@@ -156,9 +156,11 @@ final class ContourRenderer {
             return Prepared(points: pts, isIndex: isIndex, level: line.level, path: path)
         }
 
-        let minorWidth = CGFloat(0.9 * s)
-        let indexWidth = CGFloat(1.7 * s)
-        let haloExtra = CGFloat(1.1 * s)
+        // MapKit shows a tile enlarged up to 2x until the camera reaches the next zoom level, so the base sizes
+        // are on the thin side.
+        let minorWidth = CGFloat(0.7 * s)
+        let indexWidth = CGFloat(1.3 * s)
+        let haloExtra = CGFloat(0.9 * s)
 
         return renderer.pngData { ctx in
             let cg = ctx.cgContext
@@ -180,7 +182,7 @@ final class ContourRenderer {
             guard labels else { return }
 
             // Elevation labels along index lines.
-            let font = UIFont.systemFont(ofSize: CGFloat(10 * s), weight: .semibold)
+            let font = UIFont.systemFont(ofSize: CGFloat(8.5 * s), weight: .semibold)
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: font,
                 .foregroundColor: UIColor(red: 1.0, green: 0.93, blue: 0.7, alpha: 1),

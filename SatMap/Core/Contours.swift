@@ -31,10 +31,10 @@ enum ContourPolicy {
         min(z, Terrarium.maxZoom)
     }
 
-    /// Number of grid cells across a map tile. Beyond the DEM's native zoom the data is upsampled,
-    /// so fewer cells are enough for smooth lines.
+    /// Number of grid cells across a 256-pixel map tile: one per 2 pixels is smooth on screen and finer than the
+    /// elevation data itself (about 30 m SRTM in most of Africa).
     static func gridCells(forTileZoom z: Int) -> Int {
-        z <= Terrarium.maxZoom ? 256 : 128
+        128
     }
 }
 

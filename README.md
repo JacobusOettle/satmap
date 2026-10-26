@@ -6,6 +6,21 @@ maps of areas you draw (or take from a KML file), at the highest detail the imag
 
 Native Swift + MapKit, no third-party dependencies.
 
+## Screenshots
+
+Taken automatically in the iPhone simulator on a vineyard near Stellenbosch, with a simulated walk and a demo
+KML of the farm's blocks (`.github/workflows/screenshots.yml`).
+
+| Map: satellite, contours, blocks, track | Measuring: crosshair | Measuring: live distance and height |
+| --- | --- | --- |
+| <img src="docs/screenshots/01-map.jpg" width="250"> | <img src="docs/screenshots/02-measure-crosshair.jpg" width="250"> | <img src="docs/screenshots/03-measure-live.jpg" width="250"> |
+| **Blocks (KML files)** | **Blocks on the map** | **Offline maps** |
+| <img src="docs/screenshots/04-blocks-list.jpg" width="250"> | <img src="docs/screenshots/05-blocks-on-map.jpg" width="250"> | <img src="docs/screenshots/06-offline-maps.jpg" width="250"> |
+| **Download an area (from a KML)** | **Downloading** | **Offline areas** |
+| <img src="docs/screenshots/07-download-area.jpg" width="250"> | <img src="docs/screenshots/08-downloading.jpg" width="250"> | <img src="docs/screenshots/09-offline-areas.jpg" width="250"> |
+| **Drawing an area with the lasso** | | |
+| <img src="docs/screenshots/10-draw-area.jpg" width="250"> | | |
+
 ## Features
 
 | What you asked for | How it works |

@@ -471,7 +471,7 @@ enum ImageTools {
 /// (which the downloads and elevation lookups also need).
 enum Work {
     static let images: OperationQueue = makeQueue("satmap.images", 3, .userInitiated)
-    static let contours: OperationQueue = makeQueue("satmap.contours", 2, .utility)
+    static let contours: OperationQueue = makeQueue("satmap.contours", 3, .utility)
 
     private static func makeQueue(_ name: String, _ width: Int, _ qos: QualityOfService) -> OperationQueue {
         let q = OperationQueue()

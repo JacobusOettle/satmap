@@ -79,7 +79,7 @@ final class ScreenshotTests: XCTestCase {
         sleep(2)
         snap("04-blocks-list")
         tapRow(startingWith: "Demo farm")
-        sleep(12)
+        sleep(25)
         snap("05-blocks-on-map")
 
         // Offline: download the area around the blocks.
@@ -95,11 +95,14 @@ final class ScreenshotTests: XCTestCase {
         snap("08-downloading")
 
         tap("Offline maps")
-        _ = app.staticTexts["Ready offline"].waitForExistence(timeout: 300)
+        _ = app.staticTexts["Ready offline"].waitForExistence(timeout: 900)
         sleep(2)
         snap("09-offline-areas")
 
-        // Choosing an area with the lasso.
+        // Choosing an area with the lasso (measuring switched off first for a clearer view).
+        tap("Done")
+        tap("Measure")
+        tap("Offline maps")
         tap("Draw an area on the map")
         sleep(3)
         snap("10-draw-area")
