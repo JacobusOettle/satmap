@@ -72,6 +72,16 @@ Limits imposed by iOS:
 
 ## Install on your iPhone
 
+### Without a Mac: sideload the test build
+
+Download **[SatMap.ipa](https://github.com/JacobusOettle/satmap/releases/download/test-build/SatMap.ipa)**
+(rebuilt automatically after every change to the app, `.github/workflows/ipa.yml`). It is unsigned: install it
+with Impactor, Sideloadly or AltStore, which sign it with your Apple ID. With a free Apple ID it runs for 7 days,
+then has to be installed again; your data is kept. On the iPhone, turn on *Settings → Privacy & Security →
+Developer Mode* if asked, and trust your Apple ID under *Settings → General → VPN & Device Management*.
+
+### With a Mac: build in Xcode
+
 You need a Mac with **Xcode 16 or newer** and an iPhone with **iOS 16 or newer**.
 
 1. Open `SatMap.xcodeproj` in Xcode.
