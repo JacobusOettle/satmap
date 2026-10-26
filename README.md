@@ -24,8 +24,11 @@ Native Swift + MapKit, no third-party dependencies.
   towns. The downloader asks for a tile only if its parent exists, so it finds the real depth for every
   spot without wasting requests. On screen, anything deeper is enlarged from the best tile available.
 - Elevation tiles for the same area are downloaded too, so contours and heights work with no signal.
+- Keep SatMap open while it downloads; the screen stays on. In the background the download pauses so it
+  can't compete with track recording for battery or CPU, and it continues when you return.
 - Downloads resume where they stopped: after **Pause**, losing signal, leaving Wi-Fi, or closing the app.
-  The screen stays on while a download runs.
+  If the Wi-Fi is up but the internet behind it is down, the download waits and retries by itself.
+  If the phone runs out of space, it stops and tells you.
 - Each area is stored as two MBTiles files under *Application Support/SatMap/Offline* and is excluded
   from iCloud backup. Swipe an area to delete it and free the space.
 - The size estimate is an upper bound. Most of the space goes into the deepest zoom levels.
@@ -37,8 +40,10 @@ Native Swift + MapKit, no third-party dependencies.
   to 3 km so iOS can power the GPS chip down. It is raised again 3 s before the next fix is due.
 - **Not moving for 2 minutes:** sleep mode, with the GPS off. It wakes when the phone's motion
   coprocessor detects walking or driving. As a backup it also wakes after a short GPS check, every
-  minute on screen or every 5 minutes in the background, if that check shows you have moved, or after a
+  minute on screen or every 2 minutes in the background, if that check shows you have moved, or after a
   large jump in the coarse cell/Wi-Fi position.
+- **Measuring:** while a marker is placed and the app is on screen, the GPS doesn't sleep, so the
+  distance follows you even when you step a few metres.
 - MapKit's own location tracking is not used, because it keeps the GPS at full power.
 
 Limits imposed by iOS:
@@ -46,6 +51,8 @@ Limits imposed by iOS:
   saving comes from drawing and recording less often.
 - With "While Using" location permission, recording stops if you force-quit the app (swipe it away),
   and starts again when you open it.
+- With **Precise Location** turned off for SatMap, iOS only gives positions to within kilometres, so no
+  track can be recorded. The app shows a warning when that happens.
 
 ## Install on your iPhone
 
