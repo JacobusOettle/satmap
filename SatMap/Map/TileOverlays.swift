@@ -52,7 +52,7 @@ final class ContourTileOverlay: MKTileOverlay {
         let t = TileID(z: path.z, x: ((path.x % n) + n) % n, y: path.y)
         let scale = Double(path.contentScaleFactor)
         tileLog.debug("contour tile requested \(t.description, privacy: .public) contentScale \(scale)")
-        Task.detached(priority: .utility) {
+        Task.detached(priority: .userInitiated) {
             if let data = await ContourRenderer.shared.render(t, contentScale: scale) {
                 result(data, nil)
             } else {
@@ -73,6 +73,8 @@ final class ContourRenderer {
     private let emptyCache = NSCache<NSString, NSNumber>()
     private let lock = NSLock()
     private var scale: Double = 3
+    /// MapKit sometimes asks for the same tile again before the first answer: share the work.
+    private var inFlight: [String: Task<Data?, Never>] = [:]
 
     private let minorColor = UIColor(red: 1.0, green: 0.84, blue: 0.32, alpha: 0.85)
     private let indexColor = UIColor(red: 1.0, green: 0.74, blue: 0.16, alpha: 1.0)
@@ -98,6 +100,19 @@ final class ContourRenderer {
     }
 
     func render(_ t: TileID, contentScale: Double) async -> Data? {
+        let key = "\(t.z)/\(t.x)/\(t.y)"
+        let task: Task<Data?, Never> = lock.withLock {
+            if let existing = inFlight[key] { return existing }
+            let new = Task.detached(priority: .userInitiated) { [self] in await self.renderNow(t, contentScale: contentScale) }
+            inFlight[key] = new
+            return new
+        }
+        let data = await task.value
+        lock.withLock { inFlight[key] = nil }
+        return data
+    }
+
+    private func renderNow(_ t: TileID, contentScale: Double) async -> Data? {
         let s = contentScale >= 1 ? min(contentScale, 3) : screenScale
         guard let interval = ContourPolicy.intervals(forPointZoom: ContourPolicy.pointZoom(tileZoom: t.z, screenScale: s)) else { return nil }
         let key = "\(t.z)/\(t.x)/\(t.y)" as NSString
@@ -117,7 +132,10 @@ final class ContourRenderer {
 
         let cells = ContourPolicy.gridCells(forTileZoom: t.z)
         // Gridding, tracing and drawing are CPU-heavy: keep them on the contour queue.
+        var computeMs = 0
         let result: (png: Data?, empty: Bool)? = await Work.run(on: Work.contours) { [self] in
+            let computeStart = Date()
+            defer { computeMs = Int(Date().timeIntervalSince(computeStart) * 1000) }
             let sampler = DEMSampler(zoom: dz, tile: { tiles[$0] })
             guard let grid = sampler.grid(minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY,
                                           nodesX: cells + 1, nodesY: cells + 1) else { return nil }
@@ -132,7 +150,7 @@ final class ContourRenderer {
             tileLog.error("contours \(t.description, privacy: .public): no grid (\(tiles.count) elevation tiles)")
             return nil
         }
-        tileLog.debug("contours \(t.description, privacy: .public) scale \(s) \(result.empty ? "empty" : "drawn", privacy: .public) complete=\(complete) elevation \(fetchedMs) ms total \(totalMs) ms")
+        tileLog.debug("contours \(t.description, privacy: .public) scale \(s) \(result.empty ? "empty" : "drawn", privacy: .public) complete=\(complete) elevation \(fetchedMs) ms compute \(computeMs) ms total \(totalMs) ms")
         // With a neighbour missing, edges are approximated: show it, but don't keep it.
         if complete {
             if result.empty { emptyCache.setObject(1, forKey: key) }

@@ -52,8 +52,10 @@ final class TileRepository {
     let browseSession: URLSession
 
     /// MapKit asks for dozens of tiles at once. Requests queued inside URLSession time out while they wait,
-    /// so at most 6 are started at a time, newest first (the tiles for where the map is now).
-    private let limiter = RequestLimiter(slots: 6)
+    /// so only a few are started at a time per server, newest first (the tiles for where the map is now).
+    /// Imagery and elevation have separate queues so elevation (contours) isn't starved while the map moves.
+    private let imageryLimiter = RequestLimiter(slots: 6)
+    private let terrainLimiter = RequestLimiter(slots: 4)
 
     /// A network that is "connected" but can't reach the internet (e.g. a drone controller's Wi-Fi) makes every
     /// request time out. After several consecutive failures the network is skipped for a while.
@@ -231,6 +233,7 @@ final class TileRepository {
     }
 
     private func limitedFetch(_ url: URL) async -> TileFetchResult {
+        let limiter = url.host?.hasPrefix("elevation") == true ? terrainLimiter : imageryLimiter
         await limiter.acquire()
         defer { limiter.release() }
         guard networkUsable else { return .offline }
@@ -338,7 +341,7 @@ final class TileRepository {
         let pending: Task<(DEMTile?, TileFetchResult), Never>? = lock.withLock {
             if let after = demRetryAfter[t], Date() < after { return nil }
             if let existing = demInFlight[t] { return existing }
-            let task = Task.detached(priority: .utility) { [self] () -> (DEMTile?, TileFetchResult) in
+            let task = Task.detached(priority: .userInitiated) { [self] () -> (DEMTile?, TileFetchResult) in
                 let result = await self.limitedFetch(TileSources.terrainURL(t))
                 guard case .data(let d) = result else { return (nil, result) }
                 return (await Work.run(on: Work.contours) { Terrarium.decode(d, id: t) }, result)
@@ -483,7 +486,8 @@ enum ImageTools {
 /// (which the downloads and elevation lookups also need).
 enum Work {
     static let images: OperationQueue = makeQueue("satmap.images", 3, .userInitiated)
-    static let contours: OperationQueue = makeQueue("satmap.contours", 3, .utility)
+    // Contours are on-screen content the user is waiting for, like imagery.
+    static let contours: OperationQueue = makeQueue("satmap.contours", 3, .userInitiated)
 
     private static func makeQueue(_ name: String, _ width: Int, _ qos: QualityOfService) -> OperationQueue {
         let q = OperationQueue()
