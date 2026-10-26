@@ -1,0 +1,62 @@
+name: iPhone app
+
+# Builds an unsigned SatMap.ipa for installing with a sideloading tool (Impactor, Sideloadly, AltStore),
+# which signs it with your Apple ID. Published as the "test-build" pre-release, always at
+# https://github.com/JacobusOettle/satmap/releases/download/test-build/SatMap.ipa
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/satmap-ios-app]
+    paths:
+      - "SatMap/**"
+      - "SatMap.xcodeproj/**"
+      - ".github/workflows/ipa.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ipa
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build for iPhone (unsigned)
+        run: |
+          set +e
+          xcodebuild build -project SatMap.xcodeproj -scheme SatMap -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" > build.log 2>&1
+          status=$?
+          grep -E "(error|warning):" build.log | grep -v "^ld: warning" | sort -u | head -n 100
+          tail -n 20 build.log
+          exit $status
+
+      - name: Package SatMap.ipa
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/SatMap.app Payload/
+          lipo -info Payload/SatMap.app/SatMap
+          plutil -p Payload/SatMap.app/Info.plist | grep -E "CFBundleIdentifier|CFBundleShortVersionString|MinimumOSVersion"
+          zip -qry SatMap.ipa Payload
+          ls -l SatMap.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SatMap-ipa
+          path: SatMap.ipa
+
+      - name: Publish as the test-build pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release delete test-build --yes --cleanup-tag || true
+          gh release create test-build SatMap.ipa --prerelease --target "$GITHUB_SHA" \
+            --title "SatMap test build" \
+            --notes "Unsigned build of ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Sign and install it with Impactor (or Sideloadly or AltStore) using your Apple ID."

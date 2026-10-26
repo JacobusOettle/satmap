@@ -1,0 +1,131 @@
+name: Screenshots
+
+# Runs the app in an iPhone simulator, walks through its screens (SatMapUITests/ScreenshotTests.swift)
+# and commits the screenshots to docs/screenshots on the branch it was started on.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "SatMap/**"
+      - "SatMapUITests/**"
+      - ".github/workflows/screenshots.yml"
+
+permissions:
+  contents: write
+
+# A newer push makes a running set of screenshots out of date.
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Boot an iPhone simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          best = None
+          for runtime, devices in json.load(sys.stdin)["devices"].items():
+              if "SimRuntime.iOS" not in runtime:
+                  continue
+              version = tuple(int(v) for v in runtime.split("iOS-")[-1].split("-"))
+              for d in devices:
+                  if d["name"] in ("iPhone 16 Pro", "iPhone 17 Pro", "iPhone 15 Pro") and (best is None or version > best[0]):
+                      best = (version, d["udid"], d["name"])
+          print(best[1])
+          ')
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time "9:41" --dataNetwork wifi --wifiMode active --wifiBars 3 \
+            --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+
+      - name: Build app and UI tests
+        run: |
+          set +e
+          xcodebuild build-for-testing -project SatMap.xcodeproj -scheme SatMap -configuration Release \
+            -destination "id=$UDID" -derivedDataPath build CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- > build.log 2>&1
+          status=$?
+          grep -E "(error|warning):" build.log | sort -u | head -n 100
+          tail -n 20 build.log
+          exit $status
+
+      - name: Install the app with the demo farm blocks
+        run: |
+          xcrun simctl install "$UDID" build/Build/Products/Release-iphonesimulator/SatMap.app
+          xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
+          DATA=$(xcrun simctl get_app_container "$UDID" com.jacobusoettle.satmap data)
+          KML="$DATA/Library/Application Support/SatMap/KML"
+          mkdir -p "$KML"
+          ID=6F1C2D3E-4B5A-4C7D-8E9F-0A1B2C3D4E5F
+          cp SatMapUITests/DemoFarm.kml "$KML/$ID.kml"
+          printf '[{"id":"%s","name":"Demo farm","fileName":"%s.kml"}]' "$ID" "$ID" > "$KML/index.json"
+
+      - name: Take screenshots
+        run: |
+          mkdir -p shots
+          xcrun simctl spawn "$UDID" log stream --level debug --style compact \
+            --predicate 'subsystem == "com.jacobusoettle.satmap"' > applog.txt 2>&1 &
+          LOGPID=$!
+          TEST_RUNNER_SCREENSHOT_DIR="$PWD/shots" xcodebuild test-without-building \
+            -xctestrun "$(ls build/Build/Products/*.xctestrun | head -n 1)" -destination "id=$UDID" \
+            -resultBundlePath screenshots.xcresult -only-testing:SatMapUITests/ScreenshotTests/testScreenshots \
+            > test.log 2>&1 || { tail -n 60 test.log; echo "Test reported failures; keeping the screenshots taken."; }
+          if [ -z "$(ls shots)" ]; then
+            # Fall back to the screenshots attached to the result bundle.
+            xcrun xcresulttool export attachments --path screenshots.xcresult --output-path attachments
+            python3 - <<'EOF'
+          import json, shutil, pathlib
+          root = pathlib.Path("attachments")
+          for test in json.loads((root / "manifest.json").read_text()):
+              for a in test.get("attachments", []):
+                  name = a["suggestedHumanReadableName"].split("_")[0]
+                  shutil.copy(root / a["exportedFileName"], f"shots/{name}.png")
+          EOF
+          fi
+          ls -l shots
+          kill $LOGPID || true
+          echo "===== app log summary ====="
+          echo "contour tiles requested: $(grep -c 'contour tile requested' applog.txt)"
+          echo "contour tiles drawn:     $(grep -c ' drawn ' applog.txt)"
+          echo "elevation fetches:       $(grep -c 'elevation fetch' applog.txt)"
+          echo "errors:                  $(grep -cE 'failed|no elevation|no grid|paused' applog.txt)"
+          echo "--- first 60 lines ---"; head -n 60 applog.txt
+          echo "--- errors (first 60) ---"; grep -E 'failed|no elevation|no grid|paused' applog.txt | head -n 60
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: |
+            shots
+            test.log
+            applog.txt
+
+      - name: Commit screenshots to the branch
+        run: |
+          mkdir -p jpg
+          for f in shots/*.png; do
+            sips -s format jpeg -s formatOptions 82 --resampleWidth 600 "$f" --out "jpg/$(basename "${f%.png}").jpg" > /dev/null
+          done
+          ls -l jpg
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The branch may have moved while the screenshots were taken (new code, or another run's screenshots):
+          # put these on top of whatever it holds now.
+          for attempt in 1 2 3; do
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard FETCH_HEAD
+            mkdir -p docs/screenshots
+            cp jpg/*.jpg docs/screenshots/
+            git add docs/screenshots
+            git commit -m "Update app screenshots" || { echo "No changes"; exit 0; }
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep 10
+          done
+          exit 1
