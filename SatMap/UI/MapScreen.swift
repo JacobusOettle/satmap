@@ -44,11 +44,7 @@ struct MapScreen: View {
                 }
                 Spacer()
                 HStack(alignment: .bottom) {
-                    Text(TileSources.attribution)
-                        .font(.system(size: 10))
-                        .foregroundColor(.white.opacity(0.9))
-                        .shadow(color: .black, radius: 1)
-                        .frame(maxWidth: 230, alignment: .leading)
+                    // Map credits are in the Offline maps sheet.
                     Spacer()
                     if !model.isDrawingArea {
                         controls

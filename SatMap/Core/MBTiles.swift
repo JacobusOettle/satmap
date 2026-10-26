@@ -189,6 +189,16 @@ final class MBTiles {
         return noteWrite()
     }
 
+    func metadata(_ name: String) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let s = statement("SELECT value FROM metadata WHERE name = ?") else { return nil }
+        defer { sqlite3_reset(s) }
+        sqlite3_bind_text(s, 1, name, -1, Self.transient)
+        guard sqlite3_step(s) == SQLITE_ROW, let text = sqlite3_column_text(s, 0) else { return nil }
+        return String(cString: text)
+    }
+
     func setMetadata(_ values: [String: String]) {
         lock.lock()
         defer { lock.unlock() }
@@ -210,13 +220,15 @@ final class MBTiles {
         return commitLocked()
     }
 
-    /// Folds the write-ahead log back into the database file and truncates it (after each downloaded layer).
-    func checkpoint() {
+    /// Folds the write-ahead log back into the database file and truncates it (after each downloaded layer, and
+    /// before the file is exported). Returns false if it couldn't finish, e.g. because a reader was busy.
+    @discardableResult
+    func checkpoint() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard let db = db else { return }
-        _ = commitLocked()
-        sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
+        guard let db = db else { return false }
+        let committed = commitLocked()
+        return sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil) == SQLITE_OK && committed
     }
 
     // MARK: - Internals (call with lock held)

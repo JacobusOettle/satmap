@@ -148,6 +148,14 @@ final class ScreenshotTests: XCTestCase {
         }
         guard ready.count >= 2, alongRoads.exists else { return XCTFail("No area downloaded along roads") }
         snap("13-offline-along-roads")
+
+        // Backup: export both areas through the share sheet.
+        scrollTo(app.buttons["Export all offline maps"].firstMatch)
+        tap("Export all offline maps")
+        let saveToFiles = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Save to Files")).firstMatch
+        guard saveToFiles.waitForExistence(timeout: 30) else { return XCTFail("No share sheet") }
+        sleep(2)
+        snap("14-export-backup")
     }
 
     // MARK: - Helpers

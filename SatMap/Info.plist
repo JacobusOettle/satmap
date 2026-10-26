@@ -32,6 +32,24 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
+			<string>com.mapbox.mbtiles</string>
+			<key>UTTypeDescription</key>
+			<string>MBTiles map</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.database</string>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>mbtiles</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
 			<string>com.google.earth.kml</string>
 			<key>UTTypeDescription</key>
 			<string>KML</string>

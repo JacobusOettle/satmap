@@ -73,6 +73,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                     return a
                 }
                 removeOrphanedDirectories()
+                try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
             } else {
                 // Never overwrite an index we can't read (that would orphan every downloaded area).
                 try? FileManager.default.moveItem(at: indexURL, to: indexURL.appendingPathExtension("unreadable-\(Int(Date().timeIntervalSince1970))"))
@@ -117,6 +118,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     func delete(_ id: UUID) {
+        // An exported copy is a link to the same storage: remove it too, or the space isn't freed.
+        try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
         let wasActive = activeID == id
         let running = task
         areas.removeAll { $0.id == id }
@@ -142,6 +145,135 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             DispatchQueue.main.async {
                 for (id, size) in sizes { self.update(id, persist: false) { $0.bytesOnDisk = size } }
                 self.save()
+            }
+        }
+    }
+
+    // MARK: - Backup
+
+    private static let backupLayers = [
+        OfflineBackup.Layer(fileName: TileRepository.Layer.imagery.fileName, key: "imagery", label: "satellite"),
+        OfflineBackup.Layer(fileName: TileRepository.Layer.terrain.fileName, key: "terrain", label: "elevation"),
+    ]
+    /// Files handed to the share sheet. Links to the areas' own files, so they take no space while the areas exist.
+    static let exportFolder = FileManager.default.temporaryDirectory.appendingPathComponent("Export", isDirectory: true)
+    /// Areas paused for an export, resumed by `finishExport`.
+    private var pausedForExport: [UUID] = []
+
+    /// Gets areas ready to share: pauses a download running in one of them, then puts each area's files
+    /// (satellite and elevation, with the area's settings inside) into `exportFolder`.
+    func prepareExport(_ ids: [UUID], completion: @escaping (Result<[URL], Error>) -> Void) {
+        let chosen = areas.filter { ids.contains($0.id) }
+        var waitFor: Task<Void, Never>?
+        if let active = activeID, ids.contains(active), let running = task {
+            pause(active)
+            pausedForExport.append(active)
+            waitFor = running
+        }
+        let encoder = JSONEncoder()
+        let items = chosen.map { a -> (folder: URL, name: String, json: String) in
+            var saved = a
+            saved.status = a.status == .complete ? .complete : .paused
+            let json = (try? encoder.encode(saved)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            return (a.directory, a.name, json)
+        }
+        Task.detached(priority: .userInitiated) {
+            await waitFor?.value
+            let result = Result<[URL], Error> {
+                try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
+                var used = Set<String>()
+                return try items.flatMap { item in
+                    try OfflineBackup.export(areaFolder: item.folder, layers: OfflineManager.backupLayers, name: item.name,
+                                             areaJSON: item.json, into: OfflineManager.exportFolder, usedNames: &used)
+                }
+            }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// The share sheet closed: continue a download paused for the export. The exported links stay until the next
+    /// export, a deleted area or the next launch, in case the system is still copying them.
+    func finishExport() {
+        let ids = pausedForExport
+        pausedForExport = []
+        ids.forEach(resume)
+    }
+
+    /// Adds the areas in exported files (normally both files of each area; the satellite file alone also works,
+    /// and ↻ then downloads the elevation). `completion` gets a summary for the user.
+    func restore(_ urls: [URL], completion: @escaping (String) -> Void) {
+        let known = Set(areas.map(\.id))
+        let layers = OfflineManager.backupLayers
+        DispatchQueue.global(qos: .userInitiated).async {
+            let fm = FileManager.default
+            let staging = AppPaths.offline.appendingPathComponent("Restoring", isDirectory: true)
+            try? fm.removeItem(at: staging)
+            try? fm.createDirectory(at: staging, withIntermediateDirectories: true)
+            defer { try? fm.removeItem(at: staging) }
+
+            var problems: [String] = []
+            // Copy each file in first: files from iCloud Drive or another app can't be opened in place.
+            var found: [UUID: (area: Area, files: [String: URL])] = [:]
+            for (i, url) in urls.enumerated() {
+                let local = staging.appendingPathComponent("\(i).mbtiles")
+                let scoped = url.startAccessingSecurityScopedResource()
+                var copyError: NSError?
+                var copied = false
+                NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &copyError) { readable in
+                    copied = (try? fm.copyItem(at: readable, to: local)) != nil
+                }
+                if scoped { url.stopAccessingSecurityScopedResource() }
+                guard copied else {
+                    problems.append("Couldn't copy \(url.lastPathComponent) (is there enough free space?).")
+                    continue
+                }
+                do {
+                    let info = try OfflineBackup.inspect(local)
+                    let area = try JSONDecoder().decode(Area.self, from: info.areaJSON)
+                    found[area.id, default: (area, [:])].files[info.layerKey] = local
+                } catch {
+                    problems.append((error as? LocalizedError)?.errorDescription ?? "\(url.lastPathComponent) isn't a SatMap backup.")
+                }
+            }
+
+            var restored: [Area] = []
+            for (id, item) in found {
+                guard !known.contains(id) else {
+                    problems.append("\(item.area.name) is already in SatMap.")
+                    continue
+                }
+                let folder = AppPaths.offlineArea(id)
+                var complete = true
+                for layer in layers {
+                    let target = folder.appendingPathComponent(layer.fileName)
+                    try? fm.removeItem(at: target)
+                    if let file = item.files[layer.key], (try? fm.moveItem(at: file, to: target)) != nil {
+                        continue
+                    }
+                    complete = false
+                }
+                var area = item.area
+                area.status = complete && area.status == .complete ? .complete : .paused
+                area.problem = nil
+                area.bytesOnDisk = AppPaths.size(of: folder)
+                restored.append(area)
+            }
+
+            DispatchQueue.main.async {
+                let added = restored.filter { a in !self.areas.contains { $0.id == a.id } }
+                self.areas.append(contentsOf: added)
+                self.save()
+                self.publishToMap()
+                if !added.isEmpty { self.completedRevision += 1 }
+                var lines: [String] = []
+                if !added.isEmpty {
+                    lines.append("Restored \(added.map(\.name).joined(separator: ", ")).")
+                }
+                if added.contains(where: { $0.status != .complete }) {
+                    lines.append("Tap ↻ on an area marked Paused to download what its backup didn't include.")
+                }
+                lines += problems
+                completion(lines.isEmpty ? "Nothing to restore." : lines.joined(separator: "\n"))
             }
         }
     }

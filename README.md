@@ -20,8 +20,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/07-download-area.jpg" width="250"> | <img src="docs/screenshots/08-downloading.jpg" width="250"> | <img src="docs/screenshots/09-offline-areas.jpg" width="250"> |
 | **Drawing an area with the lasso** | **Contour lines switched off** | **Download only along roads** |
 | <img src="docs/screenshots/10-draw-area.jpg" width="250"> | <img src="docs/screenshots/11-contours-off.jpg" width="250"> | <img src="docs/screenshots/12-download-along-roads.jpg" width="250"> |
-| **Whole area and along roads** | | |
-| <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | | |
+| **Whole area and along roads** | **Exporting a backup** | |
+| <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | <img src="docs/screenshots/14-export-backup.jpg" width="250"> | |
 
 ## Features
 
@@ -55,6 +55,12 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   If the phone runs out of space, it stops and tells you.
 - Each area is stored as two MBTiles files under *Application Support/SatMap/Offline* and is excluded
   from iCloud backup. Swipe an area to delete it and free the space.
+- **Backup:** *Export all offline maps* (or long-press one area → *Export*) opens the share sheet with each
+  area's two files, "*name* - satellite.mbtiles" and "*name* - elevation.mbtiles": save them to Files,
+  iCloud Drive or a USB drive, or AirDrop them to a computer. Exporting takes no extra space on the iPhone, and
+  pauses a running download of that area until the share sheet closes. *Restore from a backup* adds the areas
+  back from those files (choose both files of each area), also after reinstalling SatMap. The files carry the
+  area's settings inside, and other map apps (QGIS, for example) can open them as ordinary MBTiles.
 - The size estimate is an upper bound. Most of the space goes into the deepest zoom levels.
 
 ### Battery
@@ -110,6 +116,8 @@ A paid Apple Developer account ($99/year) extends this to a year, and also allow
   contributors (ODbL). Only used to choose which imagery to download.
 - **Elevation:** [Terrain Tiles on AWS](https://registry.opendata.aws/terrain-tiles/) (Mapzen). Open data,
   free to download and store, with attribution.
+- The map credits ("Powered by Esri", the imagery and elevation sources) are at the bottom of the
+  **Offline maps** screen rather than on the map.
 - **Satellite imagery:** Esri World Imagery. Esri's terms allow using World Imagery with an ArcGIS
   account and taking it **offline only through Esri's own software**. Bulk-downloading the tiles into
   another app's storage, which is what the offline feature does, is not permitted by those terms. That

@@ -595,3 +595,56 @@ final class RoadsTests: XCTestCase {
         XCTAssertLessThanOrEqual(along.rows.count, 2)
     }
 }
+
+final class OfflineBackupTests: XCTestCase {
+    private let layers = [OfflineBackup.Layer(fileName: "imagery.mbtiles", key: "imagery", label: "satellite"),
+                          OfflineBackup.Layer(fileName: "terrain.mbtiles", key: "terrain", label: "elevation")]
+
+    func testExportedFilesAreCompleteOnTheirOwnAndCarryTheArea() throws {
+        let area = tempDir()
+        let writer = try MBTiles(url: area.appendingPathComponent("imagery.mbtiles"), create: true)
+        let tiles = (0..<300).map { TileID(z: 18, x: 1000 + $0, y: 2000) }
+        for t in tiles { XCTAssertTrue(writer.put(t, data: Data("\(t)".utf8))) }
+        XCTAssertTrue(writer.flush()) // committed to the write-ahead log, not yet to the file itself
+        let reader = try MBTiles(url: area.appendingPathComponent("imagery.mbtiles"), create: false)
+        XCTAssertNotNil(reader.tile(tiles[0])) // the map has the file open too
+
+        let out = tempDir().appendingPathComponent("Export")
+        var used = Set<String>()
+        let files = try OfflineBackup.export(areaFolder: area, layers: layers, name: "Farm: north/south",
+                                             areaJSON: #"{"name":"Farm"}"#, into: out, usedNames: &used)
+        // No elevation downloaded yet: only the satellite file.
+        XCTAssertEqual(files.map(\.lastPathComponent), ["Farm- north-south - satellite.mbtiles"])
+
+        // Copy just the file (as Files or AirDrop would) and open it elsewhere: every tile is there.
+        let copy = tempDir().appendingPathComponent("copy.mbtiles")
+        try FileManager.default.copyItem(at: files[0], to: copy)
+        let restored = try OfflineBackup.inspect(copy)
+        XCTAssertEqual(restored.layerKey, "imagery")
+        XCTAssertEqual(String(decoding: restored.areaJSON, as: UTF8.self), #"{"name":"Farm"}"#)
+        let opened = try MBTiles(url: copy, create: false)
+        XCTAssertEqual(opened.tileCount(), tiles.count)
+        XCTAssertEqual(opened.tile(tiles[299]), Data("\(tiles[299])".utf8))
+
+        // A second area with the same name gets its own file names.
+        let files2 = try OfflineBackup.export(areaFolder: area, layers: layers, name: "Farm: north/south",
+                                              areaJSON: "{}", into: out, usedNames: &used)
+        XCTAssertEqual(files2.map(\.lastPathComponent), ["Farm- north-south (2) - satellite.mbtiles"])
+        reader.close()
+        writer.close()
+    }
+
+    func testOtherMBTilesAreNotBackups() throws {
+        let url = tempDir().appendingPathComponent("other.mbtiles")
+        let store = try MBTiles(url: url, create: true)
+        store.setMetadata(["name": "Somebody's map"])
+        store.close()
+        XCTAssertThrowsError(try OfflineBackup.inspect(url))
+    }
+
+    func testFileSafeNames() {
+        XCTAssertEqual(OfflineBackup.fileSafe("  ..Block A1 / B2?  "), "Block A1 - B2-")
+        XCTAssertEqual(OfflineBackup.fileSafe("///"), "---")
+        XCTAssertEqual(OfflineBackup.fileSafe("  "), "Offline area")
+    }
+}
