@@ -84,11 +84,11 @@ struct MapScreen: View {
                 CompassButton(mapView: map)
                     .frame(width: 44, height: 44)
             }
-            MapButton(systemImage: "square.dashed") { model.sheet = .blocks }
+            MapButton(systemImage: "square.dashed", label: "Blocks") { model.sheet = .blocks }
             MapButton(systemImage: offline.activeID == nil ? "arrow.down.circle" : "arrow.down.circle.fill",
-                      active: offline.activeID != nil) { model.sheet = .offline }
-            MapButton(systemImage: measureIcon, active: model.measure != .off) { model.measureButtonTapped() }
-            MapButton(systemImage: model.following ? "location.fill" : "location") { model.centerOnUser() }
+                      label: "Offline maps", active: offline.activeID != nil) { model.sheet = .offline }
+            MapButton(systemImage: measureIcon, label: "Measure", active: model.measure != .off) { model.measureButtonTapped() }
+            MapButton(systemImage: model.following ? "location.fill" : "location", label: "My location") { model.centerOnUser() }
                 .contextMenu {
                     Button(role: .destructive) { confirmClearTrack = true } label: {
                         Label("Clear recorded track", systemImage: "trash")
@@ -121,6 +121,8 @@ struct CompassButton: UIViewRepresentable {
 
 struct MapButton: View {
     let systemImage: String
+    /// Spoken by VoiceOver.
+    let label: String
     var active = false
     let action: () -> Void
 
@@ -135,6 +137,7 @@ struct MapButton: View {
                 .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 1))
                 .shadow(color: .black.opacity(0.35), radius: 3)
         }
+        .accessibilityLabel(Text(label))
     }
 }
 

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Demo farm</name>
+    <Placemark>
+      <name>A1 Shiraz</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>18.921719,-33.918791,0 18.922491,-33.918844,0 18.923242,-33.919361,0 18.923929,-33.920393,0 18.924036,-33.921533,0 18.923242,-33.921462,0 18.921783,-33.921106,0 18.921719,-33.918791,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>A2 Sauvignon blanc</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>18.923907,-33.920785,0 18.924744,-33.920429,0 18.925538,-33.920607,0 18.925710,-33.922566,0 18.924809,-33.922797,0 18.923993,-33.922655,0 18.923907,-33.920785,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>A3 Pinotage</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>18.920131,-33.919361,0 18.920603,-33.918862,0 18.921525,-33.918755,0 18.921654,-33.920963,0 18.920689,-33.920999,0 18.920174,-33.920465,0 18.920131,-33.919361,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>B1 Cabernet</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>18.927855,-33.920643,0 18.929486,-33.919040,0 18.931353,-33.919040,0 18.928971,-33.921658,0 18.927963,-33.921141,0 18.927855,-33.920643,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>B2 Chenin blanc</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>18.929143,-33.921640,0 18.930302,-33.920536,0 18.931203,-33.921302,0 18.930645,-33.921960,0 18.930345,-33.921782,0 18.929143,-33.921640,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>B3 Merlot</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>18.929036,-33.921675,0 18.930302,-33.921693,0 18.930581,-33.922067,0 18.929272,-33.923260,0 18.928328,-33.922779,0 18.928370,-33.922281,0 18.929036,-33.921675,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>D1 Apples</name>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>18.915668,-33.914589,0 18.919659,-33.914589,0 18.919744,-33.916013,0 18.918307,-33.916868,0 18.915882,-33.916725,0 18.915668,-33.914589,0</coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+  </Document>
+</kml>
