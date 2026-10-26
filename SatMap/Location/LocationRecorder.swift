@@ -24,6 +24,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     @Published private(set) var location: CLLocation?
     @Published private(set) var power: Power = .active
     @Published private(set) var authorization: CLAuthorizationStatus
+    /// Precise Location switched off for the app: fixes are kilometres off and no track can be recorded.
+    @Published private(set) var reducedAccuracy = false
 
     /// Called on the main thread for each new track point.
     var onTrackPoint: ((TrackPoint) -> Void)?
@@ -137,6 +139,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         authorization = manager.authorizationStatus
+        reducedAccuracy = manager.accuracyAuthorization == .reducedAccuracy
         if authorization == .authorizedWhenInUse || authorization == .authorizedAlways {
             beginUpdates()
         }
@@ -402,5 +405,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     @objc private func didBecomeActive() {
         isForeground = true
         if !started { start() }
+        // Motion permission may have been answered while the app was inactive behind the prompt.
+        if started { startMotion() }
     }
 }

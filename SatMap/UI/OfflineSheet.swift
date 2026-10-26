@@ -107,7 +107,9 @@ private struct AreaRow: View {
         case .waitingForNetwork:
             return area.allowCellular || !Connectivity.shared.isOnline ? "Waiting for internet" : "Waiting for Wi-Fi"
         case .complete: return "Ready offline"
-        case .incomplete: return "Incomplete: \(Format.count(area.failedTiles)) tiles failed. Tap ↻ to retry."
+        case .incomplete:
+            if let problem = area.problem { return "Stopped: \(problem) Tap ↻ to continue." }
+            return "Incomplete: \(Format.count(area.failedTiles)) tiles failed. Tap ↻ to retry."
         }
     }
 

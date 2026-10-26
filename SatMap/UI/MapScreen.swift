@@ -38,6 +38,8 @@ struct MapScreen: View {
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
                     Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
+                } else if recorder.reducedAccuracy {
+                    Hint(text: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location.")
                 }
                 Spacer()
                 HStack(alignment: .bottom) {

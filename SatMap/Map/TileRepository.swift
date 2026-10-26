@@ -42,17 +42,19 @@ final class TileRepository {
     private let lock = NSLock()
     private var areas: [OpenArea] = []
 
-    /// Session for on-screen tiles, with an on-disk HTTP cache so recently viewed places load again quickly.
-    let browseSession: URLSession = {
-        let config = URLSessionConfiguration.default
-        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("tiles-http")
-        config.urlCache = URLCache(memoryCapacity: 32 << 20, diskCapacity: 1 << 30, directory: cacheDir)
-        config.requestCachePolicy = .useProtocolCachePolicy
-        config.httpMaximumConnectionsPerHost = 6
-        config.timeoutIntervalForRequest = 20
-        config.waitsForConnectivity = false
-        return URLSession(configuration: config)
-    }()
+    /// HTTP cache for on-screen tiles, so recently viewed places load again quickly.
+    private let urlCache: URLCache
+    /// Session for on-screen tiles.
+    let browseSession: URLSession
+
+    /// MapKit asks for dozens of tiles at once. Requests queued inside URLSession time out while they wait,
+    /// so at most 6 are started at a time, newest first (the tiles for where the map is now).
+    private let limiter = RequestLimiter(slots: 6)
+
+    /// A network that is "connected" but can't reach the internet (e.g. a drone controller's Wi-Fi) makes every
+    /// request time out. After several consecutive failures the network is skipped for a while.
+    private var consecutiveFailures = 0
+    private var networkPausedUntil = Date.distantPast
 
     // Elevation tiles decoded in memory (each 256 KB).
     private let demCache = LRUCache<TileID, DEMTile>(capacity: 80)
@@ -62,7 +64,18 @@ final class TileRepository {
     private var imageryMissing = Set<TileID>()
     private var imageryInFlight: [TileID: Task<TileFetchResult, Never>] = [:]
 
-    private init() {}
+    private init() {
+        urlCache = URLCache(memoryCapacity: 16 << 20, diskCapacity: 1 << 30,
+                            directory: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                                .appendingPathComponent("tiles-http"))
+        let config = URLSessionConfiguration.default
+        config.urlCache = urlCache
+        config.requestCachePolicy = .useProtocolCachePolicy
+        config.httpMaximumConnectionsPerHost = 6
+        config.timeoutIntervalForRequest = 15
+        config.waitsForConnectivity = false
+        browseSession = URLSession(configuration: config)
+    }
 
     // MARK: - Offline areas
 
@@ -121,15 +134,26 @@ final class TileRepository {
 
     func imageryForDisplay(_ t: TileID) async -> Data? {
         if let d = offlineTile(t, layer: .imagery) { return d }
-        let online = Connectivity.shared.isOnlineNow
-        if online, let d = await onlineImagery(t) { return d }
-        // Deeper than the imagery goes (or not available offline): enlarge part of the nearest ancestor.
+        var online = networkUsable
+        if online {
+            switch await onlineImagery(t) {
+            case .data(let d): return d
+            case .missing: break // deeper than the imagery goes here: enlarge an ancestor below
+            case .failed, .offline:
+                // Don't show (and have MapKit keep) a blurry stand-in for a tile that exists but failed
+                // to load; only offline ancestors are used.
+                online = false
+            }
+        }
+        // Enlarge part of the nearest ancestor that exists.
         for k in 1...max(1, min(8, t.z)) where t.z - k >= 0 {
             let a = t.ancestor(levels: k)
             var data = offlineTile(a, layer: .imagery)
-            if data == nil && online { data = await onlineImagery(a) }
+            if data == nil && online, case .data(let d) = await onlineImagery(a) { data = d }
             if let d = data {
-                return ImageTools.enlarge(d, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
+                return await Work.run(on: Work.images) {
+                    ImageTools.enlarge(d, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
+                }
             }
         }
         return nil
@@ -137,18 +161,17 @@ final class TileRepository {
 
     /// One network request per imagery tile at a time (many deep tiles share the same ancestor);
     /// tiles the server doesn't have are remembered.
-    private func onlineImagery(_ t: TileID) async -> Data? {
-        let session = browseSession
+    private func onlineImagery(_ t: TileID) async -> TileFetchResult {
         let pending: Task<TileFetchResult, Never>? = lock.withLock {
             if imageryMissing.contains(t) { return nil }
             if let existing = imageryInFlight[t] { return existing }
-            let task = Task.detached(priority: .userInitiated) {
-                await HTTPTileFetcher.fetch(TileSources.imageryURL(t), session: session)
+            let task = Task.detached(priority: .userInitiated) { [self] in
+                await self.limitedFetch(TileSources.imageryURL(t))
             }
             imageryInFlight[t] = task
             return task
         }
-        guard let task = pending else { return nil }
+        guard let task = pending else { return .missing }
         let result = await task.value
         lock.withLock {
             imageryInFlight[t] = nil
@@ -157,28 +180,80 @@ final class TileRepository {
                 imageryMissing.insert(t)
             }
         }
-        if case .data(let d) = result { return d }
-        return nil
+        return result
+    }
+
+    /// Whether to try the network for on-screen tiles right now.
+    private var networkUsable: Bool {
+        Connectivity.shared.isOnlineNow && lock.withLock { Date() >= networkPausedUntil }
+    }
+
+    private func limitedFetch(_ url: URL) async -> TileFetchResult {
+        await limiter.acquire()
+        defer { limiter.release() }
+        guard networkUsable else { return .offline }
+        let result = await HTTPTileFetcher.fetch(url, session: browseSession)
+        lock.withLock {
+            switch result {
+            case .data, .missing:
+                consecutiveFailures = 0
+            case .failed, .offline:
+                consecutiveFailures += 1
+                if consecutiveFailures >= 8 {
+                    networkPausedUntil = Date().addingTimeInterval(45)
+                    consecutiveFailures = 0
+                }
+            }
+        }
+        return result
+    }
+
+    /// Forget negative results (after the network comes back or an offline area finishes downloading).
+    func resetNegativeCaches() {
+        lock.withLock {
+            imageryMissing.removeAll()
+            demFailedAt.removeAll()
+            consecutiveFailures = 0
+            networkPausedUntil = .distantPast
+        }
+    }
+
+    /// Free memory while in the background, where large apps are the first to be terminated
+    /// (which would also stop track recording).
+    func trimForBackground() {
+        demCache.removeAll()
+        urlCache.memoryCapacity = 0
+        lock.withLock {
+            imageryMissing.removeAll()
+            for a in areas {
+                a.stores.values.forEach { $0.close() }
+                a.stores = [:]
+                a.lastAttempt = [:]
+            }
+        }
+    }
+
+    func restoreAfterBackground() {
+        urlCache.memoryCapacity = 16 << 20
     }
 
     // MARK: - Elevation
 
     func demTile(_ t: TileID) async -> DEMTile? {
         if let c = demCache.value(for: t) { return c }
-        if let d = offlineTile(t, layer: .terrain), let tile = Terrarium.decode(d, id: t) {
+        if let d = offlineTile(t, layer: .terrain), let tile = await Work.run(on: Work.contours, { Terrarium.decode(d, id: t) }) {
             demCache.set(tile, for: t)
             return tile
         }
-        guard Connectivity.shared.isOnlineNow else { return nil }
+        guard networkUsable else { return nil }
 
         // One network request per tile, shared by every caller that needs it meanwhile.
-        let session = browseSession
         let pending: Task<DEMTile?, Never>? = lock.withLock {
             if let failed = demFailedAt[t], Date().timeIntervalSince(failed) < 30 { return nil }
             if let existing = demInFlight[t] { return existing }
-            let task = Task.detached(priority: .utility) { () -> DEMTile? in
-                guard case .data(let d) = await HTTPTileFetcher.fetch(TileSources.terrainURL(t), session: session) else { return nil }
-                return Terrarium.decode(d, id: t)
+            let task = Task.detached(priority: .utility) { [self] () -> DEMTile? in
+                guard case .data(let d) = await self.limitedFetch(TileSources.terrainURL(t)) else { return nil }
+                return await Work.run(on: Work.contours) { Terrarium.decode(d, id: t) }
             }
             demInFlight[t] = task
             return task
@@ -301,6 +376,61 @@ enum ImageTools {
             ctx.cgContext.interpolationQuality = .high
             UIImage(cgImage: sub).draw(in: CGRect(x: 0, y: 0, width: 256, height: 256))
         }
+    }
+}
+
+/// Dedicated queues for CPU-heavy tile work, so it doesn't occupy Swift's small cooperative thread pool
+/// (which the downloads and elevation lookups also need).
+enum Work {
+    static let images: OperationQueue = makeQueue("satmap.images", 3, .userInitiated)
+    static let contours: OperationQueue = makeQueue("satmap.contours", 2, .utility)
+
+    private static func makeQueue(_ name: String, _ width: Int, _ qos: QualityOfService) -> OperationQueue {
+        let q = OperationQueue()
+        q.name = name
+        q.maxConcurrentOperationCount = width
+        q.qualityOfService = qos
+        return q
+    }
+
+    static func run<T>(on queue: OperationQueue, _ body: @escaping () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            queue.addOperation { continuation.resume(returning: body()) }
+        }
+    }
+}
+
+/// Limits concurrent requests; waiting callers are served newest first.
+final class RequestLimiter {
+    private let lock = NSLock()
+    private var free: Int
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(slots: Int) {
+        free = slots
+    }
+
+    func acquire() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            let now: Bool = lock.withLock {
+                if free > 0 {
+                    free -= 1
+                    return true
+                }
+                waiting.append(c)
+                return false
+            }
+            if now { c.resume() }
+        }
+    }
+
+    func release() {
+        let next: CheckedContinuation<Void, Never>? = lock.withLock {
+            if let c = waiting.popLast() { return c }
+            free += 1
+            return nil
+        }
+        next?.resume()
     }
 }
 

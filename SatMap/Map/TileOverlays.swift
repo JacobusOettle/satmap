@@ -49,8 +49,9 @@ final class ContourTileOverlay: MKTileOverlay {
         let n = 1 << path.z
         guard path.y >= 0, path.y < n else { return result(nil, TileUnavailable()) }
         let t = TileID(z: path.z, x: ((path.x % n) + n) % n, y: path.y)
+        let scale = Double(path.contentScaleFactor)
         Task.detached(priority: .utility) {
-            if let data = await ContourRenderer.shared.render(t) {
+            if let data = await ContourRenderer.shared.render(t, contentScale: scale) {
                 result(data, nil)
             } else {
                 result(nil, TileUnavailable())
@@ -59,8 +60,9 @@ final class ContourTileOverlay: MKTileOverlay {
     }
 }
 
-/// Draws 256×256-pixel transparent contour tiles. One tile pixel is one screen pixel, so stroke widths
-/// and fonts are multiplied by the screen scale.
+/// Draws 256×256-pixel transparent contour tiles. MapKit shows a tile pixel at 1/scale points (scale = the
+/// tile's `contentScaleFactor`, falling back to the screen scale), so stroke widths and fonts are multiplied by it
+/// and the contour interval is chosen from the equivalent web-map zoom.
 final class ContourRenderer {
     static let shared = ContourRenderer()
 
@@ -74,7 +76,7 @@ final class ContourRenderer {
     private let indexColor = UIColor(red: 1.0, green: 0.74, blue: 0.16, alpha: 1.0)
     private let haloColor = UIColor(white: 0, alpha: 0.38)
 
-    /// Screen scale (2 or 3); set once from the UI.
+    /// Screen scale (2 or 3); set once from the UI, used when MapKit doesn't report a tile scale.
     var screenScale: Double {
         get { lock.withLock { scale } }
         set { lock.withLock { scale = max(1, newValue) } }
@@ -82,14 +84,19 @@ final class ContourRenderer {
 
     private init() {
         cache.totalCostLimit = 32 << 20
-        NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: nil) { [weak self] _ in
-            self?.cache.removeAllObjects()
-            self?.emptyCache.removeAllObjects()
+        let nc = NotificationCenter.default
+        for name in [UIApplication.didReceiveMemoryWarningNotification, UIApplication.didEnterBackgroundNotification] {
+            nc.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in self?.clearCaches() }
         }
     }
 
-    func render(_ t: TileID) async -> Data? {
-        let s = screenScale
+    func clearCaches() {
+        cache.removeAllObjects()
+        emptyCache.removeAllObjects()
+    }
+
+    func render(_ t: TileID, contentScale: Double) async -> Data? {
+        let s = contentScale >= 1 ? min(contentScale, 3) : screenScale
         guard let interval = ContourPolicy.intervals(forPointZoom: ContourPolicy.pointZoom(tileZoom: t.z, screenScale: s)) else { return nil }
         let key = "\(t.z)/\(t.x)/\(t.y)" as NSString
         if let d = cache.object(forKey: key) { return d as Data }
@@ -101,19 +108,21 @@ final class ContourRenderer {
         guard !tiles.isEmpty else { return nil } // no data (offline and not downloaded); MapKit asks again later
 
         let cells = ContourPolicy.gridCells(forTileZoom: t.z)
-        let sampler = DEMSampler(zoom: dz, tile: { tiles[$0] })
-        guard let grid = sampler.grid(minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY,
-                                      nodesX: cells + 1, nodesY: cells + 1) else { return nil }
-        let lines = MarchingSquares.contours(values: grid, width: cells + 1, height: cells + 1, step: interval.step)
-        guard !lines.isEmpty else {
-            emptyCache.setObject(1, forKey: key)
-            return nil
+        // Gridding, tracing and drawing are CPU-heavy: keep them on the contour queue.
+        let result: (png: Data?, empty: Bool)? = await Work.run(on: Work.contours) { [self] in
+            let sampler = DEMSampler(zoom: dz, tile: { tiles[$0] })
+            guard let grid = sampler.grid(minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY,
+                                          nodesX: cells + 1, nodesY: cells + 1) else { return nil }
+            let lines = MarchingSquares.contours(values: grid, width: cells + 1, height: cells + 1, step: interval.step)
+            guard !lines.isEmpty else { return (nil, true) }
+            // Label every other tile (checkerboard) so index lines aren't over-labelled.
+            return (self.draw(lines, cells: cells, interval: interval, scale: s, smooth: t.z > Terrarium.maxZoom,
+                              labels: (t.x + t.y) % 2 == 0), false)
         }
-        // Label every other tile (checkerboard) so index lines aren't over-labelled.
-        let png = draw(lines, cells: cells, interval: interval, scale: s, smooth: t.z > Terrarium.maxZoom,
-                       labels: (t.x + t.y) % 2 == 0)
-        if let png = png { cache.setObject(png as NSData, forKey: key, cost: png.count) }
-        return png
+        guard let result = result else { return nil }
+        if result.empty { emptyCache.setObject(1, forKey: key) }
+        if let png = result.png { cache.setObject(png as NSData, forKey: key, cost: png.count) }
+        return result.png
     }
 
     private func draw(_ lines: [ContourLine], cells: Int, interval: (step: Double, index: Double),

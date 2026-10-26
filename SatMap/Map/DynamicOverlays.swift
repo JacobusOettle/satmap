@@ -28,7 +28,7 @@ final class TrackOverlay: NSObject, MKOverlay {
     func reset(_ track: [TrackPoint]) {
         lock.withLock {
             chunks = []
-            for p in track { appendLocked(p) }
+            for p in track { _ = appendLocked(p) }
         }
     }
 

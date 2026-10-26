@@ -4,7 +4,11 @@ enum AppPaths {
     /// Application Support/SatMap
     static let root: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return makeDirectory(base.appendingPathComponent("SatMap", isDirectory: true), excludeFromBackup: false)
+        let url = makeDirectory(base.appendingPathComponent("SatMap", isDirectory: true), excludeFromBackup: false)
+        // The track and tiles are written while the phone is locked (after the first unlock since boot).
+        try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+                                               ofItemAtPath: url.path)
+        return url
     }()
 
     /// Offline areas (many GB): excluded from iCloud/iTunes backup.

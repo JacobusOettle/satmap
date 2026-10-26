@@ -23,6 +23,8 @@ final class MBTiles {
     }
 
     let url: URL
+    /// The last write error (e.g. disk full). Writes after an error are not committed.
+    private(set) var writeError: String?
     private var db: OpaquePointer?
     private let lock = NSLock()
     private var statements: [String: OpaquePointer] = [:]
@@ -36,7 +38,11 @@ final class MBTiles {
     /// while a download writes.
     init(url: URL, create: Bool) throws {
         self.url = url
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX | (create ? SQLITE_OPEN_CREATE : 0)
+        var flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX | (create ? SQLITE_OPEN_CREATE : 0)
+        #if os(iOS)
+        // Readable and writable while the phone is locked (after the first unlock since boot), like the rest of the app's data.
+        flags |= SQLITE_OPEN_FILEPROTECTION_COMPLETEUNTILFIRSTUSERAUTHENTICATION
+        #endif
         var handle: OpaquePointer?
         let rc = sqlite3_open_v2(url.path, &handle, flags, nil)
         guard rc == SQLITE_OK, let opened = handle else {
@@ -50,6 +56,7 @@ final class MBTiles {
         try exec("""
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
+            PRAGMA journal_size_limit=67108864;
             CREATE TABLE IF NOT EXISTS metadata (name TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE IF NOT EXISTS tiles (zoom_level INTEGER NOT NULL, tile_column INTEGER NOT NULL,
                 tile_row INTEGER NOT NULL, tile_data BLOB NOT NULL);
@@ -68,7 +75,7 @@ final class MBTiles {
         defer { lock.unlock() }
         guard let db = db else { return }
         if uncommittedWrites > 0 {
-            sqlite3_exec(db, "COMMIT", nil, nil, nil)
+            if sqlite3_exec(db, "COMMIT", nil, nil, nil) != SQLITE_OK { sqlite3_exec(db, "ROLLBACK", nil, nil, nil) }
             uncommittedWrites = 0
         }
         for (_, s) in statements { sqlite3_finalize(s) }
@@ -141,11 +148,13 @@ final class MBTiles {
 
     // MARK: - Writing (batched into transactions)
 
-    func put(_ t: TileID, data: Data) {
+    /// Stores a tile. Returns false if it could not be written (see `writeError`).
+    @discardableResult
+    func put(_ t: TileID, data: Data) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard beginIfNeeded(),
-              let s = statement("INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?,?,?,?)") else { return }
+        guard writeError == nil, beginIfNeeded(),
+              let s = statement("INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?,?,?,?)") else { return false }
         defer { sqlite3_reset(s) }
         sqlite3_bind_int(s, 1, Int32(t.z))
         sqlite3_bind_int(s, 2, Int32(t.x))
@@ -153,42 +162,56 @@ final class MBTiles {
         _ = data.withUnsafeBytes { buf in
             sqlite3_bind_blob(s, 4, buf.baseAddress, Int32(buf.count), Self.transient)
         }
-        sqlite3_step(s)
+        let rc = sqlite3_step(s)
         sqlite3_clear_bindings(s)
-        noteWrite()
+        guard rc == SQLITE_DONE else { return failWrite(rc) }
+        return noteWrite()
     }
 
-    func putMissing(_ t: TileID) {
+    /// Records that the server has no tile here. Returns false on a write error.
+    @discardableResult
+    func putMissing(_ t: TileID) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard beginIfNeeded(),
-              let s = statement("INSERT OR IGNORE INTO missing_tiles (zoom_level, tile_column, tile_row) VALUES (?,?,?)") else { return }
+        guard writeError == nil, beginIfNeeded(),
+              let s = statement("INSERT OR IGNORE INTO missing_tiles (zoom_level, tile_column, tile_row) VALUES (?,?,?)") else { return false }
         defer { sqlite3_reset(s) }
         sqlite3_bind_int(s, 1, Int32(t.z))
         sqlite3_bind_int(s, 2, Int32(t.x))
         sqlite3_bind_int(s, 3, Int32(Self.tmsRow(t)))
-        sqlite3_step(s)
-        noteWrite()
+        let rc = sqlite3_step(s)
+        guard rc == SQLITE_DONE else { return failWrite(rc) }
+        return noteWrite()
     }
 
     func setMetadata(_ values: [String: String]) {
         lock.lock()
         defer { lock.unlock() }
-        guard beginIfNeeded(), let s = statement("INSERT OR REPLACE INTO metadata (name, value) VALUES (?,?)") else { return }
+        guard writeError == nil, beginIfNeeded(), let s = statement("INSERT OR REPLACE INTO metadata (name, value) VALUES (?,?)") else { return }
         for (k, v) in values {
             sqlite3_bind_text(s, 1, k, -1, Self.transient)
             sqlite3_bind_text(s, 2, v, -1, Self.transient)
             sqlite3_step(s)
             sqlite3_reset(s)
         }
-        noteWrite()
+        _ = noteWrite()
     }
 
-    /// Commits any pending writes.
-    func flush() {
+    /// Commits any pending writes. Returns false on a write error.
+    @discardableResult
+    func flush() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        commitLocked()
+        return commitLocked()
+    }
+
+    /// Folds the write-ahead log back into the database file and truncates it (after each downloaded layer).
+    func checkpoint() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let db = db else { return }
+        _ = commitLocked()
+        sqlite3_exec(db, "PRAGMA wal_checkpoint(TRUNCATE)", nil, nil, nil)
     }
 
     // MARK: - Internals (call with lock held)
@@ -196,20 +219,40 @@ final class MBTiles {
     private func beginIfNeeded() -> Bool {
         guard let db = db else { return false }
         if uncommittedWrites == 0 {
-            return sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK
+            let rc = sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil)
+            guard rc == SQLITE_OK else { return failWrite(rc) }
         }
         return true
     }
 
-    private func noteWrite() {
+    private func noteWrite() -> Bool {
         uncommittedWrites += 1
-        if uncommittedWrites >= writesPerTransaction { commitLocked() }
+        if uncommittedWrites >= writesPerTransaction { return commitLocked() }
+        return true
     }
 
-    private func commitLocked() {
-        guard let db = db, uncommittedWrites > 0 else { return }
-        sqlite3_exec(db, "COMMIT", nil, nil, nil)
+    private func commitLocked() -> Bool {
+        guard let db = db else { return false }
+        guard uncommittedWrites > 0 else { return writeError == nil }
+        let rc = sqlite3_exec(db, "COMMIT", nil, nil, nil)
         uncommittedWrites = 0
+        guard rc == SQLITE_OK else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            return failWrite(rc)
+        }
+        return true
+    }
+
+    /// Records a write failure (disk full, I/O error) and abandons the open transaction.
+    private func failWrite(_ rc: Int32) -> Bool {
+        if writeError == nil {
+            writeError = rc == SQLITE_FULL ? "The iPhone is out of storage space." : "Couldn't save map tiles (SQLite error \(rc))."
+        }
+        if let db = db, uncommittedWrites > 0 {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            uncommittedWrites = 0
+        }
+        return false
     }
 
     private func statement(_ sql: String) -> OpaquePointer? {

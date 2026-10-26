@@ -38,22 +38,29 @@ final class KMLLibrary: ObservableObject {
 
     /// Imports a .kml/.kmz picked in Files or shared into the app ("Open in SatMap").
     func importFile(at url: URL, completion: ((File?) -> Void)? = nil) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        let data: Data
-        do {
-            data = try Data(contentsOf: url)
-        } catch {
-            if scoped { url.stopAccessingSecurityScopedResource() }
-            importError = "Couldn't read \(url.lastPathComponent): \(error.localizedDescription)"
-            completion?(nil)
-            return
-        }
-        if scoped { url.stopAccessingSecurityScopedResource() }
-        // Files shared into the app land in Documents/Inbox; we keep our own copy.
-        if url.path.contains("/Inbox/") { try? FileManager.default.removeItem(at: url) }
-
         let displayName = url.deletingPathExtension().lastPathComponent
         DispatchQueue.global(qos: .userInitiated).async {
+            let scoped = url.startAccessingSecurityScopedResource()
+            var data: Data?
+            var readError: Error?
+            var coordinationError: NSError?
+            NSFileCoordinator().coordinate(readingItemAt: url, options: [.withoutChanges], error: &coordinationError) { readURL in
+                do { data = try Data(contentsOf: readURL) } catch { readError = error }
+            }
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            // A copy handed to the app (share sheet / "Open in") lives in our own container
+            // (Documents/Inbox or tmp/…-Inbox); we keep our own copy, so remove it.
+            let home = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath().path
+            if url.resolvingSymlinksInPath().path.hasPrefix(home + "/") { try? FileManager.default.removeItem(at: url) }
+
+            guard let data = data else {
+                let reason = (readError ?? coordinationError)?.localizedDescription ?? "unknown error"
+                DispatchQueue.main.async {
+                    self.importError = "Couldn't read \(url.lastPathComponent): \(reason)"
+                    completion?(nil)
+                }
+                return
+            }
             do {
                 let doc = try KMLParser.parse(data)
                 let id = UUID()

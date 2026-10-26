@@ -5,7 +5,7 @@ import UIKit
 /// Offline areas: each is a shape (lasso or KML) downloaded as satellite imagery up to `maxZoom`
 /// plus elevation tiles for contours and height differences. Downloads run one at a time, resume
 /// where they stopped, wait for the network (or Wi-Fi) and continue after the app restarts.
-final class OfflineManager: ObservableObject {
+final class OfflineManager: ObservableObject, @unchecked Sendable {
     struct Area: Codable, Identifiable, Equatable {
         enum Status: String, Codable {
             case queued
@@ -25,6 +25,8 @@ final class OfflineManager: ObservableObject {
         var status: Status
         var failedTiles: Int
         var bytesOnDisk: Int64
+        /// Why the last run stopped early (e.g. storage full), shown to the user.
+        var problem: String?
 
         var directory: URL { AppPaths.offlineArea(id) }
     }
@@ -32,6 +34,11 @@ final class OfflineManager: ObservableObject {
     @Published private(set) var areas: [Area] = []
     @Published private(set) var progress: DownloadProgress?
     @Published private(set) var activeID: UUID?
+    /// Bumped whenever a download run ends, so the map can reload tiles that weren't available before.
+    @Published private(set) var completedRevision = 0
+    /// Downloads only run while the app is open: in the background they would compete with track
+    /// recording for battery and for the CPU time iOS allows background apps.
+    private var inForeground = UIApplication.shared.applicationState != .background
 
     private var task: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -62,6 +69,9 @@ final class OfflineManager: ObservableObject {
             }
         }
         publishToMap()
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(willEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         Connectivity.shared.$state
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -76,7 +86,7 @@ final class OfflineManager: ObservableObject {
     @discardableResult
     func add(name: String, shape: CoverageShape, maxZoom: Int, allowCellular: Bool) -> Area {
         let area = Area(id: UUID(), name: name, created: Date(), shape: shape, maxZoom: maxZoom,
-                        allowCellular: allowCellular, status: .queued, failedTiles: 0, bytesOnDisk: 0)
+                        allowCellular: allowCellular, status: .queued, failedTiles: 0, bytesOnDisk: 0, problem: nil)
         areas.append(area)
         save()
         publishToMap()
@@ -92,7 +102,7 @@ final class OfflineManager: ObservableObject {
     }
 
     func resume(_ id: UUID) {
-        update(id) { $0.status = .queued; $0.failedTiles = 0 }
+        update(id) { $0.status = .queued; $0.failedTiles = 0; $0.problem = nil }
         startNextIfIdle()
     }
 
@@ -141,8 +151,22 @@ final class OfflineManager: ObservableObject {
         startNextIfIdle()
     }
 
+    @objc private func didEnterBackground() {
+        inForeground = false
+        if let id = activeID {
+            // Stop now; it continues from where it was when the app is opened again.
+            update(id) { $0.status = .queued }
+            task?.cancel()
+        }
+    }
+
+    @objc private func willEnterForeground() {
+        inForeground = true
+        startNextIfIdle()
+    }
+
     private func startNextIfIdle() {
-        guard task == nil else { return }
+        guard task == nil, inForeground else { return }
         // Areas that can't use the current network wait; the first one that can, runs.
         for a in areas where a.status == .queued && !canDownloadNow(a) {
             update(a.id) { $0.status = .waitingForNetwork }
@@ -213,8 +237,12 @@ final class OfflineManager: ObservableObject {
                 a.status = .waitingForNetwork
             case .cancelled:
                 if a.status == .downloading { a.status = .paused }
+            case .storageError(let message):
+                a.status = .incomplete
+                a.problem = message
             }
         }
+        completedRevision += 1
         startNextIfIdle()
     }
 

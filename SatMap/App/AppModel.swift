@@ -23,8 +23,9 @@ enum ActiveSheet: String, Identifiable {
     var id: String { rawValue }
 }
 
-/// App state shared by the map and the controls. Used on the main thread only.
-final class AppModel: ObservableObject {
+/// App state shared by the map and the controls. Used on the main thread only
+/// (background work hops back with DispatchQueue.main).
+final class AppModel: ObservableObject, @unchecked Sendable {
     static let shared = AppModel()
 
     let recorder = LocationRecorder()

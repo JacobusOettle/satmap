@@ -37,7 +37,7 @@ struct NewAreaView: View {
                 }
                 Toggle("Allow mobile data", isOn: $allowCellular)
             } footer: {
-                Text("Imagery is fetched as deep as Esri has it, up to the chosen zoom (often zoom 18–19 on farms, 20–21 in towns). Where a zoom doesn't exist, nothing is downloaded for it. Without mobile data the download waits for Wi-Fi.")
+                Text("Imagery is fetched as deep as Esri has it, up to the chosen zoom (often zoom 18–19 on farms, 20–21 in towns). Where a zoom doesn't exist, nothing is downloaded for it. Without mobile data the download waits for Wi-Fi. Keep SatMap open while it downloads (the screen stays on); it pauses in the background and continues when you come back.")
             }
 
             Section("Estimate") {

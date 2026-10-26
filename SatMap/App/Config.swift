@@ -21,7 +21,7 @@ enum TileSources {
     static let imageryMaxZoom = 22
 
     /// AWS Open Data "Terrain Tiles" (Terrarium encoding), used for contour lines and height differences.
-    static let terrainTemplate = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+    static let terrainTemplate = "https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png"
 
     static let attribution = "Powered by Esri · Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community · Elevation: Mapzen Terrain Tiles on AWS (USGS, NOAA, Copernicus and others)"
 
@@ -58,7 +58,7 @@ enum LocationPolicy {
     /// While sleeping, briefly turn the GPS on this often to check whether we moved
     /// (backup for when motion detection misses walking, e.g. phone held steady in hand).
     static let sleepPeekIntervalForeground: TimeInterval = 60
-    static let sleepPeekIntervalBackground: TimeInterval = 300
+    static let sleepPeekIntervalBackground: TimeInterval = 120
     /// Give up a peek after this long without a usable fix.
     static let peekTimeout: TimeInterval = 15
     /// Fixes worse than this are ignored for the track.

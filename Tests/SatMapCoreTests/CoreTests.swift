@@ -425,6 +425,18 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertEqual(store.tileCount(), expected)
     }
 
+    func testStopsOnStorageError() async throws {
+        let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
+        store.close() // every write now fails, as on a full disk
+        let server = FakeServer(deepest: 14, patch: TileID(z: 0, x: 0, y: 0))
+        let job = TileDownloadJob(shape: area, layers: [DownloadLayer(name: "sat", store: store, fetcher: server, zooms: 0...14, pruneByParent: true)],
+                                  retryDelay: { _ in 0 })
+        let (outcome, progress) = await run(job)
+        guard case .storageError = outcome else { return XCTFail("expected storage error, got \(outcome)") }
+        XCTAssertEqual(progress.fetched, 0)
+        XCTAssertLessThan(server.requests.count, 20) // stopped at the first level
+    }
+
     func testCancellation() async throws {
         let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
         let server = FakeServer(deepest: 20, patch: TileID(z: 0, x: 0, y: 0))

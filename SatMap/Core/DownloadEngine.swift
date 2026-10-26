@@ -45,6 +45,8 @@ enum DownloadOutcome: Equatable {
     case completed(failed: Int)
     case cancelled
     case offline
+    /// Tiles could not be saved (usually the phone is full).
+    case storageError(String)
 }
 
 /// Downloads every tile of a coverage shape, level by level, skipping tiles already stored, so
@@ -85,7 +87,7 @@ final class TileDownloadJob {
         for layer in layers {
             progress.layer = layer.name
             progress.maxZoom = layer.zooms.upperBound
-            defer { layer.store.flush() }
+            defer { layer.store.checkpoint() }
 
             for z in layer.zooms {
                 if Task.isCancelled { return .cancelled }
@@ -124,6 +126,7 @@ final class TileDownloadJob {
                 if todo.isEmpty { continue }
 
                 var wentOffline = false
+                var storeFailed = false
                 await withTaskGroup(of: (TileID, TileFetchResult).self) { group in
                     var next = 0
                     var inFlight = 0
@@ -139,12 +142,14 @@ final class TileDownloadJob {
                         inFlight -= 1
                         switch result {
                         case .data(let d):
-                            layer.store.put(tile, data: d)
-                            progress.fetched += 1
-                            progress.bytes += Int64(d.count)
+                            if layer.store.put(tile, data: d) {
+                                progress.fetched += 1
+                                progress.bytes += Int64(d.count)
+                            } else {
+                                storeFailed = true
+                            }
                         case .missing:
-                            layer.store.putMissing(tile)
-                            progress.missing += 1
+                            if layer.store.putMissing(tile) { progress.missing += 1 } else { storeFailed = true }
                         case .failed:
                             progress.failed += 1
                         case .offline:
@@ -152,14 +157,16 @@ final class TileDownloadJob {
                         }
                         progress.levelDone += 1
                         emit()
-                        if wentOffline || Task.isCancelled {
+                        if wentOffline || storeFailed || Task.isCancelled {
                             group.cancelAll()
                             continue
                         }
                         if next < todo.count { launch() }
                     }
                 }
-                layer.store.flush()
+                if !layer.store.flush() || storeFailed {
+                    return .storageError(layer.store.writeError ?? "Couldn't save map tiles.")
+                }
                 emit(force: true)
                 if wentOffline { return .offline }
                 if Task.isCancelled { return .cancelled }

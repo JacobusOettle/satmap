@@ -13,7 +13,7 @@ jobs:
         runner: [macos-15, macos-latest]
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Xcode version
         run: xcodebuild -version
@@ -31,3 +31,13 @@ jobs:
           echo "===== errors and warnings ====="
           grep -E "(error|warning):" build.log | grep -v "^ld: warning" | sort -u | head -n 300
           exit $status
+
+      - name: Check the built Info.plist
+        run: |
+          plist=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug-iphonesimulator/SatMap.app/Info.plist" | head -n 1)
+          plutil -p "$plist"
+          for key in UIBackgroundModes NSLocationWhenInUseUsageDescription NSMotionUsageDescription \
+                     CFBundleDocumentTypes UTImportedTypeDeclarations LSSupportsOpeningDocumentsInPlace; do
+            plutil -p "$plist" | grep -q "\"$key\"" || { echo "Missing $key"; exit 1; }
+          done
+          test -f "$(dirname "$plist")/PrivacyInfo.xcprivacy" || { echo "Missing privacy manifest"; exit 1; }

@@ -111,6 +111,25 @@ final class MapController: NSObject, MKMapViewDelegate {
             .removeDuplicates()
             .sink { [weak self] power in DispatchQueue.main.async { self?.powerChanged(power) } }
             .store(in: &cancellables)
+        // MapKit doesn't retry tiles that failed: reload them when the network returns or an area finishes.
+        Connectivity.shared.$state
+            .map(\.isOnline)
+            .removeDuplicates()
+            .dropFirst()
+            .filter { $0 }
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.reloadTiles() } }
+            .store(in: &cancellables)
+        model.offline.$completedRevision
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.reloadTiles() } }
+            .store(in: &cancellables)
+    }
+
+    func reloadTiles() {
+        TileRepository.shared.resetNegativeCaches()
+        ContourRenderer.shared.clearCaches()
+        (mapView.renderer(for: satellite) as? MKTileOverlayRenderer)?.reloadData()
+        (mapView.renderer(for: contours) as? MKTileOverlayRenderer)?.reloadData()
     }
 
     var centerCoordinate: CLLocationCoordinate2D { mapView.centerCoordinate }
@@ -335,10 +354,12 @@ final class MapController: NSObject, MKMapViewDelegate {
     @objc private func didEnterBackground() {
         isForeground = false
         saveCamera()
+        TileRepository.shared.trimForBackground()
     }
 
     @objc private func willEnterForeground() {
         isForeground = true
+        TileRepository.shared.restoreAfterBackground()
         trackChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
     }
