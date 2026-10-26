@@ -62,7 +62,7 @@ enum LocationPolicy {
     /// Give up a peek after this long without a usable fix.
     static let peekTimeout: TimeInterval = 15
     /// Fixes worse than this are ignored for the track.
-    static let maxTrackAccuracy: Double = 30
+    static let maxTrackAccuracy: Double = 20
     /// Don't add a track point unless we moved at least this far, metres.
     static let minTrackSpacing: Double = 3
     /// Start a new dotted-line segment instead of joining across a gap this long and far.

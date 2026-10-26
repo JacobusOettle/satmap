@@ -1,6 +1,7 @@
 import Combine
 import CoreLocation
 import Foundation
+import UIKit
 
 /// The measuring tool: off → aiming (crosshair) → placed (marker) → off.
 enum MeasureMode: Equatable {
@@ -65,7 +66,14 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
         if let saved = UserDefaults.standard.array(forKey: "measureMarker") as? [Double], saved.count == 2 {
             measure = .placed(GeoPoint(lat: saved[0], lon: saved[1]))
+            recorder.keepAwake = true
             refreshMarkerElevation()
+        }
+        NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            // Elevations aren't looked up in the background; catch up when the app is opened.
+            guard let self = self, case .placed = self.measure else { return }
+            if self.markerElevation == nil { self.refreshMarkerElevation() }
+            if let loc = self.recorder.location { self.refreshUserElevation(loc) }
         }
 
         // Re-publish nested objects so SwiftUI views observing the model update.
@@ -95,7 +103,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     private func locationUpdated(_ loc: CLLocation) {
         map?.locationUpdated(loc)
-        if case .placed = measure { refreshUserElevation(loc) }
+        if case .placed = measure, UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
     }
 
     func centerOnUser() {
@@ -114,12 +122,14 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             guard let c = map?.centerCoordinate else { return }
             let p = GeoPoint(lat: c.latitude, lon: c.longitude)
             measure = .placed(p)
+            recorder.keepAwake = true
             UserDefaults.standard.set([p.lat, p.lon], forKey: "measureMarker")
             markerElevation = nil
             refreshMarkerElevation()
             if let loc = recorder.location { refreshUserElevation(loc) }
         case .placed:
             measure = .off
+            recorder.keepAwake = false
             markerElevation = nil
             userElevation = nil
             UserDefaults.standard.removeObject(forKey: "measureMarker")

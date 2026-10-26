@@ -5,6 +5,7 @@ import UIKit
 /// Offline areas: each is a shape (lasso or KML) downloaded as satellite imagery up to `maxZoom`
 /// plus elevation tiles for contours and height differences. Downloads run one at a time, resume
 /// where they stopped, wait for the network (or Wi-Fi) and continue after the app restarts.
+/// Used on the main thread only.
 final class OfflineManager: ObservableObject, @unchecked Sendable {
     struct Area: Codable, Identifiable, Equatable {
         enum Status: String, Codable {
@@ -60,12 +61,18 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     init() {
-        if let data = try? Data(contentsOf: indexURL), let saved = try? JSONDecoder().decode([Area].self, from: data) {
-            areas = saved.map { a in
-                var a = a
-                // A download that was running when the app was closed continues.
-                if a.status == .downloading { a.status = .queued }
-                return a
+        if let data = try? Data(contentsOf: indexURL) {
+            if let saved = try? JSONDecoder().decode([Area].self, from: data) {
+                areas = saved.map { a in
+                    var a = a
+                    // A download that was running when the app was closed continues.
+                    if a.status == .downloading { a.status = .queued }
+                    return a
+                }
+                removeOrphanedDirectories()
+            } else {
+                // Never overwrite an index we can't read (that would orphan every downloaded area).
+                try? FileManager.default.moveItem(at: indexURL, to: indexURL.appendingPathExtension("unreadable-\(Int(Date().timeIntervalSince1970))"))
             }
         }
         publishToMap()
@@ -136,7 +143,32 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Deletes area folders that no longer belong to an area (e.g. the app was closed while deleting one).
+    private func removeOrphanedDirectories() {
+        let known = Set(areas.map { $0.id.uuidString })
+        let fm = FileManager.default
+        for url in (try? fm.contentsOfDirectory(at: AppPaths.offline, includingPropertiesForKeys: [.isDirectoryKey])) ?? [] {
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDir, UUID(uuidString: url.lastPathComponent) != nil, !known.contains(url.lastPathComponent) {
+                try? fm.removeItem(at: url)
+            }
+        }
+    }
+
     // MARK: - Running downloads
+
+    private var networkRetryDelay: TimeInterval = 15
+
+    /// The phone may report "online" while requests fail (router up, internet down), and no network change will
+    /// be announced when it recovers, so waiting areas are retried periodically with growing gaps.
+    private func scheduleNetworkRetry() {
+        let delay = networkRetryDelay
+        networkRetryDelay = min(networkRetryDelay * 2, 600)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self = self, self.task == nil else { return }
+            if self.areas.contains(where: { $0.status == .waitingForNetwork }) { self.networkChanged() }
+        }
+    }
 
     /// Whether an area may download on the current network.
     func canDownloadNow(_ a: Area) -> Bool {
@@ -227,14 +259,19 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         task = nil
         activeID = nil
         progress = nil
+        var retry = false
         update(id) { a in
             a.bytesOnDisk = size
+            // A pause by the user wins over however the run happened to end.
+            if a.status == .paused, outcome == .cancelled || outcome == .offline { return }
             switch outcome {
             case .completed(let failed):
                 a.failedTiles = failed
                 a.status = failed == 0 ? .complete : .incomplete
+                networkRetryDelay = 15
             case .offline:
                 a.status = .waitingForNetwork
+                retry = true
             case .cancelled:
                 if a.status == .downloading { a.status = .paused }
             case .storageError(let message):
@@ -243,6 +280,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             }
         }
         completedRevision += 1
+        if retry { scheduleNetworkRetry() }
         startNextIfIdle()
     }
 

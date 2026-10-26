@@ -100,6 +100,11 @@ final class MBTiles {
         return Data(bytes: p, count: count)
     }
 
+    /// Whether the downloader recorded that the server has no tile here.
+    func isMissing(_ t: TileID) -> Bool {
+        !missingColumns(z: t.z, y: t.y, xs: t.x...t.x).isEmpty
+    }
+
     func contains(_ t: TileID) -> Bool {
         !existingColumns(z: t.z, y: t.y, xs: t.x...t.x).isEmpty
     }

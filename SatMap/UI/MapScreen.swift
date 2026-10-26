@@ -220,7 +220,7 @@ struct DownloadBanner: View {
 
     private var detail: String {
         guard let p = progress, !p.layer.isEmpty else { return "Starting…" }
-        return "\(p.layer) zoom \(p.zoom)/\(p.maxZoom) · \(Format.count(p.levelDone))/\(Format.count(p.levelTotal)) · \(Format.bytes(p.bytes))"
+        return "\(p.layer) · zoom \(p.zoom) of up to \(p.maxZoom): \(Format.count(p.levelDone))/\(Format.count(p.levelTotal)) · \(Format.count(p.fetched)) tiles, \(Format.bytes(p.bytes)) saved"
     }
 }
 

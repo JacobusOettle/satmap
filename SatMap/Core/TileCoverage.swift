@@ -94,6 +94,8 @@ struct TileCoverage {
 
         // Filled polygons: the x-projection of (polygon ∩ band) is the union of the clipped edges'
         // extents and the polygon's interior spans along the band's top and bottom lines.
+        // Interior uses the non-zero winding rule, so a hand-drawn lasso that loops past its start
+        // still covers the doubly-encircled part (as it looks on screen).
         for ring in shape.polygons where ring.count >= 3 {
             var pts = ring.map(toTile)
             if pts.first! != pts.last! { pts.append(pts.first!) }
@@ -106,18 +108,24 @@ struct TileCoverage {
                     if let e = clip(pts[i], pts[i + 1], top, bottom) { add(row: row, e.0, e.1) }
                 }
                 for lineY in [top, bottom] {
-                    var xs: [Double] = []
+                    var crossings: [(x: Double, dir: Int)] = []
                     for i in 0..<(pts.count - 1) {
                         let p = pts[i], q = pts[i + 1]
                         if (p.y > lineY) != (q.y > lineY) {
-                            xs.append(p.x + (lineY - p.y) / (q.y - p.y) * (q.x - p.x))
+                            crossings.append((p.x + (lineY - p.y) / (q.y - p.y) * (q.x - p.x), q.y > p.y ? 1 : -1))
                         }
                     }
-                    xs.sort()
-                    var k = 0
-                    while k + 1 < xs.count {
-                        add(row: row, xs[k], xs[k + 1])
-                        k += 2
+                    crossings.sort { $0.x < $1.x }
+                    var winding = 0
+                    var spanStart = 0.0
+                    for c in crossings {
+                        let before = winding
+                        winding += c.dir
+                        if before == 0 && winding != 0 {
+                            spanStart = c.x
+                        } else if before != 0 && winding == 0 {
+                            add(row: row, spanStart, c.x)
+                        }
                     }
                 }
             }

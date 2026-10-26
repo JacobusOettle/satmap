@@ -119,6 +119,24 @@ final class TileRepository {
         return nil
     }
 
+    /// True if a downloaded area recorded this tile, or an ancestor of it, as not existing on the server.
+    private func offlineKnowsMissing(_ t: TileID) -> Bool {
+        let b = t.worldBounds
+        lock.lock()
+        let stores = areas
+            .filter { $0.ref.minX < b.maxX && $0.ref.maxX > b.minX && $0.ref.minY < b.maxY && $0.ref.maxY > b.minY }
+            .compactMap { store($0, .imagery) }
+        lock.unlock()
+        for s in stores {
+            for k in 0...min(4, t.z) {
+                let a = t.ancestor(levels: k)
+                if s.isMissing(a) { return true }
+                if k > 0 && s.contains(a) { break }
+            }
+        }
+        return false
+    }
+
     /// Opens an area's store lazily (call with lock held). The file appears once its download starts.
     private func store(_ a: OpenArea, _ layer: Layer) -> MBTiles? {
         if let s = a.stores[layer.fileName] { return s }
@@ -134,7 +152,9 @@ final class TileRepository {
 
     func imageryForDisplay(_ t: TileID) async -> Data? {
         if let d = offlineTile(t, layer: .imagery) { return d }
-        var online = networkUsable
+        // Inside a downloaded area the downloader already learnt where the imagery ends: don't wait on the
+        // network for tiles it knows don't exist.
+        var online = networkUsable && !offlineKnowsMissing(t)
         if online {
             switch await onlineImagery(t) {
             case .data(let d): return d

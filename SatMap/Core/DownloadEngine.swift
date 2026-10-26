@@ -63,19 +63,26 @@ final class TileDownloadJob {
     let maxAttempts: Int
     /// Seconds to wait before retry n (n = 1, 2, ...).
     let retryDelay: (Int) -> Double
+    /// This many failed tiles in a row (after retries) with no success means the connection is down even if the
+    /// phone says it is online (e.g. Wi-Fi up but the internet behind it is not): stop as `.offline` instead of
+    /// marking the rest of the area failed.
+    let outageThreshold: Int
 
     init(shape: CoverageShape, layers: [DownloadLayer], concurrency: Int = 8, maxAttempts: Int = 4,
+         outageThreshold: Int = 16,
          retryDelay: @escaping (Int) -> Double = { [1, 3, 8, 15][min($0 - 1, 3)] }) {
         self.shape = shape
         self.layers = layers
         self.concurrency = max(1, concurrency)
         self.maxAttempts = max(1, maxAttempts)
+        self.outageThreshold = max(1, outageThreshold)
         self.retryDelay = retryDelay
     }
 
     func run(progress report: @escaping (DownloadProgress) -> Void) async -> DownloadOutcome {
         var progress = DownloadProgress()
         var lastReport = Date.distantPast
+        var failuresInARow = 0
         func emit(force: Bool = false) {
             let now = Date()
             if force || now.timeIntervalSince(lastReport) >= 0.25 {
@@ -98,6 +105,7 @@ final class TileDownloadJob {
                 var total = 0
                 var alreadyDone = 0
                 for row in coverage.rows {
+                    if Task.isCancelled { return .cancelled }
                     for range in row.ranges {
                         let existing = layer.store.existingColumns(z: z, y: row.y, xs: range)
                         let missing = layer.store.missingColumns(z: z, y: row.y, xs: range)
@@ -140,6 +148,12 @@ final class TileDownloadJob {
                     while next < todo.count && inFlight < concurrency { launch() }
                     while let (tile, result) = await group.next() {
                         inFlight -= 1
+                        if case .failed = result {
+                            failuresInARow += 1
+                            if failuresInARow >= outageThreshold { wentOffline = true }
+                        } else {
+                            failuresInARow = 0
+                        }
                         switch result {
                         case .data(let d):
                             if layer.store.put(tile, data: d) {

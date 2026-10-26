@@ -132,6 +132,24 @@ final class TileCoverageTests: XCTestCase {
     func testEmpty() {
         XCTAssertEqual(TileCoverage(shape: CoverageShape(), zoom: 12).tileCount, 0)
     }
+
+    func testLassoThatLoopsPastItsStartCoversEverythingInside() {
+        // A finger-drawn circle that overshoots its start by 15% of a turn and is closed with a chord.
+        let c = GeoPoint(lat: -25.47, lon: 30.97)
+        func ring(turns: Double) -> [GeoPoint] {
+            let n = Int(120 * turns)
+            return (0...n).map { k in
+                let a = Double(k) / 120 * 2 * .pi
+                return GeoPoint(lat: c.lat + 0.005 * sin(a), lon: c.lon + 0.005 * cos(a))
+            }
+        }
+        let single = TileCoverage(shape: CoverageShape(polygons: [ring(turns: 1)]), zoom: 18)
+        let looped = TileCoverage(shape: CoverageShape(polygons: [ring(turns: 1.15)]), zoom: 18)
+        var missing = 0
+        single.forEachTile { if !looped.contains($0) { missing += 1 } }
+        XCTAssertEqual(missing, 0)
+        XCTAssertGreaterThan(single.tileCount, 40)
+    }
 }
 
 final class DecoderTests: XCTestCase {
@@ -306,6 +324,8 @@ final class StorageTests: XCTestCase {
         XCTAssertEqual(r.tileCount(), 300)
         XCTAssertEqual(r.maxStoredZoom(), 10)
         XCTAssertTrue(r.contains(TileID(z: 10, x: 299, y: 5)))
+        XCTAssertTrue(r.isMissing(TileID(z: 11, x: 4, y: 10)))
+        XCTAssertFalse(r.isMissing(TileID(z: 11, x: 5, y: 10)))
         w.close()
         r.close()
         XCTAssertThrowsError(try MBTiles(url: dir.appendingPathComponent("nope.mbtiles"), create: false))
@@ -435,6 +455,23 @@ final class DownloadEngineTests: XCTestCase {
         guard case .storageError = outcome else { return XCTFail("expected storage error, got \(outcome)") }
         XCTAssertEqual(progress.fetched, 0)
         XCTAssertLessThan(server.requests.count, 20) // stopped at the first level
+    }
+
+    func testStopsAsOfflineWhenEveryRequestFails() async throws {
+        final class DeadInternet: TileFetching {
+            var count = 0
+            func fetch(_ tile: TileID) async -> TileFetchResult {
+                count += 1
+                return .failed
+            }
+        }
+        let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
+        let server = DeadInternet()
+        let job = TileDownloadJob(shape: area, layers: [DownloadLayer(name: "dem", store: store, fetcher: server, zooms: 0...16, pruneByParent: false)],
+                                  concurrency: 2, maxAttempts: 1, outageThreshold: 5, retryDelay: { _ in 0 })
+        let (outcome, _) = await run(job)
+        XCTAssertEqual(outcome, .offline)
+        XCTAssertLessThan(server.count, 10)
     }
 
     func testCancellation() async throws {

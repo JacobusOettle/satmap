@@ -32,6 +32,14 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     /// Called on the main thread for each fix that is used (≤ every 2 s on screen, ≤ every 10 s in background).
     var onFix: ((CLLocation) -> Void)?
 
+    /// Keep the GPS awake while the app is on screen (set while the measuring marker is placed, so the live
+    /// distance follows even small moves that motion detection might miss).
+    var keepAwake = false {
+        didSet {
+            if keepAwake && isForeground && power == .sleeping { wake() }
+        }
+    }
+
     private let manager = CLLocationManager()
     private let motion = CMMotionActivityManager()
     private let motionQueue: OperationQueue = {
@@ -47,10 +55,15 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     private var lastUsedAt = Date.distantPast
     private var lastRecorded: TrackPoint?
+    /// After waking, the first track point waits for a fix of 10 m or better (or 30 s), to avoid spikes.
+    private var preciseFixNeededUntil = Date.distantPast
 
     // Stationary detection.
     private var movementAnchor: CLLocation?
     private var lastMovementAt = Date()
+    /// Last fix of 50 m or better, and when the GPS started searching without one.
+    private var lastGoodFixAt: Date?
+    private var searchingSince = Date()
     private var stationaryTimer: Timer?
     private var motionAvailable = false
     private var motionSaysMoving = false
@@ -109,9 +122,16 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = true
         lastMovementAt = Date()
+        searchingSince = Date()
         applyAccuracy()
         manager.startUpdatingLocation()
         startMotion()
+        startStationaryTimer()
+    }
+
+    /// Checks for "not moving" while active; stopped during sleep so the CPU isn't woken needlessly.
+    private func startStationaryTimer() {
+        stationaryTimer?.invalidate()
         let t = Timer(timeInterval: 15, repeats: true) { [weak self] _ in self?.evaluateStationary() }
         t.tolerance = 5
         RunLoop.main.add(t, forMode: .common)
@@ -165,6 +185,9 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
             // Coarse fixes while the GPS rests only keep the app alive.
             guard !gpsResting else { return }
             let waited = now.timeIntervalSince(acquiringSince)
+            // Only a fix taken after the GPS was woken, and no earlier than the 10 s mark.
+            guard loc.timestamp >= acquiringSince.addingTimeInterval(-0.5),
+                  now.timeIntervalSince(lastUsedAt) >= LocationPolicy.backgroundInterval - 0.5 || waited >= 20 else { return }
             guard loc.horizontalAccuracy <= 20 || (waited >= 6 && loc.horizontalAccuracy <= LocationPolicy.maxTrackAccuracy) || waited >= 20 else { return }
             use(loc, now: now)
             restUntilNextBackgroundFix()
@@ -173,8 +196,13 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     private func use(_ loc: CLLocation, now: Date) {
         lastUsedAt = now
-        location = loc
         noteMovement(loc, now: now)
+        // A coarse (cell / Wi-Fi) fix, e.g. right after waking, mustn't replace a recent GPS position.
+        if let current = location, loc.horizontalAccuracy > 100, current.horizontalAccuracy <= 100,
+           now.timeIntervalSince(current.timestamp) < 60 {
+            return
+        }
+        location = loc
         record(loc)
         onFix?(loc)
     }
@@ -183,11 +211,16 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     private func record(_ loc: CLLocation) {
         guard loc.horizontalAccuracy <= LocationPolicy.maxTrackAccuracy else { return }
+        if Date() < preciseFixNeededUntil {
+            guard loc.horizontalAccuracy <= 10 else { return }
+            preciseFixNeededUntil = .distantPast
+        }
         var p = TrackPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude,
                            time: loc.timestamp.timeIntervalSince1970, startsSegment: true)
         if let last = lastRecorded {
             let d = CLLocation(latitude: last.lat, longitude: last.lon).distance(from: loc)
-            guard d >= max(LocationPolicy.minTrackSpacing, loc.horizontalAccuracy * 0.5) else { return }
+            // Moves smaller than the fix's own error are GPS wander, not walking.
+            guard d >= max(LocationPolicy.minTrackSpacing, loc.horizontalAccuracy) else { return }
             p.startsSegment = p.time - last.time > LocationPolicy.segmentBreakSeconds && d > LocationPolicy.segmentBreakMeters
         }
         lastRecorded = p
@@ -220,6 +253,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     private func noteMovement(_ loc: CLLocation, now: Date) {
         guard loc.horizontalAccuracy <= 50 else { return }
+        lastGoodFixAt = now
         if let a = movementAnchor {
             if loc.distance(from: a) > max(LocationPolicy.movementThreshold, loc.horizontalAccuracy) {
                 movementAnchor = loc
@@ -234,8 +268,12 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private func evaluateStationary() {
         guard started, power == .active else { return }
         let now = Date()
+        if keepAwake && isForeground { return }
         // Motion says we're walking/driving: don't sleep (covers pacing within a few metres).
         if motionSaysMoving, let since = motionMovingSince, now.timeIntervalSince(since) < 600 { return }
+        // No usable fix yet (cold start, poor sky view): keep searching for a while, since we can't tell
+        // whether we're moving.
+        if lastGoodFixAt == nil && now.timeIntervalSince(searchingSince) < 600 { return }
         if now.timeIntervalSince(lastMovementAt) >= LocationPolicy.stationaryTimeout {
             enterSleep()
         }
@@ -244,6 +282,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private func enterSleep() {
         power = .sleeping
         sleepAnchor = location
+        stationaryTimer?.invalidate()
+        stationaryTimer = nil
         dutyTimer?.invalidate()
         dutyTimer = nil
         gpsResting = false
@@ -263,11 +303,14 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         pendingMotionWake?.cancel()
         pendingMotionWake = nil
         lastMovementAt = Date()
+        searchingSince = Date()
         movementAnchor = nil
         lastUsedAt = .distantPast
+        preciseFixNeededUntil = Date().addingTimeInterval(30)
         gpsResting = false
         acquiringSince = Date()
         applyAccuracy()
+        startStationaryTimer()
     }
 
     private func schedulePeek() {
@@ -287,7 +330,9 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         peeking = true
         applyAccuracy()
         peekEndTimer?.invalidate()
-        let t = Timer(timeInterval: LocationPolicy.peekTimeout, repeats: false) { [weak self] _ in self?.endPeek() }
+        // Without a recent good fix the GPS may need a cold start, which takes longer.
+        let recentFix = lastGoodFixAt.map { Date().timeIntervalSince($0) < 600 } ?? false
+        let t = Timer(timeInterval: recentFix ? LocationPolicy.peekTimeout : 45, repeats: false) { [weak self] _ in self?.endPeek() }
         RunLoop.main.add(t, forMode: .common)
         peekEndTimer = t
     }
@@ -304,11 +349,20 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private func handleWhileSleeping(_ loc: CLLocation, now: Date) {
         if peeking {
             guard loc.horizontalAccuracy <= 25 else { return }
-            if let a = sleepAnchor, loc.distance(from: a) > max(20, 2 * loc.horizontalAccuracy) {
+            lastGoodFixAt = now
+            guard let anchor = sleepAnchor, anchor.horizontalAccuracy <= 25 else {
+                // We fell asleep without a good position: this is the first one, so use it.
+                wake()
+                use(loc, now: now)
+                return
+            }
+            if loc.distance(from: anchor) > max(20, 2 * loc.horizontalAccuracy) {
                 wake()
                 use(loc, now: now)
             } else {
-                if sleepAnchor == nil { sleepAnchor = loc }
+                // Still here: refresh the dot and measuring line without adding to the track.
+                location = loc
+                onFix?(loc)
                 endPeek()
             }
             return
@@ -397,8 +451,12 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         gpsResting = false
         applyAccuracy()
         if power == .sleeping {
-            // Check right away whether we moved while the app was in the background.
-            startPeek()
+            if keepAwake {
+                wake()
+            } else {
+                // Check right away whether we moved while the app was in the background.
+                startPeek()
+            }
         }
     }
 
