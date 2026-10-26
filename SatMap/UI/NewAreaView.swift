@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Confirm an offline area: name, mobile data, only along roads, and a size estimate. Imagery is always
-/// downloaded at the highest detail available.
+/// Confirm an offline area: name, detail (deepest zoom level, with the size of each), only along roads,
+/// mobile data, and the size of the chosen download.
 struct NewAreaView: View {
     @ObservedObject var model: AppModel
     let area: PendingArea
@@ -9,7 +9,10 @@ struct NewAreaView: View {
     var showsCancel = false
 
     @State private var name: String
-    private let maxZoom = TileSources.imageryMaxZoom
+    /// The deepest zoom level to download; remembered for the next area.
+    @AppStorage("offlineMaxZoom") private var maxZoom = TileSources.imageryMaxZoom
+    /// Zoom levels offered, most detailed first: from about 3 cm to 5 m per pixel.
+    private let zoomChoices = Array((15...TileSources.imageryMaxZoom).reversed())
     @State private var allowCellular = false
     @State private var alongRoads = false
     @State private var roads: RoadsState = .notLoaded
@@ -44,11 +47,7 @@ struct NewAreaView: View {
                 TextField("Area name", text: $name)
             }
 
-            Section {
-                Toggle("Allow mobile data", isOn: $allowCellular)
-            } footer: {
-                Text("Satellite imagery is saved at the highest detail Esri has for each spot (often zoom 18–19 on farms, 20–21 in towns), plus elevation for contours and heights. Without mobile data the download waits for Wi-Fi. Keep SatMap open while it downloads (the screen stays on); it pauses in the background and continues when you come back.")
-            }
+            detailSection
 
             Section {
                 Toggle("Only along roads", isOn: $alongRoads)
@@ -59,35 +58,18 @@ struct NewAreaView: View {
                 Text("Saves satellite imagery only \(Int(Roads.corridorMeters)) m to each side of every road and track in the area, including gravel and farm roads, as mapped on OpenStreetMap. Elevation for contours and heights is still saved for the whole area.")
             }
 
-            Section("Estimate") {
-                if let km2 = areaKm2 {
-                    row("Area", String(format: "%.1f km²", km2))
-                }
-                if let counts = counts, let imagery = imageryCounts {
-                    let typical = estimate(imagery: imagery, terrain: counts, depth: min(typicalDepth, maxZoom))
-                    let worst = estimate(imagery: imagery, terrain: counts, depth: maxZoom)
-                    row("If imagery goes to zoom \(min(typicalDepth, maxZoom))", "≈ \(Format.bytes(typical.bytes))")
-                    if maxZoom > typicalDepth {
-                        row("If it goes to zoom \(maxZoom)", "up to \(Format.bytes(worst.bytes))")
-                    }
-                    row("Tiles (most)", Format.count(worst.tiles))
-                    if let free = freeSpace {
-                        row("Free space", Format.bytes(free))
-                    }
-                } else if alongRoads, case .failed = roads {
-                    Text("Needs the roads first.").foregroundColor(.secondary)
-                } else {
-                    HStack {
-                        ProgressView()
-                        Text("Calculating…").foregroundColor(.secondary)
-                    }
-                }
+            Section {
+                Toggle("Allow mobile data", isOn: $allowCellular)
+            } footer: {
+                Text("Without mobile data the download waits for Wi-Fi. Keep SatMap open while it downloads (the screen stays on); it pauses in the background and continues when you come back.")
             }
+
+            sizeSection
 
             Section {
                 Button {
                     model.startDownload(PendingArea(name: name.trimmingCharacters(in: .whitespaces), shape: area.shape),
-                                        roads: alongRoads ? roadLines : nil, maxZoom: maxZoom, allowCellular: allowCellular)
+                                        roads: alongRoads ? roadLines : nil, maxZoom: chosenZoom, allowCellular: allowCellular)
                     // Back to the map, where the download banner shows progress.
                     model.sheet = nil
                     dismiss()
@@ -123,6 +105,46 @@ struct NewAreaView: View {
         }
     }
 
+    /// Every zoom level with its detail and download size; tap one to choose it.
+    private var detailSection: some View {
+        Section {
+            ForEach(zoomChoices, id: \.self) { z in
+                Button { maxZoom = z } label: { zoomRow(z) }
+                    .accessibilityAddTraits(z == chosenZoom ? .isSelected : [])
+            }
+        } header: {
+            Text("Detail")
+        } footer: {
+            Text("Each zoom level has twice the detail of the one before and takes about 4 times the space. Esri's imagery often stops at zoom 18–19 on farms and 20–21 in towns; the download stops where the imagery does, so deeper levels can add little. Sizes include elevation for contours and heights.")
+        }
+    }
+
+    private var sizeSection: some View {
+        Section("Download size") {
+            if let km2 = areaKm2 {
+                row("Area", String(format: "%.1f km²", km2))
+            }
+            if let e = chosenEstimate {
+                row("Up to zoom \(chosenZoom)", sizeText(chosenZoom))
+                row("Tiles (most)", Format.count(e.tiles))
+                if let free = freeSpace {
+                    row("Free space", Format.bytes(free))
+                    if e.bytes > free - OfflineManager.minimumFreeSpace {
+                        Text("This may not fit. The download stops when less than 500 MB is free; choose a lower zoom or a smaller area.")
+                            .foregroundColor(.orange)
+                    }
+                }
+            } else if alongRoads, case .failed = roads {
+                Text("Needs the roads first.").foregroundColor(.secondary)
+            } else {
+                HStack {
+                    ProgressView()
+                    Text("Calculating…").foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private var roadsStatus: some View {
         switch roads {
@@ -141,6 +163,50 @@ struct NewAreaView: View {
             Text(message).foregroundColor(.orange)
             Button("Try again") { Task { await loadRoads() } }
         }
+    }
+
+    private var chosenZoom: Int {
+        min(max(maxZoom, zoomChoices.last!), zoomChoices.first!)
+    }
+
+    private func zoomRow(_ z: Int) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Zoom \(z)").foregroundColor(.primary)
+                Text(resolution(z)).font(.caption).foregroundColor(.secondary)
+            }
+            Spacer()
+            Text(sizeText(z)).foregroundColor(.secondary).monospacedDigit()
+            Image(systemName: "checkmark")
+                .font(.body.weight(.semibold))
+                .foregroundColor(.accentColor)
+                .opacity(z == chosenZoom ? 1 : 0)
+                .accessibilityHidden(true) // the row is marked selected instead
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// Ground size of one image pixel at zoom z in the middle of the area.
+    private func resolution(_ z: Int) -> String {
+        let lat = area.shape.bounds?.center.lat ?? 0
+        let m = 156_543.03 * cos(lat * .pi / 180) / Double(1 << z)
+        if m < 1 { return "\(Int((m * 100).rounded())) cm per pixel" }
+        return String(format: m < 10 ? "%.1f m per pixel" : "%.0f m per pixel", m)
+    }
+
+    /// Download size up to zoom z: about, where Esri's imagery usually reaches; an upper limit deeper down.
+    private func sizeText(_ z: Int) -> String {
+        guard let counts = counts, let imagery = imageryCounts else {
+            if alongRoads, case .failed = roads { return "–" }
+            return "…"
+        }
+        let bytes = Format.bytes(estimate(imagery: imagery, terrain: counts, depth: z).bytes)
+        return z <= typicalDepth ? "≈ \(bytes)" : "up to \(bytes)"
+    }
+
+    private var chosenEstimate: (tiles: Int, bytes: Int64)? {
+        guard let counts = counts, let imagery = imageryCounts else { return nil }
+        return estimate(imagery: imagery, terrain: counts, depth: chosenZoom)
     }
 
     private var roadLines: [[GeoPoint]]? {

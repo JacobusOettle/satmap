@@ -32,11 +32,13 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | My location + dotted track | Blue dot (grey while the GPS sleeps) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
 | KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in white with their names. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap again: a marker is dropped under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Tap a third time to remove it. |
-| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them). Imagery is always saved at the highest detail available. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
+| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
 
 ### Offline downloads
 
-- Imagery is downloaded zoom level by zoom level, up to zoom 22 (about 3–4 cm per pixel).
+- Imagery is downloaded zoom level by zoom level, up to the zoom you choose (at most 22, about 3–4 cm per
+  pixel). The download screen lists the size for each level before you start: "≈" up to zoom 19, "up to"
+  deeper, where the imagery often stops earlier and the download is smaller.
   Esri's imagery stops at different depths in different places, often zoom 18–19 on farms and 20–21 in
   towns. The downloader asks for a tile only if its parent exists, so it finds the real depth for every
   spot without wasting requests. On screen, anything deeper is enlarged from the best tile available.

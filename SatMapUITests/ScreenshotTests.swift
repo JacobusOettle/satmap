@@ -90,7 +90,7 @@ final class ScreenshotTests: XCTestCase {
         tapRow(startingWith: "Demo farm")
         sleep(8) // size estimate
         snap("07-download-area")
-        scrollForm()
+        scrollTo(app.buttons["Download"].firstMatch)
         tap("Download")
         sleep(25)
         snap("08-downloading")
@@ -126,10 +126,12 @@ final class ScreenshotTests: XCTestCase {
             name.tap()
             name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 20) + "Farm roads\n")
         }
+        tapRow(startingWith: "Zoom 20")
+        scrollTo(app.switches["Only along roads"].firstMatch)
         setSwitch("Only along roads", on: true)
         XCTAssertTrue(app.staticTexts["Roads and tracks"].waitForExistence(timeout: 180), "Roads didn't load")
         sleep(3) // size estimate
-        scrollForm()
+        scrollTo(app.buttons["Download"].firstMatch)
         snap("12-download-along-roads")
         tap("Download")
         sleep(5)
@@ -201,11 +203,15 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertEqual(s.value as? String == "1", on)
     }
 
-    /// Scrolls a form up by about a third of the screen, so the estimate and the Download button are in view.
-    private func scrollForm() {
-        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
-        start.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
-        sleep(1)
+    /// Scrolls a form up, a third of the screen at a time, until the element is on screen (forms only create
+    /// the rows near the screen).
+    private func scrollTo(_ element: XCUIElement) {
+        for _ in 0..<8 {
+            if element.exists && element.isHittable { return }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+            start.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
+            sleep(1)
+        }
     }
 
     private func setLocation(_ p: (Double, Double)) {
