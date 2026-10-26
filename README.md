@@ -18,8 +18,10 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/04-blocks-list.jpg" width="250"> | <img src="docs/screenshots/05-blocks-on-map.jpg" width="250"> | <img src="docs/screenshots/06-offline-maps.jpg" width="250"> |
 | **Download an area (from a KML)** | **Downloading** | **Offline areas** |
 | <img src="docs/screenshots/07-download-area.jpg" width="250"> | <img src="docs/screenshots/08-downloading.jpg" width="250"> | <img src="docs/screenshots/09-offline-areas.jpg" width="250"> |
-| **Drawing an area with the lasso** | **Contour lines switched off** | |
-| <img src="docs/screenshots/10-draw-area.jpg" width="250"> | <img src="docs/screenshots/11-contours-off.jpg" width="250"> | |
+| **Drawing an area with the lasso** | **Contour lines switched off** | **Download only along roads** |
+| <img src="docs/screenshots/10-draw-area.jpg" width="250"> | <img src="docs/screenshots/11-contours-off.jpg" width="250"> | <img src="docs/screenshots/12-download-along-roads.jpg" width="250"> |
+| **Whole area and along roads** | | |
+| <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | | |
 
 ## Features
 
@@ -30,7 +32,7 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | My location + dotted track | Blue dot (grey while the GPS sleeps) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
 | KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in white with their names. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap again: a marker is dropped under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Tap a third time to remove it. |
-| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them). Imagery is always saved at the highest detail available. Allow mobile data or wait for Wi-Fi, and download. |
+| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them). Imagery is always saved at the highest detail available. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
 
 ### Offline downloads
 
@@ -39,6 +41,11 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   towns. The downloader asks for a tile only if its parent exists, so it finds the real depth for every
   spot without wasting requests. On screen, anything deeper is enlarged from the best tile available.
 - Elevation tiles for the same area are downloaded too, so contours and heights work with no signal.
+- **Only along roads:** the roads are looked up on OpenStreetMap when you tick the box (all public roads,
+  service roads, and farm and forest tracks, which is where most gravel roads are; not footpaths), and only
+  the imagery within 15 m of each side of them is downloaded, at every zoom level. Away from the roads the map
+  shows the nearest coarser imagery that was saved, enlarged. Roads missing from OpenStreetMap are missed too,
+  so check the area first: rural tracks are not always mapped.
 - Keep SatMap open while it downloads; the screen stays on. In the background the download pauses so it
   can't compete with track recording for battery or CPU, and it continues when you return.
 - Downloads resume where they stopped: after **Pause**, losing signal, leaving Wi-Fi, or closing the app.
@@ -97,6 +104,8 @@ A paid Apple Developer account ($99/year) extends this to a year, and also allow
 
 ## Map data and licensing — please read
 
+- **Roads:** [OpenStreetMap](https://www.openstreetmap.org/copyright) via the public Overpass API, © OpenStreetMap
+  contributors (ODbL). Only used to choose which imagery to download.
 - **Elevation:** [Terrain Tiles on AWS](https://registry.opendata.aws/terrain-tiles/) (Mapzen). Open data,
   free to download and store, with attribution.
 - **Satellite imagery:** Esri World Imagery. Esri's terms allow using World Imagery with an ArcGIS

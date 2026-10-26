@@ -84,7 +84,7 @@ private struct AreaRow: View {
                 Text(statusText)
                     .font(.caption)
                     .foregroundColor(statusColor)
-                Text("\(Format.bytes(area.bytesOnDisk)) · up to zoom \(area.maxZoom)\(area.allowCellular ? " · mobile data allowed" : "")")
+                Text("\(Format.bytes(area.bytesOnDisk)) · up to zoom \(area.maxZoom)\(area.roads != nil ? " · along roads" : "")\(area.allowCellular ? " · mobile data allowed" : "")")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }

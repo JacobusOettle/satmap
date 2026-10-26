@@ -90,6 +90,7 @@ final class ScreenshotTests: XCTestCase {
         tapRow(startingWith: "Demo farm")
         sleep(8) // size estimate
         snap("07-download-area")
+        scrollForm()
         tap("Download")
         sleep(25)
         snap("08-downloading")
@@ -102,17 +103,44 @@ final class ScreenshotTests: XCTestCase {
         // Choosing an area with the lasso (measuring switched off first for a clearer view).
         tap("Done")
         setMeasure(.off)
-        tap("Offline maps")
+        openOfflineSheet()
         tap("Draw an area on the map")
         sleep(3)
         snap("10-draw-area")
 
         // Contour lines switched off with the side button.
-        tap("Cancel")
-        tap("Contour lines")
+        for _ in 0..<4 {
+            if app.buttons["Contour lines"].waitForExistence(timeout: 2) { break }
+            tap("Cancel")
+        }
+        setContours(on: false)
         sleep(3)
-        XCTAssertEqual(app.buttons["Contour lines"].firstMatch.value as? String, "Off")
         snap("11-contours-off")
+
+        // The same blocks again, but satellite imagery only along the roads.
+        openOfflineSheet()
+        tap("Use the blocks in a KML file")
+        tapRow(startingWith: "Demo farm")
+        let name = app.textFields.firstMatch
+        if name.waitForExistence(timeout: 10) {
+            name.tap()
+            name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 20) + "Farm roads\n")
+        }
+        setSwitch("Only along roads", on: true)
+        XCTAssertTrue(app.staticTexts["Roads and tracks"].waitForExistence(timeout: 180), "Roads didn't load")
+        sleep(3) // size estimate
+        scrollForm()
+        snap("12-download-along-roads")
+        tap("Download")
+        sleep(5)
+        openOfflineSheet()
+        let ready = app.staticTexts.matching(NSPredicate(format: "label == %@", "Ready offline"))
+        for _ in 0..<180 {
+            if ready.count >= 2 { break }
+            sleep(5)
+        }
+        XCTAssertEqual(ready.count, 2)
+        snap("13-offline-along-roads")
     }
 
     // MARK: - Helpers
@@ -137,6 +165,47 @@ final class ScreenshotTests: XCTestCase {
         let panel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
                                                          "than you", "Height:", "Waiting for GPS")).firstMatch
         return panel.exists ? .placed : .off
+    }
+
+    /// Taps the contour button until it shows the wanted state (a tap can be lost while the app is busy).
+    private func setContours(on: Bool) {
+        let button = app.buttons["Contour lines"].firstMatch
+        let wanted = on ? "On" : "Off"
+        for _ in 0..<4 {
+            if button.value as? String == wanted { return }
+            tap("Contour lines")
+            sleep(2)
+        }
+        XCTAssertEqual(button.value as? String, wanted)
+    }
+
+    /// Opens the Offline maps sheet, tapping again if a tap was lost.
+    private func openOfflineSheet() {
+        for _ in 0..<4 {
+            tap("Offline maps")
+            if app.buttons["Draw an area on the map"].waitForExistence(timeout: 5) { return }
+        }
+        XCTFail("The Offline maps sheet didn't open")
+    }
+
+    /// Toggles a switch until it has the wanted value. Taps the switch itself (right side): tapping the middle of
+    /// the row lands on its label, which doesn't toggle it.
+    private func setSwitch(_ label: String, on: Bool) {
+        let s = app.switches[label].firstMatch
+        guard s.waitForExistence(timeout: 10) else { return XCTFail("No switch '\(label)'") }
+        for _ in 0..<3 {
+            if (s.value as? String == "1") == on { break }
+            s.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            sleep(1)
+        }
+        XCTAssertEqual(s.value as? String == "1", on)
+    }
+
+    /// Scrolls a form up by about a third of the screen, so the estimate and the Download button are in view.
+    private func scrollForm() {
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+        start.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
+        sleep(1)
     }
 
     private func setLocation(_ p: (Double, Double)) {

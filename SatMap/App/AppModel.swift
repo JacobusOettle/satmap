@@ -193,8 +193,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         pendingArea = PendingArea(name: file.name, shape: file.document.coverageShape(bufferMeters: 150))
     }
 
-    func startDownload(_ area: PendingArea, maxZoom: Int, allowCellular: Bool) {
-        offline.add(name: area.name, shape: area.shape, maxZoom: maxZoom, allowCellular: allowCellular)
+    /// `roads`: download satellite imagery only along these roads.
+    func startDownload(_ area: PendingArea, roads: [[GeoPoint]]?, maxZoom: Int, allowCellular: Bool) {
+        offline.add(name: area.name, shape: area.shape, roads: roads, maxZoom: maxZoom, allowCellular: allowCellular)
         pendingArea = nil
         draftArea = nil
     }

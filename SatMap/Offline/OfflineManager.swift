@@ -21,6 +21,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         var name: String
         var created: Date
         var shape: CoverageShape
+        /// Satellite imagery only along these roads (with `Roads.corridorMeters` on each side); nil = the whole
+        /// area. Elevation is always downloaded for the whole area.
+        var roads: [[GeoPoint]]?
         var maxZoom: Int
         var allowCellular: Bool
         var status: Status
@@ -91,8 +94,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     // MARK: - Public actions
 
     @discardableResult
-    func add(name: String, shape: CoverageShape, maxZoom: Int, allowCellular: Bool) -> Area {
-        let area = Area(id: UUID(), name: name, created: Date(), shape: shape, maxZoom: maxZoom,
+    func add(name: String, shape: CoverageShape, roads: [[GeoPoint]]?, maxZoom: Int, allowCellular: Bool) -> Area {
+        let area = Area(id: UUID(), name: name, created: Date(), shape: shape, roads: roads, maxZoom: maxZoom,
                         allowCellular: allowCellular, status: .queued, failedTiles: 0, bytesOnDisk: 0, problem: nil)
         areas.append(area)
         save()
@@ -248,7 +251,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                           zooms: 0...Terrarium.maxZoom, pruneByParent: false),
             DownloadLayer(name: "Satellite", store: imagery,
                           fetcher: HTTPTileFetcher(session: session, url: TileSources.imageryURL),
-                          zooms: 0...area.maxZoom, pruneByParent: true),
+                          zooms: 0...area.maxZoom, pruneByParent: true, shape: area.roads.map(Roads.corridor)),
         ], concurrency: 8)
 
         let id = area.id

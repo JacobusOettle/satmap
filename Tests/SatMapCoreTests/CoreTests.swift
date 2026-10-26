@@ -500,3 +500,98 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertEqual(outcome, .cancelled)
     }
 }
+
+final class RoadsTests: XCTestCase {
+    /// About 1.1 km × 1.1 km.
+    private let square = CoverageShape(polygons: [[
+        GeoPoint(lat: -33.910, lon: 18.910), GeoPoint(lat: -33.910, lon: 18.922),
+        GeoPoint(lat: -33.920, lon: 18.922), GeoPoint(lat: -33.920, lon: 18.910),
+    ]])
+
+    func testQueryHasOneBoxPerPartAndOnlyVehicleRoads() throws {
+        let q = try XCTUnwrap(Roads.overpassQuery(for: square))
+        XCTAssertTrue(q.hasPrefix("[out:json]"))
+        XCTAssertTrue(q.hasSuffix("out geom;"))
+        XCTAssertTrue(q.contains("track|"))
+        XCTAssertFalse(q.contains("footway"))
+        XCTAssertEqual(q.components(separatedBy: "way[").count - 1, 1)
+        // The box is the square plus the corridor margin (15 m ≈ 0.000135° of latitude).
+        XCTAssertTrue(q.contains("(-33.920135,"))
+
+        let twoBlocks = CoverageShape(polygons: square.polygons + [square.polygons[0].map { GeoPoint(lat: $0.lat - 1, lon: $0.lon) }],
+                                      bufferMeters: 150)
+        XCTAssertEqual(try XCTUnwrap(Roads.overpassQuery(for: twoBlocks)).components(separatedBy: "way[").count - 1, 2)
+        XCTAssertNil(Roads.overpassQuery(for: CoverageShape()))
+    }
+
+    func testParsesWaysAndSkipsMissingNodes() throws {
+        let json = """
+        {"version":0.6,"elements":[
+          {"type":"way","id":1,"tags":{"highway":"track","surface":"gravel"},
+           "geometry":[{"lat":-33.91,"lon":18.91},{"lat":-33.911,"lon":18.912},null,{"lat":-33.912,"lon":18.913},{"lat":-33.913,"lon":18.914}]},
+          {"type":"way","id":2,"geometry":[{"lat":-33.915,"lon":18.915}]},
+          {"type":"node","id":3,"lat":-33.9,"lon":18.9}
+        ]}
+        """
+        let lines = try Roads.parse(Data(json.utf8))
+        XCTAssertEqual(lines.count, 2)
+        XCTAssertEqual(lines[0], [GeoPoint(lat: -33.91, lon: 18.91), GeoPoint(lat: -33.911, lon: 18.912)])
+        XCTAssertEqual(lines[1].count, 2)
+
+        let partial = #"{"elements":[],"remark":"runtime error: Query timed out in \"query\" at line 1 after 121 seconds."}"#
+        XCTAssertThrowsError(try Roads.parse(Data(partial.utf8)))
+        XCTAssertThrowsError(try Roads.parse(Data("<html>Too many requests</html>".utf8)))
+    }
+
+    func testClipKeepsOnlyThePartsInsideTheArea() {
+        // West to east through the middle, starting and ending about 1 km outside, with a bend inside.
+        let through = [GeoPoint(lat: -33.915, lon: 18.899), GeoPoint(lat: -33.915, lon: 18.916),
+                       GeoPoint(lat: -33.914, lon: 18.933)]
+        let outside = [GeoPoint(lat: -33.930, lon: 18.910), GeoPoint(lat: -33.930, lon: 18.930)]
+        let clipped = Roads.clip([through, outside], to: square)
+        XCTAssertEqual(clipped.count, 1)
+        // The square is 0.012° (about 1.11 km) wide; tiles at zoom 21 are about 16 m.
+        let width = Geo.distance(GeoPoint(lat: -33.915, lon: 18.910), GeoPoint(lat: -33.915, lon: 18.922))
+        XCTAssertEqual(Roads.length(clipped), width, accuracy: 45)
+        for p in clipped[0] {
+            XCTAssertGreaterThan(p.lon, 18.910 - 0.0004)
+            XCTAssertLessThan(p.lon, 18.922 + 0.0004)
+        }
+        // Collinear points from the 10 m checks are simplified away; the bend stays.
+        XCTAssertLessThanOrEqual(clipped[0].count, 4)
+        XCTAssertTrue(clipped[0].contains(GeoPoint(lat: -33.915, lon: 18.916)))
+
+        // A road leaving and re-entering a U-shaped area becomes two pieces.
+        let u = CoverageShape(polygons: [[
+            GeoPoint(lat: -33.910, lon: 18.910), GeoPoint(lat: -33.910, lon: 18.914), GeoPoint(lat: -33.918, lon: 18.914),
+            GeoPoint(lat: -33.918, lon: 18.918), GeoPoint(lat: -33.910, lon: 18.918), GeoPoint(lat: -33.910, lon: 18.922),
+            GeoPoint(lat: -33.920, lon: 18.922), GeoPoint(lat: -33.920, lon: 18.910),
+        ]])
+        XCTAssertEqual(Roads.clip([[GeoPoint(lat: -33.912, lon: 18.905), GeoPoint(lat: -33.912, lon: 18.927)]], to: u).count, 2)
+    }
+
+    func testDownloadsImageryOnlyAlongTheRoads() async throws {
+        let road = [GeoPoint(lat: -33.915, lon: 18.910), GeoPoint(lat: -33.915, lon: 18.922)]
+        let corridor = Roads.corridor([road])
+        let imagery = try MBTiles(url: tempDir().appendingPathComponent("i.mbtiles"), create: true)
+        let terrain = try MBTiles(url: tempDir().appendingPathComponent("t.mbtiles"), create: true)
+        let sat = FakeServer(deepest: 19, patch: TileID(z: 0, x: 0, y: 0))
+        let dem = FakeServer(deepest: 15, patch: TileID(z: 0, x: 0, y: 0))
+        let job = TileDownloadJob(shape: square, layers: [
+            DownloadLayer(name: "dem", store: terrain, fetcher: dem, zooms: 0...15, pruneByParent: false),
+            DownloadLayer(name: "sat", store: imagery, fetcher: sat, zooms: 0...19, pruneByParent: true, shape: corridor),
+        ], concurrency: 4, retryDelay: { _ in 0 })
+        let outcome = await job.run { _ in }
+        XCTAssertEqual(outcome, .completed(failed: 0))
+
+        // Elevation for the whole area, imagery only along the road.
+        XCTAssertEqual(dem.requests.filter { $0.z == 15 }.count, TileCoverage(shape: square, zoom: 15).tileCount)
+        let along = TileCoverage(shape: corridor, zoom: 19)
+        let z19 = sat.requests.filter { $0.z == 19 }
+        XCTAssertEqual(z19.count, along.tileCount)
+        XCTAssertTrue(z19.allSatisfy { along.contains($0) })
+        XCTAssertLessThan(along.tileCount * 5, TileCoverage(shape: square, zoom: 19).tileCount)
+        // At least 15 m each side: a z19 tile is about 63 m here, so the corridor is 1 or 2 rows tall.
+        XCTAssertLessThanOrEqual(along.rows.count, 2)
+    }
+}

@@ -24,6 +24,8 @@ struct DownloadLayer {
     /// places (rural areas often at z18, towns at z20+); a missing parent means every child is missing too,
     /// so this avoids millions of pointless requests when downloading "up to the maximum".
     let pruneByParent: Bool
+    /// Download this shape instead of the job's (imagery only along roads); nil = the job's shape.
+    var shape: CoverageShape? = nil
 }
 
 struct DownloadProgress: Equatable {
@@ -98,7 +100,7 @@ final class TileDownloadJob {
 
             for z in layer.zooms {
                 if Task.isCancelled { return .cancelled }
-                let coverage = TileCoverage(shape: shape, zoom: z)
+                let coverage = TileCoverage(shape: layer.shape ?? shape, zoom: z)
                 let prune = layer.pruneByParent && z > layer.zooms.lowerBound && z > 0
 
                 var todo: [Packed] = []
