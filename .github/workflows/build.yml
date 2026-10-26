@@ -34,7 +34,7 @@ jobs:
 
       - name: Check the built Info.plist
         run: |
-          plist=$(find ~/Library/Developer/Xcode/DerivedData -path "*Debug-iphonesimulator/SatMap.app/Info.plist" | head -n 1)
+          plist=$(find ~/Library/Developer/Xcode/DerivedData -path "*-iphonesimulator/SatMap.app/Info.plist" | head -n 1)
           plutil -p "$plist"
           for key in UIBackgroundModes NSLocationWhenInUseUsageDescription NSMotionUsageDescription \
                      CFBundleDocumentTypes UTImportedTypeDeclarations LSSupportsOpeningDocumentsInPlace; do
