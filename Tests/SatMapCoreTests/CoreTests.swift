@@ -37,6 +37,21 @@ final class GeoTests: XCTestCase {
         XCTAssertEqual(Geo.distance(GeoPoint(lat: 0, lon: 0), GeoPoint(lat: 1, lon: 0)), 111_195, accuracy: 5)
     }
 
+    func testLabelPointInsideConcaveBlock() {
+        // An L-shaped block whose centroid lies outside it.
+        let l = [(0.0, 0.0), (0.01, 0.0), (0.01, 0.002), (0.002, 0.002), (0.002, 0.01), (0.0, 0.01)]
+            .map { GeoPoint(lat: -25.47 + $0.1, lon: 30.97 + $0.0) }
+        let p = PolygonLabel.interiorPoint(outer: l)!
+        let inX = p.lon - 30.97, inY = p.lat + 25.47
+        XCTAssertTrue((inX >= 0 && inX <= 0.01 && inY >= 0 && inY <= 0.002) || (inX >= 0 && inX <= 0.002 && inY >= 0 && inY <= 0.01),
+                      "label at \(inX), \(inY) is outside the L")
+        // A convex block keeps its centroid.
+        let sq = [(0.0, 0.0), (0.01, 0.0), (0.01, 0.01), (0.0, 0.01)].map { GeoPoint(lat: -25.47 + $0.1, lon: 30.97 + $0.0) }
+        let c = PolygonLabel.interiorPoint(outer: sq)!
+        XCTAssertEqual(c.lon, 30.975, accuracy: 1e-9)
+        XCTAssertEqual(c.lat, -25.465, accuracy: 1e-9)
+    }
+
     func testDouglasPeucker() {
         let pts: [(x: Double, y: Double)] = (0...100).map { (Double($0), $0 == 50 ? 10.0 : 0.0) }
         let s = Simplify.douglasPeucker(pts, tolerance: 1)

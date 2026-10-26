@@ -155,6 +155,67 @@ struct GeoBounds: Codable, Hashable {
     }
 }
 
+enum PolygonLabel {
+    /// A point inside the polygon (outer ring minus holes) for a name label: the area centroid if it is inside,
+    /// otherwise the middle of the widest horizontal span across the polygon (L- and U-shaped blocks).
+    static func interiorPoint(outer: [GeoPoint], holes: [[GeoPoint]] = []) -> GeoPoint? {
+        guard outer.count >= 3, let b = GeoBounds(points: outer) else { return nil }
+        // Work relative to the first vertex for precision.
+        let o = outer[0]
+        func local(_ p: GeoPoint) -> (x: Double, y: Double) { (p.lon - o.lon, p.lat - o.lat) }
+        let ring = outer.map(local)
+        let holeRings = holes.map { $0.map(local) }
+
+        var a = 0.0, cx = 0.0, cy = 0.0
+        for i in 0..<ring.count {
+            let p = ring[i], q = ring[(i + 1) % ring.count]
+            let cross = p.x * q.y - q.x * p.y
+            a += cross
+            cx += (p.x + q.x) * cross
+            cy += (p.y + q.y) * cross
+        }
+        if abs(a) > 1e-18 {
+            let c = (x: cx / (3 * a), y: cy / (3 * a))
+            if inside(c, ring) && !holeRings.contains(where: { inside(c, $0) }) {
+                return GeoPoint(lat: o.lat + c.y, lon: o.lon + c.x)
+            }
+        }
+
+        // Widest interior span on a few horizontal lines.
+        var best: (width: Double, x: Double, y: Double)?
+        for k in 1...15 {
+            let y = (b.minLat - o.lat) + (b.maxLat - b.minLat) * Double(k) / 16
+            var xs: [Double] = []
+            for r in [ring] + holeRings {
+                for i in 0..<r.count {
+                    let p = r[i], q = r[(i + 1) % r.count]
+                    if (p.y > y) != (q.y > y) { xs.append(p.x + (y - p.y) / (q.y - p.y) * (q.x - p.x)) }
+                }
+            }
+            xs.sort()
+            var i = 0
+            while i + 1 < xs.count {
+                let w = xs[i + 1] - xs[i]
+                if w > (best?.width ?? 0) { best = (w, (xs[i] + xs[i + 1]) / 2, y) }
+                i += 2
+            }
+        }
+        if let best = best { return GeoPoint(lat: o.lat + best.y, lon: o.lon + best.x) }
+        return b.center
+    }
+
+    private static func inside(_ p: (x: Double, y: Double), _ ring: [(x: Double, y: Double)]) -> Bool {
+        var c = false
+        var j = ring.count - 1
+        for i in 0..<ring.count {
+            let a = ring[i], b = ring[j]
+            if (a.y > p.y) != (b.y > p.y), p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x { c.toggle() }
+            j = i
+        }
+        return c
+    }
+}
+
 enum Simplify {
     /// Douglas–Peucker simplification of a polyline in planar coordinates.
     static func douglasPeucker(_ pts: [(x: Double, y: Double)], tolerance: Double) -> [(x: Double, y: Double)] {

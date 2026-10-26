@@ -106,14 +106,16 @@ final class MeasureLineOverlay: NSObject, MKOverlay {
         lock.withLock { ends }
     }
 
-    /// Sets the line (nil hides it) and returns the map rect covering the old and new line.
-    func set(_ a: CLLocationCoordinate2D?, _ b: CLLocationCoordinate2D?) -> MKMapRect {
+    /// Sets the line (nil hides it) and returns small map rects along the old and new line that need redrawing
+    /// (a long diagonal line's bounding box would be most of the screen).
+    func set(_ a: CLLocationCoordinate2D?, _ b: CLLocationCoordinate2D?) -> [MKMapRect] {
         lock.withLock {
-            var dirty = MKMapRect.null
-            if let old = ends { dirty = dirty.union(Self.rect(old)) }
+            var dirty: [MKMapRect] = []
+            if let old = ends { dirty += Self.band(old) }
             if let a = a, let b = b {
-                ends = (MKMapPoint(a), MKMapPoint(b))
-                dirty = dirty.union(Self.rect(ends!))
+                let new = (MKMapPoint(a), MKMapPoint(b))
+                ends = new
+                dirty += Self.band(new)
             } else {
                 ends = nil
             }
@@ -121,8 +123,15 @@ final class MeasureLineOverlay: NSObject, MKOverlay {
         }
     }
 
-    private static func rect(_ l: (MKMapPoint, MKMapPoint)) -> MKMapRect {
-        MKMapRect(x: min(l.0.x, l.1.x), y: min(l.0.y, l.1.y), width: abs(l.0.x - l.1.x), height: abs(l.0.y - l.1.y))
+    /// The line split into 16 pieces, each piece's bounding box.
+    private static func band(_ l: (MKMapPoint, MKMapPoint)) -> [MKMapRect] {
+        let n = 16
+        return (0..<n).map { i in
+            let t0 = Double(i) / Double(n), t1 = Double(i + 1) / Double(n)
+            let x0 = l.0.x + (l.1.x - l.0.x) * t0, y0 = l.0.y + (l.1.y - l.0.y) * t0
+            let x1 = l.0.x + (l.1.x - l.0.x) * t1, y1 = l.0.y + (l.1.y - l.0.y) * t1
+            return MKMapRect(x: min(x0, x1), y: min(y0, y1), width: abs(x1 - x0), height: abs(y1 - y0))
+        }
     }
 }
 
@@ -133,12 +142,30 @@ final class MeasureLineRenderer: MKOverlayRenderer {
         guard let line = (overlay as? MeasureLineOverlay)?.line else { return }
         let (a, b) = line
         let width = 3.0 / Double(zoomScale)
+        let dash = 10.0 / Double(zoomScale), gap = 7.0 / Double(zoomScale)
+        // Only the part of the line inside this tile (Liang–Barsky clip), with the dash phase measured
+        // from the marker so dashes line up across tiles.
+        let r = mapRect.insetBy(dx: -width, dy: -width)
+        let dx = b.x - a.x, dy = b.y - a.y
+        var t0 = 0.0, t1 = 1.0
+        for (p, q) in [(-dx, a.x - r.minX), (dx, r.maxX - a.x), (-dy, a.y - r.minY), (dy, r.maxY - a.y)] {
+            if p == 0 {
+                if q < 0 { return }
+            } else {
+                let t = q / p
+                if p < 0 { t0 = max(t0, t) } else { t1 = min(t1, t) }
+            }
+        }
+        guard t0 < t1 else { return }
+        let start = MKMapPoint(x: a.x + dx * t0, y: a.y + dy * t0)
+        let end = MKMapPoint(x: a.x + dx * t1, y: a.y + dy * t1)
+        let phase = (hypot(dx, dy) * t0).truncatingRemainder(dividingBy: dash + gap)
         context.setStrokeColor(color)
         context.setLineWidth(CGFloat(width))
         context.setLineCap(.butt)
-        context.setLineDash(phase: 0, lengths: [CGFloat(10.0 / Double(zoomScale)), CGFloat(7.0 / Double(zoomScale))])
-        context.move(to: point(for: a))
-        context.addLine(to: point(for: b))
+        context.setLineDash(phase: CGFloat(phase), lengths: [CGFloat(dash), CGFloat(gap)])
+        context.move(to: point(for: start))
+        context.addLine(to: point(for: end))
         context.strokePath()
     }
 }

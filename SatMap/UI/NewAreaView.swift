@@ -1,12 +1,15 @@
 import SwiftUI
 
-/// Confirm an offline area: name, level of detail, mobile data, and a size estimate.
+/// Confirm an offline area: name, mobile data, and a size estimate. Imagery is always downloaded at the
+/// highest detail available.
 struct NewAreaView: View {
     @ObservedObject var model: AppModel
     let area: PendingArea
+    /// Presented on its own (lasso) rather than pushed inside the Offline sheet (KML).
+    var showsCancel = false
 
     @State private var name: String
-    @State private var maxZoom = TileSources.imageryMaxZoom
+    private let maxZoom = TileSources.imageryMaxZoom
     @State private var allowCellular = false
     /// Upper-bound tile counts per zoom level (computed in the background).
     @State private var counts: [Int: Int]?
@@ -17,9 +20,10 @@ struct NewAreaView: View {
     private let terrainTileBytes: Double = 45_000
     private let typicalDepth = 19
 
-    init(model: AppModel, area: PendingArea) {
+    init(model: AppModel, area: PendingArea, showsCancel: Bool = false) {
         self.model = model
         self.area = area
+        self.showsCancel = showsCancel
         _name = State(initialValue: area.name)
     }
 
@@ -30,14 +34,9 @@ struct NewAreaView: View {
             }
 
             Section {
-                Picker("Detail", selection: $maxZoom) {
-                    ForEach(Array((17...TileSources.imageryMaxZoom).reversed()), id: \.self) { z in
-                        Text(detailLabel(z)).tag(z)
-                    }
-                }
                 Toggle("Allow mobile data", isOn: $allowCellular)
             } footer: {
-                Text("Imagery is fetched as deep as Esri has it, up to the chosen zoom (often zoom 18–19 on farms, 20–21 in towns). Where a zoom doesn't exist, nothing is downloaded for it. Without mobile data the download waits for Wi-Fi. Keep SatMap open while it downloads (the screen stays on); it pauses in the background and continues when you come back.")
+                Text("Satellite imagery is saved at the highest detail Esri has for each spot (often zoom 18–19 on farms, 20–21 in towns), plus elevation for contours and heights. Without mobile data the download waits for Wi-Fi. Keep SatMap open while it downloads (the screen stays on); it pauses in the background and continues when you come back.")
             }
 
             Section("Estimate") {
@@ -67,6 +66,8 @@ struct NewAreaView: View {
                 Button {
                     model.startDownload(PendingArea(name: name.trimmingCharacters(in: .whitespaces), shape: area.shape),
                                         maxZoom: maxZoom, allowCellular: allowCellular)
+                    // Back to the map, where the download banner shows progress.
+                    model.sheet = nil
                     dismiss()
                 } label: {
                     Label("Download", systemImage: "arrow.down.circle.fill")
@@ -78,10 +79,12 @@ struct NewAreaView: View {
         .navigationTitle("Download area")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") {
-                    model.discardPendingArea()
-                    dismiss()
+            if showsCancel {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        model.discardPendingArea()
+                        dismiss()
+                    }
                 }
             }
         }
@@ -104,15 +107,6 @@ struct NewAreaView: View {
         let terrain = (0...Terrarium.maxZoom).reduce(0) { $0 + (counts[$1] ?? 0) }
         let bytes = Double(imagery) * imageryTileBytes + Double(terrain) * terrainTileBytes
         return (imagery + terrain, Int64(bytes))
-    }
-
-    private func detailLabel(_ z: Int) -> String {
-        // Ground size of one imagery pixel at this zoom and latitude.
-        let lat = area.shape.geometryBounds?.center.lat ?? 0
-        let metres = Geo.metersPerWorldUnit(atLatitude: lat) / Double(256 << z)
-        let size = metres >= 1 ? String(format: "%.1f m", metres) : "\(Int((metres * 100).rounded())) cm"
-        let base = "Zoom \(z) · \(size) per pixel"
-        return z == TileSources.imageryMaxZoom ? "Maximum (\(base))" : base
     }
 
     private func row(_ title: String, _ value: String) -> some View {

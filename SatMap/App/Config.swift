@@ -59,6 +59,7 @@ enum LocationPolicy {
     /// (backup for when motion detection misses walking, e.g. phone held steady in hand).
     static let sleepPeekIntervalForeground: TimeInterval = 60
     static let sleepPeekIntervalBackground: TimeInterval = 120
+    static let sleepPeekIntervalMeasuring: TimeInterval = 15
     /// Give up a peek after this long without a usable fix.
     static let peekTimeout: TimeInterval = 15
     /// Fixes worse than this are ignored for the track.

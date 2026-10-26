@@ -32,11 +32,11 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     /// Called on the main thread for each fix that is used (≤ every 2 s on screen, ≤ every 10 s in background).
     var onFix: ((CLLocation) -> Void)?
 
-    /// Keep the GPS awake while the app is on screen (set while the measuring marker is placed, so the live
-    /// distance follows even small moves that motion detection might miss).
-    var keepAwake = false {
+    /// Set while the measuring marker is placed: on screen, sleep-mode GPS checks run every 15 s instead of every
+    /// minute and react to smaller moves, so the live distance follows even steps motion detection misses.
+    var measuring = false {
         didSet {
-            if keepAwake && isForeground && power == .sleeping { wake() }
+            if measuring && isForeground && power == .sleeping { startPeek() }
         }
     }
 
@@ -268,7 +268,6 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private func evaluateStationary() {
         guard started, power == .active else { return }
         let now = Date()
-        if keepAwake && isForeground { return }
         // Motion says we're walking/driving: don't sleep (covers pacing within a few metres).
         if motionSaysMoving, let since = motionMovingSince, now.timeIntervalSince(since) < 600 { return }
         // No usable fix yet (cold start, poor sky view): keep searching for a while, since we can't tell
@@ -316,7 +315,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private func schedulePeek() {
         peekTimer?.invalidate()
         guard power == .sleeping else { return }
-        let interval = isForeground ? LocationPolicy.sleepPeekIntervalForeground : LocationPolicy.sleepPeekIntervalBackground
+        let interval = !isForeground ? LocationPolicy.sleepPeekIntervalBackground
+            : measuring ? LocationPolicy.sleepPeekIntervalMeasuring : LocationPolicy.sleepPeekIntervalForeground
         let t = Timer(timeInterval: interval, repeats: false) { [weak self] _ in self?.startPeek() }
         t.tolerance = interval * 0.1
         RunLoop.main.add(t, forMode: .common)
@@ -356,7 +356,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
                 use(loc, now: now)
                 return
             }
-            if loc.distance(from: anchor) > max(20, 2 * loc.horizontalAccuracy) {
+            let threshold = measuring && isForeground ? max(8, 1.5 * loc.horizontalAccuracy) : max(20, 2 * loc.horizontalAccuracy)
+            if loc.distance(from: anchor) > threshold {
                 wake()
                 use(loc, now: now)
             } else {
@@ -451,12 +452,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         gpsResting = false
         applyAccuracy()
         if power == .sleeping {
-            if keepAwake {
-                wake()
-            } else {
-                // Check right away whether we moved while the app was in the background.
-                startPeek()
-            }
+            // Check right away whether we moved while the app was in the background.
+            startPeek()
         }
     }
 

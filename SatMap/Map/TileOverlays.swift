@@ -104,8 +104,8 @@ final class ContourRenderer {
 
         let dz = ContourPolicy.demZoom(forTileZoom: t.z)
         let b = t.worldBounds
-        let tiles = await TileRepository.shared.demTiles(zoom: dz, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY)
-        guard !tiles.isEmpty else { return nil } // no data (offline and not downloaded); MapKit asks again later
+        let (tiles, complete) = await TileRepository.shared.demTiles(zoom: dz, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY)
+        guard !tiles.isEmpty else { return nil } // no data (offline and not downloaded)
 
         let cells = ContourPolicy.gridCells(forTileZoom: t.z)
         // Gridding, tracing and drawing are CPU-heavy: keep them on the contour queue.
@@ -120,8 +120,11 @@ final class ContourRenderer {
                               labels: (t.x + t.y) % 2 == 0), false)
         }
         guard let result = result else { return nil }
-        if result.empty { emptyCache.setObject(1, forKey: key) }
-        if let png = result.png { cache.setObject(png as NSData, forKey: key, cost: png.count) }
+        // With a neighbour missing, edges are approximated: show it, but don't keep it.
+        if complete {
+            if result.empty { emptyCache.setObject(1, forKey: key) }
+            if let png = result.png { cache.setObject(png as NSData, forKey: key, cost: png.count) }
+        }
         return result.png
     }
 

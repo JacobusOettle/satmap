@@ -1,3 +1,4 @@
+import MapKit
 import SwiftUI
 
 struct MapScreen: View {
@@ -66,9 +67,9 @@ struct MapScreen: View {
             }
         }
         .background(
-            Color.clear.sheet(item: $model.pendingArea) { area in
+            Color.clear.sheet(item: $model.pendingArea, onDismiss: { model.draftArea = nil }) { area in
                 NavigationStack {
-                    NewAreaView(model: model, area: area)
+                    NewAreaView(model: model, area: area, showsCancel: true)
                 }
             }
         )
@@ -79,6 +80,10 @@ struct MapScreen: View {
 
     private var controls: some View {
         VStack(spacing: 12) {
+            if let map = model.map?.mapView {
+                CompassButton(mapView: map)
+                    .frame(width: 44, height: 44)
+            }
             MapButton(systemImage: "square.dashed") { model.sheet = .blocks }
             MapButton(systemImage: offline.activeID == nil ? "arrow.down.circle" : "arrow.down.circle.fill",
                       active: offline.activeID != nil) { model.sheet = .offline }
@@ -99,6 +104,19 @@ struct MapScreen: View {
         case .placed: return "xmark"
         }
     }
+}
+
+/// MapKit's compass (appears only while the map is rotated; tap to point north up again).
+struct CompassButton: UIViewRepresentable {
+    let mapView: MKMapView
+
+    func makeUIView(context: Context) -> MKCompassButton {
+        let b = MKCompassButton(mapView: mapView)
+        b.compassVisibility = .adaptive
+        return b
+    }
+
+    func updateUIView(_ uiView: MKCompassButton, context: Context) {}
 }
 
 struct MapButton: View {

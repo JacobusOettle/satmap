@@ -13,7 +13,11 @@ struct SatMapApp: App {
                 .onOpenURL { url in
                     // A .kml/.kmz shared into the app ("Open in SatMap" / "Copy to SatMap").
                     model.kml.importFile(at: url) { file in
-                        if let b = file?.document.bounds { model.map?.zoom(to: b) }
+                        if let b = file?.document.bounds {
+                            model.map?.zoom(to: b)
+                        } else {
+                            model.sheet = .blocks // shows why the import failed
+                        }
                     }
                 }
         }

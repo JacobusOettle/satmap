@@ -256,6 +256,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     private func finished(_ id: UUID, outcome: DownloadOutcome, size: Int64) {
+        let storedSomething = (progress?.fetched ?? 0) > 0
         task = nil
         activeID = nil
         progress = nil
@@ -279,7 +280,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                 a.problem = message
             }
         }
-        completedRevision += 1
+        if storedSomething { completedRevision += 1 }
         if retry { scheduleNetworkRetry() }
         startNextIfIdle()
     }

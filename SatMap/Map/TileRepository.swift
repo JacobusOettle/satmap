@@ -56,8 +56,11 @@ final class TileRepository {
     private var consecutiveFailures = 0
     private var networkPausedUntil = Date.distantPast
 
-    // Elevation tiles decoded in memory (each 256 KB).
-    private let demCache = LRUCache<TileID, DEMTile>(capacity: 80)
+    // Elevation tiles decoded in memory (each 256 KB); a screen of contours at zoom 11–15 reads ~100 of them.
+    private let demCache = LRUCache<TileID, DEMTile>(capacity: 160)
+    /// A tile could not be loaded for a temporary reason (timeout, no internet): MapKit doesn't ask again
+    /// by itself, so the map reloads its tiles later.
+    private var retryNeeded = false
     private var demInFlight: [TileID: Task<DEMTile?, Never>] = [:]
     private var demFailedAt: [TileID: Date] = [:]
     /// Imagery tiles the server said don't exist (beyond the imagery depth), to skip asking again.
@@ -161,15 +164,25 @@ final class TileRepository {
             case .missing: break // deeper than the imagery goes here: enlarge an ancestor below
             case .failed, .offline:
                 // Don't show (and have MapKit keep) a blurry stand-in for a tile that exists but failed
-                // to load; only offline ancestors are used.
+                // to load; only offline ancestors are used, and the tile is asked for again later.
                 online = false
+                noteRetryNeeded()
             }
         }
         // Enlarge part of the nearest ancestor that exists.
         for k in 1...max(1, min(8, t.z)) where t.z - k >= 0 {
             let a = t.ancestor(levels: k)
             var data = offlineTile(a, layer: .imagery)
-            if data == nil && online, case .data(let d) = await onlineImagery(a) { data = d }
+            if data == nil && online {
+                switch await onlineImagery(a) {
+                case .data(let d): data = d
+                case .missing: break
+                case .failed, .offline:
+                    // Same rule as above: no coarser stand-in for an ancestor that failed to load.
+                    online = false
+                    noteRetryNeeded()
+                }
+            }
             if let d = data {
                 return await Work.run(on: Work.images) {
                     ImageTools.enlarge(d, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
@@ -228,10 +241,23 @@ final class TileRepository {
         return result
     }
 
-    /// Forget negative results (after the network comes back or an offline area finishes downloading).
-    func resetNegativeCaches() {
+    private func noteRetryNeeded() {
+        lock.withLock { retryNeeded = true }
+    }
+
+    /// Whether tiles failed for temporary reasons since the last call, and the network looks usable again.
+    func takeRetryNeeded() -> Bool {
+        guard networkUsable else { return false }
+        return lock.withLock {
+            let r = retryNeeded
+            retryNeeded = false
+            return r
+        }
+    }
+
+    /// Forget temporary failures (when the network comes back). What the server said doesn't exist is kept.
+    func resetFailureState() {
         lock.withLock {
-            imageryMissing.removeAll()
             demFailedAt.removeAll()
             consecutiveFailures = 0
             networkPausedUntil = .distantPast
@@ -265,7 +291,10 @@ final class TileRepository {
             demCache.set(tile, for: t)
             return tile
         }
-        guard networkUsable else { return nil }
+        guard networkUsable else {
+            if Connectivity.shared.isOnlineNow { noteRetryNeeded() }
+            return nil
+        }
 
         // One network request per tile, shared by every caller that needs it meanwhile.
         let pending: Task<DEMTile?, Never>? = lock.withLock {
@@ -283,26 +312,32 @@ final class TileRepository {
         let tile = await task.value
         lock.withLock {
             demInFlight[t] = nil
-            if tile == nil { demFailedAt[t] = Date() } else { demFailedAt[t] = nil }
+            if tile == nil {
+                demFailedAt[t] = Date()
+                retryNeeded = true
+            } else {
+                demFailedAt[t] = nil
+            }
         }
         if let tile = tile { demCache.set(tile, for: t) }
         return tile
     }
 
     /// Fetches (concurrently) every elevation tile a sampler at `zoom` needs for the world rectangle.
-    func demTiles(zoom: Int, minX: Double, minY: Double, maxX: Double, maxY: Double) async -> [TileID: DEMTile] {
+    /// `complete` is false if any of them couldn't be loaded.
+    func demTiles(zoom: Int, minX: Double, minY: Double, maxX: Double, maxY: Double) async -> (tiles: [TileID: DEMTile], complete: Bool) {
         let n = 1 << zoom
         let scale = Double(256 << zoom)
         let worldPixels = 256 * n
         let px0 = max(0, Int(floor(minX * scale - 0.5))), py0 = max(0, Int(floor(minY * scale - 0.5)))
         let px1 = min(worldPixels - 1, Int(floor(maxX * scale - 0.5)) + 1)
         let py1 = min(worldPixels - 1, Int(floor(maxY * scale - 0.5)) + 1)
-        guard px0 <= px1, py0 <= py1 else { return [:] }
+        guard px0 <= px1, py0 <= py1 else { return ([:], false) }
         var ids: [TileID] = []
         for ty in (py0 / 256)...(py1 / 256) {
             for tx in (px0 / 256)...(px1 / 256) { ids.append(TileID(z: zoom, x: tx, y: ty)) }
         }
-        return await withTaskGroup(of: (TileID, DEMTile?).self) { group in
+        let tiles = await withTaskGroup(of: (TileID, DEMTile?).self) { group -> [TileID: DEMTile] in
             for id in ids { group.addTask { (id, await self.demTile(id)) } }
             var out: [TileID: DEMTile] = [:]
             for await (id, tile) in group {
@@ -310,6 +345,7 @@ final class TileRepository {
             }
             return out
         }
+        return (tiles, tiles.count == ids.count)
     }
 
     /// Ground elevation in metres (bilinear on the finest available terrain zoom), or nil without data.
@@ -317,7 +353,7 @@ final class TileRepository {
         let w = WebMercator.world(p)
         var z = Terrarium.maxZoom
         while z >= 10 {
-            let tiles = await demTiles(zoom: z, minX: w.x, minY: w.y, maxX: w.x, maxY: w.y)
+            let tiles = await demTiles(zoom: z, minX: w.x, minY: w.y, maxX: w.x, maxY: w.y).tiles
             if !tiles.isEmpty, let e = DEMSampler(zoom: z, tile: { tiles[$0] }).elevation(worldX: w.x, worldY: w.y) {
                 return e
             }

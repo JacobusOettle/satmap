@@ -42,7 +42,7 @@ final class MapController: NSObject, MKMapViewDelegate {
         mapView.preferredConfiguration = config
         mapView.selectableMapFeatures = []
         mapView.delegate = self
-        mapView.showsCompass = true
+        mapView.showsCompass = false // shown in the controls column instead, where panels don't cover it
         mapView.showsScale = false
         mapView.isPitchEnabled = false
         mapView.showsUserLocation = false // MapKit's own location tracking would keep the GPS on at full power
@@ -111,28 +111,60 @@ final class MapController: NSObject, MKMapViewDelegate {
             .removeDuplicates()
             .sink { [weak self] power in DispatchQueue.main.async { self?.powerChanged(power) } }
             .store(in: &cancellables)
-        // MapKit doesn't retry tiles that failed: reload them when the network returns or an area finishes.
+        // MapKit doesn't ask again for tiles that failed. When the network comes back, after a temporary
+        // failure, or when an offline area finishes, reload the tiles (debounced, on screen only).
         Connectivity.shared.$state
             .map(\.isOnline)
             .removeDuplicates()
             .dropFirst()
             .filter { $0 }
-            .sink { [weak self] _ in DispatchQueue.main.async { self?.reloadTiles() } }
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    TileRepository.shared.resetFailureState()
+                    self?.requestReload()
+                }
+            }
             .store(in: &cancellables)
         model.offline.$completedRevision
             .dropFirst()
-            .sink { [weak self] _ in DispatchQueue.main.async { self?.reloadTiles() } }
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.requestReload() } }
             .store(in: &cancellables)
+        startRetryTimer()
     }
 
-    func reloadTiles() {
-        TileRepository.shared.resetNegativeCaches()
-        ContourRenderer.shared.clearCaches()
-        (mapView.renderer(for: satellite) as? MKTileOverlayRenderer)?.reloadData()
-        (mapView.renderer(for: contours) as? MKTileOverlayRenderer)?.reloadData()
+    private var retryTimer: Timer?
+
+    /// Every 30 s on screen: reload tiles if some failed for temporary reasons. Not run in the background.
+    private func startRetryTimer() {
+        retryTimer?.invalidate()
+        let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            if TileRepository.shared.takeRetryNeeded() { self?.requestReload() }
+        }
+        t.tolerance = 10
+        RunLoop.main.add(t, forMode: .common)
+        retryTimer = t
+    }
+    private var reloadPending = false
+    private var lastReload = Date.distantPast
+
+    private func requestReload() {
+        reloadPending = true
+        guard isForeground else { return } // done on return to the foreground
+        let wait = max(0, 20 - Date().timeIntervalSince(lastReload))
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self = self, self.reloadPending, self.isForeground else { return }
+            self.reloadPending = false
+            self.lastReload = Date()
+            (self.mapView.renderer(for: self.satellite) as? MKTileOverlayRenderer)?.reloadData()
+            (self.mapView.renderer(for: self.contours) as? MKTileOverlayRenderer)?.reloadData()
+        }
     }
 
-    var centerCoordinate: CLLocationCoordinate2D { mapView.centerCoordinate }
+    /// The coordinate under the crosshair (the middle of the view). `mapView.centerCoordinate` can be offset by
+    /// MapKit's safe-area margins, which differ at the top and bottom on notched iPhones.
+    var centerCoordinate: CLLocationCoordinate2D {
+        mapView.convert(CGPoint(x: mapView.bounds.midX, y: mapView.bounds.midY), toCoordinateFrom: mapView)
+    }
 
     /// Map points per screen point at the current zoom, for redraw margins.
     private var mapPointsPerPoint: Double {
@@ -250,10 +282,10 @@ final class MapController: NSObject, MKMapViewDelegate {
     private func updateMeasureLine() {
         var a: CLLocationCoordinate2D?
         if case .placed(let p) = model.measure { a = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon) }
-        let dirty = measureLine.set(a, a == nil ? nil : model.recorder.location?.coordinate)
-        guard !dirty.isNull else { return }
         let margin = 8 * mapPointsPerPoint
-        measureRenderer?.setNeedsDisplay(dirty.insetBy(dx: -margin, dy: -margin))
+        for rect in measureLine.set(a, a == nil ? nil : model.recorder.location?.coordinate) {
+            measureRenderer?.setNeedsDisplay(rect.insetBy(dx: -margin, dy: -margin))
+        }
     }
 
     // MARK: - Blocks (KML)
@@ -281,8 +313,9 @@ final class MapController: NSObject, MKMapViewDelegate {
                     }
                     let c = outer.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
                     polygons.append(MKPolygon(coordinates: c, count: c.count, interiorPolygons: interiors))
-                    if let name = feature.name, let centre = Self.labelPoint(outer) {
-                        labels.append(BlockLabelAnnotation(coordinate: centre, title: name, isPoint: false))
+                    if let name = feature.name, let p = PolygonLabel.interiorPoint(outer: outer, holes: holes) {
+                        labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
+                                                           title: name, isPoint: false))
                     }
                 case .line(let pts):
                     let c = pts.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
@@ -303,32 +336,16 @@ final class MapController: NSObject, MKMapViewDelegate {
         }
     }
 
-    /// Area-weighted centroid of a ring (falls back to the vertex average for degenerate rings).
-    static func labelPoint(_ ring: [GeoPoint]) -> CLLocationCoordinate2D? {
-        guard ring.count >= 3 else { return nil }
-        var a = 0.0, cx = 0.0, cy = 0.0
-        for i in 0..<ring.count {
-            let p = ring[i], q = ring[(i + 1) % ring.count]
-            let cross = p.lon * q.lat - q.lon * p.lat
-            a += cross
-            cx += (p.lon + q.lon) * cross
-            cy += (p.lat + q.lat) * cross
-        }
-        if abs(a) < 1e-14 {
-            let n = Double(ring.count)
-            return CLLocationCoordinate2D(latitude: ring.map(\.lat).reduce(0, +) / n, longitude: ring.map(\.lon).reduce(0, +) / n)
-        }
-        return CLLocationCoordinate2D(latitude: cy / (3 * a), longitude: cx / (3 * a))
-    }
-
     // MARK: - Lasso (choose an offline area)
 
     private func lassoFinished(_ pts: [CGPoint]) {
-        guard pts.count >= 3 else {
+        let simplified = Simplify.douglasPeucker(pts.map { (x: Double($0.x), y: Double($0.y)) }, tolerance: 4)
+        guard pts.count >= 3, simplified.count >= 3 else {
+            // A tap or a straight stroke isn't an area: clear it and let the user draw a loop.
+            lasso.reset()
             model.finishDrawing([])
             return
         }
-        let simplified = Simplify.douglasPeucker(pts.map { (x: Double($0.x), y: Double($0.y)) }, tolerance: 4)
         let ring = simplified.map { p -> GeoPoint in
             let c = mapView.convert(CGPoint(x: p.x, y: p.y), toCoordinateFrom: mapView)
             return GeoPoint(lat: c.latitude, lon: c.longitude)
@@ -353,6 +370,8 @@ final class MapController: NSObject, MKMapViewDelegate {
 
     @objc private func didEnterBackground() {
         isForeground = false
+        retryTimer?.invalidate()
+        retryTimer = nil
         saveCamera()
         TileRepository.shared.trimForBackground()
     }
@@ -360,6 +379,8 @@ final class MapController: NSObject, MKMapViewDelegate {
     @objc private func willEnterForeground() {
         isForeground = true
         TileRepository.shared.restoreAfterBackground()
+        startRetryTimer()
+        if reloadPending { requestReload() }
         trackChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
     }
@@ -379,15 +400,16 @@ final class MapController: NSObject, MKMapViewDelegate {
             measureRenderer = r
             return r
         case let o as BlockPolygons:
+            // White: yellow/orange is used by contours, cyan by the track and pink by the measuring line.
             let r = MKMultiPolygonRenderer(multiPolygon: o)
-            r.strokeColor = UIColor(red: 1, green: 0.92, blue: 0.23, alpha: 1)
-            r.fillColor = UIColor(red: 1, green: 0.92, blue: 0.23, alpha: 0.08)
-            r.lineWidth = 2
+            r.strokeColor = UIColor(white: 1, alpha: 0.95)
+            r.fillColor = UIColor(white: 1, alpha: 0.07)
+            r.lineWidth = 2.5
             return r
         case let o as BlockLines:
             let r = MKMultiPolylineRenderer(multiPolyline: o)
-            r.strokeColor = UIColor(red: 1, green: 0.92, blue: 0.23, alpha: 1)
-            r.lineWidth = 2
+            r.strokeColor = UIColor(white: 1, alpha: 0.95)
+            r.lineWidth = 2.5
             return r
         case let o as DraftAreaPolygon:
             let r = MKPolygonRenderer(polygon: o)

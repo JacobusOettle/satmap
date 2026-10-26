@@ -20,19 +20,27 @@ final class KMLLibrary: ObservableObject {
     @Published var importError: String?
 
     private let indexURL = AppPaths.kml.appendingPathComponent("index.json")
+    /// Every imported file, in order. Loaded at once at startup so an import arriving early ("Open in SatMap"
+    /// launching the app) can't overwrite it; the documents are parsed in the background.
+    private var entries: [Entry] = []
 
     init() {
-        let indexURL = self.indexURL
+        if let data = try? Data(contentsOf: indexURL), let saved = try? JSONDecoder().decode([Entry].self, from: data) {
+            entries = saved
+        }
+        let toLoad = entries
         DispatchQueue.global(qos: .userInitiated).async {
-            guard let data = try? Data(contentsOf: indexURL),
-                  let entries = try? JSONDecoder().decode([Entry].self, from: data) else { return }
             var loaded: [File] = []
-            for e in entries {
+            for e in toLoad {
                 guard let d = try? Data(contentsOf: AppPaths.kml.appendingPathComponent(e.fileName)),
                       let doc = try? KMLParser.parse(d) else { continue }
                 loaded.append(File(entry: e, document: doc))
             }
-            DispatchQueue.main.async { self.files = loaded }
+            DispatchQueue.main.async {
+                // Keep anything imported meanwhile, and skip files deleted meanwhile.
+                let current = Set(self.entries.map(\.id))
+                self.files = loaded.filter { current.contains($0.id) } + self.files.filter { f in !loaded.contains { $0.id == f.id } }
+            }
         }
     }
 
@@ -69,6 +77,7 @@ final class KMLLibrary: ObservableObject {
                 try data.write(to: AppPaths.kml.appendingPathComponent(entry.fileName), options: .atomic)
                 let file = File(entry: entry, document: doc)
                 DispatchQueue.main.async {
+                    self.entries.append(entry)
                     self.files.append(file)
                     self.saveIndex()
                     completion?(file)
@@ -83,14 +92,15 @@ final class KMLLibrary: ObservableObject {
     }
 
     func delete(_ id: UUID) {
-        guard let i = files.firstIndex(where: { $0.id == id }) else { return }
-        let f = files.remove(at: i)
-        try? FileManager.default.removeItem(at: AppPaths.kml.appendingPathComponent(f.entry.fileName))
+        guard let i = entries.firstIndex(where: { $0.id == id }) else { return }
+        let e = entries.remove(at: i)
+        files.removeAll { $0.id == id }
+        try? FileManager.default.removeItem(at: AppPaths.kml.appendingPathComponent(e.fileName))
         saveIndex()
     }
 
     private func saveIndex() {
-        if let data = try? JSONEncoder().encode(files.map(\.entry)) {
+        if let data = try? JSONEncoder().encode(entries) {
             try? data.write(to: indexURL, options: .atomic)
         }
     }

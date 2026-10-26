@@ -115,7 +115,7 @@ final class BlockLabelView: MKAnnotationView {
         label.shadowColor = UIColor(white: 0, alpha: 0.9)
         label.shadowOffset = CGSize(width: 0, height: 1)
         addSubview(label)
-        dot.backgroundColor = UIColor(red: 1, green: 0.92, blue: 0.23, alpha: 1)
+        dot.backgroundColor = .white
         dot.layer.cornerRadius = 4
         dot.layer.borderColor = UIColor.black.cgColor
         dot.layer.borderWidth = 1
