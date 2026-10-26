@@ -1,6 +1,10 @@
 import Foundation
 import ImageIO
+import os
 import UIKit
+
+/// Tile pipeline diagnostics (visible in Console.app, subsystem com.jacobusoettle.satmap).
+let tileLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "tiles")
 
 /// Where map tiles come from: downloaded offline areas first, then the network (if online), and for zooms
 /// deeper than the imagery goes, an enlarged crop of the nearest ancestor tile.
@@ -230,20 +234,28 @@ final class TileRepository {
         await limiter.acquire()
         defer { limiter.release() }
         guard networkUsable else { return .offline }
+        let started = Date()
         let result = await HTTPTileFetcher.fetch(url, session: browseSession)
+        let ms = Int(Date().timeIntervalSince(started) * 1000)
         lock.withLock {
             switch result {
             case .data, .missing:
                 consecutiveFailures = 0
                 lastSuccessAt = Date()
             case .failed, .offline:
+                tileLog.error("fetch failed (\(String(describing: result), privacy: .public)) after \(ms) ms: \(url.path, privacy: .public)")
                 lastFailedURL = url
                 consecutiveFailures += 1
                 if consecutiveFailures >= 8 {
+                    tileLog.error("network paused for 45 s after repeated failures")
                     networkPausedUntil = Date().addingTimeInterval(45)
                     consecutiveFailures = 0
                 }
             }
+        }
+        if url.host?.hasPrefix("elevation") == true {
+            let outcome = String(String(describing: result).prefix(7))
+            tileLog.debug("elevation fetch \(outcome, privacy: .public) in \(ms) ms: \(url.path, privacy: .public)")
         }
         return result
     }

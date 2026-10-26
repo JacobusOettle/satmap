@@ -63,6 +63,9 @@ jobs:
       - name: Take screenshots
         run: |
           mkdir -p shots
+          xcrun simctl spawn "$UDID" log stream --level debug --style compact \
+            --predicate 'subsystem == "com.jacobusoettle.satmap"' > applog.txt 2>&1 &
+          LOGPID=$!
           TEST_RUNNER_SCREENSHOT_DIR="$PWD/shots" xcodebuild test-without-building \
             -xctestrun "$(ls build/Build/Products/*.xctestrun | head -n 1)" -destination "id=$UDID" \
             -resultBundlePath screenshots.xcresult -only-testing:SatMapUITests/ScreenshotTests/testScreenshots \
@@ -80,6 +83,14 @@ jobs:
           EOF
           fi
           ls -l shots
+          kill $LOGPID || true
+          echo "===== app log summary ====="
+          echo "contour tiles requested: $(grep -c 'contour tile requested' applog.txt)"
+          echo "contour tiles drawn:     $(grep -c ' drawn ' applog.txt)"
+          echo "elevation fetches:       $(grep -c 'elevation fetch' applog.txt)"
+          echo "errors:                  $(grep -cE 'failed|no elevation|no grid|paused' applog.txt)"
+          echo "--- first 60 lines ---"; head -n 60 applog.txt
+          echo "--- errors (first 60) ---"; grep -E 'failed|no elevation|no grid|paused' applog.txt | head -n 60
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -88,6 +99,7 @@ jobs:
           path: |
             shots
             test.log
+            applog.txt
 
       - name: Commit screenshots to the branch
         run: |

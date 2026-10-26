@@ -1,4 +1,5 @@
 import MapKit
+import os
 import UIKit
 
 struct TileUnavailable: Error {}
@@ -50,6 +51,7 @@ final class ContourTileOverlay: MKTileOverlay {
         guard path.y >= 0, path.y < n else { return result(nil, TileUnavailable()) }
         let t = TileID(z: path.z, x: ((path.x % n) + n) % n, y: path.y)
         let scale = Double(path.contentScaleFactor)
+        tileLog.debug("contour tile requested \(t.description, privacy: .public) contentScale \(scale)")
         Task.detached(priority: .utility) {
             if let data = await ContourRenderer.shared.render(t, contentScale: scale) {
                 result(data, nil)
@@ -102,10 +104,16 @@ final class ContourRenderer {
         if let d = cache.object(forKey: key) { return d as Data }
         if emptyCache.object(forKey: key) != nil { return nil }
 
+        let started = Date()
         let dz = ContourPolicy.demZoom(forTileZoom: t.z)
         let b = t.worldBounds
         let (tiles, complete) = await TileRepository.shared.demTiles(zoom: dz, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY)
-        guard !tiles.isEmpty else { return nil } // no data (offline and not downloaded)
+        let fetchedMs = Int(Date().timeIntervalSince(started) * 1000)
+        guard !tiles.isEmpty else {
+            // No elevation data (offline and not downloaded, or the fetch failed).
+            tileLog.error("contours \(t.description, privacy: .public): no elevation tiles after \(fetchedMs) ms")
+            return nil
+        }
 
         let cells = ContourPolicy.gridCells(forTileZoom: t.z)
         // Gridding, tracing and drawing are CPU-heavy: keep them on the contour queue.
@@ -119,7 +127,12 @@ final class ContourRenderer {
             return (self.draw(lines, cells: cells, interval: interval, scale: s, smooth: t.z > Terrarium.maxZoom,
                               labels: (t.x + t.y) % 2 == 0), false)
         }
-        guard let result = result else { return nil }
+        let totalMs = Int(Date().timeIntervalSince(started) * 1000)
+        guard let result = result else {
+            tileLog.error("contours \(t.description, privacy: .public): no grid (\(tiles.count) elevation tiles)")
+            return nil
+        }
+        tileLog.debug("contours \(t.description, privacy: .public) scale \(s) \(result.empty ? "empty" : "drawn", privacy: .public) complete=\(complete) elevation \(fetchedMs) ms total \(totalMs) ms")
         // With a neighbour missing, edges are approximated: show it, but don't keep it.
         if complete {
             if result.empty { emptyCache.setObject(1, forKey: key) }
