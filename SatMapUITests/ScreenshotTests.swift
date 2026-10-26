@@ -254,11 +254,20 @@ final class ScreenshotTests: XCTestCase {
 
     private func tap(_ label: String) {
         let button = app.buttons[label].firstMatch
-        if button.waitForExistence(timeout: 10) {
-            button.tap()
-        } else {
-            XCTFail("No button '\(label)'")
+        guard button.waitForExistence(timeout: 10) else { return XCTFail("No button '\(label)'") }
+        // A button under a sheet that is still closing can't be tapped yet (the tap would end the test).
+        for _ in 0..<30 {
+            if button.isHittable { break }
+            sleep(1)
         }
+        guard button.isHittable else {
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = "not tappable: \(label)"
+            shot.lifetime = .keepAlways
+            add(shot)
+            return XCTFail("Button '\(label)' can't be tapped")
+        }
+        button.tap()
     }
 
     /// List rows are buttons whose label combines their texts ("Demo farm, 7 shapes · …").

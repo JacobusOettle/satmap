@@ -73,7 +73,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                     return a
                 }
                 removeOrphanedDirectories()
+                // Left over from an export, or from a restore interrupted by the app closing (can be GBs).
                 try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
+                try? FileManager.default.removeItem(at: OfflineManager.restoreFolder)
             } else {
                 // Never overwrite an index we can't read (that would orphan every downloaded area).
                 try? FileManager.default.moveItem(at: indexURL, to: indexURL.appendingPathExtension("unreadable-\(Int(Date().timeIntervalSince1970))"))
@@ -157,17 +159,52 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     ]
     /// Files handed to the share sheet. Links to the areas' own files, so they take no space while the areas exist.
     static let exportFolder = FileManager.default.temporaryDirectory.appendingPathComponent("Export", isDirectory: true)
-    /// Areas paused for an export, resumed by `finishExport`.
-    private var pausedForExport: [UUID] = []
+    /// Copies of picked backup files are made here before they are checked and moved into place.
+    private static let restoreFolder = AppPaths.offline.appendingPathComponent("Restoring", isDirectory: true)
 
-    /// Gets areas ready to share: pauses a download running in one of them, then puts each area's files
-    /// (satellite and elevation, with the area's settings inside) into `exportFolder`.
-    func prepareExport(_ ids: [UUID], completion: @escaping (Result<[URL], Error>) -> Void) {
+    /// What a backup task is doing ("Preparing export…"), or nil. One runs at a time.
+    @Published private(set) var backupStatus: String?
+    /// The outcome of the last backup task, for an alert; cleared by `clearBackupMessage`.
+    @Published private(set) var backupMessage: String?
+    /// From an export starting until its share sheet closes no download starts: an exported area's files must not
+    /// change while they are prepared or copied.
+    private var holdDownloads = false
+    /// The download paused for an export, resumed by `finishExport`.
+    private var pausedForExport: UUID?
+
+    func clearBackupMessage() {
+        backupMessage = nil
+    }
+
+    /// Exports areas: pauses a download running in one of them, puts each area's files (satellite and elevation,
+    /// with the area's settings inside) into `exportFolder` and opens the share sheet. Its own presentation, so it
+    /// works even if the Offline maps sheet is closed meanwhile.
+    func export(_ ids: [UUID]) {
+        guard backupStatus == nil else { return }
+        backupStatus = "Preparing export…"
+        holdDownloads = true
+        prepareExport(ids) { [weak self] result in
+            guard let self = self else { return }
+            self.backupStatus = nil
+            switch result {
+            case .success(let urls) where !urls.isEmpty:
+                SharePresenter.present(urls) { [weak self] in self?.finishExport() }
+            case .success:
+                self.finishExport()
+                self.backupMessage = "Nothing has been downloaded yet to export."
+            case .failure(let error):
+                self.finishExport()
+                self.backupMessage = (error as? LocalizedError)?.errorDescription ?? "Couldn't export."
+            }
+        }
+    }
+
+    private func prepareExport(_ ids: [UUID], completion: @escaping (Result<[URL], Error>) -> Void) {
         let chosen = areas.filter { ids.contains($0.id) }
         var waitFor: Task<Void, Never>?
         if let active = activeID, ids.contains(active), let running = task {
             pause(active)
-            pausedForExport.append(active)
+            pausedForExport = active
             waitFor = running
         }
         let encoder = JSONEncoder()
@@ -191,22 +228,29 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// The share sheet closed: continue a download paused for the export. The exported links stay until the next
-    /// export, a deleted area or the next launch, in case the system is still copying them.
-    func finishExport() {
-        let ids = pausedForExport
-        pausedForExport = []
-        ids.forEach(resume)
+    /// The share sheet closed (its work done): downloads may run again, including one paused for the export. The
+    /// exported links stay until the next export, a deleted area or the next launch.
+    private func finishExport() {
+        holdDownloads = false
+        if let id = pausedForExport, areas.contains(where: { $0.id == id && $0.status == .paused }) {
+            pausedForExport = nil
+            resume(id)
+        } else {
+            pausedForExport = nil
+            startNextIfIdle()
+        }
     }
 
     /// Adds the areas in exported files (normally both files of each area; the satellite file alone also works,
-    /// and ↻ then downloads the elevation). `completion` gets a summary for the user.
-    func restore(_ urls: [URL], completion: @escaping (String) -> Void) {
+    /// and ↻ then downloads the elevation). The summary for the user ends up in `backupMessage`.
+    func restore(_ urls: [URL]) {
+        guard backupStatus == nil, !urls.isEmpty else { return }
+        backupStatus = "Restoring…"
         let known = Set(areas.map(\.id))
         let layers = OfflineManager.backupLayers
         DispatchQueue.global(qos: .userInitiated).async {
             let fm = FileManager.default
-            let staging = AppPaths.offline.appendingPathComponent("Restoring", isDirectory: true)
+            let staging = OfflineManager.restoreFolder
             try? fm.removeItem(at: staging)
             try? fm.createDirectory(at: staging, withIntermediateDirectories: true)
             defer { try? fm.removeItem(at: staging) }
@@ -273,7 +317,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                     lines.append("Tap ↻ on an area marked Paused to download what its backup didn't include.")
                 }
                 lines += problems
-                completion(lines.isEmpty ? "Nothing to restore." : lines.joined(separator: "\n"))
+                self.backupStatus = nil
+                self.backupMessage = lines.isEmpty ? "Nothing to restore." : lines.joined(separator: "\n")
             }
         }
     }
@@ -337,7 +382,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     private func startNextIfIdle() {
-        guard task == nil, inForeground else { return }
+        guard task == nil, inForeground, !holdDownloads else { return }
         if let free = AppPaths.freeDiskSpace(), free < OfflineManager.minimumFreeSpace {
             for a in areas where a.status == .queued {
                 update(a.id) { $0.status = .incomplete; $0.problem = "Less than 500 MB free on the iPhone. Free up space, then tap ↻." }

@@ -8,16 +8,7 @@ struct OfflineSheet: View {
     @ObservedObject var library: KMLLibrary
     @Environment(\.dismiss) private var dismiss
     @State private var freeSpace: Int64?
-    @State private var exportFiles: ExportFiles?
     @State private var importing = false
-    /// What is being done in the background ("Preparing export…"), shown in the Backup section.
-    @State private var busy: String?
-    @State private var message: String?
-
-    private struct ExportFiles: Identifiable {
-        let id = UUID()
-        let urls: [URL]
-    }
 
     var body: some View {
         NavigationStack {
@@ -53,10 +44,11 @@ struct OfflineSheet: View {
                             }
                             .contextMenu {
                                 Button {
-                                    export([area.id])
+                                    offline.export([area.id])
                                 } label: {
                                     Label("Export", systemImage: "square.and.arrow.up")
                                 }
+                                .disabled(offline.backupStatus != nil)
                             }
                     }
                     .onDelete { offsets in
@@ -66,26 +58,21 @@ struct OfflineSheet: View {
 
                 Section {
                     Button {
-                        export(offline.areas.map(\.id))
+                        offline.export(offline.areas.map(\.id))
                     } label: {
                         Label("Export all offline maps", systemImage: "square.and.arrow.up")
                     }
-                    .disabled(offline.areas.isEmpty || busy != nil)
+                    .disabled(offline.areas.isEmpty || offline.backupStatus != nil)
                     Button {
                         importing = true
                     } label: {
                         Label("Restore from a backup", systemImage: "square.and.arrow.down")
                     }
-                    .disabled(busy != nil)
+                    .disabled(offline.backupStatus != nil)
                     .fileImporter(isPresented: $importing, allowedContentTypes: [.mbtiles], allowsMultipleSelection: true) { result in
-                        guard case .success(let urls) = result, !urls.isEmpty else { return }
-                        busy = "Restoring…"
-                        offline.restore(urls) { summary in
-                            busy = nil
-                            message = summary
-                        }
+                        if case .success(let urls) = result { offline.restore(urls) }
                     }
-                    if let busy = busy {
+                    if let busy = offline.backupStatus {
                         HStack {
                             ProgressView()
                             Text(busy).foregroundColor(.secondary)
@@ -115,36 +102,15 @@ struct OfflineSheet: View {
                 }
             }
             .onAppear { offline.refreshSizes() }
-            .sheet(item: $exportFiles, onDismiss: { offline.finishExport() }) { files in
-                ShareSheet(items: files.urls) { exportFiles = nil }
-            }
-            .alert("Backup", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+            .alert("Backup", isPresented: Binding(get: { offline.backupMessage != nil },
+                                                  set: { if !$0 { offline.clearBackupMessage() } })) {
                 Button("OK", role: .cancel) {}
             } message: {
-                Text(message ?? "")
+                Text(offline.backupMessage ?? "")
             }
             .task(id: "\(offline.completedRevision)-\(offline.areas.count)") {
                 // The free-space query can be slow: run it off the main thread, not in the view body.
                 freeSpace = await Task.detached(priority: .utility) { AppPaths.freeDiskSpace() }.value
-            }
-        }
-    }
-}
-
-extension OfflineSheet {
-    private func export(_ ids: [UUID]) {
-        busy = "Preparing export…"
-        offline.prepareExport(ids) { result in
-            busy = nil
-            switch result {
-            case .success(let urls) where !urls.isEmpty:
-                exportFiles = ExportFiles(urls: urls)
-            case .success:
-                offline.finishExport()
-                message = "Nothing has been downloaded yet to export."
-            case .failure(let error):
-                offline.finishExport()
-                message = (error as? LocalizedError)?.errorDescription ?? "Couldn't export."
             }
         }
     }
