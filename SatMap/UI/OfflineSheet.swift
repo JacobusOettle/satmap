@@ -62,7 +62,7 @@ struct OfflineSheet: View {
                 }
             }
             .onAppear { offline.refreshSizes() }
-            .task(id: offline.completedRevision) {
+            .task(id: "\(offline.completedRevision)-\(offline.areas.count)") {
                 // The free-space query can be slow: run it off the main thread, not in the view body.
                 freeSpace = await Task.detached(priority: .utility) { AppPaths.freeDiskSpace() }.value
             }

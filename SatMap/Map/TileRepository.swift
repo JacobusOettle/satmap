@@ -61,10 +61,13 @@ final class TileRepository {
     /// A tile could not be loaded for a temporary reason (timeout, no internet): MapKit doesn't ask again
     /// by itself, so the map reloads its tiles later.
     private var retryNeeded = false
+    private var retryNeededSince = Date.distantFuture
     /// A request that failed for a temporary reason, used to test whether the network has recovered.
     private var lastFailedURL: URL?
-    private var demInFlight: [TileID: Task<DEMTile?, Never>] = [:]
-    private var demFailedAt: [TileID: Date] = [:]
+    private var lastSuccessAt = Date.distantPast
+    private var demInFlight: [TileID: Task<(DEMTile?, TileFetchResult), Never>] = [:]
+    /// Elevation tiles not to request again before the given time (after a failure or a missing tile).
+    private var demRetryAfter: [TileID: Date] = [:]
     /// Imagery tiles the server said don't exist (beyond the imagery depth), to skip asking again.
     private var imageryMissing = Set<TileID>()
     private var imageryInFlight: [TileID: Task<TileFetchResult, Never>] = [:]
@@ -232,6 +235,7 @@ final class TileRepository {
             switch result {
             case .data, .missing:
                 consecutiveFailures = 0
+                lastSuccessAt = Date()
             case .failed, .offline:
                 lastFailedURL = url
                 consecutiveFailures += 1
@@ -245,32 +249,42 @@ final class TileRepository {
     }
 
     private func noteRetryNeeded() {
-        lock.withLock { retryNeeded = true }
+        lock.withLock { markRetryNeededLocked() }
+    }
+
+    private func markRetryNeededLocked() {
+        if !retryNeeded { retryNeededSince = Date() }
+        retryNeeded = true
     }
 
     /// True if tiles failed for temporary reasons and the network has recovered (a request that failed before now
     /// succeeds), so reloading the map's tiles is worthwhile. On a still-poor connection this stays false.
     func probeRecovery() async -> Bool {
         guard networkUsable else { return false }
-        let (needed, probe) = lock.withLock { (retryNeeded, lastFailedURL) }
+        let (needed, since, probe, success) = lock.withLock { (retryNeeded, retryNeededSince, lastFailedURL, lastSuccessAt) }
         guard needed else { return false }
-        if let url = probe {
+        // Some request has already succeeded since the failures: recovered. Otherwise ask again for one that failed.
+        var recovered = success > since
+        if !recovered, let url = probe {
             switch await limitedFetch(url) {
-            case .data, .missing: break
-            case .failed, .offline: return false
+            case .data, .missing: recovered = true
+            case .failed, .offline: recovered = false
             }
         }
-        lock.withLock {
-            retryNeeded = false
-            lastFailedURL = nil
+        if recovered || probe == nil {
+            lock.withLock {
+                retryNeeded = false
+                retryNeededSince = .distantFuture
+                lastFailedURL = nil
+            }
         }
-        return true
+        return recovered
     }
 
     /// Forget temporary failures (when the network comes back). What the server said doesn't exist is kept.
     func resetFailureState() {
         lock.withLock {
-            demFailedAt.removeAll()
+            demRetryAfter.removeAll()
             consecutiveFailures = 0
             networkPausedUntil = .distantPast
         }
@@ -309,26 +323,32 @@ final class TileRepository {
         }
 
         // One network request per tile, shared by every caller that needs it meanwhile.
-        let pending: Task<DEMTile?, Never>? = lock.withLock {
-            if let failed = demFailedAt[t], Date().timeIntervalSince(failed) < 30 { return nil }
+        let pending: Task<(DEMTile?, TileFetchResult), Never>? = lock.withLock {
+            if let after = demRetryAfter[t], Date() < after { return nil }
             if let existing = demInFlight[t] { return existing }
-            let task = Task.detached(priority: .utility) { [self] () -> DEMTile? in
-                guard case .data(let d) = await self.limitedFetch(TileSources.terrainURL(t)) else { return nil }
-                return await Work.run(on: Work.contours) { Terrarium.decode(d, id: t) }
+            let task = Task.detached(priority: .utility) { [self] () -> (DEMTile?, TileFetchResult) in
+                let result = await self.limitedFetch(TileSources.terrainURL(t))
+                guard case .data(let d) = result else { return (nil, result) }
+                return (await Work.run(on: Work.contours) { Terrarium.decode(d, id: t) }, result)
             }
             demInFlight[t] = task
             return task
         }
         guard let task = pending else { return nil }
 
-        let tile = await task.value
+        let (tile, result) = await task.value
         lock.withLock {
             demInFlight[t] = nil
-            if tile == nil {
-                demFailedAt[t] = Date()
-                retryNeeded = true
-            } else {
-                demFailedAt[t] = nil
+            switch (tile, result) {
+            case (.some, _):
+                demRetryAfter[t] = nil
+            case (nil, .failed), (nil, .offline):
+                // Temporary: try again soon, and reload the map once the network works.
+                demRetryAfter[t] = Date().addingTimeInterval(30)
+                markRetryNeededLocked()
+            default:
+                // Missing on the server or undecodable: retrying won't help for a while.
+                demRetryAfter[t] = Date().addingTimeInterval(600)
             }
         }
         if let tile = tile { demCache.set(tile, for: t) }
