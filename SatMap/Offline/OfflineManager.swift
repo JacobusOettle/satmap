@@ -165,8 +165,12 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         let delay = networkRetryDelay
         networkRetryDelay = min(networkRetryDelay * 2, 600)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self = self, self.task == nil else { return }
-            if self.areas.contains(where: { $0.status == .waitingForNetwork }) { self.networkChanged() }
+            guard let self = self, self.areas.contains(where: { $0.status == .waitingForNetwork }) else { return }
+            if self.task != nil {
+                self.scheduleNetworkRetry() // another area is downloading; check again later
+            } else {
+                self.networkChanged()
+            }
         }
     }
 
@@ -187,18 +191,25 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         inForeground = false
         if let id = activeID {
             // Stop now; it continues from where it was when the app is opened again.
-            update(id) { $0.status = .queued }
+            update(id) { if $0.status == .downloading { $0.status = .queued } }
             task?.cancel()
         }
     }
 
     @objc private func willEnterForeground() {
         inForeground = true
-        startNextIfIdle()
+        networkChanged()
     }
 
     private func startNextIfIdle() {
         guard task == nil, inForeground else { return }
+        if let free = AppPaths.freeDiskSpace(), free < OfflineManager.minimumFreeSpace {
+            for a in areas where a.status == .queued {
+                update(a.id) { $0.status = .incomplete; $0.problem = "Less than 500 MB free on the iPhone. Free up space, then tap ↻." }
+            }
+            updateIdleTimer()
+            return
+        }
         // Areas that can't use the current network wait; the first one that can, runs.
         for a in areas where a.status == .queued && !canDownloadNow(a) {
             update(a.id) { $0.status = .waitingForNetwork }
@@ -218,7 +229,11 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             imagery = try MBTiles(url: dir.appendingPathComponent(TileRepository.Layer.imagery.fileName), create: true)
             terrain = try MBTiles(url: dir.appendingPathComponent(TileRepository.Layer.terrain.fileName), create: true)
         } catch {
-            update(area.id) { $0.status = .incomplete }
+            update(area.id) {
+                $0.status = .incomplete
+                $0.problem = (error as? LocalizedError)?.errorDescription ?? "Couldn't open the tile database."
+            }
+            DispatchQueue.main.async { [weak self] in self?.startNextIfIdle() }
             return
         }
         imagery.setMetadata(["name": area.name, "format": "jpg", "type": "baselayer", "minzoom": "0",
@@ -243,8 +258,16 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         updateIdleTimer()
 
         task = Task.detached(priority: .utility) { [weak self] in
+            var lastSpaceCheck = Date.distantPast
             let outcome = await job.run { p in
                 DispatchQueue.main.async { if self?.activeID == id { self?.progress = p } }
+                // Never fill the phone completely: the track log and the rest of the phone need room too.
+                if Date().timeIntervalSince(lastSpaceCheck) > 10 {
+                    lastSpaceCheck = Date()
+                    if let free = AppPaths.freeDiskSpace(), free < OfflineManager.minimumFreeSpace {
+                        DispatchQueue.main.async { self?.stopForLowSpace(id) }
+                    }
+                }
             }
             imagery.close()
             terrain.close()
@@ -255,8 +278,31 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
+    static let minimumFreeSpace: Int64 = 500 << 20
+    private var lowSpaceStop: UUID?
+
+    private func stopForLowSpace(_ id: UUID) {
+        guard activeID == id, lowSpaceStop == nil else { return }
+        lowSpaceStop = id
+        task?.cancel()
+    }
+
     private func finished(_ id: UUID, outcome: DownloadOutcome, size: Int64) {
         let storedSomething = (progress?.fetched ?? 0) > 0
+        if lowSpaceStop == id {
+            lowSpaceStop = nil
+            update(id) {
+                $0.bytesOnDisk = size
+                $0.status = .incomplete
+                $0.problem = "Less than 500 MB free on the iPhone. Free up space, then tap ↻."
+            }
+            task = nil
+            activeID = nil
+            progress = nil
+            completedRevision += storedSomething ? 1 : 0
+            startNextIfIdle()
+            return
+        }
         task = nil
         activeID = nil
         progress = nil
