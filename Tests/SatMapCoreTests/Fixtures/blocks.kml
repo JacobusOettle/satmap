@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+<Document>
+  <name>Farm Blocks</name>
+  <Style id="s"><LineStyle><color>ff00ffff</color></LineStyle></Style>
+  <Folder>
+    <name>Section A</name>
+    <Placemark>
+      <name>Block A1</name>
+      <styleUrl>#s</styleUrl>
+      <Polygon>
+        <outerBoundaryIs><LinearRing><coordinates>
+          30.9700,-25.4700,0 30.9750,-25.4700,0 30.9750,-25.4750,0 30.9700,-25.4750,0 30.9700,-25.4700,0
+        </coordinates></LinearRing></outerBoundaryIs>
+        <innerBoundaryIs><LinearRing><coordinates>30.971,-25.471 30.972,-25.471 30.972,-25.472 30.971,-25.471</coordinates></LinearRing></innerBoundaryIs>
+      </Polygon>
+    </Placemark>
+    <Placemark>
+      <name><![CDATA[Block A2 & co]]></name>
+      <MultiGeometry>
+        <Polygon><outerBoundaryIs><LinearRing><coordinates>30.98,-25.47 30.985,-25.47 30.985,-25.475 30.98,-25.47</coordinates></LinearRing></outerBoundaryIs></Polygon>
+        <LineString><coordinates>30.98,-25.48 30.99,-25.49</coordinates></LineString>
+      </MultiGeometry>
+    </Placemark>
+    <Placemark><name>Pump</name><Point><coordinates>30.99,-25.46,12</coordinates></Point></Placemark>
+  </Folder>
+</Document>
+</kml>
