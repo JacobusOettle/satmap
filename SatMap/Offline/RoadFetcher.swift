@@ -5,10 +5,12 @@ private let roadLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "r
 
 /// Roads and tracks in an area from OpenStreetMap, through the public Overpass API (no account needed).
 enum RoadFetcher {
-    /// The main server, then mirrors for when it is busy (public Overpass servers are often overloaded).
+    /// The main server, then mirrors for when it is busy (public Overpass servers are often overloaded). The main
+    /// server's "busy" errors pass quickly, so it gets a second turn.
     private static let servers = [
         URL(string: "https://overpass-api.de/api/interpreter")!,
         URL(string: "https://overpass.private.coffee/api/interpreter")!,
+        URL(string: "https://overpass-api.de/api/interpreter")!,
         URL(string: "https://overpass.kumi.systems/api/interpreter")!,
     ]
 
