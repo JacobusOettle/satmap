@@ -127,9 +127,13 @@ final class ScreenshotTests: XCTestCase {
             name.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 20) + "Farm roads\n")
         }
         tapRow(startingWith: "Zoom 20")
-        scrollTo(app.switches["Only along roads"].firstMatch)
-        setSwitch("Only along roads", on: true)
-        XCTAssertTrue(app.staticTexts["Roads and tracks"].waitForExistence(timeout: 180), "Roads didn't load")
+        // Scroll until the Download button shows: the switch above it is then well inside the screen.
+        scrollTo(app.buttons["Download"].firstMatch)
+        // Without roads there is nothing true to show: stop rather than snap a whole-area download.
+        guard setSwitch("Only along roads", on: true) else { return }
+        guard app.staticTexts["Roads and tracks"].waitForExistence(timeout: 180) else {
+            return XCTFail("Roads didn't load")
+        }
         sleep(3) // size estimate
         scrollTo(app.buttons["Download"].firstMatch)
         snap("12-download-along-roads")
@@ -137,11 +141,12 @@ final class ScreenshotTests: XCTestCase {
         sleep(5)
         openOfflineSheet()
         let ready = app.staticTexts.matching(NSPredicate(format: "label == %@", "Ready offline"))
+        let alongRoads = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "along roads")).firstMatch
         for _ in 0..<180 {
             if ready.count >= 2 { break }
             sleep(5)
         }
-        XCTAssertEqual(ready.count, 2)
+        guard ready.count >= 2, alongRoads.exists else { return XCTFail("No area downloaded along roads") }
         snap("13-offline-along-roads")
     }
 
@@ -190,17 +195,29 @@ final class ScreenshotTests: XCTestCase {
         XCTFail("The Offline maps sheet didn't open")
     }
 
-    /// Toggles a switch until it has the wanted value. Taps the switch itself (right side): tapping the middle of
-    /// the row lands on its label, which doesn't toggle it.
-    private func setSwitch(_ label: String, on: Bool) {
-        let s = app.switches[label].firstMatch
-        guard s.waitForExistence(timeout: 10) else { return XCTFail("No switch '\(label)'") }
+    /// Toggles a switch until it has the wanted value; returns whether it has. The row must be fully on screen.
+    @discardableResult
+    private func setSwitch(_ label: String, on: Bool) -> Bool {
+        let row = app.switches[label].firstMatch
+        guard row.waitForExistence(timeout: 10) else {
+            XCTFail("No switch '\(label)'")
+            return false
+        }
+        // On recent iOS the row is one switch element with the actual control inside it. Without that, tap the
+        // switch's side of the row: its middle is the label, which doesn't toggle it.
+        let control = row.switches.firstMatch
+        func isOn() -> Bool { [row, control].contains { $0.exists && $0.value as? String == "1" } }
         for _ in 0..<3 {
-            if (s.value as? String == "1") == on { break }
-            s.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            if isOn() == on { break }
+            if control.exists && control.isHittable {
+                control.tap()
+            } else {
+                row.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            }
             sleep(1)
         }
-        XCTAssertEqual(s.value as? String == "1", on)
+        XCTAssertEqual(isOn(), on, "Switch '\(label)' didn't change")
+        return isOn() == on
     }
 
     /// Scrolls a form up, a third of the screen at a time, until the element is on screen (forms only create

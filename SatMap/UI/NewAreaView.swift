@@ -190,7 +190,7 @@ struct NewAreaView: View {
     private func resolution(_ z: Int) -> String {
         let lat = area.shape.bounds?.center.lat ?? 0
         let m = 156_543.03 * cos(lat * .pi / 180) / Double(1 << z)
-        if m < 1 { return "\(Int((m * 100).rounded())) cm per pixel" }
+        if m < 0.95 { return "\(Int((m * 100).rounded())) cm per pixel" }
         return String(format: m < 10 ? "%.1f m per pixel" : "%.0f m per pixel", m)
     }
 
