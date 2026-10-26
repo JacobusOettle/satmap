@@ -131,9 +131,15 @@ final class ScreenshotTests: XCTestCase {
         scrollTo(app.buttons["Download"].firstMatch)
         // Without roads there is nothing true to show: stop rather than snap a whole-area download.
         guard setSwitch("Only along roads", on: true) else { return }
-        guard app.staticTexts["Roads and tracks"].waitForExistence(timeout: 180) else {
-            return XCTFail("Roads didn't load")
+        // The public road servers are sometimes busy: try again, as a user would.
+        let roadsLoaded = app.staticTexts["Roads and tracks"]
+        for _ in 0..<60 {
+            if roadsLoaded.exists { break }
+            let again = app.buttons["Try again"]
+            if again.exists && again.isHittable { again.tap() }
+            sleep(4)
         }
+        guard roadsLoaded.exists else { return XCTFail("Roads didn't load") }
         sleep(3) // size estimate
         scrollTo(app.buttons["Download"].firstMatch)
         snap("12-download-along-roads")
