@@ -13,6 +13,7 @@ struct NewAreaView: View {
     @State private var allowCellular = false
     /// Upper-bound tile counts per zoom level (computed in the background).
     @State private var counts: [Int: Int]?
+    @State private var freeSpace: Int64?
     @Environment(\.dismiss) private var dismiss
 
     /// Rough average sizes from Esri JPEG and Terrarium PNG tiles.
@@ -51,7 +52,7 @@ struct NewAreaView: View {
                         row("If it goes to zoom \(maxZoom)", "up to \(Format.bytes(worst.bytes))")
                     }
                     row("Tiles (most)", Format.count(worst.tiles))
-                    if let free = AppPaths.freeDiskSpace() {
+                    if let free = freeSpace {
                         row("Free space", Format.bytes(free))
                     }
                 } else {
@@ -91,9 +92,10 @@ struct NewAreaView: View {
         .task {
             let shape = area.shape
             let result = await Task.detached(priority: .userInitiated) {
-                TileCoverage.tileCounts(shape: shape, zooms: 0...TileSources.imageryMaxZoom)
+                (TileCoverage.tileCounts(shape: shape, zooms: 0...TileSources.imageryMaxZoom), AppPaths.freeDiskSpace())
             }.value
-            counts = result
+            freeSpace = result.1
+            counts = result.0
         }
     }
 

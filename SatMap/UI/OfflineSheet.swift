@@ -6,6 +6,7 @@ struct OfflineSheet: View {
     @ObservedObject var offline: OfflineManager
     @ObservedObject var library: KMLLibrary
     @Environment(\.dismiss) private var dismiss
+    @State private var freeSpace: Int64?
 
     var body: some View {
         NavigationStack {
@@ -45,7 +46,7 @@ struct OfflineSheet: View {
                     }
                 }
 
-                if let free = AppPaths.freeDiskSpace() {
+                if let free = freeSpace {
                     Section {
                         Text("Free space on this iPhone: \(Format.bytes(free))")
                             .font(.footnote)
@@ -61,6 +62,10 @@ struct OfflineSheet: View {
                 }
             }
             .onAppear { offline.refreshSizes() }
+            .task(id: offline.completedRevision) {
+                // The free-space query can be slow: run it off the main thread, not in the view body.
+                freeSpace = await Task.detached(priority: .utility) { AppPaths.freeDiskSpace() }.value
+            }
         }
     }
 }

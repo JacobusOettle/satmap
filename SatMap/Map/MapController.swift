@@ -138,7 +138,10 @@ final class MapController: NSObject, MKMapViewDelegate {
     private func startRetryTimer() {
         retryTimer?.invalidate()
         let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
-            if TileRepository.shared.takeRetryNeeded() { self?.requestReload() }
+            Task.detached(priority: .utility) {
+                guard await TileRepository.shared.probeRecovery() else { return }
+                DispatchQueue.main.async { self?.requestReload() }
+            }
         }
         t.tolerance = 10
         RunLoop.main.add(t, forMode: .common)

@@ -13,13 +13,13 @@ Native Swift + MapKit, no third-party dependencies.
 | Satellite view | Esri World Imagery tiles drawn over MapKit (Apple's own map is switched off). |
 | Contour lines | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. Works offline for downloaded areas. |
 | My location + dotted track | Blue dot (grey while the GPS sleeps) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
-| KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in yellow with their names. Tap a file to zoom to it. Swipe to remove. |
+| KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in white with their names. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap again: a marker is dropped under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Tap a third time to remove it. |
-| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them). Choose the detail (default: maximum), allow mobile data or wait for Wi-Fi, and download. |
+| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them). Imagery is always saved at the highest detail available. Allow mobile data or wait for Wi-Fi, and download. |
 
 ### Offline downloads
 
-- Imagery is downloaded zoom level by zoom level, up to zoom 22 by default (about 3–4 cm per pixel).
+- Imagery is downloaded zoom level by zoom level, up to zoom 22 (about 3–4 cm per pixel).
   Esri's imagery stops at different depths in different places, often zoom 18–19 on farms and 20–21 in
   towns. The downloader asks for a tile only if its parent exists, so it finds the real depth for every
   spot without wasting requests. On screen, anything deeper is enlarged from the best tile available.
@@ -42,8 +42,9 @@ Native Swift + MapKit, no third-party dependencies.
   coprocessor detects walking or driving. As a backup it also wakes after a short GPS check, every
   minute on screen or every 2 minutes in the background, if that check shows you have moved, or after a
   large jump in the coarse cell/Wi-Fi position.
-- **Measuring:** while a marker is placed and the app is on screen, the GPS doesn't sleep, so the
-  distance follows you even when you step a few metres.
+- **Measuring:** while a marker is placed and the app is on screen, the sleep-mode GPS check runs every
+  15 s instead of every minute, and reacts to moves of about 8 m. The distance then follows you even when
+  motion detection misses a few steps.
 - MapKit's own location tracking is not used, because it keeps the GPS at full power.
 
 Limits imposed by iOS:

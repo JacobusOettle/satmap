@@ -61,6 +61,8 @@ final class TileRepository {
     /// A tile could not be loaded for a temporary reason (timeout, no internet): MapKit doesn't ask again
     /// by itself, so the map reloads its tiles later.
     private var retryNeeded = false
+    /// A request that failed for a temporary reason, used to test whether the network has recovered.
+    private var lastFailedURL: URL?
     private var demInFlight: [TileID: Task<DEMTile?, Never>] = [:]
     private var demFailedAt: [TileID: Date] = [:]
     /// Imagery tiles the server said don't exist (beyond the imagery depth), to skip asking again.
@@ -231,6 +233,7 @@ final class TileRepository {
             case .data, .missing:
                 consecutiveFailures = 0
             case .failed, .offline:
+                lastFailedURL = url
                 consecutiveFailures += 1
                 if consecutiveFailures >= 8 {
                     networkPausedUntil = Date().addingTimeInterval(45)
@@ -245,14 +248,23 @@ final class TileRepository {
         lock.withLock { retryNeeded = true }
     }
 
-    /// Whether tiles failed for temporary reasons since the last call, and the network looks usable again.
-    func takeRetryNeeded() -> Bool {
+    /// True if tiles failed for temporary reasons and the network has recovered (a request that failed before now
+    /// succeeds), so reloading the map's tiles is worthwhile. On a still-poor connection this stays false.
+    func probeRecovery() async -> Bool {
         guard networkUsable else { return false }
-        return lock.withLock {
-            let r = retryNeeded
-            retryNeeded = false
-            return r
+        let (needed, probe) = lock.withLock { (retryNeeded, lastFailedURL) }
+        guard needed else { return false }
+        if let url = probe {
+            switch await limitedFetch(url) {
+            case .data, .missing: break
+            case .failed, .offline: return false
+            }
         }
+        lock.withLock {
+            retryNeeded = false
+            lastFailedURL = nil
+        }
+        return true
     }
 
     /// Forget temporary failures (when the network comes back). What the server said doesn't exist is kept.
