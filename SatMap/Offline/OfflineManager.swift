@@ -120,7 +120,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     func delete(_ id: UUID) {
-        // An exported copy is a link to the same storage: remove it too, or the space isn't freed.
+        // An exported copy shares the area's storage: remove it too, or the space isn't freed.
         try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
         let wasActive = activeID == id
         let running = task
@@ -157,7 +157,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         OfflineBackup.Layer(fileName: TileRepository.Layer.imagery.fileName, key: "imagery", label: "satellite"),
         OfflineBackup.Layer(fileName: TileRepository.Layer.terrain.fileName, key: "terrain", label: "elevation"),
     ]
-    /// Files handed to the share sheet. Links to the areas' own files, so they take no space while the areas exist.
+    /// Files handed to the share sheet: clones of the areas' files, sharing their storage until either changes.
     static let exportFolder = FileManager.default.temporaryDirectory.appendingPathComponent("Export", isDirectory: true)
     /// Copies of picked backup files are made here before they are checked and moved into place.
     private static let restoreFolder = AppPaths.offline.appendingPathComponent("Restoring", isDirectory: true)
@@ -228,8 +228,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// The share sheet closed (its work done): downloads may run again, including one paused for the export. The
-    /// exported links stay until the next export, a deleted area or the next launch.
+    /// The share sheet closed: downloads may run again, including one paused for the export. The exported copies
+    /// stay until the next export, a deleted area or the next launch, in case the system is still sending them.
     private func finishExport() {
         holdDownloads = false
         if let id = pausedForExport, areas.contains(where: { $0.id == id && $0.status == .paused }) {

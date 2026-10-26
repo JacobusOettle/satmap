@@ -57,8 +57,9 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   from iCloud backup. Swipe an area to delete it and free the space.
 - **Backup:** *Export all offline maps* (or long-press one area → *Export*) opens the share sheet with each
   area's two files, "*name* - satellite.mbtiles" and "*name* - elevation.mbtiles": save them to Files,
-  iCloud Drive or a USB drive, or AirDrop them to a computer. Exporting takes no extra space on the iPhone, and
-  pauses a running download of that area until the share sheet closes. *Restore from a backup* adds the areas
+  iCloud Drive or a USB drive, or AirDrop them to a computer. Exporting is instant and takes almost no extra space
+  (the iPhone's file system shares the data between the area and its export), and downloads wait until the
+  share sheet closes. *Restore from a backup* adds the areas
   back from those files (choose both files of each area), also after reinstalling SatMap. The files carry the
   area's settings inside, and other map apps (QGIS, for example) can open them as ordinary MBTiles.
 - The size estimate is an upper bound. Most of the space goes into the deepest zoom levels.

@@ -28,9 +28,10 @@ enum OfflineBackup {
         }
     }
 
-    /// Writes the area's settings into its tile files, folds their write-ahead logs into them, and puts them into
-    /// `folder` under readable names. Hard links: no copy, no extra space (they share the files' storage). Layers
-    /// not downloaded yet are skipped. `usedNames` avoids two areas getting the same file names.
+    /// Writes the area's settings into its tile files, folds their write-ahead logs into them, and copies them into
+    /// `folder` under readable names. On the iPhone (APFS) a copy is a clone: instant, sharing storage until either
+    /// file changes, so it takes almost no space, and a download that resumes in the area can't change a copy the
+    /// system may still be sending. Layers not downloaded yet are skipped. `usedNames` keeps file names unique.
     static func export(areaFolder: URL, layers: [Layer], name: String, areaJSON: String, into folder: URL,
                        usedNames: inout Set<String>) throws -> [URL] {
         let fm = FileManager.default
@@ -54,11 +55,7 @@ enum OfflineBackup {
             guard ready else { throw Failure.busy(name) }
             let target = folder.appendingPathComponent("\(base) - \(layer.label).mbtiles")
             try? fm.removeItem(at: target)
-            do {
-                try fm.linkItem(at: source, to: target)
-            } catch {
-                try fm.copyItem(at: source, to: target)
-            }
+            try fm.copyItem(at: source, to: target)
             out.append(target)
         }
         return out
