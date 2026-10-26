@@ -61,6 +61,13 @@ enum Format {
         ByteCountFormatter.string(fromByteCount: b, countStyle: .file)
     }
 
+    /// "0.35 ha", "27.5 ha", "1,250 ha".
+    static func hectares(_ squareMeters: Double) -> String {
+        let ha = squareMeters / 10_000
+        if ha >= 100 { return "\(count(Int(ha.rounded()))) ha" }
+        return String(format: ha < 1 ? "%.2f ha" : "%.1f ha", ha)
+    }
+
     static func count(_ n: Int) -> String {
         NumberFormatter.localizedString(from: NSNumber(value: n), number: .decimal)
     }

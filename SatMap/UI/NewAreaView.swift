@@ -121,8 +121,8 @@ struct NewAreaView: View {
 
     private var sizeSection: some View {
         Section("Download size") {
-            if let km2 = areaKm2 {
-                row("Area", String(format: "%.1f km²", km2))
+            if let m2 = areaSquareMeters {
+                row("Area", Format.hectares(m2))
             }
             if let e = chosenEstimate {
                 row("Up to zoom \(chosenZoom)", sizeText(chosenZoom))
@@ -238,9 +238,9 @@ struct NewAreaView: View {
         }
     }
 
-    private var areaKm2: Double? {
+    private var areaSquareMeters: Double? {
         let a = area.shape.polygonAreaSquareMeters
-        return a > 0 ? a / 1_000_000 : nil
+        return a > 0 ? a : nil
     }
 
     private func estimate(imagery imageryCounts: [Int: Int], terrain terrainCounts: [Int: Int], depth: Int) -> (tiles: Int, bytes: Int64) {
