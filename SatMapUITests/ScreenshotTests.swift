@@ -66,10 +66,10 @@ final class ScreenshotTests: XCTestCase {
         snap("01-map")
 
         // Measure: crosshair, then marker, then walk uphill.
-        tap("Measure")
+        setMeasure(.aiming)
         sleep(2)
         snap("02-measure-crosshair")
-        tap("Measure")
+        setMeasure(.placed)
         walk(walkUphill)
         sleep(10) // elevations for the height difference
         snap("03-measure-live")
@@ -101,7 +101,7 @@ final class ScreenshotTests: XCTestCase {
 
         // Choosing an area with the lasso (measuring switched off first for a clearer view).
         tap("Done")
-        tap("Measure")
+        setMeasure(.off)
         tap("Offline maps")
         tap("Draw an area on the map")
         sleep(3)
@@ -109,6 +109,28 @@ final class ScreenshotTests: XCTestCase {
     }
 
     // MARK: - Helpers
+
+    private enum MeasureState {
+        case off, aiming, placed
+    }
+
+    /// Taps the measure button until the screen shows the wanted state (a tap can be lost while the app is busy).
+    private func setMeasure(_ wanted: MeasureState) {
+        for _ in 0..<4 {
+            if currentMeasureState() == wanted { return }
+            tap("Measure")
+            sleep(2)
+        }
+        XCTAssertEqual(currentMeasureState(), wanted)
+    }
+
+    private func currentMeasureState() -> MeasureState {
+        let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Move the map so the crosshair")).firstMatch
+        if hint.exists { return .aiming }
+        let panel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
+                                                         "than you", "Height:", "Waiting for GPS")).firstMatch
+        return panel.exists ? .placed : .off
+    }
 
     private func setLocation(_ p: (Double, Double)) {
         XCUIDevice.shared.location = XCUILocation(location: CLLocation(
