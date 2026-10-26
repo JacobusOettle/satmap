@@ -18,15 +18,15 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/04-blocks-list.jpg" width="250"> | <img src="docs/screenshots/05-blocks-on-map.jpg" width="250"> | <img src="docs/screenshots/06-offline-maps.jpg" width="250"> |
 | **Download an area (from a KML)** | **Downloading** | **Offline areas** |
 | <img src="docs/screenshots/07-download-area.jpg" width="250"> | <img src="docs/screenshots/08-downloading.jpg" width="250"> | <img src="docs/screenshots/09-offline-areas.jpg" width="250"> |
-| **Drawing an area with the lasso** | | |
-| <img src="docs/screenshots/10-draw-area.jpg" width="250"> | | |
+| **Drawing an area with the lasso** | **Contour lines switched off** | |
+| <img src="docs/screenshots/10-draw-area.jpg" width="250"> | <img src="docs/screenshots/11-contours-off.jpg" width="250"> | |
 
 ## Features
 
 | What you asked for | How it works |
 | --- | --- |
 | Satellite view | Esri World Imagery tiles drawn over MapKit (Apple's own map is switched off). |
-| Contour lines | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. Works offline for downloaded areas. |
+| Contour lines | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. Works offline for downloaded areas. The mountain button at the top of the side buttons switches them on and off (remembered); while they are off, no elevation is downloaded for the map. |
 | My location + dotted track | Blue dot (grey while the GPS sleeps) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
 | KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in white with their names. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap again: a marker is dropped under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Tap a third time to remove it. |

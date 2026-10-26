@@ -39,6 +39,11 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     @Published private(set) var trackRevision = 0
 
     @Published var following = true
+    /// Contour lines on the map (side button). Remembered between launches. While off, no elevation tiles are
+    /// fetched for the map; the measuring tool still looks up heights.
+    @Published var showContours = UserDefaults.standard.object(forKey: "showContours") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showContours, forKey: "showContours") }
+    }
     @Published private(set) var measure: MeasureMode = .off
     @Published private(set) var markerElevation: Double?
     @Published private(set) var userElevation: Double?

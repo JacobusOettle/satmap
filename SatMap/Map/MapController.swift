@@ -50,9 +50,10 @@ final class MapController: NSObject, MKMapViewDelegate {
         mapView.register(MeasureMarkerView.self, forAnnotationViewWithReuseIdentifier: MeasureMarkerView.reuseID)
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
 
-        // Later overlays draw on top: imagery, contours, (blocks inserted above contours), track, measuring line.
+        // Later overlays draw on top: imagery, contours (when switched on), (blocks inserted below the track),
+        // track, measuring line.
         mapView.addOverlay(satellite, level: .aboveLabels)
-        mapView.addOverlay(contours, level: .aboveLabels)
+        if model.showContours { mapView.addOverlay(contours, level: .aboveLabels) }
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
@@ -91,6 +92,10 @@ final class MapController: NSObject, MKMapViewDelegate {
         model.$measure
             .removeDuplicates()
             .sink { [weak self] m in DispatchQueue.main.async { self?.measureChanged(m) } }
+            .store(in: &cancellables)
+        model.$showContours
+            .removeDuplicates()
+            .sink { [weak self] show in DispatchQueue.main.async { self?.contoursChanged(show) } }
             .store(in: &cancellables)
         model.kml.$files
             .sink { [weak self] files in DispatchQueue.main.async { self?.blocksChanged(files) } }
@@ -247,6 +252,19 @@ final class MapController: NSObject, MKMapViewDelegate {
         v.sleeping = power == .sleeping
     }
 
+    // MARK: - Contours
+
+    /// Removing the overlay (rather than hiding it) stops MapKit asking for contour tiles, so no elevation is
+    /// downloaded or processed for them. Rendered tiles stay cached, so switching back on is quick.
+    private func contoursChanged(_ show: Bool) {
+        let shown = mapView.overlays.contains { $0 === contours }
+        if show && !shown {
+            mapView.insertOverlay(contours, above: satellite) // under the blocks, track and measuring line
+        } else if !show && shown {
+            mapView.removeOverlay(contours)
+        }
+    }
+
     // MARK: - Track
 
     private func trackChanged() {
@@ -331,8 +349,8 @@ final class MapController: NSObject, MKMapViewDelegate {
             var overlays: [MKOverlay] = []
             if !polygons.isEmpty { overlays.append(BlockPolygons(polygons)) }
             if !lines.isEmpty { overlays.append(BlockLines(lines)) }
-            // Keep blocks under the track and the measuring line.
-            for o in overlays { mapView.insertOverlay(o, above: contours) }
+            // Keep blocks above the contours and under the track and the measuring line.
+            for o in overlays { mapView.insertOverlay(o, below: track) }
             mapView.addAnnotations(labels)
             blockOverlays[f.id] = overlays
             blockLabels[f.id] = labels

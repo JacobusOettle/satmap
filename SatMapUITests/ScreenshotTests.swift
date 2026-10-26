@@ -106,6 +106,13 @@ final class ScreenshotTests: XCTestCase {
         tap("Draw an area on the map")
         sleep(3)
         snap("10-draw-area")
+
+        // Contour lines switched off with the side button.
+        tap("Cancel")
+        tap("Contour lines")
+        sleep(3)
+        XCTAssertEqual(app.buttons["Contour lines"].firstMatch.value as? String, "Off")
+        snap("11-contours-off")
     }
 
     // MARK: - Helpers

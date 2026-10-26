@@ -84,6 +84,9 @@ struct MapScreen: View {
                 CompassButton(mapView: map)
                     .frame(width: 44, height: 44)
             }
+            MapButton(systemImage: model.showContours ? "mountain.2.fill" : "mountain.2", label: "Contour lines",
+                      dimmed: !model.showContours) { model.showContours.toggle() }
+                .accessibilityValue(Text(model.showContours ? "On" : "Off"))
             MapButton(systemImage: "square.dashed", label: "Blocks") { model.sheet = .blocks }
             MapButton(systemImage: offline.activeID == nil ? "arrow.down.circle" : "arrow.down.circle.fill",
                       label: "Offline maps", active: offline.activeID != nil) { model.sheet = .offline }
@@ -124,6 +127,8 @@ struct MapButton: View {
     /// Spoken by VoiceOver.
     let label: String
     var active = false
+    /// A switch that is off: the icon is faded.
+    var dimmed = false
     let action: () -> Void
 
     var body: some View {
@@ -131,7 +136,7 @@ struct MapButton: View {
             Image(systemName: systemImage)
                 .font(.system(size: 20, weight: .semibold))
                 .frame(width: 50, height: 50)
-                .foregroundColor(active ? .black : .white)
+                .foregroundColor(active ? .black : .white.opacity(dimmed ? 0.45 : 1))
                 .background(active ? Color.yellow : Color.black.opacity(0.6))
                 .clipShape(Circle())
                 .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 1))
