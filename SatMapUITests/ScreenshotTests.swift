@@ -228,11 +228,14 @@ final class ScreenshotTests: XCTestCase {
         return isOn() == on
     }
 
-    /// Scrolls a form up, a third of the screen at a time, until the element is on screen (forms only create
-    /// the rows near the screen).
+    /// Scrolls a form up, a third of the screen at a time, until the element is wholly on screen and clear of the
+    /// navigation bar and the home indicator (forms only create the rows near the screen, and a tap on a sliver at
+    /// the bottom edge is lost).
     private func scrollTo(_ element: XCUIElement) {
+        let window = app.windows.firstMatch.frame
         for _ in 0..<8 {
-            if element.exists && element.isHittable { return }
+            if element.exists && element.isHittable,
+               element.frame.minY > window.minY + 100, element.frame.maxY < window.maxY - 40 { return }
             let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
             start.press(forDuration: 0.1, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
             sleep(1)
