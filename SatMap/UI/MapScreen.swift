@@ -50,22 +50,27 @@ struct MapScreen: View {
                     Hint(text: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location.")
                 }
                 Spacer()
-                HStack(alignment: .bottom) {
-                    // Map credits are in the Offline maps sheet.
-                    if let loc = recorder.location, !model.isDrawingArea {
-                        CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
-                                      text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
-                                      id: "myCoordinates")
-                            .padding(.bottom, 24) // clear of MapKit's "Legal" link in the corner
-                    }
-                    Spacer()
-                    if !model.isDrawingArea {
+                // Map credits are in the Offline maps sheet.
+                if !model.isDrawingArea {
+                    HStack {
+                        Spacer()
                         controls
                     }
+                    // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
+                    // bottom of the screen to your coordinates.
+                    .padding(.bottom, Self.controlsLift)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
+            .overlay(alignment: .bottom) {
+                if let loc = recorder.location, !model.isDrawingArea {
+                    CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
+                                  text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
+                                  id: "myCoordinates")
+                        .padding(.bottom, 8)
+                }
+            }
         }
         .sheet(item: $model.sheet) { sheet in
             switch sheet {
@@ -86,6 +91,9 @@ struct MapScreen: View {
             Button("Clear track", role: .destructive) { model.clearTrack() }
         }
     }
+
+    /// Two side buttons and the gap between them.
+    private static let controlsLift: CGFloat = 2 * (50 + 12)
 
     private var controls: some View {
         VStack(spacing: 12) {
