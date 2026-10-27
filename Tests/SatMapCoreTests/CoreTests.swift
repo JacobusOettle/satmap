@@ -952,3 +952,53 @@ final class CoverageDifferenceTests: XCTestCase {
         XCTAssertLessThan(TileCoverage(shape: line, zoom: 8).tileCount, 1 << 10)
     }
 }
+
+/// Fails every request for the first `count` different tiles it is asked for (one round of requests hit by a gap).
+private final class FirstRoundFails: TileFetching {
+    private let lock = NSLock()
+    private let count: Int
+    private var failing = Set<TileID>()
+    private var seen = Set<TileID>()
+
+    init(count: Int) {
+        self.count = count
+    }
+
+    func fetch(_ tile: TileID) async -> TileFetchResult {
+        let fail: Bool = lock.withLock {
+            if !seen.contains(tile) {
+                seen.insert(tile)
+                if seen.count <= count { failing.insert(tile) }
+            }
+            return failing.contains(tile)
+        }
+        return fail ? .failed : .data(Data([0xFF, 0xD8, 0, 0]))
+    }
+}
+
+extension ConcurrencyTests {
+    func testFewerAtOnceWhenAnswersQueueUpOnASlowLink() {
+        // Answers at the connection's own pace keep it growing; answers well over it (data queueing on a slow link,
+        // though under 5 s) bring it down.
+        var c = ConcurrencyController(start: 16, min: 4, max: 32)
+        for _ in 0..<100 { c.record(seconds: 0.33, ok: true) }
+        let grown = c.limit
+        XCTAssertGreaterThan(grown, 16)
+        for _ in 0..<200 { c.record(seconds: 3.5, ok: true) }
+        XCTAssertLessThan(c.limit, grown / 2)
+    }
+
+    func testOneRoundOfFailuresIsNotAnOutage() async throws {
+        // A short gap fails every request that was under way (16 at the start), and only those: the download goes on
+        // (they are retried by the next run), rather than stopping as offline.
+        let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
+        let lat = -33.92, lon = 18.85
+        let square = CoverageShape(polygons: [[GeoPoint(lat: lat, lon: lon), GeoPoint(lat: lat, lon: lon + 0.01),
+                                               GeoPoint(lat: lat + 0.01, lon: lon + 0.01), GeoPoint(lat: lat + 0.01, lon: lon)]])
+        let job = TileDownloadJob(shape: square, layers: [DownloadLayer(name: "sat", store: store, fetcher: FirstRoundFails(count: 16),
+                                                                        zooms: 17...17, pruneByParent: false)],
+                                  concurrency: 32, retryDelay: { _ in 0 })
+        let outcome = await job.run { _ in }
+        XCTAssertEqual(outcome, .completed(failed: 16))
+    }
+}

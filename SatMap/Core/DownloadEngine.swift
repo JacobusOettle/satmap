@@ -58,9 +58,10 @@ enum DownloadOutcome: Equatable {
 }
 
 /// How many tile requests to keep going at once. Tile servers answer each request in about a quarter of a second
-/// however many run together, so more at once is faster, until the connection is full: then requests slow down or
-/// time out. So it starts in the middle, adds one for every `limit` quick answers (up to `max`), and drops by a quarter
-/// (down to `min`) when a request fails or takes longer than `slowSeconds`, at most once per round of requests.
+/// however many run together, so more at once is faster, until the connection is full: then answers queue up behind
+/// each other (which also slows the map on screen) or time out. So it starts in the middle, adds one for every `limit`
+/// quick answers (up to `max`), and drops by a quarter (down to `min`) at most once per round of requests when one
+/// fails or is slow: over `slowSeconds`, or well over the connection's own answer time (the fastest seen lately).
 struct ConcurrencyController {
     let min: Int
     let max: Int
@@ -69,6 +70,8 @@ struct ConcurrencyController {
     private var quick = 0
     private var finished = 0
     private var lastDrop = Int.min / 2
+    /// The fastest answer seen lately (it creeps up slowly, so a change of network is noticed).
+    private(set) var baseSeconds: Double?
 
     init(start: Int, min: Int, max: Int, slowSeconds: Double = 5) {
         self.min = Swift.max(1, min)
@@ -79,7 +82,9 @@ struct ConcurrencyController {
 
     mutating func record(seconds: Double, ok: Bool) {
         finished += 1
-        if !ok || seconds > slowSeconds {
+        let base = Swift.min(baseSeconds.map { $0 * 1.002 } ?? seconds, seconds)
+        baseSeconds = base
+        if !ok || seconds > slowSeconds || seconds > Swift.max(2 * base, base + 1) {
             quick = 0
             // The requests already under way were sent at the old rate: one drop per round.
             if finished - lastDrop >= limit {
@@ -131,6 +136,10 @@ final class TileDownloadJob {
         var progress = DownloadProgress()
         var lastReport = Date.distantPast
         var failuresInARow = 0
+        /// Tiles sent so far, and the count when the current streak of failures began.
+        var launched = 0
+        var streakStart = 0
+        var failedSinceStreak = false
         func emit(force: Bool = false) {
             let now = Date()
             if force || now.timeIntervalSince(lastReport) >= 0.25 {
@@ -238,7 +247,7 @@ final class TileDownloadJob {
 
                 var wentOffline = false
                 var storeFailed = false
-                await withTaskGroup(of: (TileID, TileFetchResult, Double).self) { group in
+                await withTaskGroup(of: (TileID, TileFetchResult, Double, Int, Int).self) { group in
                     var next = 0
                     var inFlight = 0
                     func launch() {
@@ -246,26 +255,33 @@ final class TileDownloadJob {
                         next += 1
                         inFlight += 1
                         let tile = TileID(z: z, x: Int(p.x), y: Int(p.y))
+                        let seq = launched
+                        launched += 1
                         group.addTask { [self] in
-                            let started = Date()
-                            let result = await self.fetchWithRetry(layer.fetcher, tile)
-                            return (tile, result, Date().timeIntervalSince(started))
+                            let (result, seconds, attempts) = await self.fetchWithRetry(layer.fetcher, tile)
+                            return (tile, result, seconds, attempts, seq)
                         }
                     }
                     while next < todo.count && inFlight < parallel.limit { launch() }
-                    while let (tile, result, seconds) = await group.next() {
+                    while let (tile, result, seconds, attempts, seq) = await group.next() {
                         inFlight -= 1
                         switch result {
-                        case .data, .missing: parallel.record(seconds: seconds, ok: true)
+                        // A tile that needed another try counts as trouble too.
+                        case .data, .missing: parallel.record(seconds: seconds, ok: attempts == 1)
                         case .failed: parallel.record(seconds: seconds, ok: false)
                         case .offline: break
                         }
                         progress.parallel = parallel.limit
                         if case .failed = result {
+                            if failuresInARow == 0 { streakStart = launched }
                             failuresInARow += 1
-                            if failuresInARow >= outageThreshold { wentOffline = true }
+                            // Many requests run at once, so one short gap fails a whole round of them together: the
+                            // connection counts as down only when tiles sent after the failures began fail as well.
+                            if seq >= streakStart { failedSinceStreak = true }
+                            if failuresInARow >= outageThreshold && failedSinceStreak { wentOffline = true }
                         } else {
                             failuresInARow = 0
+                            failedSinceStreak = false
                         }
                         switch result {
                         case .data(let d):
@@ -318,12 +334,15 @@ final class TileDownloadJob {
         return .completed(failed: progress.failed)
     }
 
-    private func fetchWithRetry(_ fetcher: TileFetching, _ tile: TileID) async -> TileFetchResult {
+    /// The result, how long the last attempt took and how many attempts it took.
+    private func fetchWithRetry(_ fetcher: TileFetching, _ tile: TileID) async -> (TileFetchResult, Double, Int) {
         var attempt = 1
         while true {
-            if Task.isCancelled { return .failed }
+            if Task.isCancelled { return (.failed, 0, attempt) }
+            let started = Date()
             let r = await fetcher.fetch(tile)
-            guard case .failed = r, attempt < maxAttempts else { return r }
+            let seconds = Date().timeIntervalSince(started)
+            guard case .failed = r, attempt < maxAttempts else { return (r, seconds, attempt) }
             let delay = retryDelay(attempt)
             if delay > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))

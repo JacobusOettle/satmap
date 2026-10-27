@@ -50,8 +50,10 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 - Elevation tiles for the same area are downloaded too, so contours and heights work with no signal.
 - Up to 32 tiles are requested at once. Each takes about a quarter of a second whatever the number, so this is
   what makes a download fast (measured: 8 at once ≈ 30 tiles/s, 32 at once ≈ 95 tiles/s). The number adapts: it
-  starts at 16, grows while tiles come back quickly and drops by a quarter when requests fail or take over 5 s,
-  so a weak connection isn't swamped.
+  starts at 16, grows while tiles come back at the connection's normal pace, and drops by a quarter when requests
+  fail or come back much slower than that (data queueing on a slow link, which would also slow the map on screen).
+  A short gap that fails one round of requests doesn't stop the download: it only counts as offline when tiles
+  sent after the failures began fail too.
 - **Only along roads:** the roads are looked up on OpenStreetMap when you tick the box (all public roads,
   service roads, and farm and forest tracks, which is where most gravel roads are; not footpaths), and only
   the imagery within 15 m of each side of them is downloaded, at every zoom level. Away from the roads the map
