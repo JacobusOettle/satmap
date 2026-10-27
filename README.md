@@ -24,8 +24,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | <img src="docs/screenshots/14-export-backup.jpg" width="250"> | <img src="docs/screenshots/15-coordinates.jpg" width="250"> |
 | **Measuring between two points** | **Kruger National Park roads** | **One level deeper for an area** |
 | <img src="docs/screenshots/16-measure-two-points.jpg" width="250"> | <img src="docs/screenshots/17-kruger-roads.jpg" width="250"> | <img src="docs/screenshots/18-area-deeper-level.jpg" width="250"> |
-| **Measuring a shape's area** | | |
-| <img src="docs/screenshots/19-measure-area.jpg" width="250"> | | |
+| **Measuring a shape's area** | **Where I've been** | |
+| <img src="docs/screenshots/19-measure-area.jpg" width="250"> | <img src="docs/screenshots/20-where-ive-been.jpg" width="250"> | |
 
 ## Features
 
@@ -36,8 +36,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | My location + dotted track | Blue dot (grey while the GPS sleeps) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
 | KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in white with their names. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap a spot on the map, or tap the ruler again to drop a marker under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Add more points the same way (B, C, D …): the panel shows the total distance along the line, the last leg, and how much higher or lower the last point is than A. Tap A again (or **Close shape**) to close the shape: its area (hectares and m²) and perimeter. **Undo** removes the last point; ✕ clears it all. |
-| Coordinates | Tap a spot on the map: a pin marks it and its coordinates (latitude, longitude in decimal degrees) show at the top. Your own coordinates show at the bottom left and follow you. Tap either to copy it to the clipboard. |
-| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them), or **Kruger National Park roads** (every tar and gravel road inside the park, shipped with the app; see below). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
+| Coordinates | Tap a spot on the map: a pin marks it and its coordinates (latitude, longitude in decimal degrees) show at the top. Your own coordinates show at the bottom in the centre and follow you. Tap either to copy it to the clipboard. |
+| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them), or **Kruger National Park roads** (every tar and gravel road inside the park, shipped with the app; see below), or **Where I've been** (along your dotted track; see below). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
 
 ### Offline downloads
 
@@ -58,6 +58,10 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   the parts inside the park are kept. Imagery is saved 15 m to each side of them, elevation for the whole park.
   Refresh the list with the *Kruger roads* workflow (`tools/extract_kruger_osm.sh`, `tools/build_kruger_roads.py`); roads missing
   from OpenStreetMap can be added as KML/KMZ files in `tools/kruger-extra`.
+- **Where I've been:** imagery 15 m to each side of your dotted track (the same as along roads), for when you
+  leave the roads, with elevation under it. It is one area, "Where I've been", that you update: tap it again after
+  a trip and the new parts of the track are added; what is already saved is skipped. Parts of earlier trips stay
+  in the area even after you clear the track.
 - Keep SatMap open while it downloads; the screen stays on. In the background the download pauses so it
   can't compete with track recording for battery or CPU, and it continues when you return.
 - **Going deeper later:** tap a downloaded area to open it: *Show on the map*, how deep the imagery it found goes,

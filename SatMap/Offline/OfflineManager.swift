@@ -26,6 +26,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         var roads: [[GeoPoint]]?
         /// Or the roads of a set shipped with the app (`RoadPresets`), so they aren't stored again here.
         var preset: String?
+        /// The area along your recorded track ("Where I've been"), updated from the latest track each time.
+        var isTrack: Bool?
         var maxZoom: Int
         var allowCellular: Bool
         var status: Status
@@ -114,6 +116,33 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         publishToMap()
         startNextIfIdle()
         return area
+    }
+
+    /// Downloads imagery along your recorded track (with `Roads.corridorMeters` each side) and elevation under it,
+    /// into one area that is updated each time: the new parts of the track are added and what is saved is skipped.
+    func updateTrackArea(name: String, lines: [[GeoPoint]], maxZoom: Int, allowCellular: Bool) {
+        let shape = Roads.corridor(lines)
+        guard let existing = areas.first(where: { $0.isTrack == true }) else {
+            let area = add(name: name, shape: shape, roads: lines, preset: nil, maxZoom: maxZoom, allowCellular: allowCellular)
+            update(area.id) { $0.isTrack = true }
+            return
+        }
+        update(existing.id) {
+            $0.name = name
+            $0.shape = shape
+            $0.roads = lines
+            $0.maxZoom = maxZoom
+            $0.allowCellular = allowCellular
+            $0.status = .queued
+            $0.failedTiles = 0
+            $0.problem = nil
+        }
+        publishToMap()
+        if activeID == existing.id {
+            task?.cancel() // the run ends as cancelled; the area stays queued and starts again with the new track
+        } else {
+            startNextIfIdle()
+        }
     }
 
     /// Downloads an area to a different (deeper) zoom level. Tiles already saved are kept and skipped, so only the

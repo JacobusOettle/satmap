@@ -165,6 +165,18 @@ final class ScreenshotTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
         sleep(1)
 
+        // Imagery along the simulated walk (not downloaded here, so the area counts below stay the same).
+        tap("Where I've been")
+        if app.staticTexts["Your track"].waitForExistence(timeout: 30) {
+            sleep(3) // size estimate
+            scrollTo(app.buttons["Download"].firstMatch)
+            snap("20-where-ive-been")
+        } else {
+            XCTFail("The track didn't load")
+        }
+        app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
+        sleep(1)
+
         // The same blocks again, but satellite imagery only along the roads.
         tap("Use the blocks in a KML file")
         tapRow(startingWith: "Demo farm")

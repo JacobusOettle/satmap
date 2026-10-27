@@ -9,6 +9,8 @@ struct NewAreaView: View {
     var showsCancel = false
     /// A road set shipped with the app (`RoadPresets`): imagery is always downloaded along its roads.
     var presetID: String?
+    /// Your recorded track ("Where I've been"): imagery along it, updating the one track area.
+    var trackLines: [[GeoPoint]]?
 
     @State private var name: String
     /// The deepest zoom level to download; remembered for the next area.
@@ -36,14 +38,18 @@ struct NewAreaView: View {
         case failed(String)
     }
 
-    init(model: AppModel, area: PendingArea, showsCancel: Bool = false, presetID: String? = nil) {
+    init(model: AppModel, area: PendingArea, showsCancel: Bool = false, presetID: String? = nil, trackLines: [[GeoPoint]]? = nil) {
         self.model = model
         self.area = area
         self.showsCancel = showsCancel
         self.presetID = presetID
+        self.trackLines = trackLines
         _name = State(initialValue: area.name)
-        _alongRoads = State(initialValue: presetID != nil)
+        _alongRoads = State(initialValue: presetID != nil || trackLines != nil)
     }
+
+    /// Imagery always goes along given lines (a shipped road list or your track), never the whole area.
+    private var fixedLines: Bool { presetID != nil || trackLines != nil }
 
     var body: some View {
         Form {
@@ -53,7 +59,13 @@ struct NewAreaView: View {
 
             detailSection
 
-            if let preset = presetID.flatMap(RoadPresets.load) {
+            if trackLines != nil {
+                Section {
+                    roadsStatus
+                } footer: {
+                    Text("Satellite imagery \(Int(Roads.corridorMeters)) m to each side of everywhere you've been (your dotted track), with elevation under it. Come back here after a trip to add the new parts: what is already saved is skipped.")
+                }
+            } else if let preset = presetID.flatMap(RoadPresets.load) {
                 Section {
                     roadsStatus
                 } footer: {
@@ -80,9 +92,14 @@ struct NewAreaView: View {
 
             Section {
                 Button {
-                    model.startDownload(PendingArea(name: name.trimmingCharacters(in: .whitespaces), shape: area.shape),
-                                        roads: presetID == nil && alongRoads ? roadLines : nil, preset: presetID,
-                                        maxZoom: chosenZoom, allowCellular: allowCellular)
+                    let trimmed = name.trimmingCharacters(in: .whitespaces)
+                    if let lines = trackLines {
+                        model.startTrackDownload(name: trimmed, lines: lines, maxZoom: chosenZoom, allowCellular: allowCellular)
+                    } else {
+                        model.startDownload(PendingArea(name: trimmed, shape: area.shape),
+                                            roads: presetID == nil && alongRoads ? roadLines : nil, preset: presetID,
+                                            maxZoom: chosenZoom, allowCellular: allowCellular)
+                    }
                     // Back to the map, where the download banner shows progress.
                     model.sheet = nil
                     dismiss()
@@ -107,9 +124,9 @@ struct NewAreaView: View {
         }
         .task {
             let shape = area.shape
-            // Along a preset's roads the whole area only matters for elevation; its imagery counts for a big
+            // Along a road list or your track the whole area only matters for elevation; its imagery counts for a big
             // park would take long to work out.
-            let zooms = presetID == nil ? 0...TileSources.imageryMaxZoom : 0...Terrarium.maxZoom
+            let zooms = fixedLines ? 0...Terrarium.maxZoom : 0...TileSources.imageryMaxZoom
             let result = await Task.detached(priority: .userInitiated) {
                 (TileCoverage.tileCounts(shape: shape, zooms: zooms), AppPaths.freeDiskSpace())
             }.value
@@ -171,7 +188,8 @@ struct NewAreaView: View {
             }
         case .loaded(_, let km, _):
             if km > 0 {
-                row("Roads and tracks", km < 10 ? String(format: "%.1f km", km) : "\(Format.count(Int(km.rounded()))) km")
+                row(trackLines != nil ? "Your track" : "Roads and tracks",
+                    km < 10 ? String(format: "%.1f km", km) : "\(Format.count(Int(km.rounded()))) km")
             } else {
                 Text("No roads or tracks are mapped in this area.").foregroundColor(.orange)
             }
@@ -241,7 +259,9 @@ struct NewAreaView: View {
         let preset = presetID.flatMap(RoadPresets.load)
         do {
             let lines: [[GeoPoint]]
-            if let preset = preset {
+            if let track = trackLines {
+                lines = track
+            } else if let preset = preset {
                 lines = preset.roads
             } else {
                 lines = try await RoadFetcher.roads(in: shape)

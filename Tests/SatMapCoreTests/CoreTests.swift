@@ -603,6 +603,39 @@ final class RoadsTests: XCTestCase {
         XCTAssertEqual(Roads.clip([[GeoPoint(lat: -33.912, lon: 18.905), GeoPoint(lat: -33.912, lon: 18.927)]], to: u).count, 2)
     }
 
+    func testTrackLinesSplitAtBreaksAndSimplify() {
+        // 40 points walking east every ~10 m in a straight line, a break, then a short second walk and a lone point.
+        var track = (0..<40).map { TrackPoint(lat: -24.99, lon: 31.59 + Double($0) * 0.0001, time: Double($0), startsSegment: $0 == 0) }
+        track += (0..<3).map { TrackPoint(lat: -25.0 - Double($0) * 0.0001, lon: 31.6, time: 100 + Double($0), startsSegment: $0 == 0) }
+        track.append(TrackPoint(lat: -25.01, lon: 31.61, time: 200, startsSegment: true))
+        let lines = Roads.trackLines(track)
+        XCTAssertEqual(lines.count, 3)
+        XCTAssertEqual(lines[0], [track[0].geo, track[39].geo]) // a straight walk keeps only its ends
+        XCTAssertEqual(lines[1].count, 2)
+        XCTAssertEqual(lines[2], [track[43].geo])
+        XCTAssertEqual(Roads.length(lines), 39 * 10.09 + 2 * 11.06, accuracy: 3)
+        XCTAssertEqual(Roads.trackLines([]), [])
+        // The corridor covers a lone point too.
+        XCTAssertGreaterThan(TileCoverage(shape: Roads.corridor([lines[2]]), zoom: 19).tileCount, 0)
+    }
+
+    func testTrackAreaKeepsEarlierTripsAfterTheTrackIsCleared() {
+        let east = [GeoPoint(lat: -24.99, lon: 31.59), GeoPoint(lat: -24.99, lon: 31.594)]
+        let longer = [GeoPoint(lat: -24.99, lon: 31.59), GeoPoint(lat: -24.99, lon: 31.596)]
+        let elsewhere = [GeoPoint(lat: -25.05, lon: 31.70), GeoPoint(lat: -25.05, lon: 31.702)]
+        // The same track, grown: nothing earlier is kept twice.
+        XCTAssertEqual(Roads.mergeTrack(previous: [east], latest: [longer]), [longer])
+        // The track was cleared and a new trip recorded: the earlier trip stays in the area.
+        let merged = Roads.mergeTrack(previous: [east], latest: [elsewhere])
+        XCTAssertEqual(merged.count, 2)
+        XCTAssertEqual(Roads.length(merged), Roads.length([east, elsewhere]), accuracy: 1)
+        // A new trip that partly overlaps: only the part not covered again is kept.
+        let partly = Roads.mergeTrack(previous: [east], latest: [[GeoPoint(lat: -24.99, lon: 31.592), GeoPoint(lat: -24.99, lon: 31.596)]])
+        XCTAssertEqual(Roads.length(partly), Roads.length([longer]), accuracy: 40)
+        XCTAssertEqual(Roads.mergeTrack(previous: [], latest: [east]), [east])
+        XCTAssertEqual(Roads.mergeTrack(previous: [east], latest: []), [east])
+    }
+
     func testDownloadsImageryOnlyAlongTheRoads() async throws {
         let road = [GeoPoint(lat: -33.915, lon: 18.910), GeoPoint(lat: -33.915, lon: 18.922)]
         let corridor = Roads.corridor([road])

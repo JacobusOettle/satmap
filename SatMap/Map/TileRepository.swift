@@ -34,7 +34,8 @@ final class TileRepository {
     }
 
     private final class OpenArea {
-        let ref: AreaRef
+        /// Replaced when the area grows (the area along your track is updated as the track gets longer).
+        var ref: AreaRef
         var stores: [String: MBTiles] = [:]
         var lastAttempt: [String: Date] = [:]
 
@@ -102,7 +103,12 @@ final class TileRepository {
         }
         var next: [OpenArea] = []
         for r in refs {
-            next.append(areas.first(where: { $0.ref.id == r.id }) ?? OpenArea(ref: r))
+            if let open = areas.first(where: { $0.ref.id == r.id }) {
+                open.ref = r // bounds may have changed; the open stores stay valid
+                next.append(open)
+            } else {
+                next.append(OpenArea(ref: r))
+            }
         }
         areas = next
     }

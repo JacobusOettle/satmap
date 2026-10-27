@@ -29,6 +29,11 @@ struct OfflineSheet: View {
                     } label: {
                         Label("Kruger National Park roads", systemImage: "car")
                     }
+                    NavigationLink {
+                        TrackAreaView(model: model)
+                    } label: {
+                        Label("Where I've been", systemImage: "figure.walk")
+                    }
                 } footer: {
                     Text("Saves satellite imagery at the highest detail available plus elevation data for contours and heights, so the map works with no signal.")
                 }
@@ -134,7 +139,7 @@ private struct AreaRow: View {
                 Text(statusText)
                     .font(.caption)
                     .foregroundColor(statusColor)
-                Text("\(Format.bytes(area.bytesOnDisk)) · up to zoom \(area.maxZoom)\(area.alongRoads ? " · along roads" : "")\(area.allowCellular ? " · mobile data allowed" : "")")
+                Text("\(Format.bytes(area.bytesOnDisk)) · up to zoom \(area.maxZoom)\(area.isTrack == true ? " · along your track" : area.alongRoads ? " · along roads" : "")\(area.allowCellular ? " · mobile data allowed" : "")")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -188,6 +193,38 @@ private struct PresetAreaView: View {
                         presetID: presetID)
         } else {
             Text("The road list is missing from this build of SatMap.").foregroundColor(.secondary)
+        }
+    }
+}
+
+/// "Where I've been": the download screen for imagery along the recorded track, plus the earlier trips already in
+/// the track area (the track may have been cleared since). Worked out once when shown.
+private struct TrackAreaView: View {
+    @ObservedObject var model: AppModel
+    @State private var lines: [[GeoPoint]]?
+
+    var body: some View {
+        Group {
+            if let lines = lines, !lines.isEmpty {
+                NewAreaView(model: model,
+                            area: PendingArea(name: model.offline.areas.first { $0.isTrack == true }?.name ?? "Where I've been",
+                                              shape: Roads.corridor(lines)),
+                            trackLines: lines)
+            } else if lines != nil {
+                Text("No track recorded yet. Your dotted track is recorded while SatMap knows where you are.")
+                    .foregroundColor(.secondary)
+                    .padding()
+            } else {
+                ProgressView()
+            }
+        }
+        .task {
+            guard lines == nil else { return }
+            let track = model.track
+            let previous = model.offline.areas.first { $0.isTrack == true }?.roads ?? []
+            lines = await Task.detached(priority: .userInitiated) {
+                Roads.mergeTrack(previous: previous, latest: Roads.trackLines(track))
+            }.value
         }
     }
 }

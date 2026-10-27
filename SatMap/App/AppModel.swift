@@ -323,6 +323,11 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         draftArea = nil
     }
 
+    /// "Where I've been": imagery along the recorded track, added to (or creating) the track area.
+    func startTrackDownload(name: String, lines: [[GeoPoint]], maxZoom: Int, allowCellular: Bool) {
+        offline.updateTrackArea(name: name, lines: lines, maxZoom: maxZoom, allowCellular: allowCellular)
+    }
+
     func discardPendingArea() {
         pendingArea = nil
         draftArea = nil

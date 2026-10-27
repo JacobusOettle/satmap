@@ -85,9 +85,14 @@ enum Roads {
     /// The parts of the roads inside the area: each road is checked every 10 m or less against the area's
     /// tiles at zoom 21 (about 15 m), and the result is simplified to within 1 m.
     static func clip(_ roads: [[GeoPoint]], to area: CoverageShape) -> [[GeoPoint]] {
+        clip(roads, to: area, keepInside: true)
+    }
+
+    /// The parts of the roads inside the area (`keepInside`) or outside it, checked as in `clip(_:to:)`.
+    private static func clip(_ roads: [[GeoPoint]], to area: CoverageShape, keepInside: Bool) -> [[GeoPoint]] {
         let z = 21
         let coverage = TileCoverage(shape: area, zoom: z)
-        func inside(_ p: GeoPoint) -> Bool { coverage.contains(TileID.containing(p, z: z)) }
+        func inside(_ p: GeoPoint) -> Bool { coverage.contains(TileID.containing(p, z: z)) == keepInside }
         func lerp(_ a: GeoPoint, _ b: GeoPoint, _ t: Double) -> GeoPoint {
             GeoPoint(lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t)
         }
@@ -126,6 +131,30 @@ enum Roads {
         roads.reduce(0) { total, line in
             zip(line, line.dropFirst()).reduce(total) { $0 + Geo.distance($1.0, $1.1) }
         }
+    }
+
+    /// The recorded track as lines (a new line wherever the dotted line breaks), simplified to within 2 m, for
+    /// downloading imagery along where you have been. A lone point stays a one-point line (its corridor is a square).
+    static func trackLines(_ track: [TrackPoint]) -> [[GeoPoint]] {
+        var lines: [[GeoPoint]] = []
+        var current: [GeoPoint] = []
+        for p in track {
+            if p.startsSegment, !current.isEmpty {
+                lines.append(current)
+                current = []
+            }
+            current.append(p.geo)
+        }
+        if !current.isEmpty { lines.append(current) }
+        return lines.map { simplify($0, toleranceMeters: 2) }
+    }
+
+    /// The lines of the area along your track after an update: the latest track plus the parts of the earlier lines
+    /// it doesn't cover (the track may have been cleared since), so imagery saved before stays part of the area.
+    static func mergeTrack(previous: [[GeoPoint]], latest: [[GeoPoint]]) -> [[GeoPoint]] {
+        guard !previous.isEmpty else { return latest }
+        guard !latest.isEmpty else { return previous }
+        return latest + clip(previous, to: corridor(latest), keepInside: false)
     }
 
     /// Douglas–Peucker in local metres around the line's first point.
