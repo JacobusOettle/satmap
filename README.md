@@ -54,7 +54,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 - **Kruger National Park roads:** the park's boundary and every road in it (tar, gravel and management
   tracks, about the same road types as above) come with the app, from OpenStreetMap, so no lookup is needed. Only
   the parts inside the park are kept. Imagery is saved 15 m to each side of them, elevation for the whole park.
-  Refresh the list with the *Kruger roads* workflow (`tools/fetch_kruger_osm.py`, `tools/build_kruger_roads.py`).
+  Refresh the list with the *Kruger roads* workflow (`tools/extract_kruger_osm.sh`, `tools/build_kruger_roads.py`); roads missing
+  from OpenStreetMap can be added as KML/KMZ files in `tools/kruger-extra`.
 - Keep SatMap open while it downloads; the screen stays on. In the background the download pauses so it
   can't compete with track recording for battery or CPU, and it continues when you return.
 - Downloads resume where they stopped: after **Pause**, losing signal, leaving Wi-Fi, or closing the app.

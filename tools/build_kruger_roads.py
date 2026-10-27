@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Builds SatMap/Resources/KrugerRoads.json from tools/fetch_kruger_osm.py's output.
+"""Builds SatMap/Resources/KrugerRoads.json from tools/extract_kruger_osm.sh's output.
 
 Keeps only the parts of roads inside the park boundary (checked every 10 m or less), simplifies them to within
 1 m, and stores the park's outer boundary (simplified to 20 m) and the roads as encoded polylines (RoadPreset in
 SatMap/Core/Roads.swift reads them).
 
-    python3 tools/build_kruger_roads.py <folder with boundary.json and roads.json> SatMap/Resources/KrugerRoads.json
+    python3 tools/build_kruger_roads.py <folder with boundary.geojson and roads.geojson> SatMap/Resources/KrugerRoads.json \
+        [folder of extra .kml/.kmz files]
+
+Roads from the extra KML/KMZ files (their lines; polygons such as drone blocks and points are ignored) are added
+too, for roads OpenStreetMap doesn't have. The output tells how much of them OpenStreetMap already covered.
 """
 import bisect
 import collections
 import datetime
 import json
 import math
+import os
 import sys
+import xml.etree.ElementTree as ET
+import zipfile
 
 STEP_M = 10.0      # how often a road is checked against the boundary
 ROW_M = 20.0       # height of the boundary index rows
@@ -35,41 +42,25 @@ class Projection:
         return (self.lat0 + y / self.my, self.lon0 + x / self.mx)
 
 
-def rings_from_relation(rel):
-    """Joins the member ways of a multipolygon relation into closed rings, by role."""
-    pieces = {"outer": [], "inner": []}
-    for m in rel.get("members", []):
-        if m.get("type") != "way" or not m.get("geometry"):
-            continue
-        pts = [(g["lat"], g["lon"]) for g in m["geometry"] if g]
-        if len(pts) >= 2:
-            pieces["inner" if m.get("role") == "inner" else "outer"].append(pts)
-    rings = {}
-    for role, segs in pieces.items():
-        out = []
-        segs = [list(s) for s in segs]
-        while segs:
-            ring = segs.pop()
-            while ring[0] != ring[-1]:
-                for i, s in enumerate(segs):
-                    if s[0] == ring[-1]:
-                        ring += s[1:]
-                    elif s[-1] == ring[-1]:
-                        ring += s[-2::-1]
-                    elif s[-1] == ring[0]:
-                        ring = s[:-1] + ring
-                    elif s[0] == ring[0]:
-                        ring = s[:0:-1] + ring
-                    else:
-                        continue
-                    segs.pop(i)
-                    break
-                else:
-                    print(f"warning: an {role} ring does not close ({len(ring)} points); closing it", file=sys.stderr)
-                    ring.append(ring[0])
-            out.append(ring)
-        rings[role] = out
+def rings_from_geojson(doc):
+    """Outer and inner rings of the (Multi)Polygon features, as (lat, lon) lists."""
+    rings = {"outer": [], "inner": []}
+    for f in doc.get("features", []):
+        g = f.get("geometry") or {}
+        polys = g["coordinates"] if g.get("type") == "MultiPolygon" else [g["coordinates"]] if g.get("type") == "Polygon" else []
+        for poly in polys:
+            for i, ring in enumerate(poly):
+                rings["outer" if i == 0 else "inner"].append([(lat, lon) for lon, lat in ring])
     return rings
+
+
+def lines_from_geojson(doc):
+    """(tags, [(lat, lon)]) for every LineString (or MultiLineString part)."""
+    for f in doc.get("features", []):
+        g = f.get("geometry") or {}
+        parts = [g["coordinates"]] if g.get("type") == "LineString" else g["coordinates"] if g.get("type") == "MultiLineString" else []
+        for part in parts:
+            yield f.get("properties") or {}, [(lat, lon) for lon, lat in part]
 
 
 class Inside:
@@ -141,14 +132,82 @@ def encode(points):
     return "".join(out)
 
 
+def kml_lines(path):
+    """Every LineString in a .kml or .kmz file, as (lat, lon) lists (polygons and points are left out)."""
+    if path.lower().endswith(".kmz"):
+        with zipfile.ZipFile(path) as z:
+            name = next((n for n in z.namelist() if n.lower().endswith(".kml")), None)
+            if name is None:
+                return []
+            root = ET.fromstring(z.read(name))
+    else:
+        root = ET.parse(path).getroot()
+    lines = []
+    for el in root.iter():
+        if el.tag.rsplit("}", 1)[-1] != "LineString":
+            continue
+        for c in el:
+            if c.tag.rsplit("}", 1)[-1] == "coordinates" and c.text:
+                pts = []
+                for tok in c.text.split():
+                    parts = tok.split(",")
+                    if len(parts) >= 2:
+                        pts.append((float(parts[1]), float(parts[0])))
+                if len(pts) >= 2:
+                    lines.append(pts)
+    return lines
+
+
+class NearRoads:
+    """Answers "is there a road within `radius` metres of this point?" with a grid of road segments."""
+
+    def __init__(self, lines_xy, radius):
+        self.r = radius
+        self.cell = max(radius, 50.0)
+        self.grid = collections.defaultdict(list)
+        for line in lines_xy:
+            for a, b in zip(line, line[1:]):
+                x0, x1 = sorted((a[0], b[0]))
+                y0, y1 = sorted((a[1], b[1]))
+                for gx in range(int((x0 - radius) // self.cell), int((x1 + radius) // self.cell) + 1):
+                    for gy in range(int((y0 - radius) // self.cell), int((y1 + radius) // self.cell) + 1):
+                        self.grid[(gx, gy)].append((a, b))
+
+    def __call__(self, x, y):
+        for (ax, ay), (bx, by) in self.grid.get((int(x // self.cell), int(y // self.cell)), ()):
+            dx, dy = bx - ax, by - ay
+            ll = dx * dx + dy * dy
+            t = 0.0 if ll == 0 else max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / ll))
+            if math.hypot(ax + t * dx - x, ay + t * dy - y) <= self.r:
+                return True
+        return False
+
+
+def clip_runs(xy, inside):
+    """The parts of a line inside the park, checked every STEP_M or less."""
+    runs, run = [], []
+    for (ax, ay), (bx, by) in zip(xy, xy[1:]):
+        n = max(1, math.ceil(math.hypot(bx - ax, by - ay) / STEP_M))
+        for k in range(n):
+            t0, tm, t1 = k / n, (k + 0.5) / n, (k + 1) / n
+            if inside(ax + (bx - ax) * tm, ay + (by - ay) * tm):
+                if not run:
+                    run.append((ax + (bx - ax) * t0, ay + (by - ay) * t0))
+                run.append((ax + (bx - ax) * t1, ay + (by - ay) * t1))
+            elif run:
+                runs.append(run)
+                run = []
+    if run:
+        runs.append(run)
+    return [r for r in runs if len(r) >= 2]
+
+
 def length_m(pts_xy):
     return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts_xy, pts_xy[1:]))
 
 
 def main(src, dst):
-    boundary = json.load(open(f"{src}/boundary.json"))
-    rel = next(e for e in boundary["elements"] if e["type"] == "relation")
-    rings = rings_from_relation(rel)
+    rings = rings_from_geojson(json.load(open(f"{src}/boundary.geojson")))
     outer = rings["outer"]
     if not outer:
         raise SystemExit("no outer boundary")
@@ -158,42 +217,51 @@ def main(src, dst):
     inside = Inside([[proj.xy(*p) for p in r] for r in outer + rings["inner"]])
     print(f"boundary: {len(outer)} outer, {len(rings['inner'])} inner rings, {sum(map(len, outer))} points")
 
-    roads = json.load(open(f"{src}/roads.json"))
-    kept, total_m, kept_m = [], 0.0, 0.0
+    kept, total_m, kept_m, ways = [], 0.0, 0.0, 0
     by_type = collections.Counter()
     by_surface = collections.Counter()
-    for way in roads["elements"]:
-        if way.get("type") != "way":
-            continue
-        geom = [(g["lat"], g["lon"]) for g in way.get("geometry") or [] if g]
+    for tags, geom in lines_from_geojson(json.load(open(f"{src}/roads.geojson"))):
         if len(geom) < 2:
             continue
+        ways += 1
         xy = [proj.xy(*p) for p in geom]
         total_m += length_m(xy)
-        run = []
-        runs = []
-        for (ax, ay), (bx, by) in zip(xy, xy[1:]):
-            n = max(1, math.ceil(math.hypot(bx - ax, by - ay) / STEP_M))
-            for k in range(n):
-                t0, tm, t1 = k / n, (k + 0.5) / n, (k + 1) / n
-                if inside(ax + (bx - ax) * tm, ay + (by - ay) * tm):
-                    if not run:
-                        run.append((ax + (bx - ax) * t0, ay + (by - ay) * t0))
-                    run.append((ax + (bx - ax) * t1, ay + (by - ay) * t1))
-                elif run:
-                    runs.append(run)
-                    run = []
-        if run:
-            runs.append(run)
-        tags = way.get("tags", {})
-        for r in runs:
-            if len(r) < 2:
-                continue
+        for r in clip_runs(xy, inside):
             m = length_m(r)
             kept_m += m
             by_type[tags.get("highway", "?")] += m
             by_surface[tags.get("surface", "unknown")] += m
-            kept.append([proj.ll(*p) for p in simplify(r, ROAD_TOL_M)])
+            kept.append(r)
+    osm_count = len(kept)
+
+    # Roads from KML files: added where OpenStreetMap has no road within 15 m (the imagery corridor).
+    extra_dir = sys.argv[3] if len(sys.argv) > 3 else None
+    if extra_dir and os.path.isdir(extra_dir):
+        near = NearRoads(kept, 15.0)
+        for name in sorted(os.listdir(extra_dir)):
+            if not name.lower().endswith((".kml", ".kmz")):
+                continue
+            lines = kml_lines(os.path.join(extra_dir, name))
+            km_in = km_new = 0.0
+            for line in lines:
+                for r in clip_runs([proj.xy(*p) for p in line], inside):
+                    km_in += length_m(r) / 1000
+                    # Split into pieces OpenStreetMap already covers and pieces it doesn't; keep the latter.
+                    piece = []
+                    dense = clip_runs(r, lambda x, y: True)[0]
+                    for p in dense:
+                        if near(*p):
+                            if len(piece) >= 2:
+                                km_new += length_m(piece) / 1000
+                                kept.append(piece)
+                            piece = []
+                        else:
+                            piece.append(p)
+                    if len(piece) >= 2:
+                        km_new += length_m(piece) / 1000
+                        kept.append(piece)
+            print(f"{name}: {len(lines)} lines, {km_in:.1f} km inside the park, {km_new:.1f} km not in OpenStreetMap (added)")
+    kept = [[proj.ll(*p) for p in simplify(r, ROAD_TOL_M)] for r in kept]
 
     outer_simple = []
     for r in outer:
@@ -210,8 +278,9 @@ def main(src, dst):
     with open(dst, "w") as f:
         json.dump(doc, f, separators=(",", ":"))
 
-    print(f"roads: {len(roads['elements'])} ways, {total_m / 1000:.0f} km in total, "
-          f"{kept_m / 1000:.0f} km inside the park in {len(kept)} pieces, {sum(map(len, kept))} points")
+    print(f"roads: {ways} ways, {total_m / 1000:.0f} km in total, "
+          f"{kept_m / 1000:.0f} km inside the park in {osm_count} pieces; {len(kept)} pieces with KML roads, "
+          f"{sum(map(len, kept))} points")
     print("by highway type (km):", ", ".join(f"{k} {v / 1000:.0f}" for k, v in by_type.most_common()))
     print("by surface (km):", ", ".join(f"{k} {v / 1000:.0f}" for k, v in by_surface.most_common(12)))
     print(f"boundary simplified to {sum(map(len, outer_simple))} points; wrote {dst}")
