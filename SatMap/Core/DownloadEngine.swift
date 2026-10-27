@@ -44,6 +44,8 @@ struct DownloadProgress: Equatable {
     /// bound, as deeper levels shrink where the imagery stops), and how many of them are behind.
     var overallDone: Int = 0
     var overallTotal: Int = 0
+    /// Requests running at once at the moment.
+    var parallel: Int = 0
 }
 
 enum DownloadOutcome: Equatable {
@@ -53,6 +55,45 @@ enum DownloadOutcome: Equatable {
     case offline
     /// Tiles could not be saved (usually the phone is full).
     case storageError(String)
+}
+
+/// How many tile requests to keep going at once. Tile servers answer each request in about a quarter of a second
+/// however many run together, so more at once is faster, until the connection is full: then requests slow down or
+/// time out. So it starts in the middle, adds one for every `limit` quick answers (up to `max`), and drops by a quarter
+/// (down to `min`) when a request fails or takes longer than `slowSeconds`, at most once per round of requests.
+struct ConcurrencyController {
+    let min: Int
+    let max: Int
+    let slowSeconds: Double
+    private(set) var limit: Int
+    private var quick = 0
+    private var finished = 0
+    private var lastDrop = Int.min / 2
+
+    init(start: Int, min: Int, max: Int, slowSeconds: Double = 5) {
+        self.min = Swift.max(1, min)
+        self.max = Swift.max(self.min, max)
+        self.slowSeconds = slowSeconds
+        limit = Swift.min(self.max, Swift.max(self.min, start))
+    }
+
+    mutating func record(seconds: Double, ok: Bool) {
+        finished += 1
+        if !ok || seconds > slowSeconds {
+            quick = 0
+            // The requests already under way were sent at the old rate: one drop per round.
+            if finished - lastDrop >= limit {
+                limit = Swift.max(min, limit * 3 / 4)
+                lastDrop = finished
+            }
+            return
+        }
+        quick += 1
+        if quick >= limit {
+            limit = Swift.min(max, limit + 1)
+            quick = 0
+        }
+    }
 }
 
 /// Downloads every tile of a coverage shape, level by level, skipping tiles already stored, so
@@ -65,6 +106,7 @@ final class TileDownloadJob {
 
     let shape: CoverageShape
     let layers: [DownloadLayer]
+    /// The most requests at once; how many really run adapts to the connection (`ConcurrencyController`).
     let concurrency: Int
     let maxAttempts: Int
     /// Seconds to wait before retry n (n = 1, 2, ...).
@@ -112,6 +154,8 @@ final class TileDownloadJob {
             progress.layer = layer.name
             progress.maxZoom = layer.zooms.upperBound
             defer { layer.store.checkpoint() }
+            // Each layer comes from its own server.
+            var parallel = ConcurrencyController(start: min(16, concurrency), min: min(4, concurrency), max: concurrency)
 
             for (zi, z) in layer.zooms.enumerated() {
                 if Task.isCancelled { return .cancelled }
@@ -162,7 +206,7 @@ final class TileDownloadJob {
 
                 var wentOffline = false
                 var storeFailed = false
-                await withTaskGroup(of: (TileID, TileFetchResult).self) { group in
+                await withTaskGroup(of: (TileID, TileFetchResult, Double).self) { group in
                     var next = 0
                     var inFlight = 0
                     func launch() {
@@ -170,11 +214,21 @@ final class TileDownloadJob {
                         next += 1
                         inFlight += 1
                         let tile = TileID(z: z, x: Int(p.x), y: Int(p.y))
-                        group.addTask { [self] in (tile, await self.fetchWithRetry(layer.fetcher, tile)) }
+                        group.addTask { [self] in
+                            let started = Date()
+                            let result = await self.fetchWithRetry(layer.fetcher, tile)
+                            return (tile, result, Date().timeIntervalSince(started))
+                        }
                     }
-                    while next < todo.count && inFlight < concurrency { launch() }
-                    while let (tile, result) = await group.next() {
+                    while next < todo.count && inFlight < parallel.limit { launch() }
+                    while let (tile, result, seconds) = await group.next() {
                         inFlight -= 1
+                        switch result {
+                        case .data, .missing: parallel.record(seconds: seconds, ok: true)
+                        case .failed: parallel.record(seconds: seconds, ok: false)
+                        case .offline: break
+                        }
+                        progress.parallel = parallel.limit
                         if case .failed = result {
                             failuresInARow += 1
                             if failuresInARow >= outageThreshold { wentOffline = true }
@@ -203,7 +257,7 @@ final class TileDownloadJob {
                             group.cancelAll()
                             continue
                         }
-                        if next < todo.count { launch() }
+                        while next < todo.count && inFlight < parallel.limit { launch() }
                     }
                 }
                 if !layer.store.flush() || storeFailed {

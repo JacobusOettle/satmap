@@ -864,3 +864,64 @@ final class TileFallbackTests: XCTestCase {
         XCTAssertEqual(cache.count, 1)
     }
 }
+
+final class ConcurrencyTests: XCTestCase {
+    func testMoreAtOnceWhileAnswersComeQuickly() {
+        var c = ConcurrencyController(start: 16, min: 4, max: 32)
+        XCTAssertEqual(c.limit, 16)
+        for _ in 0..<2_000 { c.record(seconds: 0.25, ok: true) }
+        XCTAssertEqual(c.limit, 32)
+    }
+
+    func testFewerAtOnceWhenRequestsFailOrSlowDown() {
+        var c = ConcurrencyController(start: 32, min: 4, max: 32)
+        // A burst of failures from one round of requests drops the limit once.
+        for _ in 0..<10 { c.record(seconds: 20, ok: false) }
+        XCTAssertEqual(c.limit, 24)
+        // Still failing, round after round: down to the minimum, not below.
+        for _ in 0..<500 { c.record(seconds: 20, ok: false) }
+        XCTAssertEqual(c.limit, 4)
+        // Slow answers count as trouble too.
+        var slow = ConcurrencyController(start: 16, min: 4, max: 32)
+        for _ in 0..<12 { slow.record(seconds: 8, ok: true) } // one round at the new limit: one drop
+        XCTAssertEqual(slow.limit, 12)
+        slow.record(seconds: 8, ok: true) // the next round
+        XCTAssertEqual(slow.limit, 9)
+        // A fixed number when min = max (as in tests and small jobs).
+        var fixed = ConcurrencyController(start: 16, min: 4, max: 4)
+        for _ in 0..<100 { fixed.record(seconds: 0.1, ok: true) }
+        XCTAssertEqual(fixed.limit, 4)
+    }
+}
+
+/// Counts how many requests run at the same time.
+private final class ParallelProbe: TileFetching {
+    private let lock = NSLock()
+    private var running = 0
+    private(set) var most = 0
+
+    func fetch(_ tile: TileID) async -> TileFetchResult {
+        lock.withLock { running += 1; most = max(most, running) }
+        try? await Task.sleep(nanoseconds: 2_000_000)
+        lock.withLock { running -= 1 }
+        return .data(Data([0xFF, 0xD8, 0, 0]))
+    }
+}
+
+extension ConcurrencyTests {
+    func testJobRunsMoreRequestsAtOnceOnAGoodConnection() async throws {
+        let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
+        let probe = ParallelProbe()
+        let lat = -33.92, lon = 18.85
+        let square = CoverageShape(polygons: [[GeoPoint(lat: lat, lon: lon), GeoPoint(lat: lat, lon: lon + 0.02),
+                                               GeoPoint(lat: lat + 0.02, lon: lon + 0.02), GeoPoint(lat: lat + 0.02, lon: lon)]])
+        let job = TileDownloadJob(shape: square, layers: [DownloadLayer(name: "sat", store: store, fetcher: probe, zooms: 0...17, pruneByParent: false)],
+                                  concurrency: 32, retryDelay: { _ in 0 })
+        var last = DownloadProgress()
+        let outcome = await job.run { last = $0 }
+        XCTAssertEqual(outcome, .completed(failed: 0))
+        XCTAssertGreaterThan(probe.most, 16) // grew past the starting 16
+        XCTAssertLessThanOrEqual(probe.most, 32)
+        XCTAssertGreaterThan(last.parallel, 16)
+    }
+}

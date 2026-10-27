@@ -71,7 +71,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         let config = URLSessionConfiguration.default
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        config.httpMaximumConnectionsPerHost = 8
+        // As many as the download job may run at once (only used where the server doesn't multiplex over HTTP/2).
+        config.httpMaximumConnectionsPerHost = 32
         // Short enough that a slow spot doesn't hold up the progress for long (iOS may end a background task whose
         // progress stops for about half a minute); a timed-out tile is tried again.
         config.timeoutIntervalForRequest = 20
@@ -540,7 +541,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             DownloadLayer(name: "Satellite", store: imagery,
                           fetcher: HTTPTileFetcher(session: session, url: TileSources.imageryURL),
                           zooms: 0...area.maxZoom, pruneByParent: true, shape: area.roadLines.map(Roads.corridor)),
-        ], concurrency: 8)
+        ], concurrency: 32)
 
         let id = area.id
         let name = area.name
