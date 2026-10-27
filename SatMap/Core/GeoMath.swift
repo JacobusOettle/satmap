@@ -85,6 +85,11 @@ enum Geo {
         return 2 * earthRadius * asin(min(1, sqrt(h)))
     }
 
+    /// Length of the line through the points, in metres.
+    static func pathLength(_ points: [GeoPoint]) -> Double {
+        zip(points, points.dropFirst()).reduce(0) { $0 + distance($1.0, $1.1) }
+    }
+
     /// Ground metres represented by one normalized world unit at a given latitude.
     static func metersPerWorldUnit(atLatitude lat: Double) -> Double {
         mercatorCircumference * cos(lat * .pi / 180)

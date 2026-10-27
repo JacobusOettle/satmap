@@ -37,6 +37,19 @@ final class GeoTests: XCTestCase {
         XCTAssertEqual(Geo.distance(GeoPoint(lat: 0, lon: 0), GeoPoint(lat: 1, lon: 0)), 111_195, accuracy: 5)
     }
 
+    func testPathLengthAndShapeArea() {
+        // A 100 m × 100 m square near Skukuza (1 ha), measured corner to corner.
+        let lat = -24.99, lon = 31.59
+        let dLat = 100 / 110_574.0, dLon = 100 / (111_320.0 * cos(lat * .pi / 180))
+        let square = [GeoPoint(lat: lat, lon: lon), GeoPoint(lat: lat, lon: lon + dLon),
+                      GeoPoint(lat: lat + dLat, lon: lon + dLon), GeoPoint(lat: lat + dLat, lon: lon)]
+        XCTAssertEqual(Geo.pathLength(square), 300, accuracy: 1)
+        XCTAssertEqual(Geo.pathLength(square + [square[0]]), 400, accuracy: 1.5)
+        XCTAssertEqual(Geo.ringArea(square), 10_000, accuracy: 100)
+        XCTAssertEqual(Geo.ringArea(square.reversed()), 10_000, accuracy: 100) // either direction round
+        XCTAssertEqual(Geo.pathLength([square[0]]), 0)
+    }
+
     func testLabelPointInsideConcaveBlock() {
         // An L-shaped block whose centroid lies outside it.
         let l = [(0.0, 0.0), (0.01, 0.0), (0.01, 0.002), (0.002, 0.002), (0.002, 0.01), (0.0, 0.01)]
@@ -429,6 +442,26 @@ final class DownloadEngineTests: XCTestCase {
         let (again, _) = await run(job)
         XCTAssertEqual(again, .completed(failed: 0))
         XCTAssertEqual(server.requests.count, before)
+    }
+
+    /// Choosing a deeper level for a downloaded area runs the job again with a higher maximum: only the new level
+    /// is fetched (stored tiles and tiles known to be missing are skipped).
+    func testDeeperLevelFetchesOnlyTheNewLevel() async throws {
+        let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
+        let server = FakeServer(deepest: 19, patch: TileID(z: 0, x: 0, y: 0))
+        func job(_ maxZoom: Int) -> TileDownloadJob {
+            TileDownloadJob(shape: area, layers: [DownloadLayer(name: "sat", store: store, fetcher: server, zooms: 0...maxZoom, pruneByParent: true)],
+                            concurrency: 4, retryDelay: { _ in 0 })
+        }
+        let firstRun = await job(17).run { _ in }
+        XCTAssertEqual(firstRun, .completed(failed: 0))
+        let first = server.requests.count
+        let secondRun = await job(18).run { _ in }
+        XCTAssertEqual(secondRun, .completed(failed: 0))
+        let again = server.requests[first...]
+        XCTAssertFalse(again.isEmpty)
+        XCTAssertTrue(again.allSatisfy { $0.z == 18 }, "only zoom 18 is fetched the second time")
+        XCTAssertEqual(again.count, TileCoverage(shape: area, zoom: 18).tileCount)
     }
 
     func testRetriesTransientFailures() async throws {

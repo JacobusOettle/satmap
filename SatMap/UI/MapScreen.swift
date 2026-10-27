@@ -32,8 +32,9 @@ struct MapScreen: View {
                 }
                 switch model.measure {
                 case .aiming:
-                    Hint(text: "Tap the spot on the map, or move the crosshair onto it and tap the measure button.")
-                case .placed, .pair:
+                    Hint(text: "Tap the spot on the map, or move the crosshair onto it and tap the measure button.",
+                         onClose: model.clearMeasure)
+                case .placed, .path, .closed:
                     MeasurePanel(model: model, recorder: recorder)
                 case .off:
                     EmptyView()
@@ -41,6 +42,7 @@ struct MapScreen: View {
                 if let p = model.selectedPoint, !model.isDrawingArea {
                     CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
                                   onClose: { model.selectedPoint = nil })
+                        .frame(maxWidth: .infinity)
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
                     Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
@@ -53,7 +55,7 @@ struct MapScreen: View {
                     if let loc = recorder.location, !model.isDrawingArea {
                         CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
                                       text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
-                                      id: "myCoordinates", compact: true)
+                                      id: "myCoordinates")
                             .padding(.bottom, 24) // clear of MapKit's "Legal" link in the corner
                     }
                     Spacer()
@@ -110,16 +112,16 @@ struct MapScreen: View {
     private var measureIcon: String {
         switch model.measure {
         case .off: return "ruler"
-        case .aiming, .placed: return "scope"
-        case .pair: return "xmark"
+        case .aiming, .placed, .path: return "scope"
+        case .closed: return "xmark"
         }
     }
 
-    /// While a (second) point can be placed with the measure button.
+    /// While a point can be placed with the measure button.
     private var showsCrosshair: Bool {
         switch model.measure {
-        case .aiming, .placed: return true
-        case .off, .pair: return false
+        case .aiming, .placed, .path: return true
+        case .off, .closed: return false
         }
     }
 }
@@ -175,47 +177,79 @@ struct Crosshair: View {
 
 struct Hint: View {
     let text: String
+    /// Shows a ✕ ("Stop measuring") after the text.
+    var onClose: (() -> Void)?
 
     var body: some View {
-        Text(text)
-            .font(.footnote.weight(.medium))
-            .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.black.opacity(0.65))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+        HStack(alignment: .top, spacing: 8) {
+            Text(text)
+                .font(.footnote.weight(.medium))
+            if let onClose = onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark").font(.footnote.weight(.bold))
+                }
+                .accessibilityLabel(Text("Stop measuring"))
+            }
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.65))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
-/// Live distance and height difference from you to the marker, or between two points A and B.
+/// Live distance and height from you to the marker; or the length of the line through the points, the height from
+/// A to the last point, and once closed, the shape's area and perimeter.
 struct MeasurePanel: View {
     @ObservedObject var model: AppModel
     @ObservedObject var recorder: LocationRecorder
 
-    private var isPair: Bool {
-        if case .pair = model.measure { return true }
-        return false
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if isPair {
-                Text("From A to B").font(.caption.weight(.semibold)).opacity(0.85)
-            }
-            Text(model.markerDistance.map(Format.distance) ?? "Waiting for GPS…")
-                .font(.system(size: 30, weight: .bold).monospacedDigit())
-            Text(heightText)
-                .font(.headline)
-            if isPair, let a = model.markerElevation, let b = model.secondElevation {
-                Text("A \(Int(a.rounded())) m · B \(Int(b.rounded())) m above sea level")
-                    .font(.caption)
-                    .opacity(0.85)
-            } else if !isPair, let m = model.markerElevation, let u = model.userElevation {
-                Text("Marker \(Int(m.rounded())) m · You \(Int(u.rounded())) m above sea level")
-                    .font(.caption)
-                    .opacity(0.85)
-            }
-            if !isPair {
+            let points = model.measure.points
+            switch model.measure {
+            case .closed:
+                Text("Shape \(MeasureMode.label(0))–\(MeasureMode.label(points.count - 1)) · \(points.count) corners")
+                    .font(.caption.weight(.semibold)).opacity(0.85)
+                Text(model.measuredArea.map(Format.hectares) ?? "–")
+                    .font(.system(size: 30, weight: .bold).monospacedDigit())
+                Text("Perimeter \(model.markerDistance.map(Format.distance) ?? "–")")
+                    .font(.headline)
+                if let a = model.measuredArea, a < 1_000_000 {
+                    Text("\(Format.count(Int(a.rounded()))) m²").font(.caption).opacity(0.85)
+                }
+                actions(close: false)
+            case .path:
+                let last = MeasureMode.label(points.count - 1)
+                Text(points.count == 2 ? "From A to B" : "From A to \(last) · \(points.count) points")
+                    .font(.caption.weight(.semibold)).opacity(0.85)
+                Text(model.markerDistance.map(Format.distance) ?? "–")
+                    .font(.system(size: 30, weight: .bold).monospacedDigit())
+                Text(heightText)
+                    .font(.headline)
+                if points.count >= 3 {
+                    Text("Last leg \(MeasureMode.label(points.count - 2)) → \(last): \(Format.distance(Geo.distance(points[points.count - 2], points[points.count - 1])))")
+                        .font(.caption).opacity(0.85)
+                }
+                if let a = model.markerElevation, let b = model.lastElevation {
+                    Text("A \(Int(a.rounded())) m · \(last) \(Int(b.rounded())) m above sea level")
+                        .font(.caption).opacity(0.85)
+                }
+                actions(close: points.count >= 3)
+                Text(points.count >= 3 ? "Tap the map for more points, or tap A to close the shape and see its area."
+                                       : "Tap the map (or use the crosshair and the measure button) for more points.")
+                    .font(.caption2).opacity(0.7)
+            default:
+                Text(model.markerDistance.map(Format.distance) ?? "Waiting for GPS…")
+                    .font(.system(size: 30, weight: .bold).monospacedDigit())
+                Text(heightText)
+                    .font(.headline)
+                if let m = model.markerElevation, let u = model.userElevation {
+                    Text("Marker \(Int(m.rounded())) m · You \(Int(u.rounded())) m above sea level")
+                        .font(.caption)
+                        .opacity(0.85)
+                }
                 Text("Tap the map, or use the crosshair and the measure button, for a second point.")
                     .font(.caption2)
                     .opacity(0.7)
@@ -227,33 +261,62 @@ struct MeasurePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.black.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(alignment: .topTrailing) {
-            Button(action: model.clearMeasure) {
-                Image(systemName: "xmark")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundColor(.white)
-                    .padding(12)
-            }
-            .accessibilityLabel(Text("Stop measuring"))
-        }
+        .overlay(alignment: .topTrailing) { StopMeasuringButton(model: model) }
     }
 
+    /// Undo the last point; close the shape (three or more points).
+    private func actions(close: Bool) -> some View {
+        HStack(spacing: 10) {
+            Button(action: model.undoMeasurePoint) {
+                Label("Undo", systemImage: "arrow.uturn.backward")
+            }
+            if close {
+                Button(action: model.closeMeasureShape) {
+                    Label("Close shape", systemImage: "pentagon")
+                }
+            }
+        }
+        .font(.subheadline.weight(.semibold))
+        .buttonStyle(.bordered)
+        .tint(.white)
+        .padding(.top, 2)
+    }
+
+    /// Marker vs you, or the last point vs A.
     private var heightText: String {
+        let isPath: Bool
+        if case .path = model.measure { isPath = true } else { isPath = false }
         let first = model.markerElevation
-        let second = isPair ? model.secondElevation : model.userElevation
+        let second = isPath ? model.lastElevation : model.userElevation
         guard let m = first, let u = second else {
             return Connectivity.shared.isOnline
                 ? "Height: loading elevation…"
                 : "Height: no elevation data here offline (download this area)"
         }
-        if isPair {
+        if isPath {
+            let last = MeasureMode.label(model.measure.points.count - 1)
             let diff = (u - m).rounded()
-            if diff == 0 { return "B is level with A" }
-            return diff > 0 ? "▲ B is \(Int(diff)) m higher than A" : "▼ B is \(Int(-diff)) m lower than A"
+            if diff == 0 { return "\(last) is level with A" }
+            return diff > 0 ? "▲ \(last) is \(Int(diff)) m higher than A" : "▼ \(last) is \(Int(-diff)) m lower than A"
         }
         let diff = (m - u).rounded()
         if diff == 0 { return "Marker is level with you" }
         return diff > 0 ? "▲ Marker is \(Int(diff)) m higher than you" : "▼ Marker is \(Int(-diff)) m lower than you"
+    }
+}
+
+/// The ✕ in the corner of the measuring hint and panel.
+struct StopMeasuringButton: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Button(action: model.clearMeasure) {
+            Image(systemName: "xmark")
+                .font(.subheadline.weight(.bold))
+                .foregroundColor(.white)
+                .padding(12)
+        }
+        .accessibilityLabel(Text("Stop measuring"))
     }
 }
 
@@ -263,7 +326,6 @@ struct CoordinateBar: View {
     let text: String
     /// Accessibility identifier, for the UI test.
     let id: String
-    var compact = false
     var onClose: (() -> Void)?
     @State private var copied = false
 
@@ -278,7 +340,7 @@ struct CoordinateBar: View {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
                     Text(copied ? "Copied" : text)
-                        .font((compact ? Font.caption : Font.subheadline).monospacedDigit().weight(.semibold))
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     if !copied {
@@ -296,11 +358,10 @@ struct CoordinateBar: View {
             }
         }
         .foregroundColor(.white)
-        .padding(.horizontal, compact ? 10 : 12)
-        .padding(.vertical, compact ? 6 : 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(Color.black.opacity(0.65))
         .clipShape(Capsule())
-        .frame(maxWidth: compact ? nil : .infinity)
     }
 }
 

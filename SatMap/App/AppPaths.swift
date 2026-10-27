@@ -68,6 +68,13 @@ enum Format {
         return String(format: ha < 1 ? "%.2f ha" : "%.1f ha", ha)
     }
 
+    /// Ground size of one satellite image pixel at a zoom level and latitude: "25 cm per pixel", "1.0 m per pixel".
+    static func groundResolution(zoom z: Int, latitude: Double) -> String {
+        let m = 156_543.03 * cos(latitude * .pi / 180) / Double(1 << z)
+        if m < 0.95 { return "\(Int((m * 100).rounded())) cm per pixel" }
+        return String(format: m < 10 ? "%.1f m per pixel" : "%.0f m per pixel", m)
+    }
+
     /// Latitude, longitude in decimal degrees (6 decimals, about 10 cm): "-24.987654, 31.592134".
     static func coordinate(_ p: GeoPoint) -> String {
         String(format: "%.6f, %.6f", p.lat, p.lon)

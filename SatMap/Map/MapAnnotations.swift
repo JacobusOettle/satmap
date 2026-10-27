@@ -20,7 +20,7 @@ final class UserLocationAnnotation: NSObject, MKAnnotation {
 
 final class MeasureMarkerAnnotation: NSObject, MKAnnotation {
     let coordinate: CLLocationCoordinate2D
-    /// "A" or "B" when two points are measured.
+    /// "A", "B", "C" … when two or more points are measured.
     let label: String?
 
     init(coordinate: CLLocationCoordinate2D, label: String?) {
@@ -100,7 +100,7 @@ final class MeasureMarkerView: MKAnnotationView {
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
         frame = CGRect(x: 0, y: 0, width: 30, height: 30)
-        letter.frame = CGRect(x: 18, y: -14, width: 20, height: 18)
+        letter.frame = CGRect(x: 18, y: -14, width: 34, height: 18)
         letter.font = .systemFont(ofSize: 15, weight: .heavy)
         letter.textColor = .white
         letter.shadowColor = UIColor(white: 0, alpha: 0.9)

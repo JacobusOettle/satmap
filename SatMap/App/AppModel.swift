@@ -4,22 +4,36 @@ import Foundation
 import UIKit
 
 /// The measuring tool. A point is placed at the crosshair (ruler button) or where the map is tapped.
-/// off → aiming → placed (distance from you to the point) → pair (distance between two points) → off.
+/// off → aiming → placed (distance from you to A) → path (A → B → C …, total distance) → closed (back to A: area).
 enum MeasureMode: Equatable {
     case off
     /// Crosshair shown, waiting for the first point.
     case aiming
     /// One point: the live distance and height from you to it.
     case placed(GeoPoint)
-    /// Two points: the distance and height between them.
-    case pair(GeoPoint, GeoPoint)
+    /// Two or more points: the line through them, its total length and the height from first to last.
+    case path([GeoPoint])
+    /// Three or more points joined back to the first: the shape's area and perimeter.
+    case closed([GeoPoint])
 
     var points: [GeoPoint] {
         switch self {
         case .off, .aiming: return []
         case .placed(let a): return [a]
-        case .pair(let a, let b): return [a, b]
+        case .path(let pts), .closed(let pts): return pts
         }
+    }
+
+    /// "A", "B", … "Z", "AA", "AB", … "ZZ", "AAA", …
+    static func label(_ i: Int) -> String {
+        let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        var n = i + 1, s = ""
+        while n > 0 {
+            n -= 1
+            s = String(letters[n % 26]) + s
+            n /= 26
+        }
+        return s
     }
 }
 
@@ -58,9 +72,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         didSet { UserDefaults.standard.set(showContours, forKey: "showContours") }
     }
     @Published private(set) var measure: MeasureMode = .off
-    /// Elevation of the first measuring point, of the second, and of where you are.
+    /// Elevation of the first measuring point, of the last one (with two or more), and of where you are.
     @Published private(set) var markerElevation: Double?
-    @Published private(set) var secondElevation: Double?
+    @Published private(set) var lastElevation: Double?
     @Published private(set) var userElevation: Double?
     /// The last point tapped on the map (or placed for measuring); its coordinates are shown at the top.
     @Published var selectedPoint: GeoPoint?
@@ -89,7 +103,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             // Elevations aren't looked up in the background; catch up when the app is opened.
             guard let self = self else { return }
-            if self.markerElevation == nil || self.secondElevation == nil { self.refreshPointElevations() }
+            if self.markerElevation == nil || self.lastElevation == nil { self.refreshPointElevations() }
             if case .placed = self.measure, let loc = self.recorder.location { self.refreshUserElevation(loc) }
         }
 
@@ -130,18 +144,17 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     // MARK: - Measuring
 
-    /// The measure button: shows the crosshair, then places a point at it (distance from you), then a second point
-    /// (distance between the two), then clears.
+    /// The measure button: shows the crosshair, then places a point at it each time (A, B, C …); after a shape is
+    /// closed it clears.
     func measureButtonTapped() {
         switch measure {
         case .off:
             measure = .aiming
-        case .aiming, .placed:
+        case .aiming, .placed, .path:
             guard let c = map?.centerCoordinate else { return }
             addMeasurePoint(GeoPoint(lat: c.latitude, lon: c.longitude))
-        case .pair:
-            setMeasure(.off)
-            selectedPoint = nil
+        case .closed:
+            clearMeasure()
         }
     }
 
@@ -158,11 +171,36 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         selectedPoint = p
         switch measure {
         case .placed(let a):
-            setMeasure(.pair(a, p))
+            setMeasure(.path([a, p]))
+        case .path(let pts):
+            setMeasure(.path(pts + [p]))
         default:
-            // The first point, or a new start after two points.
+            // The first point, or a new start after a closed shape.
             setMeasure(.placed(p))
         }
+    }
+
+    /// Joins the last point back to the first (tap on A, or "Close shape"): the area.
+    func closeMeasureShape() {
+        guard case .path(let pts) = measure, pts.count >= 3 else { return }
+        setMeasure(.closed(pts))
+    }
+
+    /// Removes the last point (or reopens a closed shape).
+    func undoMeasurePoint() {
+        switch measure {
+        case .closed(let pts):
+            setMeasure(.path(pts))
+        case .path(let pts) where pts.count > 2:
+            setMeasure(.path(Array(pts.dropLast())))
+        case .path(let pts):
+            setMeasure(.placed(pts[0]))
+        case .placed:
+            setMeasure(.aiming)
+        case .off, .aiming:
+            return
+        }
+        selectedPoint = measure.points.last
     }
 
     private func setMeasure(_ m: MeasureMode) {
@@ -172,40 +210,54 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         if case .placed = m { recorder.measuring = true } else { recorder.measuring = false }
         let new = m.points
         if new.first != old.first { markerElevation = nil }
-        if new.count < 2 || new.last != old.last || old.count < 2 { secondElevation = nil }
+        if new.count < 2 || new.last != old.last || old.count < 2 { lastElevation = nil }
         if new.isEmpty { userElevation = nil }
         refreshPointElevations()
         if case .placed = m, let loc = recorder.location { refreshUserElevation(loc) }
     }
 
-    /// Distance from you to the point, or between the two points.
+    /// Distance from you to the point, or the total length of the line through the points (around the shape when
+    /// it is closed).
     var markerDistance: Double? {
         switch measure {
         case .placed(let p):
             guard let loc = recorder.location else { return nil }
             return loc.distance(from: CLLocation(latitude: p.lat, longitude: p.lon))
-        case .pair(let a, let b):
-            return Geo.distance(a, b)
+        case .path(let pts):
+            return Geo.pathLength(pts)
+        case .closed(let pts):
+            return Geo.pathLength(pts + [pts[0]])
         case .off, .aiming:
             return nil
         }
     }
 
-    /// Looks up the measuring points' elevations that aren't known yet. A failed lookup (no signal) is tried again
-    /// a few times, 15 s apart, while the point stays and the app is on screen.
+    /// The closed shape's area in square metres.
+    var measuredArea: Double? {
+        guard case .closed(let pts) = measure else { return nil }
+        return Geo.ringArea(pts)
+    }
+
+    /// Looks up the elevations of the first and last measuring points that aren't known yet (not for a closed
+    /// shape). A failed lookup (no signal) is tried again a few times, 15 s apart, while the point stays and the app
+    /// is on screen.
     private func refreshPointElevations(attempt: Int = 0) {
+        if case .closed = measure { return }
         let points = measure.points
-        for (i, p) in points.enumerated() where (i == 0 ? markerElevation : secondElevation) == nil {
+        guard let first = points.first else { return }
+        var wanted: [(isFirst: Bool, point: GeoPoint)] = []
+        if markerElevation == nil { wanted.append((true, first)) }
+        if points.count >= 2, lastElevation == nil, let last = points.last { wanted.append((false, last)) }
+        for (isFirst, p) in wanted {
             Task.detached(priority: .userInitiated) {
                 let e = await TileRepository.shared.elevation(at: p)
                 DispatchQueue.main.async {
                     let now = self.measure.points
-                    guard i < now.count, now[i] == p else { return }
-                    if i == 0 { self.markerElevation = e } else { self.secondElevation = e }
+                    guard (isFirst ? now.first : (now.count >= 2 ? now.last : nil)) == p else { return }
+                    if isFirst { self.markerElevation = e } else { self.lastElevation = e }
                     if e == nil, attempt < 4 {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
-                            guard UIApplication.shared.applicationState == .active, i < self.measure.points.count,
-                                  self.measure.points[i] == p else { return }
+                            guard UIApplication.shared.applicationState == .active else { return }
                             self.refreshPointElevations(attempt: attempt + 1)
                         }
                     }

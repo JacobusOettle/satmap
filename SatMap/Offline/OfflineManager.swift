@@ -116,6 +116,36 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         return area
     }
 
+    /// Downloads an area to a different (deeper) zoom level. Tiles already saved are kept and skipped, so only the
+    /// new levels are fetched.
+    func changeMaxZoom(_ id: UUID, to zoom: Int) {
+        guard areas.contains(where: { $0.id == id && $0.maxZoom != zoom }) else { return }
+        update(id) {
+            $0.maxZoom = zoom
+            $0.status = .queued
+            $0.failedTiles = 0
+            $0.problem = nil
+        }
+        if activeID == id {
+            task?.cancel() // the run ends as cancelled; the area stays queued and starts again with the new level
+        } else {
+            startNextIfIdle()
+        }
+    }
+
+    /// The deepest zoom level with satellite imagery saved for an area (nil if none yet). Esri's imagery stops at
+    /// different levels in different places, so this can be less than the level asked for.
+    @MainActor
+    func savedImageryDepth(_ id: UUID) async -> Int? {
+        guard let area = areas.first(where: { $0.id == id }) else { return nil }
+        let url = area.directory.appendingPathComponent(TileRepository.Layer.imagery.fileName)
+        return await Task.detached(priority: .userInitiated) { () -> Int? in
+            guard FileManager.default.fileExists(atPath: url.path), let store = try? MBTiles(url: url, create: false) else { return nil }
+            defer { store.close() }
+            return store.maxStoredZoom()
+        }.value
+    }
+
     func pause(_ id: UUID) {
         if activeID == id {
             task?.cancel() // the run loop marks it paused when the job stops
@@ -509,6 +539,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             a.bytesOnDisk = size
             // A pause by the user wins over however the run happened to end.
             if a.status == .paused, outcome == .cancelled || outcome == .offline { return }
+            // Queued again during the run (a new zoom level, or the app went to the background): run it again.
+            if a.status == .queued { return }
             switch outcome {
             case .completed(let failed):
                 a.failedTiles = failed

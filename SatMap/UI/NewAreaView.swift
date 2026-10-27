@@ -171,7 +171,7 @@ struct NewAreaView: View {
             }
         case .loaded(_, let km, _):
             if km > 0 {
-                row("Roads and tracks", String(format: km < 10 ? "%.1f km" : "%.0f km", km))
+                row("Roads and tracks", km < 10 ? String(format: "%.1f km", km) : "\(Format.count(Int(km.rounded()))) km")
             } else {
                 Text("No roads or tracks are mapped in this area.").foregroundColor(.orange)
             }
@@ -204,10 +204,7 @@ struct NewAreaView: View {
 
     /// Ground size of one image pixel at zoom z in the middle of the area.
     private func resolution(_ z: Int) -> String {
-        let lat = area.shape.bounds?.center.lat ?? 0
-        let m = 156_543.03 * cos(lat * .pi / 180) / Double(1 << z)
-        if m < 0.95 { return "\(Int((m * 100).rounded())) cm per pixel" }
-        return String(format: m < 10 ? "%.1f m per pixel" : "%.0f m per pixel", m)
+        Format.groundResolution(zoom: z, latitude: area.shape.bounds?.center.lat ?? 0)
     }
 
     /// Download size up to zoom z: about, where Esri's imagery usually reaches; an upper limit deeper down.

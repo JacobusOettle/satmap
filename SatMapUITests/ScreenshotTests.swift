@@ -139,6 +139,17 @@ final class ScreenshotTests: XCTestCase {
         sleep(8) // elevations of both points
         XCTAssertEqual(currentMeasureState(), .pair)
         snap("16-measure-two-points")
+
+        // Two more points, then tap A again: the shape's area.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.45)).tap() // C
+        sleep(2)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.4)).tap() // D: below the taller panel and its bar
+        sleep(2)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap() // A again: close
+        sleep(3)
+        XCTAssertEqual(currentMeasureState(), .shape)
+        XCTAssertTrue(app.staticTexts["Shape A–D · 4 corners"].exists, "The shape didn't get four corners")
+        snap("19-measure-area")
         setMeasure(.off)
 
         // The one-tap Kruger National Park roads (not downloaded here: several GB).
@@ -191,6 +202,27 @@ final class ScreenshotTests: XCTestCase {
         guard ready.count >= 2, alongRoads.exists else { return XCTFail("No area downloaded along roads") }
         snap("13-offline-along-roads")
 
+        // Open the roads area and add one deeper level (only zoom 21 is downloaded).
+        tapRow(startingWith: "Farm roads")
+        if app.staticTexts["Imagery found down to"].waitForExistence(timeout: 20) {
+            tapRow(startingWith: "Zoom 21")
+            sleep(3) // size of the extra level
+            scrollTo(app.buttons["Download zoom 21"].firstMatch)
+            snap("18-area-deeper-level")
+            tap("Download zoom 21")
+            sleep(2)
+            app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
+            for _ in 0..<120 {
+                if ready.count >= 2 { break }
+                sleep(5)
+            }
+            XCTAssertEqual(ready.count, 2, "The roads area didn't finish its extra level")
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "up to zoom 21")).firstMatch.exists)
+        } else {
+            XCTFail("The area screen didn't open")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+
         // Backup: export both areas through the share sheet.
         scrollTo(app.buttons["Export all offline maps"].firstMatch)
         tap("Export all offline maps")
@@ -203,14 +235,19 @@ final class ScreenshotTests: XCTestCase {
     // MARK: - Helpers
 
     private enum MeasureState {
-        case off, aiming, placed, pair
+        case off, aiming, placed, pair, shape
     }
 
-    /// Taps the measure button until the screen shows the wanted state (a tap can be lost while the app is busy).
+    /// Taps the measure button (or its ✕ to stop) until the screen shows the wanted state (a tap can be lost while
+    /// the app is busy).
     private func setMeasure(_ wanted: MeasureState) {
         for _ in 0..<4 {
             if currentMeasureState() == wanted { return }
-            tap("Measure")
+            if wanted == .off {
+                tap("Stop measuring")
+            } else {
+                tap("Measure")
+            }
             sleep(2)
         }
         XCTAssertEqual(currentMeasureState(), wanted)
@@ -219,7 +256,8 @@ final class ScreenshotTests: XCTestCase {
     private func currentMeasureState() -> MeasureState {
         let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Tap the spot on the map")).firstMatch
         if hint.exists { return .aiming }
-        if app.staticTexts["From A to B"].exists { return .pair }
+        if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "From A to")).firstMatch.exists { return .pair }
+        if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Shape A")).firstMatch.exists { return .shape }
         let panel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
                                                          "than you", "Height:", "Waiting for GPS")).firstMatch
         return panel.exists ? .placed : .off
