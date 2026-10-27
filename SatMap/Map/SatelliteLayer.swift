@@ -2,12 +2,12 @@ import ImageIO
 import MapKit
 import UIKit
 
-/// Satellite imagery in two of MapKit's own tile layers, so the map neither goes black while tiles load nor flickers:
-/// - `SatelliteBackdropOverlay` underneath answers at once with the best imagery already in memory: the nearest
-///   coarser tile enlarged (after zooming in), or the four sharper tiles under it (after zooming out). In a new place
-///   it asks for one tile three levels up first, which covers 64 tiles and arrives quickly.
-/// - `SatelliteTileOverlay` on top loads each tile itself (offline areas, then Esri), and MapKit shows it over the
-///   backdrop as it arrives.
+/// Satellite imagery in two layers, so the map neither goes grey while tiles load nor flickers:
+/// - `SatelliteTileOverlay` on top, one of MapKit's tile layers: loads each tile itself (offline areas, then Esri),
+///   and MapKit fades it in as it arrives.
+/// - Underneath (`SatelliteMode`), what is shown meanwhile: by default `SatelliteRenderer`, which paints every spot at
+///   once with the best imagery in memory (the nearest coarser tile enlarged after zooming in, the sharper ones under
+///   it after zooming out). `ImageryPrefetch` keeps coarse tiles around the screen in memory for it.
 /// Both replace Apple's map entirely, so MapKit doesn't download its own tiles.
 
 /// Imagery tiles loaded for the screen (JPEG data, 15–60 KB each), for the backdrop to build on.
@@ -158,9 +158,9 @@ extension TileID {
 enum SatelliteMode: String {
     /// One tile layer, as before the backdrop.
     case single
-    /// A backdrop tile layer under the tile layer.
+    /// A backdrop tile layer under the tile layer (`SatelliteBackdropOverlay`).
     case backdrop
-    /// SatMap draws the imagery itself (`SatelliteRenderer`).
+    /// SatMap draws what it has under the tile layer (`SatelliteRenderer`).
     case renderer
 
     static let changed = Notification.Name("SatelliteModeChanged")
@@ -182,28 +182,27 @@ final class SatelliteDrawnOverlay: MKTileOverlay {
     }
 }
 
-/// Draws the imagery itself: each tile is painted at once with the best imagery in memory (its own tile, else the
-/// nearest coarser one enlarged and the sharper ones under it), so a zoom never shows an empty block. Tiles that arrive
-/// are drawn by asking MapKit to redraw their places, gathered and at most about three times a second.
+/// The layer under the tile layer in Drawn mode: each spot is painted at once, as MapKit asks for it at a new zoom or
+/// place, with the best imagery in memory: its own tile, else the nearest coarser one enlarged and the sharper ones
+/// under it. MapKit shows this while the tile layer above loads, instead of grey. It loads nothing itself and asks
+/// MapKit to redraw only spots it had nothing for, once a coarse tile for that place has arrived (they were empty, so
+/// nothing visible blinks). MapKit calls `draw` on several threads at once.
 final class SatelliteRenderer: MKOverlayRenderer {
+    /// Decoded tiles (256 KB each) drawn from, so each is decoded once.
     private static let decoded = RecentCache<TileID, UIImage>(capacity: 300)
 
     private let lock = NSLock()
-    private var loading = Set<TileID>()
+    /// Coarse tiles asked for, with the spots (and the zoom scale each was drawn at) waiting for them.
+    private var waiting: [TileID: [TileID: MKZoomScale]] = [:]
     private var retryAfter: [TileID: CFTimeInterval] = [:]
-    private var arrived = Set<TileID>()
-    private var flushScheduled = false
-    private var lastZoomScale: MKZoomScale = 0
 
     override func canDraw(_ mapRect: MKMapRect, zoomScale: MKZoomScale) -> Bool {
         true
     }
 
     override func draw(_ mapRect: MKMapRect, zoomScale: MKZoomScale, in context: CGContext) {
-        lock.withLock { lastZoomScale = zoomScale }
         let world = MKMapSize.world.width
-        let pixels = world * Double(zoomScale) * Double(contentScaleFactor)
-        let z = Int(min(Double(TileSources.imageryMaxZoom), max(0, log2(pixels / 256).rounded())))
+        let z = Self.level(pixelsPerMapPoint: Double(zoomScale) * Double(contentScaleFactor))
         let n = 1 << z
         let size = world / Double(n)
         let x0 = max(0, Int(floor(mapRect.minX / size))), x1 = min(n - 1, Int(ceil(mapRect.maxX / size)) - 1)
@@ -218,13 +217,26 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 let rect = self.rect(for: Self.mapRect(t))
                 if let image = Self.image(t) {
                     image.draw(in: rect)
-                    continue
+                } else if !drawStandIn(for: t, in: rect, context: context), t.z >= 1 {
+                    waitFor(t.ancestor(levels: min(3, t.z)), spot: t, scale: zoomScale)
                 }
-                let ancestor = drawStandIn(for: t, in: rect, context: context)
-                load(t)
-                // A new place: a tile three levels up covers 64 of these.
-                if t.z >= 3, (ancestor?.z ?? -1) < t.z - 3 { load(t.ancestor(levels: 3), urgent: true) }
             }
+        }
+    }
+
+    /// The imagery level drawn at a zoom: tiles about 256 pixels across on screen.
+    static func level(pixelsPerMapPoint: Double) -> Int {
+        let pixels = MKMapSize.world.width * pixelsPerMapPoint
+        guard pixels > 0, pixels.isFinite else { return 0 }
+        return Int(min(Double(TileSources.imageryMaxZoom), max(0, log2(pixels / 256).rounded())))
+    }
+
+    /// Decodes tiles in memory ahead of drawing (off the drawing threads), so the next zoom or pan paints at once.
+    static func prepare(_ tiles: [TileID]) {
+        let wanted = tiles.filter { !decoded.contains($0) && ImageryMemory.tiles.contains($0) }
+        guard !wanted.isEmpty else { return }
+        Work.prepare.addOperation {
+            for t in wanted where !decoded.contains(t) { _ = image(t) }
         }
     }
 
@@ -235,66 +247,54 @@ final class SatelliteRenderer: MKOverlayRenderer {
         return i
     }
 
-    private func drawStandIn(for t: TileID, in rect: CGRect, context: CGContext) -> TileID? {
+    /// The nearest coarser tile in memory, enlarged, then the sharper ones under it, two levels down (after zooming
+    /// out by more than one level), then one. False if there was none.
+    private func drawStandIn(for t: TileID, in rect: CGRect, context: CGContext) -> Bool {
         let memory = ImageryMemory.tiles
-        let ancestor = TileFallback.ancestor(of: t, maxLevels: 10) { memory.contains($0) || Self.decoded.contains($0) }
-        if let a = ancestor, let image = Self.image(a) {
+        var drew = false
+        if let a = TileFallback.ancestor(of: t, maxLevels: 10, has: { memory.contains($0) }), let image = Self.image(a) {
             context.saveGState()
             context.clip(to: rect)
             image.draw(in: self.rect(for: Self.mapRect(a)))
             context.restoreGState()
+            drew = true
         }
-        if t.z < TileSources.imageryMaxZoom {
-            for i in 0..<4 {
-                let c = TileID(z: t.z + 1, x: t.x * 2 + i % 2, y: t.y * 2 + i / 2)
-                if memory.contains(c), let image = Self.image(c) { image.draw(in: self.rect(for: Self.mapRect(c))) }
+        for k in [2, 1] where t.z + k <= TileSources.imageryMaxZoom {
+            let side = 1 << k
+            for i in 0..<(side * side) {
+                let c = TileID(z: t.z + k, x: (t.x << k) + i % side, y: (t.y << k) + i / side)
+                if memory.contains(c), let image = Self.image(c) {
+                    image.draw(in: self.rect(for: Self.mapRect(c)))
+                    drew = true
+                }
             }
         }
-        return ancestor
+        return drew
     }
 
-    private func load(_ t: TileID, urgent: Bool = false) {
+    /// Asks for a coarse tile covering an empty spot (one request for 64 spots), first in line.
+    private func waitFor(_ seed: TileID, spot: TileID, scale: MKZoomScale) {
         let now = CACurrentMediaTime()
         let start: Bool = lock.withLock {
-            if let after = retryAfter[t], now < after { return false }
-            return loading.insert(t).inserted
+            if let after = retryAfter[seed], now < after { return false }
+            let first = waiting[seed] == nil
+            waiting[seed, default: [:]][spot] = scale
+            return first
         }
         guard start else { return }
         Task.detached(priority: .userInitiated) { [weak self] in
-            var ok = false
-            if let r = await TileRepository.shared.imageryForDisplay(t, urgent: urgent),
-               let image = await Work.run(on: Work.images, { UIImage(data: r.data)?.preparingForDisplay() }) {
-                if r.quality == .exact { ImageryMemory.tiles.set(r.data, for: t) }
-                Self.decoded.set(image, for: t)
-                ok = true
-            }
+            let r = await TileRepository.shared.imageryForDisplay(seed, urgent: true)
+            if let r = r, r.quality == .exact { ImageryMemory.tiles.set(r.data, for: seed) }
             guard let self = self else { return }
-            let schedule: Bool = self.lock.withLock {
-                self.loading.remove(t)
-                if !ok {
-                    self.retryAfter[t] = CACurrentMediaTime() + 30
-                    return false
-                }
-                self.arrived.insert(t)
-                if self.flushScheduled { return false }
-                self.flushScheduled = true
-                return true
+            let spots: [TileID: MKZoomScale] = self.lock.withLock {
+                if r == nil { self.retryAfter[seed] = CACurrentMediaTime() + 30 }
+                return self.waiting.removeValue(forKey: seed) ?? [:]
             }
-            guard schedule else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.flush() }
-        }
-    }
-
-    /// Redraws the places of the tiles that arrived, at the zoom on screen.
-    private func flush() {
-        let (tiles, scale): (Set<TileID>, MKZoomScale) = lock.withLock {
-            let t = arrived
-            arrived = []
-            flushScheduled = false
-            return (t, lastZoomScale)
-        }
-        for t in tiles {
-            if scale > 0 { setNeedsDisplay(Self.mapRect(t), zoomScale: scale) } else { setNeedsDisplay(Self.mapRect(t)) }
+            guard r?.quality == .exact, !spots.isEmpty else { return }
+            DispatchQueue.main.async {
+                // Redraw the spots that were empty, at the zoom they were drawn at.
+                for (t, scale) in spots { self.setNeedsDisplay(Self.mapRect(t), zoomScale: scale) }
+            }
         }
     }
 
@@ -309,5 +309,55 @@ final class SatelliteRenderer: MKOverlayRenderer {
     private static func mapRect(_ t: TileID) -> MKMapRect {
         let size = MKMapSize.world.width / Double(1 << t.z)
         return MKMapRect(x: Double(t.x) * size, y: Double(t.y) * size, width: size, height: size)
+    }
+}
+
+/// When the map comes to rest: gets the imagery ready for the next zoom or pan, so its new spots have something to
+/// show at once rather than grey:
+/// - coarse tiles around the screen, 3 levels up over twice the screen and 6 levels up over eight times it, in the
+///   background (offline areas first, then online after everything on screen);
+/// - for the Drawn layer, those and the tiles on screen decoded ahead (they are what a zoom in enlarges).
+enum ImageryPrefetch {
+    private static let lock = NSLock()
+    private static var loading = Set<TileID>()
+
+    static func mapStopped(visible: MKMapRect, pixelsPerMapPoint: Double, decode: Bool) {
+        let z = SatelliteRenderer.level(pixelsPerMapPoint: pixelsPerMapPoint)
+        let onScreen = tiles(z, in: visible)
+        var surround: [TileID] = []
+        for (up, grow) in [(3, 0.5), (6, 3.5)] where z - up >= 0 {
+            let r = visible.insetBy(dx: -visible.width * grow, dy: -visible.height * grow)
+            surround += tiles(z - up, in: r)
+        }
+        if decode { SatelliteRenderer.prepare(onScreen + surround) }
+        let memory = ImageryMemory.tiles
+        let wanted: [TileID] = lock.withLock {
+            let w = surround.filter { !memory.contains($0) && !loading.contains($0) }
+            loading.formUnion(w)
+            return w
+        }
+        for t in wanted {
+            Task.detached(priority: .utility) {
+                if let d = await TileRepository.shared.imageryInBackground(t) {
+                    memory.set(d, for: t)
+                    if decode { SatelliteRenderer.prepare([t]) }
+                }
+                _ = lock.withLock { loading.remove(t) }
+            }
+        }
+    }
+
+    /// The tiles of a level covering a map rect (wrapping round the world sideways).
+    private static func tiles(_ z: Int, in r: MKMapRect) -> [TileID] {
+        let n = 1 << z
+        let size = MKMapSize.world.width / Double(n)
+        let x0 = Int(floor(r.minX / size)), x1 = Int(ceil(r.maxX / size)) - 1
+        let y0 = max(0, Int(floor(r.minY / size))), y1 = min(n - 1, Int(ceil(r.maxY / size)) - 1)
+        guard x0 <= x1, y0 <= y1, x1 - x0 < 64, y1 - y0 < 64 else { return [] }
+        var out = Set<TileID>()
+        for y in y0...y1 {
+            for x in x0...x1 { out.insert(TileID(z: z, x: ((x % n) + n) % n, y: y)) }
+        }
+        return Array(out)
     }
 }

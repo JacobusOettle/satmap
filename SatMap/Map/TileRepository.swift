@@ -77,7 +77,8 @@ final class TileRepository {
     private var demRetryAfter: [TileID: Date] = [:]
     /// Imagery tiles the server said don't exist (beyond the imagery depth), to skip asking again.
     private var imageryMissing = Set<TileID>()
-    private var imageryInFlight: [TileID: Task<TileFetchResult, Never>] = [:]
+    private var imageryInFlight: [TileID: (task: Task<TileFetchResult, Never>, priority: RequestPriority, id: Int)] = [:]
+    private var imageryRequests = 0
 
     private init() {
         urlCache = URLCache(memoryCapacity: 16 << 20, diskCapacity: 1 << 30,
@@ -180,13 +181,14 @@ final class TileRepository {
 
     /// The imagery for an on-screen tile. `urgent` requests go before the others.
     func imageryForDisplay(_ t: TileID, urgent: Bool = false) async -> (data: Data, quality: ImageryQuality)? {
+        let priority: RequestPriority = urgent ? .urgent : .normal
         if let d = offlineTile(t, layer: .imagery) { return (d, .exact) }
         // Inside a downloaded area the downloader already learnt where the imagery ends: don't wait on the
         // network for tiles it knows don't exist.
         var beyondDepth = offlineKnowsMissing(t)
         var online = networkUsable && !beyondDepth
         if online {
-            switch await onlineImagery(t, urgent: urgent) {
+            switch await onlineImagery(t, priority: priority) {
             case .data(let d): return (d, .exact)
             case .missing: beyondDepth = true // deeper than the imagery goes here: enlarge an ancestor below
             case .failed, .offline:
@@ -201,7 +203,7 @@ final class TileRepository {
             let a = t.ancestor(levels: k)
             var data = offlineTile(a, layer: .imagery)
             if data == nil && online {
-                switch await onlineImagery(a, urgent: urgent) {
+                switch await onlineImagery(a, priority: priority) {
                 case .data(let d): data = d
                 case .missing: break
                 case .failed, .offline:
@@ -220,22 +222,34 @@ final class TileRepository {
         return nil
     }
 
-    /// One network request per imagery tile at a time (many deep tiles share the same ancestor);
-    /// tiles the server doesn't have are remembered.
-    private func onlineImagery(_ t: TileID, urgent: Bool = false) async -> TileFetchResult {
-        let pending: Task<TileFetchResult, Never>? = lock.withLock {
+    /// A tile's imagery only if it is at hand (offline areas, or online in the background, after on-screen tiles):
+    /// for getting ready for the next zoom or pan. Nil rather than a stand-in.
+    func imageryInBackground(_ t: TileID) async -> Data? {
+        if let d = offlineTile(t, layer: .imagery) { return d }
+        guard networkUsable, !offlineKnowsMissing(t) else { return nil }
+        if case .data(let d) = await onlineImagery(t, priority: .background) { return d }
+        return nil
+    }
+
+    /// One network request per imagery tile at a time (many deep tiles share the same ancestor), unless a tile wanted
+    /// sooner is still waiting its turn behind on-screen ones: then it is asked for again, at its own priority. Tiles
+    /// the server doesn't have are remembered.
+    private func onlineImagery(_ t: TileID, priority: RequestPriority) async -> TileFetchResult {
+        let pending: (task: Task<TileFetchResult, Never>, id: Int)? = lock.withLock {
             if imageryMissing.contains(t) { return nil }
-            if let existing = imageryInFlight[t] { return existing }
-            let task = Task.detached(priority: .userInitiated) { [self] in
-                await self.limitedFetch(TileSources.imageryURL(t), urgent: urgent)
+            if let existing = imageryInFlight[t], existing.priority >= priority { return (existing.task, existing.id) }
+            imageryRequests += 1
+            let id = imageryRequests
+            let task = Task.detached(priority: priority == .background ? .utility : .userInitiated) { [self] in
+                await self.limitedFetch(TileSources.imageryURL(t), priority: priority)
             }
-            imageryInFlight[t] = task
-            return task
+            imageryInFlight[t] = (task, priority, id)
+            return (task, id)
         }
-        guard let task = pending else { return .missing }
-        let result = await task.value
+        guard let request = pending else { return .missing }
+        let result = await request.task.value
         lock.withLock {
-            imageryInFlight[t] = nil
+            if imageryInFlight[t]?.id == request.id { imageryInFlight[t] = nil }
             if case .missing = result {
                 if imageryMissing.count > 20_000 { imageryMissing.removeAll() }
                 imageryMissing.insert(t)
@@ -249,9 +263,9 @@ final class TileRepository {
         Connectivity.shared.isOnlineNow && lock.withLock { Date() >= networkPausedUntil }
     }
 
-    private func limitedFetch(_ url: URL, urgent: Bool = false) async -> TileFetchResult {
+    private func limitedFetch(_ url: URL, priority: RequestPriority = .normal) async -> TileFetchResult {
         let limiter = url.host?.hasPrefix("elevation") == true ? terrainLimiter : imageryLimiter
-        await limiter.acquire(urgent: urgent)
+        await limiter.acquire(priority)
         defer { limiter.release() }
         guard networkUsable else { return .offline }
         let started = Date()
@@ -537,6 +551,8 @@ enum Work {
     static let contours: OperationQueue = makeQueue("satmap.contours", 3, .userInitiated)
     // The backdrop under the imagery answers from memory; it must keep up with a whole screen of tiles at once.
     static let backdrop: OperationQueue = makeQueue("satmap.backdrop", 4, .userInitiated)
+    // Getting imagery ready for the next zoom or pan, after what is on screen.
+    static let prepare: OperationQueue = makeQueue("satmap.prepare", 1, .utility)
 
     private static func makeQueue(_ name: String, _ width: Int, _ qos: QualityOfService) -> OperationQueue {
         let q = OperationQueue()
@@ -553,25 +569,36 @@ enum Work {
     }
 }
 
-/// Limits concurrent requests; waiting callers are served newest first, urgent ones before the rest.
+/// Which waiting requests go first.
+enum RequestPriority: Int, Comparable {
+    /// Getting ready for the next zoom or pan: after everything on screen.
+    case background
+    case normal
+    /// One coarse tile that fills a whole new place.
+    case urgent
+
+    static func < (a: RequestPriority, b: RequestPriority) -> Bool { a.rawValue < b.rawValue }
+}
+
+/// Limits concurrent requests; waiting callers are served by priority, newest first.
 final class RequestLimiter {
     private let lock = NSLock()
     private var free: Int
-    private var waiting: [CheckedContinuation<Void, Never>] = []
-    private var urgentWaiting: [CheckedContinuation<Void, Never>] = []
+    /// Indexed by `RequestPriority.rawValue`.
+    private var waiting: [[CheckedContinuation<Void, Never>]] = [[], [], []]
 
     init(slots: Int) {
         free = slots
     }
 
-    func acquire(urgent: Bool = false) async {
+    func acquire(_ priority: RequestPriority = .normal) async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             let now: Bool = lock.withLock {
                 if free > 0 {
                     free -= 1
                     return true
                 }
-                if urgent { urgentWaiting.append(c) } else { waiting.append(c) }
+                waiting[priority.rawValue].append(c)
                 return false
             }
             if now { c.resume() }
@@ -580,7 +607,7 @@ final class RequestLimiter {
 
     func release() {
         let next: CheckedContinuation<Void, Never>? = lock.withLock {
-            if let c = urgentWaiting.popLast() ?? waiting.popLast() { return c }
+            for p in waiting.indices.reversed() where !waiting[p].isEmpty { return waiting[p].popLast() }
             free += 1
             return nil
         }
