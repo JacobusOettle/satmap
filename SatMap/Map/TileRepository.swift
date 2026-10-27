@@ -183,8 +183,22 @@ final class TileRepository {
 
     /// The imagery for an on-screen tile. `urgent` requests go before the others.
     func imageryForDisplay(_ t: TileID, urgent: Bool = false) async -> (data: Data, quality: ImageryQuality)? {
+        guard let r = await nearestImagery(t, urgent: urgent) else { return nil }
+        if r.tile == t { return (r.data, .exact) }
+        // Enlarge part of the nearest ancestor that exists.
+        let a = r.tile, k = t.z - a.z
+        let enlarged = await Work.run(on: Work.images) {
+            ImageTools.enlarge(r.data, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
+        }
+        return enlarged.map { ($0, r.beyondDepth ? .enlargedForGood : .enlargedForNow) }
+    }
+
+    /// The tile's own imagery, or if it can't be had (deeper than the imagery goes, or not saved offline and not
+    /// loaded) the nearest coarser tile that exists, as it is: the drawn layer enlarges what it has itself.
+    /// `beyondDepth`: the tile itself doesn't exist.
+    func nearestImagery(_ t: TileID, urgent: Bool = false) async -> (tile: TileID, data: Data, beyondDepth: Bool)? {
         let priority: RequestPriority = urgent ? .urgent : .normal
-        if let d = offlineTile(t, layer: .imagery) { return (d, .exact) }
+        if let d = offlineTile(t, layer: .imagery) { return (t, d, false) }
         // Inside a downloaded area the downloader already learnt where the imagery ends: don't wait on the
         // network for tiles it knows don't exist.
         var beyondDepth = offlineKnowsMissing(t)
@@ -193,8 +207,8 @@ final class TileRepository {
         if !online && !beyondDepth && Connectivity.shared.isOnlineNow { noteRetryNeeded() }
         if online {
             switch await onlineImagery(t, priority: priority) {
-            case .data(let d): return (d, .exact)
-            case .missing: beyondDepth = true // deeper than the imagery goes here: enlarge an ancestor below
+            case .data(let d): return (t, d, false)
+            case .missing: beyondDepth = true // deeper than the imagery goes here: an ancestor below
             case .failed, .offline:
                 // Don't show (and have MapKit keep) a blurry stand-in for a tile that exists but failed
                 // to load; only offline ancestors are used, and the tile is asked for again later.
@@ -202,7 +216,7 @@ final class TileRepository {
                 noteRetryNeeded()
             }
         }
-        // Enlarge part of the nearest ancestor that exists.
+        // The nearest ancestor that exists.
         for k in 1...max(1, min(8, t.z)) where t.z - k >= 0 {
             let a = t.ancestor(levels: k)
             var data = offlineTile(a, layer: .imagery)
@@ -216,12 +230,7 @@ final class TileRepository {
                     noteRetryNeeded()
                 }
             }
-            if let d = data {
-                let enlarged = await Work.run(on: Work.images) {
-                    ImageTools.enlarge(d, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
-                }
-                return enlarged.map { ($0, beyondDepth ? .enlargedForGood : .enlargedForNow) }
-            }
+            if let d = data { return (a, d, beyondDepth) }
         }
         return nil
     }

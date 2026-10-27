@@ -16,6 +16,7 @@ final class ZoomTests: XCTestCase {
     func testScriptBackdrop() { scripted(mode: "backdrop") }
     func testScriptRenderer() { scripted(mode: "renderer") }
     func testScriptBackdropContours() { scripted(mode: "backdrop", contours: true) }
+    func testScriptRendererContours() { scripted(mode: "renderer", contours: true) }
 
     private func scripted(mode: String, contours: Bool = false) {
         XCUIDevice.shared.location = XCUILocation(location: CLLocation(

@@ -25,6 +25,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var drawnOutgoing: SatelliteDrawnOverlay?
     private var swapScheduled = false
     private var lastSwap: CFTimeInterval = 0
+    /// Swaps put off while the shown layer's own tiles are decoded for the new one.
+    private var swapDeferrals = 0
     /// Between MapKit's region-will-change and did-change: swaps wait, leaving MapKit's drawing to what comes into view.
     private var mapMoving = false
     private var movingSince: CFTimeInterval = 0
@@ -327,9 +329,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    /// The imagery level the drawn layer paints at the zoom on screen (tiles about 256 pixels across). MapKit paints
-    /// overlays finer than the zoom on screen (the zoom test showed a level finer): how much, and its pixels per point,
-    /// are taken from its latest paint, rounded to whole levels.
+    /// The imagery level the drawn layer paints at the zoom on screen (tiles about 256 pixels across), as MapKit
+    /// paints it: its zoom scale over the one on screen (in whole levels) and its pixels per point, which needn't be
+    /// the screen's (the zoom test showed a level's difference), are taken from its latest paint.
     private var imageryLevel: Int? {
         guard let perPoint = crosshairMapPointsPerPoint else { return nil }
         let onScreen = 1 / perPoint // points per map point
@@ -502,34 +504,57 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     /// Shows what arrived with a freshly drawn layer (redrawing part of a layer would empty it first: grey): it goes
     /// under the drawn one, which covers it while it paints, and that one goes once it has painted the screen.
     private func swapDrawn() {
-        guard isForeground, let old = drawn else { return }
+        guard let old = drawn else { return }
+        guard isForeground else {
+            swapWaiting = true // on return
+            return
+        }
         guard drawnOutgoing == nil else { return scheduleSwap() } // one at a time
+        // The new layer paints only decoded tiles: not before the ones shown are (a few tries at most).
+        if let r = mapView.renderer(for: old) as? SatelliteRenderer, swapDeferrals < 3, !r.ownSpotsReady() {
+            swapDeferrals += 1
+            return scheduleSwap()
+        }
+        swapDeferrals = 0
         lastSwap = CACurrentMediaTime()
         let new = SatelliteDrawnOverlay(urlTemplate: nil)
         drawn = new
         drawnOutgoing = old
         mapView.insertOverlay(new, below: old)
-        retire(old, once: new, hasPaintedSince: CACurrentMediaTime())
+        retire(old, once: new, ticks: 0)
     }
 
-    /// Removes the old drawn layer once the new one has painted what is on screen, or after 2 s at most.
-    private func retire(_ old: SatelliteDrawnOverlay, once new: SatelliteDrawnOverlay, hasPaintedSince start: CFTimeInterval) {
+    /// Removes the old drawn layer once the new one has painted the whole screen. If it hasn't in 2 s (on screen:
+    /// MapKit doesn't paint in the background), the new one goes instead and the old one stays.
+    private func retire(_ old: SatelliteDrawnOverlay, once new: SatelliteDrawnOverlay, ticks: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             guard let self = self, self.drawnOutgoing === old else { return }
-            let painted = (self.mapView.renderer(for: new) as? SatelliteRenderer)?.hasPainted(self.screenPoints) == true
-            guard painted || CACurrentMediaTime() - start > 2 else {
-                return self.retire(old, once: new, hasPaintedSince: start)
+            let painted = self.isForeground
+                && (self.mapView.renderer(for: new) as? SatelliteRenderer)?.hasPainted(self.screenPoints) == true
+            if painted {
+                // A moment more for MapKit to show the last patch painted.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    guard let self = self, self.drawnOutgoing === old else { return }
+                    self.mapView.removeOverlay(old)
+                    self.drawnOutgoing = nil
+                }
+            } else if self.isForeground, ticks >= 20 {
+                self.mapView.removeOverlay(new)
+                self.drawn = old
+                self.drawnOutgoing = nil
+                self.scheduleSwap()
+            } else {
+                self.retire(old, once: new, ticks: self.isForeground ? ticks + 1 : ticks)
             }
-            self.mapView.removeOverlay(old)
-            self.drawnOutgoing = nil
         }
     }
 
-    /// Points across the screen, as map points (right however the map is turned).
+    /// Points across the screen to its edges, closer together than MapKit's patches, as map points (right however
+    /// the map is turned).
     private var screenPoints: [MKMapPoint] {
-        let b = mapView.bounds
-        return (0..<25).map { i in
-            let p = CGPoint(x: b.width * (CGFloat(i % 5) + 0.5) / 5, y: b.height * (CGFloat(i / 5) + 0.5) / 5)
+        let b = mapView.bounds.insetBy(dx: 1, dy: 1)
+        return (0..<81).map { i in
+            let p = CGPoint(x: b.minX + b.width * CGFloat(i % 9) / 8, y: b.minY + b.height * CGFloat(i / 9) / 8)
             return MKMapPoint(mapView.convert(p, toCoordinateFrom: mapView))
         }
     }
@@ -791,8 +816,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         TileRepository.shared.restoreAfterBackground()
         startRetryTimer()
         if reloadPending { requestReload() }
-        // Tiles that arrived meanwhile.
-        if let d = drawn, (mapView.renderer(for: d) as? SatelliteRenderer)?.hasStandIns == true { scheduleSwap() }
+        // A new layer owed for tiles that arrived meanwhile.
+        if swapWaiting {
+            swapWaiting = false
+            scheduleSwap()
+        }
         trackChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
     }

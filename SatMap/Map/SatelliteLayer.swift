@@ -201,7 +201,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// layers, so a new one doesn't ask again for what its predecessor is loading.
     private static let loads = NSLock()
     private static var loading = Set<TileID>()
-    private static var retryAfter: [TileID: CFTimeInterval] = [:]
+    private static var retryAfter: [TileID: (until: CFTimeInterval, beyondDepth: Bool)] = [:]
     /// Around the screen and the level drawn there (set by `MapController` as the map moves). MapKit paints in
     /// large patches, mostly off screen, and keeps patches of other zooms: only spots in focus are loaded, decoded and
     /// improved by a new layer.
@@ -224,8 +224,10 @@ final class SatelliteRenderer: MKOverlayRenderer {
     }
 
     private let lock = NSLock()
-    /// Spots painted without their own tile, with the level of the coarse tile shown there (-1: nothing).
+    /// Spots painted without their own tile, with the level of the coarse tile shown there (-1: nothing), and those
+    /// painted with it.
     private var standIns: [TileID: Int] = [:]
+    private var ownSpots = Set<TileID>()
     /// The patches painted at the latest zoom.
     private var painted: [MKMapRect] = []
     private var paintedScale: MKZoomScale = 0
@@ -259,6 +261,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 let t = TileID(z: z, x: x, y: y)
                 if let image = Self.decoded.value(for: t) {
                     image.draw(in: self.rect(for: Self.mapRect(t)))
+                    ImageryMemory.tiles.touch(t) // on screen: keep its data longest
                     own.append(t)
                     continue
                 }
@@ -297,8 +300,15 @@ final class SatelliteRenderer: MKOverlayRenderer {
             }
             painted.append(mapRect)
             for t in own { standIns[t] = nil }
+            ownSpots.formUnion(own)
             standIns.merge(shownStandIns) { _, new in new }
+            ownSpots.subtract(shownStandIns.keys)
         }
+        // A tile that arrived while this patch was painting found no stand-in here to improve yet: announce it again.
+        let late = shownStandIns.first { spot, shown in
+            Self.decoded.contains(spot) || (TileFallback.ancestor(of: spot, maxLevels: 10, has: Self.has)?.z ?? -1) > shown
+        }
+        if let spot = late?.key { DispatchQueue.main.async { Self.onArrival?(spot) } }
         let ms = Int((CACurrentMediaTime() - began) * 1000)
         let empty = shownStandIns.values.filter { $0 < 0 }.count
         tileLog.debug("drawn z\(z): \(own.count) own, \(shownStandIns.count - empty) stand-in, \(empty) empty in \(ms) ms")
@@ -354,29 +364,47 @@ final class SatelliteRenderer: MKOverlayRenderer {
     }
 
     /// Loads a tile into memory, once at a time; `urgent` ones before the others.
+    /// Loads a tile into memory, once at a time; `urgent` ones before the others. If it can't be had, the nearest
+    /// coarser tile that exists is loaded instead (as it is: it is enlarged when drawn), which may be sharper than
+    /// what the spot shows.
     private static func load(_ t: TileID, urgent: Bool) {
         let now = CACurrentMediaTime()
         let start: Bool = loads.withLock {
-            if let after = retryAfter[t], now < after { return false }
+            if let after = retryAfter[t], now < after.until { return false }
             return loading.insert(t).inserted
         }
         guard start else { return }
         Task.detached(priority: .userInitiated) {
-            let r = await TileRepository.shared.imageryForDisplay(t, urgent: urgent)
-            let exact = r?.quality == .exact
-            if let r = r, exact { ImageryMemory.tiles.set(r.data, for: t) }
+            let r = await TileRepository.shared.nearestImagery(t, urgent: urgent)
+            if let r = r { ImageryMemory.tiles.set(r.data, for: r.tile) }
             loads.withLock {
                 loading.remove(t)
                 // Not there for now: asked for again in a while, or much later if the imagery doesn't go this deep.
-                if !exact { retryAfter[t] = CACurrentMediaTime() + (r?.quality == .enlargedForGood ? 600 : 30) }
+                if r?.tile != t {
+                    let deep = r?.beyondDepth == true
+                    retryAfter[t] = (CACurrentMediaTime() + (deep ? 600 : 30), deep)
+                }
             }
-            if exact { prepare([t]) }
+            if let r = r { prepare([r.tile]) }
         }
     }
 
-    /// Tiles that failed may be asked for again at once (the network is back).
+    /// Tiles that failed may be asked for again at once (the network is back); not those deeper than the imagery.
     static func reload() {
-        loads.withLock { retryAfter.removeAll() }
+        loads.withLock { retryAfter = retryAfter.filter { $0.value.beyondDepth } }
+    }
+
+    /// Whether every spot this layer shows with its own tile in focus is decoded, so a new layer would show it too
+    /// (after the app was in the background or memory ran low, they may not be). Those that aren't are decoded, or
+    /// loaded again, for the next try.
+    func ownSpotsReady() -> Bool {
+        let focus = Self.loads.withLock { Self.focus }
+        let missing = lock.withLock { ownSpots.filter { Self.inFocus($0, focus) && !Self.decoded.contains($0) } }
+        guard !missing.isEmpty else { return true }
+        for t in missing {
+            if ImageryMemory.tiles.contains(t) { Self.prepare([t]) } else { Self.load(t, urgent: true) }
+        }
+        return false
     }
 
     /// Decodes tiles in memory (off the drawing threads), so they can be drawn at once: each is announced
