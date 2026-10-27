@@ -38,7 +38,7 @@ struct OfflineSheet: View {
                     Text("Saves satellite imagery at the highest detail available plus elevation data for contours and heights, so the map works with no signal.")
                 }
 
-                Section("Offline areas") {
+                Section {
                     if offline.areas.isEmpty {
                         Text("No offline areas yet.").foregroundColor(.secondary)
                     }
@@ -62,6 +62,12 @@ struct OfflineSheet: View {
                     }
                     .onDelete { offsets in
                         offsets.map { offline.areas[$0].id }.forEach(offline.delete)
+                    }
+                } header: {
+                    Text("Offline areas")
+                } footer: {
+                    if let status = offline.backgroundStatus {
+                        Text(status)
                     }
                 }
 

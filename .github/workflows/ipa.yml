@@ -46,6 +46,8 @@ jobs:
           mkdir Payload
           cp -R build/Build/Products/Release-iphoneos/SatMap.app Payload/
           lipo -info Payload/SatMap.app/SatMap
+          # Background downloads need the iOS 26 SDK: stop if they were left out of the build.
+          nm -u Payload/SatMap.app/SatMap | grep -q BGContinuedProcessingTaskRequest || { echo "Built without background downloads (needs Xcode 26)"; exit 1; }
           plutil -p Payload/SatMap.app/Info.plist | grep -E "CFBundleIdentifier|CFBundleShortVersionString|MinimumOSVersion"
           zip -qry SatMap.ipa Payload
           ls -l SatMap.ipa

@@ -54,6 +54,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     private var inForeground = UIApplication.shared.applicationState != .background
     /// Lets a download carry on in the background (with a progress bar on the Lock Screen from iOS 26).
     private let background = BackgroundDownload()
+    /// What happens to downloads in the background, for the Offline maps screen (nil until the first download).
+    @Published private(set) var backgroundStatus: String?
     /// Whether the last run downloaded its whole area, for the system's progress bar as it closes.
     private var lastRunComplete = false
 
@@ -70,7 +72,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         config.urlCache = nil
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.httpMaximumConnectionsPerHost = 8
-        config.timeoutIntervalForRequest = 30
+        // Short enough that a slow spot doesn't hold up the progress for long (iOS may end a background task whose
+        // progress stops for about half a minute); a timed-out tile is tried again.
+        config.timeoutIntervalForRequest = 20
         config.waitsForConnectivity = false
         config.allowsExpensiveNetworkAccess = allowExpensive
         return URLSession(configuration: config)
@@ -100,6 +104,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         nc.addObserver(self, selector: #selector(willEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
         background.onExpire = { [weak self] in self?.backgroundTimeEnded() }
+        background.onStatusChange = { [weak self] in self?.backgroundStatus = self?.background.status }
         Connectivity.shared.$state
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -551,7 +556,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     guard let self = self, self.activeID == id else { return }
                     self.progress = p
-                    self.background.update(title: name, subtitle: Self.progressText(p), done: p.overallDone, total: p.overallTotal)
+                    self.background.update(area: id, title: name, subtitle: Self.progressText(p), done: p.overallDone, total: p.overallTotal)
                 }
                 // Never fill the phone completely: the track log and the rest of the phone need room too.
                 if Date().timeIntervalSince(lastSpaceCheck) > 10 {

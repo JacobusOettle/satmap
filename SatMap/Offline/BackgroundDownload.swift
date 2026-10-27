@@ -11,6 +11,12 @@ import UIKit
 final class BackgroundDownload {
     /// The background time ended: the download has to stop.
     var onExpire: (() -> Void)?
+    /// What happens to downloads in the background, in a few words for the Offline maps screen (nil until the first
+    /// download). Also says why iOS didn't allow more, as there is no other way to see that on the phone.
+    private(set) var status: String? {
+        didSet { if status != oldValue { onStatusChange?() } }
+    }
+    var onStatusChange: (() -> Void)?
 
     /// The continued processing task (iOS 26 and later) once iOS has started it, and its identifier until then.
     private var task: AnyObject?
@@ -20,8 +26,13 @@ final class BackgroundDownload {
 
     private var title = ""
     private var subtitle = ""
+    /// Progress for the task's bar, over every area it has downloaded so far: the areas before the current one count
+    /// as done.
+    private var areaID: UUID?
+    private var carried: Int64 = 0
     private var done: Int64 = 0
     private var total: Int64 = 0
+    private var shownDone: Int64 = 0
     private var shownTitle = ""
     private var shownSubtitle = ""
     private var titleShownAt = Date.distantPast
@@ -36,16 +47,24 @@ final class BackgroundDownload {
         self.subtitle = subtitle
         guard task == nil, pending == nil, UIApplication.shared.applicationState == .active else { return }
         #if compiler(>=6.2) // the iOS 26 SDK (Xcode 26)
-        if #available(iOS 26.0, *) { submit() }
+        if #available(iOS 26.0, *) {
+            submit()
+            return
+        }
         #endif
+        status = "In the background a download goes on for about half a minute, then continues when you open SatMap. With iOS 26 or later it keeps going, with its progress on the Lock Screen."
     }
 
-    /// The download's progress, for the system's progress bar.
-    func update(title: String, subtitle: String, done: Int, total: Int) {
+    /// The download's progress (tiles done and planned in the area being downloaded), for the system's progress bar.
+    func update(area: UUID, title: String, subtitle: String, done: Int, total: Int) {
+        if area != areaID {
+            if areaID != nil { carried = max(self.done, self.total) } // the area before was finished
+            areaID = area
+        }
         self.title = title
         self.subtitle = subtitle
-        self.done = Int64(max(0, done))
-        self.total = Int64(max(0, total))
+        self.done = carried + Int64(max(0, done))
+        self.total = carried + Int64(max(0, total))
         push()
     }
 
@@ -79,6 +98,10 @@ final class BackgroundDownload {
             }
             #endif
         }
+        areaID = nil
+        carried = 0
+        done = 0
+        total = 0
         endBackgroundTime()
     }
 
@@ -91,10 +114,11 @@ final class BackgroundDownload {
     private func push() {
         #if compiler(>=6.2)
         guard #available(iOS 26.0, *), let t = task as? BGContinuedProcessingTask else { return }
-        // Whole tiles: the system watches the completed count to see that the work is moving.
+        // Whole tiles, never going back: the system watches the completed count to see that the work is moving.
         let total = max(self.total, 1)
         if t.progress.totalUnitCount != total { t.progress.totalUnitCount = total }
-        t.progress.completedUnitCount = min(done, total)
+        shownDone = max(shownDone, min(done, total))
+        t.progress.completedUnitCount = shownDone
         if (title != shownTitle || subtitle != shownSubtitle) && Date().timeIntervalSince(titleShownAt) >= 1 {
             t.updateTitle(title, subtitle: subtitle)
             shownTitle = title
@@ -105,26 +129,92 @@ final class BackgroundDownload {
     }
 
     #if compiler(>=6.2)
+    /// How the task's identifier is made. It has to start with the bundle identifier the app is installed with and
+    /// match an entry "<prefix>.*" in BGTaskSchedulerPermittedIdentifiers. Sideloading with Impactor adds the team ID
+    /// to the bundle identifier (com.jacobusoettle.satmap.ABCDE12345) but not to those entries, and iOS doesn't say
+    /// whether "*" then covers more than one part, so two ways are tried; one that iOS never starts isn't used again.
+    private enum Style: String, CaseIterable {
+        /// "<bundle id>.download.<new UUID>": a new identifier for each download.
+        case unique
+        /// "<bundle id>" itself: one part after "com.jacobusoettle.satmap.", registered once.
+        case bundle
+    }
+
+    /// Ways iOS didn't start (remembered, tried last) and ways not tried again until SatMap is restarted.
+    private static let failedStylesKey = "backgroundTaskFailedStyles"
+    private var timedOut = Set<String>()
+    private var registeredBundleID = false
+
     @available(iOS 26.0, *)
     private func submit() {
         guard let bundleID = Bundle.main.bundleIdentifier else { return }
-        // A new identifier each time (registering one twice ends the app). It has to start with the bundle identifier
-        // the app is installed with (sideloading tools add the team ID to it) and match BGTaskSchedulerPermittedIdentifiers.
-        let id = "\(bundleID).download.\(UUID().uuidString)"
-        let permitted = Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String] ?? []
-        guard permitted.contains(where: { $0 == id || ($0.hasSuffix(".*") && id.hasPrefix(String($0.dropLast()))) }) else { return }
-        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: .main) { [weak self] t in
-            if let self = self { self.started(t, id: id) } else { t.setTaskCompleted(success: true) }
+        let prefixes = (Bundle.main.object(forInfoDictionaryKey: "BGTaskSchedulerPermittedIdentifiers") as? [String] ?? [])
+            .filter { $0.hasSuffix(".*") }
+            .map { String($0.dropLast(2)) }
+        func permitted(_ id: String) -> Bool { prefixes.contains { id.hasPrefix($0 + ".") } }
+
+        let failed = Set(UserDefaults.standard.stringArray(forKey: Self.failedStylesKey) ?? [])
+        let possible = Style.allCases.filter { style in
+            switch style {
+            case .unique: return permitted("\(bundleID).download.x")
+            case .bundle: return permitted(bundleID)
+            }
         }
-        guard registered else { return }
-        let request = BGContinuedProcessingTaskRequest(identifier: id, title: title, subtitle: subtitle)
-        request.strategy = .fail
-        do {
-            try BGTaskScheduler.shared.submit(request)
+        guard !possible.isEmpty else {
+            status = "In the background a download goes on for about half a minute: this copy of SatMap (\(bundleID)) isn't set up for more."
+            return
+        }
+        let styles = possible
+            .filter { !timedOut.contains($0.rawValue) }
+            .sorted { !failed.contains($0.rawValue) && failed.contains($1.rawValue) }
+        guard !styles.isEmpty else { return } // none started this time; the status says so
+
+        var problems: [String] = []
+        for style in styles {
+            let id: String
+            switch style {
+            case .unique:
+                // New each time: registering an identifier twice ends the app.
+                id = "\(bundleID).download.\(UUID().uuidString)"
+                guard BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: .main, launchHandler: { [weak self] t in
+                    if let self = self { self.started(t, id: id) } else { t.setTaskCompleted(success: true) }
+                }) else {
+                    problems.append("\(style.rawValue): not registered")
+                    continue
+                }
+            case .bundle:
+                id = bundleID
+                if !registeredBundleID {
+                    guard BGTaskScheduler.shared.register(forTaskWithIdentifier: id, using: .main, launchHandler: { [weak self] t in
+                        if let self = self { self.started(t, id: id) } else { t.setTaskCompleted(success: true) }
+                    }) else {
+                        problems.append("\(style.rawValue): not registered")
+                        continue
+                    }
+                    registeredBundleID = true
+                }
+            }
+            let request = BGContinuedProcessingTaskRequest(identifier: id, title: title, subtitle: subtitle)
+            request.strategy = .fail
+            do {
+                try BGTaskScheduler.shared.submit(request)
+            } catch {
+                problems.append("\(style.rawValue): \((error as NSError).code)")
+                continue
+            }
             pending = id
-        } catch {
-            // Not possible now (too many tasks, or not allowed): the download runs while SatMap is on screen, as before.
+            // iOS starts the task within a second or not at all (e.g. it doesn't accept the identifier).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                guard let self = self, self.pending == id else { return }
+                self.pending = nil
+                self.timedOut.insert(style.rawValue)
+                UserDefaults.standard.set(Array(failed.union([style.rawValue])), forKey: Self.failedStylesKey)
+                self.status = "In the background a download goes on for about half a minute: iOS didn't start it as a background task (\(style.rawValue), \(bundleID))."
+                self.begin(title: self.title, subtitle: self.subtitle) // the other way, if there is one left
+            }
+            return
         }
+        status = "In the background a download goes on for about half a minute: iOS didn't accept it as a background task (\(problems.joined(separator: ", ")), \(bundleID))."
     }
 
     @available(iOS 26.0, *)
@@ -135,6 +225,12 @@ final class BackgroundDownload {
         }
         pending = nil
         task = t
+        if let style = Style.allCases.first(where: { ($0 == .bundle) == (id == Bundle.main.bundleIdentifier) }) {
+            // This way works: try it first from now on.
+            let failed = Set(UserDefaults.standard.stringArray(forKey: Self.failedStylesKey) ?? []).subtracting([style.rawValue])
+            UserDefaults.standard.set(Array(failed), forKey: Self.failedStylesKey)
+        }
+        status = "Downloads keep going in the background, with their progress on the Lock Screen and in the Dynamic Island."
         t.expirationHandler = { [weak self, weak t] in
             // iOS ends the task, or it was stopped from the Lock Screen (iOS doesn't say which).
             DispatchQueue.main.async {
@@ -146,6 +242,7 @@ final class BackgroundDownload {
                 }
             }
         }
+        shownDone = 0
         shownTitle = ""
         shownSubtitle = ""
         titleShownAt = .distantPast
