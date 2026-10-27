@@ -515,7 +515,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         }
         guard drawnOutgoing == nil else { return scheduleSwap() } // one at a time
         // The new layer paints only decoded tiles: not before the ones shown are (a few tries at most).
-        if let r = mapView.renderer(for: old) as? SatelliteRenderer, swapDeferrals < 3, !r.ownSpotsReady() {
+        if let r = mapView.renderer(for: old) as? SatelliteRenderer, swapDeferrals < 3,
+           !r.ownSpotsReady(contours: model.showContours) {
             swapDeferrals += 1
             return scheduleSwap()
         }

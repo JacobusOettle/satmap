@@ -59,6 +59,10 @@ final class RecentCache<Key: Hashable, Value> {
         }
     }
 
+    func remove(_ key: Key) {
+        lock.withLock { values[key] = nil }
+    }
+
     func remove(where shouldRemove: (Key, Value) -> Bool) {
         lock.withLock {
             values = values.filter { !shouldRemove($0.key, $0.value.value) }

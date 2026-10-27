@@ -17,6 +17,7 @@ enum ZoomScript {
         (17, 0, 0), // two levels in there
         (14, 0, 0), // three out
         (14, 0, -1), // and on to a new place
+        (15.15, 0, 0), // in, to between two levels: imagery tiles show smaller than at a whole level, so more of them
     ]
 
     /// The step under way, shown in the top left corner as four squares (white for 1: step + 1 in binary, bit 0 on

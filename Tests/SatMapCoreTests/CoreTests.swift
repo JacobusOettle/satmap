@@ -840,6 +840,9 @@ final class TileFallbackTests: XCTestCase {
         XCTAssertNil(cache.value(for: 1))
         cache.remove { key, _ in key == 4 }
         XCTAssertFalse(cache.contains(4))
+        cache.set("5", for: 5)
+        cache.remove(5)
+        XCTAssertFalse(cache.contains(5))
         cache.trim(to: 1)
         XCTAssertEqual(cache.count, 1)
     }

@@ -191,7 +191,8 @@ final class SatelliteDrawnOverlay: MKTileOverlay {
 /// patch redrawn, which MapKit empties first (grey): when tiles have arrived that would improve what it shows, a new
 /// layer replaces it. MapKit calls `draw` on several threads at once.
 /// It draws the contour lines over the imagery too (when switched on): a tile layer of them over this one would hold
-/// up its paints after each change of zoom level (MapKit's, 0.2–0.4 s of grey).
+/// up its paints after each change of zoom level (MapKit's, 0.2–0.4 s of grey). Contour tiles are a few levels above
+/// the imagery's (`contourShift`), as MapKit asked for them as a tile layer.
 final class SatelliteRenderer: MKOverlayRenderer {
     /// Decoded tiles (256 KB each) drawn from, so each is decoded once: those in focus, and some.
     private static let decoded = RecentCache<TileID, UIImage>(capacity: 400)
@@ -314,9 +315,11 @@ final class SatelliteRenderer: MKOverlayRenderer {
         for c in sharper {
             Self.decoded.value(for: c)?.draw(in: self.rect(for: Self.mapRect(c)))
         }
-        let contours = drawsContours && z >= ContourPolicy.minTileZoom && ContourPolicy.intervals(
-            forPointZoom: ContourPolicy.pointZoom(tileZoom: z, screenScale: Double(contentScaleFactor))) != nil
-        let lacking = contours ? drawContours(over: spots, focus: focus, in: context) : [:]
+        let shift = contourShift
+        let contours = drawsContours && z - shift >= ContourPolicy.minTileZoom && ContourPolicy.intervals(
+            forPointZoom: ContourPolicy.pointZoom(tileZoom: z - shift, screenScale: Double(contentScaleFactor))) != nil
+        let contourTiles = contours ? Array(Set(spots.map { $0.ancestor(levels: shift) })) : []
+        let lacking = contours ? drawContours(over: contourTiles, focus: contourFocus(focus), in: context) : [:]
         lock.withLock {
             if zoomScale != paintedScale {
                 painted = []
@@ -328,8 +331,8 @@ final class SatelliteRenderer: MKOverlayRenderer {
             standIns.merge(shownStandIns) { _, new in new }
             ownSpots.subtract(shownStandIns.keys)
             if contours {
-                for t in spots { contoursLacking[t] = lacking[t] }
-                contourSpots.formUnion(spots.filter { lacking[$0] == nil })
+                for t in contourTiles { contoursLacking[t] = lacking[t] }
+                contourSpots.formUnion(contourTiles.filter { lacking[$0] == nil })
                 contourSpots.subtract(lacking.keys)
             }
         }
@@ -346,9 +349,20 @@ final class SatelliteRenderer: MKOverlayRenderer {
         tileLog.debug("drawn z\(z): \(own.count) own, \(shownStandIns.count - empty) stand-in, \(empty) empty, \(lacking.count) without contours in \(ms) ms")
     }
 
-    /// Draws the contour lines over these spots: each one's own tile, else for now its parent's enlarged or its
-    /// children's; and loads those missing in focus. Returns the spots drawn without their own tile (true: with it,
-    /// its edges approximated).
+    /// Contour tiles are about 256 points across, as MapKit asked for them as a tile layer (imagery tiles are about
+    /// 256 pixels): the same lines, labels and intervals, and far fewer tiles to work out. This many levels up.
+    private var contourShift: Int {
+        Int(log2(max(1, Double(contentScaleFactor))).rounded())
+    }
+
+    /// The focus (`setFocus`) for contour tiles.
+    private func contourFocus(_ f: (rect: MKMapRect, level: Int)) -> (rect: MKMapRect, level: Int) {
+        (f.rect, f.level - contourShift)
+    }
+
+    /// Draws these contour tiles: each one's own lines, else for now its parent's enlarged or its children's; and
+    /// loads those missing in focus. Returns the tiles drawn without their own lines (true: with them, their edges
+    /// approximated).
     private func drawContours(over spots: [TileID], focus: (rect: MKMapRect, level: Int), in context: CGContext) -> [TileID: Bool] {
         var lacking: [TileID: Bool] = [:]
         var parents: [TileID: [TileID]] = [:]
@@ -402,7 +416,9 @@ final class SatelliteRenderer: MKOverlayRenderer {
     func wouldImprove(with t: TileID, _ content: Content) -> Bool {
         let focus = Self.loads.withLock { Self.focus }
         if content == .contours {
-            guard Self.inFocus(t, focus), let approximate = lock.withLock({ contoursLacking[t] }) else { return false }
+            guard Self.inFocus(t, contourFocus(focus)), let approximate = lock.withLock({ contoursLacking[t] }) else {
+                return false
+            }
             return Self.contoursBetter(t, than: approximate)
         }
         return lock.withLock {
@@ -419,8 +435,9 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// may improve it).
     var hasStandIns: Bool {
         let focus = Self.loads.withLock { Self.focus }
+        let contours = contourFocus(focus)
         return lock.withLock {
-            standIns.keys.contains { Self.inFocus($0, focus) } || contoursLacking.keys.contains { Self.inFocus($0, focus) }
+            standIns.keys.contains { Self.inFocus($0, focus) } || contoursLacking.keys.contains { Self.inFocus($0, contours) }
         }
     }
 
@@ -428,9 +445,10 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// stopped, and MapKit doesn't repaint patches it has painted (maybe before they came into focus).
     func loadStandIns() {
         let focus = Self.loads.withLock { Self.focus }
+        let cf = contourFocus(focus)
         let (spots, contours) = lock.withLock {
             (standIns.filter { $0.key.z == focus.level && Self.inFocus($0.key, focus) },
-             contoursLacking.keys.filter { $0.z == focus.level && Self.inFocus($0, focus) })
+             contoursLacking.keys.filter { $0.z == cf.level && Self.inFocus($0, cf) })
         }
         for (t, shown) in spots {
             if ImageryMemory.tiles.contains(t) {
@@ -492,6 +510,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
             switch tile {
             case .lines(let png, let complete):
                 if let i = UIImage(data: png)?.preparingForDisplay() {
+                    noContours.remove(t)
                     contourImages.set((i, complete), for: t)
                     arrived = complete || !had
                 } else {
@@ -500,6 +519,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 again = !complete
             case .blank:
                 noContours.set(true, for: t)
+                contourImages.remove(t)
             case .unavailable:
                 arrived = false
                 again = true
@@ -521,13 +541,16 @@ final class SatelliteRenderer: MKOverlayRenderer {
     }
 
     /// Whether every spot this layer shows with its own tile in focus is decoded, so a new layer would show it too
-    /// (after the app was in the background or memory ran low, they may not be). Those that aren't are decoded, or
-    /// loaded again, for the next try.
-    func ownSpotsReady() -> Bool {
+    /// (after the app was in the background or memory ran low, they may not be), and its contour lines when the new
+    /// layer draws them (`contours`). Those that aren't are decoded, or loaded again, for the next try.
+    func ownSpotsReady(contours: Bool) -> Bool {
         let focus = Self.loads.withLock { Self.focus }
+        let cf = contourFocus(focus)
         let (missing, missingContours) = lock.withLock {
             (ownSpots.filter { Self.inFocus($0, focus) && !Self.decoded.contains($0) },
-             contourSpots.filter { Self.inFocus($0, focus) && !Self.contourImages.contains($0) && !Self.noContours.contains($0) })
+             contourSpots.filter {
+                 contours && Self.inFocus($0, cf) && !Self.contourImages.contains($0) && !Self.noContours.contains($0)
+             })
         }
         guard !missing.isEmpty || !missingContours.isEmpty else { return true }
         for t in missing {
