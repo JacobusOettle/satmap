@@ -135,6 +135,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     /// The deepest zoom level with satellite imagery saved for an area (nil if none yet). Esri's imagery stops at
     /// different levels in different places, so this can be less than the level asked for.
+    @MainActor
     func savedImageryDepth(_ id: UUID) async -> Int? {
         guard let area = areas.first(where: { $0.id == id }) else { return nil }
         let url = area.directory.appendingPathComponent(TileRepository.Layer.imagery.fileName)
