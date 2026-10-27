@@ -1098,3 +1098,30 @@ final class CoordinateParserTests: XCTestCase {
         }
     }
 }
+
+final class ScaleBarTests: XCTestCase {
+    func testLongestRoundDistanceThatFits() {
+        func check(_ metersPerPoint: Double, _ meters: Double, _ label: String, line: UInt = #line) {
+            guard let s = ScaleBar.choose(metersPerPoint: metersPerPoint, maxWidth: 110) else {
+                return XCTFail("No scale", line: line)
+            }
+            XCTAssertEqual(s.meters, meters, accuracy: 1e-9, line: line)
+            XCTAssertEqual(s.width, meters / metersPerPoint, accuracy: 1e-9, line: line)
+            XCTAssertLessThanOrEqual(s.width, 110 + 1e-9, line: line)
+            XCTAssertGreaterThanOrEqual(s.width, 110 * 0.4 - 1e-9, line: line) // 2 of 5, the biggest step down
+            XCTAssertEqual(ScaleBar.label(s.meters), label, line: line)
+        }
+        check(300.0 / 393, 50, "50 m")      // the screen 300 m across
+        check(1, 100, "100 m")              // exactly 100 m in 100 points; 110 m doesn't round
+        check(1000.0 / 110, 1000, "1 km")   // exactly the bar's length
+        check(45, 2000, "2 km")             // 4950 m fit
+        check(0.004, 0.2, "20 cm")          // closest zoom
+        check(90_000, 5_000_000, "5000 km") // the world
+    }
+
+    func testNoScaleWithoutAZoom() {
+        XCTAssertNil(ScaleBar.choose(metersPerPoint: 0, maxWidth: 110))
+        XCTAssertNil(ScaleBar.choose(metersPerPoint: .nan, maxWidth: 110))
+        XCTAssertNil(ScaleBar.choose(metersPerPoint: .infinity, maxWidth: 110))
+    }
+}

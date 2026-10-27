@@ -257,3 +257,22 @@ enum Simplify {
         return qx * qx + qy * qy
     }
 }
+
+/// The map's scale bar: the longest round distance (1, 2 or 5 × a power of ten metres) that fits in the bar.
+enum ScaleBar {
+    /// The distance and the bar's length in points, given the ground metres per screen point.
+    static func choose(metersPerPoint: Double, maxWidth: Double) -> (meters: Double, width: Double)? {
+        guard metersPerPoint > 0, metersPerPoint.isFinite, maxWidth > 0 else { return nil }
+        let most = metersPerPoint * maxWidth
+        let power = pow(10, floor(log10(most)))
+        let meters = [5, 2, 1].map { $0 * power }.first { $0 <= most * (1 + 1e-9) } ?? power
+        return (meters, meters / metersPerPoint)
+    }
+
+    /// "50 cm", "200 m", "5 km".
+    static func label(_ meters: Double) -> String {
+        if meters >= 1000 { return "\(Int((meters / 1000).rounded())) km" }
+        if meters >= 1 { return "\(Int(meters.rounded())) m" }
+        return "\(Int((meters * 100).rounded())) cm"
+    }
+}

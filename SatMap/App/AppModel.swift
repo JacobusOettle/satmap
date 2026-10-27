@@ -101,6 +101,22 @@ final class CrosshairAim: ObservableObject, @unchecked Sendable {
     }
 }
 
+/// The scale bar's round distance and its length on screen, set by the map as it zooms. Kept out of `AppModel` so a
+/// zoom redraws only the bar.
+final class MapScale: ObservableObject {
+    @Published private(set) var meters: Double = 0
+    @Published private(set) var width: Double = 0
+    /// The bar's longest, in points.
+    static let maxWidth = 110.0
+
+    func update(metersPerPoint: Double) {
+        guard let s = ScaleBar.choose(metersPerPoint: metersPerPoint, maxWidth: Self.maxWidth) else { return }
+        let w = (s.width * 2).rounded() / 2
+        if s.meters != meters { meters = s.meters }
+        if w != width { width = w }
+    }
+}
+
 /// A shape waiting for the user to confirm an offline download.
 struct PendingArea: Identifiable {
     let id = UUID()
@@ -144,6 +160,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     @Published private(set) var userElevation: Double?
     /// The spot under the crosshair while aiming.
     let aim = CrosshairAim()
+    /// The scale bar.
+    let scale = MapScale()
     /// The last point tapped on the map (or placed for measuring); its coordinates are shown at the top.
     @Published var selectedPoint: GeoPoint?
 

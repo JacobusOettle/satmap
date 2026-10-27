@@ -53,7 +53,8 @@ struct MapScreen: View {
                 Spacer()
                 // Map credits are in the Offline maps sheet.
                 if !model.isDrawingArea {
-                    HStack {
+                    HStack(alignment: .bottom) {
+                        ScaleBarView(scale: model.scale)
                         Spacer()
                         controls
                     }
@@ -313,6 +314,42 @@ struct MeasurePanel: View {
         let diff = (m - u).rounded()
         if diff == 0 { return "Marker is level with you" }
         return diff > 0 ? "▲ Marker is \(Int(diff)) m higher than you" : "▼ Marker is \(Int(-diff)) m lower than you"
+    }
+}
+
+/// The map's scale, bottom left: a round distance and its length on the map, changing as the map zooms.
+struct ScaleBarView: View {
+    @ObservedObject var scale: MapScale
+
+    var body: some View {
+        if scale.width > 0 {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ScaleBar.label(scale.meters))
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                ScaleBarShape()
+                    .stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineCap: .square))
+                    .frame(width: CGFloat(scale.width), height: 6)
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black, radius: 1.5)
+            .padding(.bottom, 4)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Scale")
+            .accessibilityValue(Text(ScaleBar.label(scale.meters)))
+        }
+    }
+}
+
+/// ⊔: a line with a tick up at each end.
+private struct ScaleBarShape: Shape {
+    func path(in r: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: r.minX, y: r.minY))
+        p.addLine(to: CGPoint(x: r.minX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.maxY))
+        p.addLine(to: CGPoint(x: r.maxX, y: r.minY))
+        return p
     }
 }
 

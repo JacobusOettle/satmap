@@ -289,10 +289,23 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
         saveCamera()
         updateAim()
+        updateScale()
     }
 
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
+        updateScale()
+    }
+
+    /// The scale bar: ground metres per screen point at the crosshair, measured across 100 points (right however the
+    /// map is turned).
+    private func updateScale() {
+        let b = mapView.bounds
+        guard b.width > 100 else { return }
+        let l = mapView.convert(CGPoint(x: b.midX - 50, y: b.midY), toCoordinateFrom: mapView)
+        let r = mapView.convert(CGPoint(x: b.midX + 50, y: b.midY), toCoordinateFrom: mapView)
+        let m = Geo.distance(GeoPoint(lat: l.latitude, lon: l.longitude), GeoPoint(lat: r.latitude, lon: r.longitude))
+        model.scale.update(metersPerPoint: m / 100)
     }
 
     private func userIsTouchingMap() -> Bool {
