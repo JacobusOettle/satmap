@@ -330,18 +330,16 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     }
 
     /// The imagery level the drawn layer paints at the zoom on screen (tiles about 256 pixels across), as MapKit
-    /// paints it: its zoom scale over the one on screen (in whole levels) and its pixels per point, which needn't be
-    /// the screen's (the zoom test showed a level's difference), are taken from its latest paint.
+    /// paints it: at a whole zoom level, the next at or above the zoom on screen (the zoom test showed paints at a
+    /// zoom scale of 2⁻⁶ with 2⁻⁶·⁰⁹ on screen), and at its pixels per point (from its latest paint).
     private var imageryLevel: Int? {
         guard let perPoint = crosshairMapPointsPerPoint else { return nil }
         let onScreen = 1 / perPoint // points per map point
-        var pixels = onScreen * Double(max(1, mapView.window?.screen.scale ?? mapView.traitCollection.displayScale))
+        let painted = pow(2, ceil(log2(onScreen) - 1e-6))
+        var pixelsPerPoint = Double(max(1, mapView.window?.screen.scale ?? mapView.traitCollection.displayScale))
         let paint = SatelliteRenderer.lastPaintScale
-        if satelliteMode == .renderer, paint.zoomScale > 0, paint.pixelsPerPoint > 0 {
-            let finer = pow(2, max(0, log2(Double(paint.zoomScale) / onScreen).rounded()))
-            pixels = onScreen * finer * Double(paint.pixelsPerPoint)
-        }
-        return SatelliteRenderer.level(pixelsPerMapPoint: pixels)
+        if satelliteMode == .renderer, paint.pixelsPerPoint > 0 { pixelsPerPoint = Double(paint.pixelsPerPoint) }
+        return SatelliteRenderer.level(pixelsPerMapPoint: painted * pixelsPerPoint)
     }
 
     /// Map points per screen point at the crosshair, measured like `metersPerPoint` (right however the map is turned).
