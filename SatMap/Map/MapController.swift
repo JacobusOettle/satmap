@@ -107,6 +107,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
         restoreCamera()
         bind()
+        ZoomScript.runIfAsked(on: mapView, model: model)
         if let loc = model.recorder.location { locationUpdated(loc) }
 
         let nc = NotificationCenter.default

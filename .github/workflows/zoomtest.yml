@@ -53,6 +53,9 @@ jobs:
         run: |
           mkdir -p videos
           for mode in Single Backdrop Renderer BackdropContours; do
+            xcrun simctl spawn "$UDID" log stream --level info --style compact \
+              --predicate 'subsystem == "com.jacobusoettle.satmap" AND category == "zoomscript"' > "videos/script-$mode.log" 2>&1 &
+            LOGPID=$!
             xcrun simctl uninstall "$UDID" com.jacobusoettle.satmap || true
             xcrun simctl install "$UDID" build/Build/Products/Release-iphonesimulator/SatMap.app
             xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
@@ -61,10 +64,12 @@ jobs:
             date -u +"recording $mode started %Y-%m-%d %H:%M:%S.%N" | tee -a videos/times.txt
             sleep 2
             xcodebuild test-without-building -xctestrun "$(ls build/Build/Products/*.xctestrun | head -n 1)" \
-              -destination "id=$UDID" -only-testing:SatMapUITests/ZoomTests/testZoom$mode > "videos/test-$mode.log" 2>&1 \
+              -destination "id=$UDID" -only-testing:SatMapUITests/ZoomTests/testScript$mode > "videos/test-$mode.log" 2>&1 \
               || tail -n 30 "videos/test-$mode.log"
             kill -INT $REC
             wait $REC || true
+            kill $LOGPID || true
+            cat "videos/script-$mode.log"
             grep -E "Start Test at|t = .*(Double tap|Two finger|Pinch with|Swipe|Launch)" "videos/test-$mode.log" | tee -a videos/times.txt | head -n 20 || true
           done
           ls -l videos
