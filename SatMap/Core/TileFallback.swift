@@ -1,32 +1,7 @@
 import Foundation
 
-/// What the map shows for a spot while its own tile loads, so it never goes black: the nearest coarser tile already in
-/// memory (enlarged), then sharper tiles from deeper levels that are still in memory (after zooming out). The real
-/// tile is drawn over them, fading in, when it arrives.
+/// Stand-ins for a tile that hasn't loaded yet, so the map never goes black.
 enum TileFallback {
-    /// The tile zoom for a map shown `pixelsPerWorld` screen pixels across the whole world: one image pixel per
-    /// screen pixel, rounded to the nearest level (as MapKit's own tile overlays).
-    static func zoom(pixelsPerWorld: Double, maxZoom: Int) -> Int {
-        guard pixelsPerWorld > 0 else { return 0 }
-        let z = log2(pixelsPerWorld / 256).rounded()
-        return Int(min(Double(maxZoom), max(0, z)))
-    }
-
-    /// The tiles at zoom `z` covering part of the world given as fractions (0...1) of its width and height.
-    static func tiles(minX: Double, minY: Double, maxX: Double, maxY: Double, z: Int) -> [TileID] {
-        let n = 1 << z
-        let scale = Double(n)
-        let x0 = max(0, Int(floor(minX * scale))), x1 = min(n - 1, Int(ceil(maxX * scale)) - 1)
-        let y0 = max(0, Int(floor(minY * scale))), y1 = min(n - 1, Int(ceil(maxY * scale)) - 1)
-        guard x0 <= x1, y0 <= y1 else { return [] }
-        var out: [TileID] = []
-        out.reserveCapacity((x1 - x0 + 1) * (y1 - y0 + 1))
-        for y in y0...y1 {
-            for x in x0...x1 { out.append(TileID(z: z, x: x, y: y)) }
-        }
-        return out
-    }
-
     /// The nearest ancestor, at most `maxLevels` up, that `has` says is available.
     static func ancestor(of t: TileID, maxLevels: Int, has: (TileID) -> Bool) -> TileID? {
         guard t.z > 0, maxLevels > 0 else { return nil }
@@ -35,23 +10,6 @@ enum TileFallback {
             if has(a) { return a }
         }
         return nil
-    }
-
-    /// Available tiles inside `t` from up to `levels` zooms deeper, coarsest first: drawn in this order, the sharpest
-    /// end on top.
-    static func descendants(of t: TileID, levels: Int, has: (TileID) -> Bool) -> [TileID] {
-        var out: [TileID] = []
-        guard levels > 0 else { return out }
-        for d in 1...levels {
-            let side = 1 << d
-            for dy in 0..<side {
-                for dx in 0..<side {
-                    let c = TileID(z: t.z + d, x: (t.x << d) + dx, y: (t.y << d) + dy)
-                    if has(c) { out.append(c) }
-                }
-            }
-        }
-        return out
     }
 }
 

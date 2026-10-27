@@ -34,6 +34,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         TileRepository.shared.trimMemory()
-        SatelliteRenderer.trimMemory()
+        ImageryMemory.trimMemory()
     }
 }

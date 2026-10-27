@@ -499,6 +499,28 @@ enum ImageTools {
     }
 }
 
+extension ImageTools {
+    /// Four tiles (top left, top right, bottom left, bottom right) shrunk into one 256 px tile.
+    static func combine(_ quarters: [Data]) -> Data? {
+        let images = quarters.compactMap { d -> CGImage? in
+            guard let src = CGImageSourceCreateWithData(d as CFData, nil) else { return nil }
+            return CGImageSourceCreateImageAtIndex(src, 0, nil)
+        }
+        guard images.count == 4 else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        format.preferredRange = .standard
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format)
+        return renderer.jpegData(withCompressionQuality: 0.9) { ctx in
+            ctx.cgContext.interpolationQuality = .high
+            for (i, image) in images.enumerated() {
+                UIImage(cgImage: image).draw(in: CGRect(x: CGFloat(i % 2) * 128, y: CGFloat(i / 2) * 128, width: 128, height: 128))
+            }
+        }
+    }
+}
+
 /// Dedicated queues for CPU-heavy tile work, so it doesn't occupy Swift's small cooperative thread pool
 /// (which the downloads and elevation lookups also need).
 enum Work {

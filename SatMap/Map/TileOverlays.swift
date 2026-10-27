@@ -5,8 +5,8 @@ import UIKit
 struct TileUnavailable: Error {}
 
 /// MapKit stops requesting tiles past `maximumZ` (and doesn't reliably enlarge the last level),
-/// so the contour overlay accepts very deep zooms and works from ancestor data itself.
-private let deepestTileZoom = 25
+/// so the tile overlays accept very deep zooms and enlarge ancestor data themselves.
+let deepestTileZoom = 25
 
 /// Contour lines drawn on the device from elevation tiles (offline areas or online).
 final class ContourTileOverlay: MKTileOverlay {
