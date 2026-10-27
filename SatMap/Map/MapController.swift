@@ -318,17 +318,28 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         let n = stopCount
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self = self, n == self.stopCount, self.isForeground, let level = self.imageryLevel else { return }
-            ImageryPrefetch.mapStopped(visible: self.mapView.visibleMapRect, level: level, decode: self.satelliteMode == .renderer)
+            let visible = self.mapView.visibleMapRect
+            if self.satelliteMode == .renderer {
+                SatelliteRenderer.setFocus(visible.insetBy(dx: -visible.width / 4, dy: -visible.height / 4), level: level)
+            }
+            ImageryPrefetch.mapStopped(visible: visible, level: level, decode: self.satelliteMode == .renderer)
             if let d = self.drawn { (self.mapView.renderer(for: d) as? SatelliteRenderer)?.loadStandIns() }
         }
     }
 
-    /// The imagery level the drawn layer paints at the zoom on screen (tiles about 256 pixels across).
+    /// The imagery level the drawn layer paints at the zoom on screen (tiles about 256 pixels across). MapKit paints
+    /// overlays finer than the zoom on screen (the zoom test showed a level finer): how much, and its pixels per point,
+    /// are taken from its latest paint, rounded to whole levels.
     private var imageryLevel: Int? {
         guard let perPoint = crosshairMapPointsPerPoint else { return nil }
-        var scale = Double(mapView.window?.screen.scale ?? mapView.traitCollection.displayScale)
-        if let d = drawn, let r = mapView.renderer(for: d) { scale = Double(r.contentScaleFactor) } // as it draws
-        return SatelliteRenderer.level(pixelsPerMapPoint: max(1, scale) / perPoint)
+        let onScreen = 1 / perPoint // points per map point
+        var pixels = onScreen * Double(max(1, mapView.window?.screen.scale ?? mapView.traitCollection.displayScale))
+        let paint = SatelliteRenderer.lastPaintScale
+        if satelliteMode == .renderer, paint.zoomScale > 0, paint.pixelsPerPoint > 0 {
+            let finer = pow(2, max(0, log2(Double(paint.zoomScale) / onScreen).rounded()))
+            pixels = onScreen * finer * Double(paint.pixelsPerPoint)
+        }
+        return SatelliteRenderer.level(pixelsPerMapPoint: pixels)
     }
 
     /// Map points per screen point at the crosshair, measured like `metersPerPoint` (right however the map is turned).

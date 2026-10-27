@@ -211,6 +211,14 @@ final class SatelliteRenderer: MKOverlayRenderer {
         loads.withLock { focus = (rect, level) }
     }
 
+    /// MapKit's zoom scale and pixels per point in its latest paint: it paints finer than the zoom on screen, and
+    /// `MapController` works out the level it paints at from these.
+    private static var paintScale = (zoomScale: MKZoomScale(0), pixelsPerPoint: CGFloat(0))
+
+    static var lastPaintScale: (zoomScale: MKZoomScale, pixelsPerPoint: CGFloat) {
+        loads.withLock { paintScale }
+    }
+
     private static func inFocus(_ t: TileID, _ f: (rect: MKMapRect, level: Int)) -> Bool {
         abs(t.z - f.level) <= 1 && f.rect.intersects(mapRect(t))
     }
@@ -235,7 +243,10 @@ final class SatelliteRenderer: MKOverlayRenderer {
         let y0 = max(0, Int(floor(mapRect.minY / size))), y1 = min(n - 1, Int(ceil(mapRect.maxY / size)) - 1)
         guard x0 <= x1, y0 <= y1 else { return }
         let began = CACurrentMediaTime()
-        let focus = Self.loads.withLock { Self.focus }
+        let focus: (rect: MKMapRect, level: Int) = Self.loads.withLock {
+            Self.paintScale = (zoomScale, contentScaleFactor)
+            return Self.focus
+        }
         // Only decoded tiles are copied here, so a patch paints quickly; tiles in memory not decoded yet are decoded
         // off this thread and come with the next layer. Each coarse tile is drawn once, under all the spots it serves.
         var own: [TileID] = [], shownStandIns: [TileID: Int] = [:]
@@ -324,7 +335,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// stopped, and MapKit doesn't repaint patches it has painted (maybe before they came into focus).
     func loadStandIns() {
         let focus = Self.loads.withLock { Self.focus }
-        let spots = lock.withLock { standIns.filter { Self.inFocus($0.key, focus) } }
+        let spots = lock.withLock { standIns.filter { $0.key.z == focus.level && Self.inFocus($0.key, focus) } }
         for (t, shown) in spots {
             if ImageryMemory.tiles.contains(t) {
                 Self.prepare([t])
@@ -459,7 +470,8 @@ enum ImageryPrefetch {
             loading.formUnion(w)
             return w
         }
-        tileLog.debug("map stopped at z\(z): \(onScreen.count) on screen, \(surround.count) around, \(wanted.count) to load")
+        let paint = SatelliteRenderer.lastPaintScale
+        tileLog.debug("map stopped at z\(z): \(onScreen.count) on screen, \(surround.count) around, \(wanted.count) to load; last paint at zoom scale \(Double(paint.zoomScale)), \(Double(paint.pixelsPerPoint)) px/pt")
         for t in wanted {
             Task.detached(priority: .utility) {
                 if let d = await TileRepository.shared.imageryInBackground(t) {

@@ -25,7 +25,7 @@ final class ZoomTests: XCTestCase {
         app.launch()
         allowPermissionPrompts()
         XCTAssertTrue(app.maps.firstMatch.waitForExistence(timeout: 30), "No map")
-        sleep(20 + 12 * 5 + 6) // the script's steps
+        sleep(20 + 12 * 5 + 6 + 54) // the script's steps, with room for a slow start on the simulator
     }
 
     private func zoomAround(mode: String, contours: Bool = false) {
