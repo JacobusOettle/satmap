@@ -22,8 +22,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/10-draw-area.jpg" width="250"> | <img src="docs/screenshots/11-contours-off.jpg" width="250"> | <img src="docs/screenshots/12-download-along-roads.jpg" width="250"> |
 | **Whole area and along roads** | **Exporting a backup** | **Coordinates of a tapped spot and of you** |
 | <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | <img src="docs/screenshots/14-export-backup.jpg" width="250"> | <img src="docs/screenshots/15-coordinates.jpg" width="250"> |
-| **Measuring between two points** | **Kruger National Park roads** | |
-| <img src="docs/screenshots/16-measure-two-points.jpg" width="250"> | <img src="docs/screenshots/17-kruger-roads.jpg" width="250"> | |
+| **Measuring between two points** | **Kruger National Park roads** | **One level deeper for an area** |
+| <img src="docs/screenshots/16-measure-two-points.jpg" width="250"> | <img src="docs/screenshots/17-kruger-roads.jpg" width="250"> | <img src="docs/screenshots/18-area-deeper-level.jpg" width="250"> |
 
 ## Features
 
@@ -58,6 +58,9 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   from OpenStreetMap can be added as KML/KMZ files in `tools/kruger-extra`.
 - Keep SatMap open while it downloads; the screen stays on. In the background the download pauses so it
   can't compete with track recording for battery or CPU, and it continues when you return.
+- **Going deeper later:** tap a downloaded area to open it: *Show on the map*, how deep the imagery it found goes,
+  and the zoom levels with the size each deeper one would add. Choose a deeper level and download: what is saved
+  is kept, and only the new levels are fetched.
 - Downloads resume where they stopped: after **Pause**, losing signal, leaving Wi-Fi, or closing the app.
   If the Wi-Fi is up but the internet behind it is down, the download waits and retries by itself.
   If the phone runs out of space, it stops and tells you.

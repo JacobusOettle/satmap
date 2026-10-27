@@ -431,6 +431,26 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertEqual(server.requests.count, before)
     }
 
+    /// Choosing a deeper level for a downloaded area runs the job again with a higher maximum: only the new level
+    /// is fetched (stored tiles and tiles known to be missing are skipped).
+    func testDeeperLevelFetchesOnlyTheNewLevel() async throws {
+        let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
+        let server = FakeServer(deepest: 19, patch: TileID(z: 0, x: 0, y: 0))
+        func job(_ maxZoom: Int) -> TileDownloadJob {
+            TileDownloadJob(shape: area, layers: [DownloadLayer(name: "sat", store: store, fetcher: server, zooms: 0...maxZoom, pruneByParent: true)],
+                            concurrency: 4, retryDelay: { _ in 0 })
+        }
+        let firstRun = await job(17).run { _ in }
+        XCTAssertEqual(firstRun, .completed(failed: 0))
+        let first = server.requests.count
+        let secondRun = await job(18).run { _ in }
+        XCTAssertEqual(secondRun, .completed(failed: 0))
+        let again = server.requests[first...]
+        XCTAssertFalse(again.isEmpty)
+        XCTAssertTrue(again.allSatisfy { $0.z == 18 }, "only zoom 18 is fetched the second time")
+        XCTAssertEqual(again.count, TileCoverage(shape: area, zoom: 18).tileCount)
+    }
+
     func testRetriesTransientFailures() async throws {
         let store = try MBTiles(url: tempDir().appendingPathComponent("s.mbtiles"), create: true)
         let server = FakeServer(deepest: 14, patch: TileID(z: 0, x: 0, y: 0))

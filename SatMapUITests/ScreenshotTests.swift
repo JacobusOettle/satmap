@@ -191,6 +191,27 @@ final class ScreenshotTests: XCTestCase {
         guard ready.count >= 2, alongRoads.exists else { return XCTFail("No area downloaded along roads") }
         snap("13-offline-along-roads")
 
+        // Open the roads area and add one deeper level (only zoom 21 is downloaded).
+        tapRow(startingWith: "Farm roads")
+        if app.staticTexts["Imagery found down to"].waitForExistence(timeout: 20) {
+            tapRow(startingWith: "Zoom 21")
+            sleep(3) // size of the extra level
+            scrollTo(app.buttons["Download zoom 21"].firstMatch)
+            snap("18-area-deeper-level")
+            tap("Download zoom 21")
+            sleep(2)
+            app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
+            for _ in 0..<120 {
+                if ready.count >= 2 { break }
+                sleep(5)
+            }
+            XCTAssertEqual(ready.count, 2, "The roads area didn't finish its extra level")
+            XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "up to zoom 21")).firstMatch.exists)
+        } else {
+            XCTFail("The area screen didn't open")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+
         // Backup: export both areas through the share sheet.
         scrollTo(app.buttons["Export all offline maps"].firstMatch)
         tap("Export all offline maps")

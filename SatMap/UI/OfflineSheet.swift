@@ -38,15 +38,14 @@ struct OfflineSheet: View {
                         Text("No offline areas yet.").foregroundColor(.secondary)
                     }
                     ForEach(offline.areas) { area in
-                        AreaRow(area: area, progress: offline.activeID == area.id ? offline.progress : nil,
-                                canDownloadNow: offline.canDownloadNow(area),
-                                onPause: { offline.pause(area.id) },
-                                onResume: { offline.resume(area.id) })
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if let b = area.shape.bounds { model.map?.zoom(to: b) }
-                                dismiss()
-                            }
+                        NavigationLink {
+                            AreaDetailView(model: model, offline: offline, areaID: area.id)
+                        } label: {
+                            AreaRow(area: area, progress: offline.activeID == area.id ? offline.progress : nil,
+                                    canDownloadNow: offline.canDownloadNow(area),
+                                    onPause: { offline.pause(area.id) },
+                                    onResume: { offline.resume(area.id) })
+                        }
                             .contextMenu {
                                 Button {
                                     offline.export([area.id])
