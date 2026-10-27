@@ -4,11 +4,12 @@ import UIKit
 
 /// Satellite imagery in two layers, so the map neither goes grey while tiles load nor flickers:
 /// - `SatelliteTileOverlay` on top, one of MapKit's tile layers: loads each tile itself (offline areas, then Esri),
-///   and MapKit fades it in as it arrives.
+///   and MapKit fades it in as it arrives. Where it has no tile yet it is see-through.
 /// - Underneath (`SatelliteMode`), what is shown meanwhile: by default `SatelliteRenderer`, which paints every spot at
 ///   once with the best imagery in memory (the nearest coarser tile enlarged after zooming in, the sharper ones under
 ///   it after zooming out). `ImageryPrefetch` keeps coarse tiles around the screen in memory for it.
-/// Both replace Apple's map entirely, so MapKit doesn't download its own tiles.
+/// The bottom layer replaces Apple's map entirely, so MapKit doesn't download its own tiles; only that one, as MapKit
+/// paints a grey loading grid where a replacing layer has no tile yet (`MapController.satelliteModeChanged`).
 
 /// Imagery tiles loaded for the screen (JPEG data, 15–60 KB each), for the backdrop to build on.
 enum ImageryMemory {
@@ -247,26 +248,40 @@ final class SatelliteRenderer: MKOverlayRenderer {
         return i
     }
 
-    /// The nearest coarser tile in memory, enlarged, then the sharper ones under it, two levels down (after zooming
-    /// out by more than one level), then one. False if there was none.
+    /// The sharper tiles in memory (after zooming out): each quarter's tile one level down, else what there is of its
+    /// four two levels down; under them, where they don't cover it all, the nearest coarser tile enlarged. False if
+    /// there was nothing.
     private func drawStandIn(for t: TileID, in rect: CGRect, context: CGContext) -> Bool {
         let memory = ImageryMemory.tiles
+        let deepest = TileSources.imageryMaxZoom
+        func quarters(_ p: TileID) -> [TileID] {
+            (0..<4).map { TileID(z: p.z + 1, x: p.x * 2 + $0 % 2, y: p.y * 2 + $0 / 2) }
+        }
+        var sharper: [TileID] = []
+        var covered = t.z < deepest
+        if t.z < deepest {
+            for c in quarters(t) {
+                if memory.contains(c) {
+                    sharper.append(c)
+                } else {
+                    covered = false
+                    if c.z < deepest { sharper += quarters(c).filter { memory.contains($0) } }
+                }
+            }
+        }
         var drew = false
-        if let a = TileFallback.ancestor(of: t, maxLevels: 10, has: { memory.contains($0) }), let image = Self.image(a) {
+        if !covered, let a = TileFallback.ancestor(of: t, maxLevels: 10, has: { memory.contains($0) }),
+           let image = Self.image(a) {
             context.saveGState()
             context.clip(to: rect)
             image.draw(in: self.rect(for: Self.mapRect(a)))
             context.restoreGState()
             drew = true
         }
-        for k in [2, 1] where t.z + k <= TileSources.imageryMaxZoom {
-            let side = 1 << k
-            for i in 0..<(side * side) {
-                let c = TileID(z: t.z + k, x: (t.x << k) + i % side, y: (t.y << k) + i / side)
-                if memory.contains(c), let image = Self.image(c) {
-                    image.draw(in: self.rect(for: Self.mapRect(c)))
-                    drew = true
-                }
+        for c in sharper {
+            if let image = Self.image(c) {
+                image.draw(in: self.rect(for: Self.mapRect(c)))
+                drew = true
             }
         }
         return drew

@@ -70,6 +70,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         // Later overlays draw on top: imagery, contours (when switched on), (blocks inserted below the track),
         // track, measuring line.
         if let u = underlay { mapView.addOverlay(u, level: .aboveLabels) }
+        satellite.canReplaceMapContent = underlay == nil // see `satelliteModeChanged`
         mapView.addOverlay(satellite, level: .aboveLabels)
         NotificationCenter.default.addObserver(forName: SatelliteMode.changed, object: nil, queue: .main) { [weak self] _ in
             self?.satelliteModeChanged()
@@ -387,14 +388,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     }
 
     /// The way of drawing the imagery was switched (Offline maps, while it is being tried out): swap the layer under
-    /// the tile layer.
+    /// the tile layer. Only the bottom layer replaces Apple's map: where a layer that does has no tile yet, MapKit
+    /// paints its grey loading grid, which on the tile layer would hide what is underneath (the whole map goes grey
+    /// on a zoom). So the tile layer is added again with the setting for the new mode.
     private func satelliteModeChanged() {
         let mode = SatelliteMode.current
         guard mode != satelliteMode else { return }
         satelliteMode = mode
         if let u = underlay { mapView.removeOverlay(u) }
+        mapView.removeOverlay(satellite)
         satelliteRenderer = nil
         underlay = Self.underlay(for: mode)
+        satellite.canReplaceMapContent = underlay == nil
+        mapView.insertOverlay(satellite, at: 0, level: .aboveLabels)
         if let u = underlay { mapView.insertOverlay(u, at: 0, level: .aboveLabels) }
     }
 
