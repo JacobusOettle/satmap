@@ -37,6 +37,41 @@ enum MeasureMode: Equatable {
     }
 }
 
+/// While aiming the measuring tool: the spot under the crosshair and its height, which change as the map moves. Kept
+/// out of `AppModel` so a pan redraws only the measuring panel, not the whole screen.
+final class CrosshairAim: ObservableObject, @unchecked Sendable {
+    @Published private(set) var point: GeoPoint?
+    @Published private(set) var elevation: Double?
+    private var lookingUp = false
+    private var lookedUp: GeoPoint?
+
+    /// The spot under the crosshair (nil when not aiming). Its height is looked up one at a time, always for the
+    /// latest spot, so a pan doesn't queue a lookup for every frame.
+    func set(_ p: GeoPoint?) {
+        guard p != point else { return }
+        point = p
+        if p == nil {
+            elevation = nil
+            lookedUp = nil
+        }
+        lookUp()
+    }
+
+    private func lookUp() {
+        guard !lookingUp, let p = point, p != lookedUp else { return }
+        lookingUp = true
+        lookedUp = p
+        Task.detached(priority: .userInitiated) {
+            let e = await TileRepository.shared.elevation(at: p)
+            DispatchQueue.main.async {
+                self.lookingUp = false
+                if self.point != nil { self.elevation = e }
+                self.lookUp()
+            }
+        }
+    }
+}
+
 /// A shape waiting for the user to confirm an offline download.
 struct PendingArea: Identifiable {
     let id = UUID()
@@ -78,6 +113,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     @Published private(set) var markerElevation: Double?
     @Published private(set) var lastElevation: Double?
     @Published private(set) var userElevation: Double?
+    /// The spot under the crosshair while aiming.
+    let aim = CrosshairAim()
     /// The last point tapped on the map (or placed for measuring); its coordinates are shown at the top.
     @Published var selectedPoint: GeoPoint?
 
@@ -106,7 +143,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             // Elevations aren't looked up in the background; catch up when the app is opened.
             guard let self = self else { return }
             if self.markerElevation == nil || self.lastElevation == nil { self.refreshPointElevations() }
-            if case .placed = self.measure, let loc = self.recorder.location { self.refreshUserElevation(loc) }
+            if self.measureIsFromYou, let loc = self.recorder.location { self.refreshUserElevation(loc) }
         }
 
         // Re-publish nested objects so SwiftUI views observing the model update.
@@ -136,7 +173,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     private func locationUpdated(_ loc: CLLocation) {
         map?.locationUpdated(loc)
-        if case .placed = measure, UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
+        if measureIsFromYou, UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
     }
 
     /// My location: centres the map on you and follows you. Tapped again while it does (also a quick second tap), it
@@ -157,7 +194,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     func measureButtonTapped() {
         switch measure {
         case .off:
-            measure = .aiming
+            setMeasure(.aiming)
         case .aiming, .placed, .path:
             guard let c = map?.centerCoordinate else { return }
             addMeasurePoint(GeoPoint(lat: c.latitude, lon: c.longitude))
@@ -215,13 +252,22 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         let old = measure.points
         measure = m
         // Faster GPS checks while asleep only matter when the distance is from you.
-        if case .placed = m { recorder.measuring = true } else { recorder.measuring = false }
+        recorder.measuring = measureIsFromYou
+        if m != .aiming { aim.set(nil) }
         let new = m.points
         if new.first != old.first { markerElevation = nil }
         if new.count < 2 || new.last != old.last || old.count < 2 { lastElevation = nil }
-        if new.isEmpty { userElevation = nil }
+        if m == .off { userElevation = nil }
         refreshPointElevations()
-        if case .placed = m, let loc = recorder.location { refreshUserElevation(loc) }
+        if measureIsFromYou, let loc = recorder.location { refreshUserElevation(loc) }
+    }
+
+    /// Aiming (to the crosshair) or one point: the distance and height are from you.
+    private var measureIsFromYou: Bool {
+        switch measure {
+        case .aiming, .placed: return true
+        case .off, .path, .closed: return false
+        }
     }
 
     /// Distance from you to the point, or the total length of the line through the points (around the shape when

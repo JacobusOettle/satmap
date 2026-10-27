@@ -930,25 +930,45 @@ final class CoverageDifferenceTests: XCTestCase {
 }
 
 /// Fails every request for the first `count` different tiles it is asked for (one round of requests hit by a gap).
-private final class FirstRoundFails: TileFetching {
+/// None of those answers until all of them have been asked for, as when a connection drops with a round of requests
+/// out: so they are the round sent first, in whatever order the tasks happen to run (the job must send at least
+/// `count` at once).
+private final class FirstRoundFails: TileFetching, @unchecked Sendable {
     private let lock = NSLock()
     private let count: Int
     private var failing = Set<TileID>()
-    private var seen = Set<TileID>()
+    private var waiting: [CheckedContinuation<Void, Never>] = []
 
     init(count: Int) {
         self.count = count
     }
 
     func fetch(_ tile: TileID) async -> TileFetchResult {
-        let fail: Bool = lock.withLock {
-            if !seen.contains(tile) {
-                seen.insert(tile)
-                if seen.count <= count { failing.insert(tile) }
-            }
-            return failing.contains(tile)
+        enum Step { case answer(fail: Bool), wait, release([CheckedContinuation<Void, Never>]) }
+        let step: Step = lock.withLock {
+            if failing.contains(tile) { return .answer(fail: true) }
+            guard failing.count < count else { return .answer(fail: false) }
+            failing.insert(tile)
+            if failing.count < count { return .wait }
+            defer { waiting = [] }
+            return .release(waiting)
         }
-        return fail ? .failed : .data(Data([0xFF, 0xD8, 0, 0]))
+        switch step {
+        case .answer(let fail):
+            return fail ? .failed : .data(Data([0xFF, 0xD8, 0, 0]))
+        case .wait:
+            await withCheckedContinuation { c in
+                let go: Bool = lock.withLock {
+                    if failing.count >= count { return true }
+                    waiting.append(c)
+                    return false
+                }
+                if go { c.resume() }
+            }
+        case .release(let others):
+            others.forEach { $0.resume() }
+        }
+        return .failed
     }
 }
 

@@ -9,6 +9,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     let container = UIView()
     let mapView = MKMapView()
     private let lasso = LassoView()
+    /// While aiming the measuring tool: the dashed line from you to the crosshair. Drawn over the map rather than as
+    /// a map overlay, so it follows a pan frame by frame.
+    private let aimLineView = UIView()
+    private let aimLine = CAShapeLayer()
     private let model: AppModel
 
     private var satelliteMode = SatelliteMode.current
@@ -77,6 +81,15 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
         container.addSubview(mapView)
         mapView.translatesAutoresizingMaskIntoConstraints = false
+        aimLineView.frame = container.bounds
+        aimLineView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        aimLineView.isUserInteractionEnabled = false
+        aimLine.strokeColor = UIColor(red: 1, green: 0.18, blue: 0.4, alpha: 1).cgColor // as MeasureLineRenderer
+        aimLine.fillColor = nil
+        aimLine.lineWidth = 3
+        aimLine.lineDashPattern = [10, 7]
+        aimLineView.layer.addSublayer(aimLine)
+        container.addSubview(aimLineView)
         lasso.translatesAutoresizingMaskIntoConstraints = false
         lasso.isHidden = true
         container.addSubview(lasso)
@@ -280,6 +293,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
         saveCamera()
+        updateAim()
+    }
+
+    func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
+        updateAim()
     }
 
     private func userIsTouchingMap() -> Bool {
@@ -311,6 +329,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             hasCentredOnFirstFix = true
         }
         updateMeasureLine()
+        updateAim()
     }
 
     private func powerChanged(_ power: LocationRecorder.Power) {
@@ -426,6 +445,34 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         }
         mapView.addAnnotations(markerAnnotations)
         updateMeasureLine()
+        updateAim()
+    }
+
+    /// While aiming: the spot under the crosshair (for the live distance and height) and the line from you to it.
+    private func updateAim() {
+        guard model.measure == .aiming else {
+            if aimLine.path != nil { aimLine.path = nil }
+            return
+        }
+        let c = centerCoordinate
+        model.aim.set(GeoPoint(lat: c.latitude, lon: c.longitude))
+        var path: CGPath?
+        if let me = model.recorder.location?.coordinate {
+            let a = mapView.convert(me, toPointTo: aimLineView)
+            let b = CGPoint(x: aimLineView.bounds.midX, y: aimLineView.bounds.midY)
+            let length = hypot(b.x - a.x, b.y - a.y)
+            let dot: CGFloat = 11 // from the edge of your dot
+            if length > dot + 4 {
+                let p = CGMutablePath()
+                p.move(to: CGPoint(x: a.x + (b.x - a.x) / length * dot, y: a.y + (b.y - a.y) / length * dot))
+                p.addLine(to: b)
+                path = p
+            }
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        aimLine.path = path
+        CATransaction.commit()
     }
 
     /// From you to the point, or through the points (back to the first when the shape is closed).

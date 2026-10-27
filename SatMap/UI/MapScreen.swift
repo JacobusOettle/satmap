@@ -32,8 +32,7 @@ struct MapScreen: View {
                 }
                 switch model.measure {
                 case .aiming:
-                    Hint(text: "Tap the spot on the map, or move the crosshair onto it and tap the measure button.",
-                         onClose: model.clearMeasure)
+                    AimPanel(model: model, aim: model.aim, recorder: recorder)
                 case .placed, .path, .closed:
                     MeasurePanel(model: model, recorder: recorder)
                 case .off:
@@ -314,6 +313,54 @@ struct MeasurePanel: View {
         let diff = (m - u).rounded()
         if diff == 0 { return "Marker is level with you" }
         return diff > 0 ? "▲ Marker is \(Int(diff)) m higher than you" : "▼ Marker is \(Int(-diff)) m lower than you"
+    }
+}
+
+/// While aiming: the live distance and height from you to the spot under the crosshair, as the map moves.
+struct AimPanel: View {
+    @ObservedObject var model: AppModel
+    @ObservedObject var aim: CrosshairAim
+    @ObservedObject var recorder: LocationRecorder
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("You to the crosshair")
+                .font(.caption.weight(.semibold)).opacity(0.85)
+            Text(distanceText)
+                .font(.system(size: 30, weight: .bold).monospacedDigit())
+            Text(heightText)
+                .font(.headline)
+            if let c = aim.elevation, let u = model.userElevation {
+                Text("Crosshair \(Int(c.rounded())) m · You \(Int(u.rounded())) m above sea level")
+                    .font(.caption).opacity(0.85)
+            }
+            Text("Tap the spot on the map, or move the crosshair onto it and tap the measure button, for point A.")
+                .font(.caption2).opacity(0.7)
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.black.opacity(0.7))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) { StopMeasuringButton(model: model) }
+    }
+
+    private var distanceText: String {
+        guard let loc = recorder.location else { return "Waiting for GPS…" }
+        guard let p = aim.point else { return "–" }
+        return Format.distance(loc.distance(from: CLLocation(latitude: p.lat, longitude: p.lon)))
+    }
+
+    private var heightText: String {
+        guard let c = aim.elevation, let u = model.userElevation else {
+            return Connectivity.shared.isOnline
+                ? "Height: loading elevation…"
+                : "Height: no elevation data here offline (download this area)"
+        }
+        let diff = (c - u).rounded()
+        if diff == 0 { return "Crosshair is level with you" }
+        return diff > 0 ? "▲ Crosshair is \(Int(diff)) m higher than you" : "▼ Crosshair is \(Int(-diff)) m lower than you"
     }
 }
 
