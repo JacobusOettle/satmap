@@ -269,6 +269,13 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         if case .path(let pts) = measure, pts.count >= 3, let apart = map?.pointsApart(p, pts[0]), apart < 20 {
             return closeMeasureShape()
         }
+        // The crosshair still on the last point (another tap without moving the map): no leg of 0 m.
+        switch measure {
+        case .placed, .path:
+            if let last = measure.points.last, let apart = map?.pointsApart(p, last), apart < 6 { return }
+        default:
+            break
+        }
         selectedPoint = p
         switch measure {
         case .placed(let a):

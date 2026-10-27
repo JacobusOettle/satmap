@@ -76,6 +76,7 @@ final class ScreenshotTests: XCTestCase {
 
         // Blocks from the KML file.
         tap("Blocks")
+        if !app.navigationBars["Blocks"].waitForExistence(timeout: 5) { tap("Blocks") } // a tap can be lost while the app is busy
         sleep(2)
         snap("04-blocks-list")
         tapRow(startingWith: "Demo farm")
@@ -148,7 +149,7 @@ final class ScreenshotTests: XCTestCase {
         dragMap(dx: -0.25, dy: 0)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.45)).tap() // D
         sleep(2)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7)).tap() // A (moved down with the map): close
+        tap("Close shape") // (the map glides on a little after each drag, so where A ends up isn't known exactly)
         sleep(3)
         XCTAssertEqual(currentMeasureState(), .shape)
         XCTAssertTrue(app.staticTexts["Shape A–D · 4 corners"].exists, "The shape didn't get four corners")
