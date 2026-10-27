@@ -264,6 +264,22 @@ final class DecoderTests: XCTestCase {
         XCTAssertEqual(own.fill, false)
         XCTAssertEqual(try XCTUnwrap(doc.features[2].style?.iconColor).red, 1, accuracy: 1e-9)
         XCTAssertNil(doc.features[3].style)
+        // Google Earth Web and the Earth app: shared styles in gx:CascadingStyle, which holds the id.
+        let earth = """
+        <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2" xmlns:kml="http://www.opengis.net/kml/2.2"><Document>
+          <gx:CascadingStyle kml:id="__managed_style_N"><Style><LineStyle><color>ff2dc0fb</color><width>3.2</width></LineStyle>
+            <PolyStyle><color>402dc0fb</color></PolyStyle></Style></gx:CascadingStyle>
+          <gx:CascadingStyle kml:id="__managed_style_H"><Style><LineStyle><color>ff2dc0fb</color><width>4.8</width></LineStyle></Style></gx:CascadingStyle>
+          <StyleMap id="__managed_style_M"><Pair><key>normal</key><styleUrl>#__managed_style_N</styleUrl></Pair>
+            <Pair><key>highlight</key><styleUrl>#__managed_style_H</styleUrl></Pair></StyleMap>
+          <Placemark><name>E</name><styleUrl>#__managed_style_M</styleUrl>
+            <Polygon><outerBoundaryIs><LinearRing><coordinates>31,-25 31.1,-25 31.1,-25.1 31,-25</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+        </Document></kml>
+        """
+        let web = try XCTUnwrap(KMLParser.parse(Data(earth.utf8)).features.first?.style)
+        XCTAssertEqual(web.lineWidth, 3.2)
+        XCTAssertEqual(web.lineColor, KMLColor(kml: "ff2dc0fb"))
+        XCTAssertEqual(web.fillColor, KMLColor(kml: "402dc0fb"))
         XCTAssertNil(KMLColor(kml: "red"))
         XCTAssertEqual(KMLColor(kml: "0000ff")?.red, 1)
     }

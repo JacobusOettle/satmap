@@ -153,6 +153,8 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
     private var featureStyles: [(url: String?, own: KMLStyle?)] = []
     private var style: KMLStyle?
     private var styleID: String?
+    /// Google Earth Web and the Earth app write each shared style as an id-less Style in a gx:CascadingStyle with the id.
+    private var cascadingID: String?
     private var placemarkStyleURL: String?
     private var placemarkStyle: KMLStyle?
     private var styleMapID: String?
@@ -215,7 +217,10 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
             holes = []
         case "Style":
             style = KMLStyle()
-            styleID = attributeDict["id"]
+            let parent = stack.count >= 2 ? stack[stack.count - 2] : ""
+            styleID = attributeDict["id"] ?? (parent == "CascadingStyle" ? cascadingID : nil)
+        case "CascadingStyle":
+            cascadingID = attributeDict["kml:id"] ?? attributeDict["id"]
         case "StyleMap":
             styleMapID = attributeDict["id"]
         case "Pair":
@@ -282,6 +287,8 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
             pair = nil
         case "StyleMap":
             styleMapID = nil
+        case "CascadingStyle":
+            cascadingID = nil
         case "name":
             if parent == "Placemark" {
                 placemarkName = value.isEmpty ? nil : value
