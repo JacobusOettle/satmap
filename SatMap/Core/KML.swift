@@ -12,6 +12,45 @@ enum KMLGeometry: Hashable {
 struct KMLFeature: Hashable {
     var name: String?
     var geometry: KMLGeometry
+    /// How the file draws it (nil: no style of its own).
+    var style: KMLStyle?
+}
+
+/// A KML colour: written aabbggrr in hex (alpha first, then blue, green, red).
+struct KMLColor: Hashable {
+    var red: Double, green: Double, blue: Double, alpha: Double
+
+    /// From "aabbggrr" (also with a leading "#", or "bbggrr" opaque); nil if it isn't that.
+    init?(kml text: String) {
+        var hex = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if hex.hasPrefix("#") { hex.removeFirst() }
+        if hex.count == 6 { hex = "ff" + hex }
+        guard hex.count == 8, let v = UInt32(hex, radix: 16) else { return nil }
+        alpha = Double(v >> 24 & 0xff) / 255
+        blue = Double(v >> 16 & 0xff) / 255
+        green = Double(v >> 8 & 0xff) / 255
+        red = Double(v & 0xff) / 255
+    }
+}
+
+/// The parts of a KML style SatMap draws: outlines and lines (LineStyle), polygon fills (PolyStyle) and point
+/// icons' colour (IconStyle). Unset parts are nil (the app's own look).
+struct KMLStyle: Hashable {
+    var lineColor: KMLColor?
+    var lineWidth: Double?
+    var fillColor: KMLColor?
+    var fill: Bool?
+    var outline: Bool?
+    var iconColor: KMLColor?
+
+    var isEmpty: Bool { self == KMLStyle() }
+
+    /// This style's parts, and `base`'s where this one has none (a placemark's own style over its shared one).
+    func over(_ base: KMLStyle) -> KMLStyle {
+        KMLStyle(lineColor: lineColor ?? base.lineColor, lineWidth: lineWidth ?? base.lineWidth,
+                 fillColor: fillColor ?? base.fillColor, fill: fill ?? base.fill, outline: outline ?? base.outline,
+                 iconColor: iconColor ?? base.iconColor)
+    }
 }
 
 struct KMLDocument {
@@ -78,7 +117,7 @@ enum KMLParser {
         parser.delegate = delegate
         guard parser.parse() || !delegate.features.isEmpty else { throw KMLError.unreadable }
         guard !delegate.features.isEmpty else { throw KMLError.noGeometry }
-        return KMLDocument(name: delegate.documentName, features: delegate.features)
+        return KMLDocument(name: delegate.documentName, features: delegate.styledFeatures())
     }
 
     /// Parses a KML `<coordinates>` string: whitespace-separated "lon,lat[,alt]" tuples.
@@ -106,6 +145,54 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
     private var outer: [GeoPoint] = []
     private var holes: [[GeoPoint]] = []
 
+    /// Styles: shared ones by id (anywhere in the file, as Google Earth reads them), style maps by id (the style for
+    /// their "normal" key: a link, or a style of its own), and each feature's link and own style, joined up at the end
+    /// (shared styles may come after the placemarks that use them).
+    private var styles: [String: KMLStyle] = [:]
+    private var styleMaps: [String: (url: String?, style: KMLStyle?)] = [:]
+    private var featureStyles: [(url: String?, own: KMLStyle?)] = []
+    private var style: KMLStyle?
+    private var styleID: String?
+    private var placemarkStyleURL: String?
+    private var placemarkStyle: KMLStyle?
+    private var styleMapID: String?
+    private var pair: (key: String?, url: String?, style: KMLStyle?)?
+
+    /// The features with their styles: a placemark's own style over the one its styleUrl names (through a style map's
+    /// normal style).
+    func styledFeatures() -> [KMLFeature] {
+        zip(features, featureStyles).map { feature, s in
+            var f = feature
+            var shared: KMLStyle?
+            if let id = s.url.flatMap(Self.styleID) {
+                if let m = styleMaps[id] {
+                    shared = m.style ?? m.url.flatMap(Self.styleID).flatMap { styles[$0] }
+                } else {
+                    shared = styles[id]
+                }
+            }
+            let merged = (s.own ?? KMLStyle()).over(shared ?? KMLStyle())
+            f.style = merged.isEmpty ? nil : merged
+            return f
+        }
+    }
+
+    /// The id a styleUrl points to: "#id", or "file.kml#id" (only styles in this file are known).
+    private static func styleID(_ url: String) -> String? {
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let hash = u.lastIndex(of: "#") else { return u.isEmpty ? nil : u }
+        let id = String(u[u.index(after: hash)...])
+        return id.isEmpty ? nil : id
+    }
+
+    private static func flag(_ text: String) -> Bool? {
+        switch text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true": return true
+        case "0", "false": return false
+        default: return nil
+        }
+    }
+
     private func local(_ name: String) -> String {
         if let i = name.lastIndex(of: ":") { return String(name[name.index(after: i)...]) }
         return name
@@ -121,9 +208,18 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
             inPlacemark = true
             placemarkName = nil
             pendingGeometries = []
+            placemarkStyleURL = nil
+            placemarkStyle = nil
         case "Polygon":
             outer = []
             holes = []
+        case "Style":
+            style = KMLStyle()
+            styleID = attributeDict["id"]
+        case "StyleMap":
+            styleMapID = attributeDict["id"]
+        case "Pair":
+            pair = (key: nil, url: nil, style: nil)
         default:
             break
         }
@@ -144,9 +240,49 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
             text = ""
         }
         let parent = stack.count >= 2 ? stack[stack.count - 2] : ""
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         switch name {
+        case "color" where style != nil:
+            let c = KMLColor(kml: value)
+            switch parent {
+            case "LineStyle": style?.lineColor = c
+            case "PolyStyle": style?.fillColor = c
+            case "IconStyle": style?.iconColor = c
+            default: break
+            }
+        case "width" where style != nil && parent == "LineStyle":
+            style?.lineWidth = Double(value)
+        case "fill" where style != nil && parent == "PolyStyle":
+            style?.fill = Self.flag(value)
+        case "outline" where style != nil && parent == "PolyStyle":
+            style?.outline = Self.flag(value)
+        case "Style":
+            guard let s = style else { return }
+            style = nil
+            if pair != nil {
+                pair?.style = s
+            } else if parent == "Placemark" && inPlacemark {
+                placemarkStyle = s
+            } else if let id = styleID {
+                styles[id] = s
+            }
+            styleID = nil
+        case "key" where parent == "Pair":
+            pair?.key = value
+        case "styleUrl":
+            if pair != nil {
+                pair?.url = value
+            } else if parent == "Placemark" && inPlacemark {
+                placemarkStyleURL = value
+            }
+        case "Pair":
+            if let p = pair, let id = styleMapID, p.key == nil || p.key == "normal" {
+                styleMaps[id] = (url: p.url, style: p.style)
+            }
+            pair = nil
+        case "StyleMap":
+            styleMapID = nil
         case "name":
-            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if parent == "Placemark" {
                 placemarkName = value.isEmpty ? nil : value
             } else if parent == "Document" && documentName == nil && !value.isEmpty {
@@ -171,7 +307,10 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
             outer = []
             holes = []
         case "Placemark":
-            for g in pendingGeometries { features.append(KMLFeature(name: placemarkName, geometry: g)) }
+            for g in pendingGeometries {
+                features.append(KMLFeature(name: placemarkName, geometry: g))
+                featureStyles.append((url: placemarkStyleURL, own: placemarkStyle))
+            }
             pendingGeometries = []
             inPlacemark = false
         default:

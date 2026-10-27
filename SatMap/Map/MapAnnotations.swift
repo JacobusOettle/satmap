@@ -3,8 +3,14 @@ import UIKit
 
 // MARK: - Overlay types (distinct classes so the renderer can style them)
 
-final class BlockPolygons: MKMultiPolygon {}
-final class BlockLines: MKMultiPolyline {}
+/// A KML file's polygons, and its lines, with one style (`KMLStyle`; nil: the app's own look).
+final class BlockPolygons: MKMultiPolygon {
+    var style: KMLStyle?
+}
+
+final class BlockLines: MKMultiPolyline {
+    var style: KMLStyle?
+}
 final class DraftAreaPolygon: MKPolygon {}
 
 // MARK: - Annotations
@@ -44,12 +50,21 @@ final class BlockLabelAnnotation: NSObject, MKAnnotation {
     let coordinate: CLLocationCoordinate2D
     let title: String?
     let isPoint: Bool
+    /// A point's colour in its file (its icon's), if it has one.
+    let color: UIColor?
 
-    init(coordinate: CLLocationCoordinate2D, title: String?, isPoint: Bool) {
+    init(coordinate: CLLocationCoordinate2D, title: String?, isPoint: Bool, color: UIColor? = nil) {
         self.coordinate = coordinate
         self.title = title
         self.isPoint = isPoint
+        self.color = color
         super.init()
+    }
+}
+
+extension UIColor {
+    convenience init(kml c: KMLColor) {
+        self.init(red: CGFloat(c.red), green: CGFloat(c.green), blue: CGFloat(c.blue), alpha: CGFloat(c.alpha))
     }
 }
 
@@ -196,6 +211,7 @@ final class BlockLabelView: MKAnnotationView {
         label.text = a.title
         label.sizeToFit()
         dot.isHidden = !a.isPoint
+        dot.backgroundColor = a.color ?? .white
         let w = max(label.bounds.width, 8)
         let h = label.bounds.height + (a.isPoint ? 10 : 0)
         frame = CGRect(x: 0, y: 0, width: w, height: h)

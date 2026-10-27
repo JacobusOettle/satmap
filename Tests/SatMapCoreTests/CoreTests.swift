@@ -220,11 +220,52 @@ final class DecoderTests: XCTestCase {
             XCTAssertEqual(l.count, 2)
             guard case .point(let p) = doc.features[3].geometry else { return XCTFail("point") }
             XCTAssertEqual(p.lat, -25.46, accuracy: 1e-9)
+            XCTAssertEqual(doc.features[0].style?.lineColor, KMLColor(kml: "ff00ffff"))
+            XCTAssertNil(doc.features[1].style)
             let shape = doc.coverageShape(bufferMeters: 100)
             XCTAssertEqual(shape.polygons.count, 2)
             XCTAssertEqual(shape.lines.count, 1)
             XCTAssertEqual(shape.points.count, 1)
         }
+    }
+
+    func testKMLStyles() throws {
+        // Shared styles (also after the placemarks using them), a style map's normal style (linked or its own), a
+        // placemark's own style over its shared one, and colours written aabbggrr.
+        let kml = """
+        <kml xmlns="http://www.opengis.net/kml/2.2"><Document>
+          <Placemark><name>A</name><styleUrl>#map</styleUrl>
+            <Polygon><outerBoundaryIs><LinearRing><coordinates>31,-25 31.1,-25 31.1,-25.1 31,-25</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>
+          <Placemark><name>B</name><styleUrl>#green</styleUrl>
+            <Style><LineStyle><width>4</width></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+            <LineString><coordinates>31,-25 31.1,-25.1</coordinates></LineString></Placemark>
+          <Placemark><name>C</name><styleUrl>#inlineMap</styleUrl><Point><coordinates>31,-25</coordinates></Point></Placemark>
+          <Placemark><name>D</name><styleUrl>#missing</styleUrl><Point><coordinates>31.2,-25</coordinates></Point></Placemark>
+          <StyleMap id="map"><Pair><key>normal</key><styleUrl>#green</styleUrl></Pair><Pair><key>highlight</key><styleUrl>#red</styleUrl></Pair></StyleMap>
+          <StyleMap id="inlineMap"><Pair><key>highlight</key><styleUrl>#red</styleUrl></Pair>
+            <Pair><key>normal</key><Style><IconStyle><color>#ff0000ff</color></IconStyle></Style></Pair></StyleMap>
+          <Style id="green"><LineStyle><color>ff6ed035</color><width>2</width></LineStyle><PolyStyle><color>596ed035</color></PolyStyle></Style>
+          <Style id="red"><LineStyle><color>ff0000ff</color></LineStyle></Style>
+        </Document></kml>
+        """
+        let doc = try KMLParser.parse(Data(kml.utf8))
+        XCTAssertEqual(doc.features.count, 4)
+        let green = try XCTUnwrap(doc.features[0].style)
+        XCTAssertEqual(green.lineWidth, 2)
+        let line = try XCTUnwrap(green.lineColor)
+        XCTAssertEqual(line.red, 0x35 / 255.0, accuracy: 1e-9)
+        XCTAssertEqual(line.green, 0xd0 / 255.0, accuracy: 1e-9)
+        XCTAssertEqual(line.blue, 0x6e / 255.0, accuracy: 1e-9)
+        XCTAssertEqual(line.alpha, 1, accuracy: 1e-9)
+        XCTAssertEqual(try XCTUnwrap(green.fillColor).alpha, 0x59 / 255.0, accuracy: 1e-9)
+        let own = try XCTUnwrap(doc.features[1].style)
+        XCTAssertEqual(own.lineWidth, 4)
+        XCTAssertEqual(own.lineColor, green.lineColor)
+        XCTAssertEqual(own.fill, false)
+        XCTAssertEqual(try XCTUnwrap(doc.features[2].style?.iconColor).red, 1, accuracy: 1e-9)
+        XCTAssertNil(doc.features[3].style)
+        XCTAssertNil(KMLColor(kml: "red"))
+        XCTAssertEqual(KMLColor(kml: "0000ff")?.red, 1)
     }
 
     func testRejectsGarbage() {

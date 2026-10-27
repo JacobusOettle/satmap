@@ -751,8 +751,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             blockLabels[id] = nil
         }
         for f in files where blockOverlays[f.id] == nil {
-            var polygons: [MKPolygon] = []
-            var lines: [MKPolyline] = []
+            // One overlay for each style's polygons and one for its lines (files often give every block a style of
+            // its own, with the same colours).
+            var polygons: [KMLStyle?: [MKPolygon]] = [:], polygonOrder: [KMLStyle?] = []
+            var lines: [KMLStyle?: [MKPolyline]] = [:], lineOrder: [KMLStyle?] = []
             var labels: [MKAnnotation] = []
             for feature in f.document.features {
                 switch feature.geometry {
@@ -762,22 +764,33 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
                         return MKPolygon(coordinates: c, count: c.count)
                     }
                     let c = outer.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                    polygons.append(MKPolygon(coordinates: c, count: c.count, interiorPolygons: interiors))
+                    if polygons[feature.style] == nil { polygonOrder.append(feature.style) }
+                    polygons[feature.style, default: []].append(MKPolygon(coordinates: c, count: c.count, interiorPolygons: interiors))
                     if let name = feature.name, let p = PolygonLabel.interiorPoint(outer: outer, holes: holes) {
                         labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
                                                            title: name, isPoint: false))
                     }
                 case .line(let pts):
                     let c = pts.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                    lines.append(MKPolyline(coordinates: c, count: c.count))
+                    if lines[feature.style] == nil { lineOrder.append(feature.style) }
+                    lines[feature.style, default: []].append(MKPolyline(coordinates: c, count: c.count))
                 case .point(let p):
                     labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
-                                                       title: feature.name ?? "", isPoint: true))
+                                                       title: feature.name ?? "", isPoint: true,
+                                                       color: feature.style?.iconColor.map(UIColor.init(kml:))))
                 }
             }
             var overlays: [MKOverlay] = []
-            if !polygons.isEmpty { overlays.append(BlockPolygons(polygons)) }
-            if !lines.isEmpty { overlays.append(BlockLines(lines)) }
+            for style in polygonOrder {
+                let o = BlockPolygons(polygons[style] ?? [])
+                o.style = style
+                overlays.append(o)
+            }
+            for style in lineOrder {
+                let o = BlockLines(lines[style] ?? [])
+                o.style = style
+                overlays.append(o)
+            }
             // Keep blocks above the contours and under the track and the measuring line.
             for o in overlays { mapView.insertOverlay(o, below: track) }
             mapView.addAnnotations(labels)
@@ -858,16 +871,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             measureRenderer = r
             return r
         case let o as BlockPolygons:
-            // White: yellow/orange is used by contours, cyan by the track and pink by the measuring line.
             let r = MKMultiPolygonRenderer(multiPolygon: o)
-            r.strokeColor = UIColor(white: 1, alpha: 0.95)
-            r.fillColor = UIColor(white: 1, alpha: 0.07)
-            r.lineWidth = 2.5
+            Self.style(r, o.style, polygons: true)
             return r
         case let o as BlockLines:
             let r = MKMultiPolylineRenderer(multiPolyline: o)
-            r.strokeColor = UIColor(white: 1, alpha: 0.95)
-            r.lineWidth = 2.5
+            Self.style(r, o.style, polygons: false)
             return r
         case let o as DraftAreaPolygon:
             let r = MKPolygonRenderer(polygon: o)
@@ -878,6 +887,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             return r
         default:
             return MKOverlayRenderer(overlay: overlay)
+        }
+    }
+
+    /// Blocks in their file's colours and line widths (KML styles). What a file leaves unset is white (yellow/orange is
+    /// used by contours, cyan by the track and pink by the measuring line), with a faint fill.
+    private static func style(_ r: MKOverlayPathRenderer, _ style: KMLStyle?, polygons: Bool) {
+        let s = style ?? KMLStyle()
+        let width = s.lineWidth ?? 2.5
+        let outline = width > 0 && (!polygons || s.outline != false)
+        r.strokeColor = outline ? s.lineColor.map(UIColor.init(kml:)) ?? UIColor(white: 1, alpha: 0.95) : .clear
+        r.lineWidth = min(12, max(1.5, width))
+        if polygons {
+            r.fillColor = s.fill == false ? .clear : s.fillColor.map(UIColor.init(kml:)) ?? UIColor(white: 1, alpha: 0.07)
         }
     }
 
