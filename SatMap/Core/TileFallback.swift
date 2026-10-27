@@ -16,7 +16,7 @@ enum TileFallback {
 /// A thread-safe cache that keeps the most recently used values (lookups are O(1); when full, the least recently used
 /// quarter is dropped at once).
 final class RecentCache<Key: Hashable, Value> {
-    private let capacity: Int
+    private var capacity: Int
     private var values: [Key: (value: Value, used: UInt64)] = [:]
     private var clock: UInt64 = 0
     private let lock = NSLock()
@@ -34,6 +34,11 @@ final class RecentCache<Key: Hashable, Value> {
             values[key] = (entry.value, clock)
             return entry.value
         }
+    }
+
+    /// The value without marking it as used.
+    func peek(_ key: Key) -> Value? {
+        lock.withLock { values[key]?.value }
     }
 
     func contains(_ key: Key) -> Bool {
@@ -66,6 +71,16 @@ final class RecentCache<Key: Hashable, Value> {
     func remove(where shouldRemove: (Key, Value) -> Bool) {
         lock.withLock {
             values = values.filter { !shouldRemove($0.key, $0.value.value) }
+        }
+    }
+
+    /// Holds up to this many from now on (the least recently used go at once if there are more).
+    func resize(to capacity: Int) {
+        lock.withLock {
+            let c = max(1, capacity)
+            guard c != self.capacity else { return }
+            self.capacity = c
+            trimLocked(to: c)
         }
     }
 

@@ -324,27 +324,31 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         stopCount += 1
         let n = stopCount
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self = self, n == self.stopCount, self.isForeground, let level = self.imageryLevel else { return }
+            guard let self = self, n == self.stopCount, self.isForeground, let levels = self.imageryLevels else { return }
             let visible = self.mapView.visibleMapRect
             if self.satelliteMode == .renderer {
-                SatelliteRenderer.setFocus(visible.insetBy(dx: -visible.width / 4, dy: -visible.height / 4), level: level)
+                SatelliteRenderer.setFocus(visible.insetBy(dx: -visible.width / 4, dy: -visible.height / 4),
+                                           level: levels.imagery, contourLevel: levels.contours)
             }
-            ImageryPrefetch.mapStopped(visible: visible, level: level, decode: self.satelliteMode == .renderer)
+            ImageryPrefetch.mapStopped(visible: visible, level: levels.imagery, decode: self.satelliteMode == .renderer)
             if let d = self.drawn { (self.mapView.renderer(for: d) as? SatelliteRenderer)?.loadStandIns() }
         }
     }
 
-    /// The imagery level the drawn layer paints at the zoom on screen (tiles about 256 pixels across), as MapKit
-    /// paints it: at a whole zoom level, the next at or above the zoom on screen (the zoom test showed paints at a
-    /// zoom scale of 2⁻⁶ with 2⁻⁶·⁰⁹ on screen), and at its pixels per point (from its latest paint).
-    private var imageryLevel: Int? {
+    /// The imagery level for the zoom on screen: tiles about 256 pixels across on screen (a tile pixel 0.7 to 1.4
+    /// screen pixels, at the drawn layer's pixels per point, from its latest paint). Not at the zoom MapKit paints at,
+    /// the next whole zoom level at or above the one on screen (the zoom test showed paints at a zoom scale of 2⁻⁶ with
+    /// 2⁻⁶·⁰⁹ on screen): there, tiles would show at half to full size, up to four times as many for a screen.
+    /// And the contour level: tiles 256 points across at the zoom MapKit paints at, as it asked for them as a tile layer.
+    private var imageryLevels: (imagery: Int, contours: Int)? {
         guard let perPoint = crosshairMapPointsPerPoint else { return nil }
         let onScreen = 1 / perPoint // points per map point
         let painted = pow(2, ceil(log2(onScreen) - 1e-6))
         var pixelsPerPoint = Double(max(1, mapView.window?.screen.scale ?? mapView.traitCollection.displayScale))
         let paint = SatelliteRenderer.lastPaintScale
         if satelliteMode == .renderer, paint.pixelsPerPoint > 0 { pixelsPerPoint = Double(paint.pixelsPerPoint) }
-        return SatelliteRenderer.level(pixelsPerMapPoint: painted * pixelsPerPoint)
+        return (SatelliteRenderer.level(pixelsPerMapPoint: onScreen * pixelsPerPoint),
+                SatelliteRenderer.level(pixelsPerMapPoint: painted))
     }
 
     /// Map points per screen point at the crosshair, measured like `metersPerPoint` (right however the map is turned).
@@ -362,9 +366,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
         updateScale()
-        if satelliteMode == .renderer, let level = imageryLevel {
+        if satelliteMode == .renderer, let levels = imageryLevels {
             let v = mapView.visibleMapRect
-            SatelliteRenderer.setFocus(v.insetBy(dx: -v.width / 4, dy: -v.height / 4), level: level)
+            SatelliteRenderer.setFocus(v.insetBy(dx: -v.width / 4, dy: -v.height / 4),
+                                       level: levels.imagery, contourLevel: levels.contours)
         }
     }
 

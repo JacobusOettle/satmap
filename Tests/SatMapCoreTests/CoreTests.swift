@@ -847,6 +847,20 @@ final class TileFallbackTests: XCTestCase {
         XCTAssertEqual(cache.count, 1)
     }
 
+    func testRecentCachePeeksAndResizes() {
+        // Peeking doesn't count as use; a smaller capacity drops the least recently used at once.
+        let cache = RecentCache<Int, String>(capacity: 10)
+        for i in 0..<6 { cache.set("\(i)", for: i) }
+        XCTAssertEqual(cache.peek(0), "0")
+        cache.resize(to: 3)
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertNil(cache.peek(0))
+        XCTAssertEqual(cache.peek(5), "5")
+        cache.resize(to: 6)
+        for i in 6..<9 { cache.set("\(i)", for: i) }
+        XCTAssertEqual(cache.count, 6)
+    }
+
     func testTouchedValuesOutlastNewerOnes() {
         // The coarse tiles around the screen are touched at every stop: many newer tiles don't push them out, and
         // checking for them (contains) doesn't count as use.
