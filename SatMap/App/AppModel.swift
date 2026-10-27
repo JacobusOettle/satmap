@@ -191,7 +191,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func refreshPointElevations() {
+    /// Looks up the measuring points' elevations that aren't known yet. A failed lookup (no signal) is tried again
+    /// a few times, 15 s apart, while the point stays and the app is on screen.
+    private func refreshPointElevations(attempt: Int = 0) {
         let points = measure.points
         for (i, p) in points.enumerated() where (i == 0 ? markerElevation : secondElevation) == nil {
             Task.detached(priority: .userInitiated) {
@@ -200,9 +202,22 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                     let now = self.measure.points
                     guard i < now.count, now[i] == p else { return }
                     if i == 0 { self.markerElevation = e } else { self.secondElevation = e }
+                    if e == nil, attempt < 4 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                            guard UIApplication.shared.applicationState == .active, i < self.measure.points.count,
+                                  self.measure.points[i] == p else { return }
+                            self.refreshPointElevations(attempt: attempt + 1)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// The ✕ on the measuring panel.
+    func clearMeasure() {
+        setMeasure(.off)
+        selectedPoint = nil
     }
 
     private func refreshUserElevation(_ loc: CLLocation) {

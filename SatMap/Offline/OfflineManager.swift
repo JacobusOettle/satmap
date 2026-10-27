@@ -411,6 +411,15 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     private func run(_ area: Area) {
+        // Never fall back to the whole area (for a national park, terabytes) if a shipped road list is missing.
+        if area.preset != nil && area.roadLines == nil {
+            update(area.id) {
+                $0.status = .incomplete
+                $0.problem = "This version of SatMap doesn't have the road list for this area."
+            }
+            DispatchQueue.main.async { [weak self] in self?.startNextIfIdle() }
+            return
+        }
         let dir = area.directory
         let imagery: MBTiles
         let terrain: MBTiles

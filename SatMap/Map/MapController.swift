@@ -18,6 +18,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var trackRenderer: TrackRenderer?
     private var measureRenderer: MeasureLineRenderer?
 
+    /// A single tap on the map. It waits until the tap can't be the start of a double-tap zoom, so where the
+    /// finger was is recorded straight away by `touchRecorder` (the map may move meanwhile, e.g. following you).
+    private let tapRecognizer = UITapGestureRecognizer()
+    private let touchRecorder = UITapGestureRecognizer()
+    private var lastTouch: (point: CGPoint, coordinate: CLLocationCoordinate2D)?
     private var userAnnotation: UserLocationAnnotation?
     private var markerAnnotations: [MeasureMarkerAnnotation] = []
     private var selectedAnnotation: SelectedPointAnnotation?
@@ -78,9 +83,13 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         ])
         lasso.onFinish = { [weak self] pts in self?.lassoFinished(pts) }
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(mapTapped(_:)))
-        tap.delegate = self
-        mapView.addGestureRecognizer(tap)
+        tapRecognizer.addTarget(self, action: #selector(mapTapped(_:)))
+        tapRecognizer.delegate = self
+        mapView.addGestureRecognizer(tapRecognizer)
+        touchRecorder.addTarget(self, action: #selector(touchEnded(_:)))
+        touchRecorder.delegate = self
+        touchRecorder.cancelsTouchesInView = false
+        mapView.addGestureRecognizer(touchRecorder)
 
         restoreCamera()
         bind()
@@ -299,14 +308,23 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     // MARK: - Tapping the map
 
     /// A single tap (not the first tap of a double-tap zoom) on the map, outside lasso drawing.
+    @objc private func touchEnded(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended else { return }
+        let point = g.location(in: mapView)
+        lastTouch = (point, mapView.convert(point, toCoordinateFrom: mapView))
+    }
+
     @objc private func mapTapped(_ g: UITapGestureRecognizer) {
         guard g.state == .ended, !model.isDrawingArea else { return }
-        let c = mapView.convert(g.location(in: mapView), toCoordinateFrom: mapView)
+        let point = g.location(in: mapView)
+        var c = mapView.convert(point, toCoordinateFrom: mapView)
+        if let t = lastTouch, hypot(t.point.x - point.x, t.point.y - point.y) < 1 { c = t.coordinate }
+        lastTouch = nil
         model.mapTapped(GeoPoint(lat: c.latitude, lon: c.longitude))
     }
 
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
-        (other as? UITapGestureRecognizer)?.numberOfTapsRequired == 2
+        g === tapRecognizer && (other as? UITapGestureRecognizer)?.numberOfTapsRequired == 2
     }
 
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {

@@ -54,6 +54,7 @@ struct MapScreen: View {
                         CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
                                       text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
                                       id: "myCoordinates", compact: true)
+                            .padding(.bottom, 24) // clear of MapKit's "Legal" link in the corner
                     }
                     Spacer()
                     if !model.isDrawingArea {
@@ -226,6 +227,15 @@ struct MeasurePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.black.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
+            Button(action: model.clearMeasure) {
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundColor(.white)
+                    .padding(12)
+            }
+            .accessibilityLabel(Text("Stop measuring"))
+        }
     }
 
     private var heightText: String {
@@ -263,7 +273,7 @@ struct CoordinateBar: View {
                 UIPasteboard.general.string = text
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copied = false }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
