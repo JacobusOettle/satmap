@@ -139,6 +139,16 @@ final class ScreenshotTests: XCTestCase {
         sleep(8) // elevations of both points
         XCTAssertEqual(currentMeasureState(), .pair)
         snap("16-measure-two-points")
+
+        // Two more points, then tap A again: the shape's area.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.45)).tap()
+        sleep(2)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.33)).tap()
+        sleep(2)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap()
+        sleep(3)
+        XCTAssertEqual(currentMeasureState(), .shape)
+        snap("19-measure-area")
         setMeasure(.off)
 
         // The one-tap Kruger National Park roads (not downloaded here: several GB).
@@ -224,14 +234,19 @@ final class ScreenshotTests: XCTestCase {
     // MARK: - Helpers
 
     private enum MeasureState {
-        case off, aiming, placed, pair
+        case off, aiming, placed, pair, shape
     }
 
-    /// Taps the measure button until the screen shows the wanted state (a tap can be lost while the app is busy).
+    /// Taps the measure button (or its ✕ to stop) until the screen shows the wanted state (a tap can be lost while
+    /// the app is busy).
     private func setMeasure(_ wanted: MeasureState) {
         for _ in 0..<4 {
             if currentMeasureState() == wanted { return }
-            tap("Measure")
+            if wanted == .off {
+                tap("Stop measuring")
+            } else {
+                tap("Measure")
+            }
             sleep(2)
         }
         XCTAssertEqual(currentMeasureState(), wanted)
@@ -240,7 +255,8 @@ final class ScreenshotTests: XCTestCase {
     private func currentMeasureState() -> MeasureState {
         let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Tap the spot on the map")).firstMatch
         if hint.exists { return .aiming }
-        if app.staticTexts["From A to B"].exists { return .pair }
+        if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "From A to")).firstMatch.exists { return .pair }
+        if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Shape A")).firstMatch.exists { return .shape }
         let panel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
                                                          "than you", "Height:", "Waiting for GPS")).firstMatch
         return panel.exists ? .placed : .off

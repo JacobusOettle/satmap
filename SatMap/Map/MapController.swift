@@ -329,6 +329,14 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         var c = mapView.convert(point, toCoordinateFrom: mapView)
         if let t = lastTouch, hypot(t.point.x - point.x, t.point.y - point.y) < 1 { c = t.coordinate }
         lastTouch = nil
+        // A tap on point A, with three or more points, closes the shape.
+        if case .path(let pts) = model.measure, pts.count >= 3 {
+            let a = mapView.convert(CLLocationCoordinate2D(latitude: pts[0].lat, longitude: pts[0].lon), toPointTo: mapView)
+            if hypot(a.x - point.x, a.y - point.y) < 30 {
+                model.closeMeasureShape()
+                return
+            }
+        }
         model.mapTapped(GeoPoint(lat: c.latitude, lon: c.longitude))
     }
 
@@ -358,25 +366,31 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         let points = m.points
         markerAnnotations = points.enumerated().map { i, p in
             MeasureMarkerAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
-                                    label: points.count == 2 ? (i == 0 ? "A" : "B") : nil)
+                                    label: points.count >= 2 ? MeasureMode.label(i) : nil)
         }
         mapView.addAnnotations(markerAnnotations)
         updateMeasureLine()
     }
 
-    /// From you to the point, or between the two points.
+    /// From you to the point, or through the points (back to the first when the shape is closed).
     private func updateMeasureLine() {
-        var ends: (CLLocationCoordinate2D?, CLLocationCoordinate2D?) = (nil, nil)
+        var line: [CLLocationCoordinate2D] = []
+        var closed = false
         switch model.measure {
         case .placed(let p):
-            ends = (CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), model.recorder.location?.coordinate)
-        case .pair(let a, let b):
-            ends = (CLLocationCoordinate2D(latitude: a.lat, longitude: a.lon), CLLocationCoordinate2D(latitude: b.lat, longitude: b.lon))
+            if let me = model.recorder.location?.coordinate {
+                line = [CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), me]
+            }
+        case .path(let pts):
+            line = pts.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+        case .closed(let pts):
+            line = pts.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+            closed = true
         case .off, .aiming:
             break
         }
         let margin = 8 * mapPointsPerPoint
-        for rect in measureLine.set(ends.0, ends.1) {
+        for rect in measureLine.set(line, closed: closed) {
             measureRenderer?.setNeedsDisplay(rect.insetBy(dx: -margin, dy: -margin))
         }
     }

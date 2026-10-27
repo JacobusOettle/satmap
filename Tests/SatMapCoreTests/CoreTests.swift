@@ -37,6 +37,19 @@ final class GeoTests: XCTestCase {
         XCTAssertEqual(Geo.distance(GeoPoint(lat: 0, lon: 0), GeoPoint(lat: 1, lon: 0)), 111_195, accuracy: 5)
     }
 
+    func testPathLengthAndShapeArea() {
+        // A 100 m × 100 m square near Skukuza (1 ha), measured corner to corner.
+        let lat = -24.99, lon = 31.59
+        let dLat = 100 / 110_574.0, dLon = 100 / (111_320.0 * cos(lat * .pi / 180))
+        let square = [GeoPoint(lat: lat, lon: lon), GeoPoint(lat: lat, lon: lon + dLon),
+                      GeoPoint(lat: lat + dLat, lon: lon + dLon), GeoPoint(lat: lat + dLat, lon: lon)]
+        XCTAssertEqual(Geo.pathLength(square), 300, accuracy: 1)
+        XCTAssertEqual(Geo.pathLength(square + [square[0]]), 400, accuracy: 1.5)
+        XCTAssertEqual(Geo.ringArea(square), 10_000, accuracy: 100)
+        XCTAssertEqual(Geo.ringArea(square.reversed()), 10_000, accuracy: 100) // either direction round
+        XCTAssertEqual(Geo.pathLength([square[0]]), 0)
+    }
+
     func testLabelPointInsideConcaveBlock() {
         // An L-shaped block whose centroid lies outside it.
         let l = [(0.0, 0.0), (0.01, 0.0), (0.01, 0.002), (0.002, 0.002), (0.002, 0.01), (0.0, 0.01)]

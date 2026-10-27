@@ -30,7 +30,8 @@ struct AreaDetailView: View {
                         Label("Show on the map", systemImage: "map")
                     }
                     row("Saved", Format.bytes(area.bytesOnDisk))
-                    row("Downloaded to", "zoom \(area.maxZoom)\(area.alongRoads ? ", along roads" : "")")
+                    row(area.status == .complete ? "Downloaded to" : "Downloading to",
+                        "zoom \(area.maxZoom)\(area.alongRoads ? ", along roads" : "")")
                     if let d = savedDepth {
                         row("Imagery found down to", "zoom \(d)")
                     }
@@ -39,7 +40,8 @@ struct AreaDetailView: View {
                 Section {
                     ForEach(zoomChoices, id: \.self) { z in
                         Button { chosenZoom = z } label: { zoomRow(z, area: area) }
-                            .disabled(z <= area.maxZoom)
+                            // Deeper levels can be added; while a download runs, a lower one stops it there.
+                            .disabled(z == area.maxZoom || (z < area.maxZoom && area.status == .complete))
                             .accessibilityAddTraits(z == chosenZoom ? .isSelected : [])
                     }
                 } header: {
@@ -53,8 +55,7 @@ struct AreaDetailView: View {
                         if let z = chosenZoom { offline.changeMaxZoom(areaID, to: z) }
                         chosenZoom = nil
                     } label: {
-                        Label(chosenZoom.map { "Download zoom \(area.maxZoom + 1)\($0 > area.maxZoom + 1 ? "–\($0)" : "")" } ?? "Choose a deeper level",
-                              systemImage: "arrow.down.circle.fill")
+                        Label(buttonTitle(area), systemImage: "arrow.down.circle.fill")
                             .font(.headline)
                     }
                     .disabled(chosenZoom == nil)
@@ -82,12 +83,13 @@ struct AreaDetailView: View {
                     .font(.caption).foregroundColor(.secondary)
             }
             Spacer()
-            Text(z <= area.maxZoom ? "Downloaded" : extraSize(to: z, from: area.maxZoom))
+            Text(z <= area.maxZoom ? (area.status == .complete ? "Downloaded" : "In this download")
+                                   : extraSize(to: z, from: area.maxZoom))
                 .foregroundColor(.secondary).monospacedDigit()
             Image(systemName: "checkmark")
                 .font(.body.weight(.semibold))
-                .foregroundColor(z <= area.maxZoom ? .secondary : .accentColor)
-                .opacity(z <= area.maxZoom || z == chosenZoom ? 1 : 0)
+                .foregroundColor(z == chosenZoom ? .accentColor : .secondary)
+                .opacity(z == chosenZoom || (z <= area.maxZoom && area.status == .complete) ? 1 : 0)
                 .accessibilityHidden(true)
         }
         .contentShape(Rectangle())
@@ -102,9 +104,18 @@ struct AreaDetailView: View {
         return z <= typicalDepth ? "≈ \(bytes)" : "up to \(bytes)"
     }
 
+    private func buttonTitle(_ area: OfflineManager.Area) -> String {
+        guard let z = chosenZoom else { return "Choose a deeper level" }
+        if z < area.maxZoom { return "Stop at zoom \(z)" }
+        return "Download zoom \(area.maxZoom + 1)\(z > area.maxZoom + 1 ? "–\(z)" : "")"
+    }
+
     private func footer(_ area: OfflineManager.Area) -> String {
         var s = "Choose a deeper level to add it: what is saved is kept and only the new levels are downloaded."
-        if let d = savedDepth, d < area.maxZoom {
+        if area.status != .complete {
+            s += " While it downloads, choose a lower level to stop there instead."
+        }
+        if area.status == .complete, let d = savedDepth, d < area.maxZoom {
             s += " Esri's imagery here stops at zoom \(d), so deeper levels will add little or nothing."
         }
         return s
