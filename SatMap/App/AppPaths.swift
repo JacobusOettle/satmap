@@ -68,6 +68,11 @@ enum Format {
         return String(format: ha < 1 ? "%.2f ha" : "%.1f ha", ha)
     }
 
+    /// Latitude, longitude in decimal degrees (6 decimals, about 10 cm): "-24.987654, 31.592134".
+    static func coordinate(_ p: GeoPoint) -> String {
+        String(format: "%.6f, %.6f", p.lat, p.lon)
+    }
+
     static func count(_ n: Int) -> String {
         NumberFormatter.localizedString(from: NSNumber(value: n), number: .decimal)
     }

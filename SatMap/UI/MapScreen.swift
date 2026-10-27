@@ -1,5 +1,6 @@
 import MapKit
 import SwiftUI
+import UIKit
 
 struct MapScreen: View {
     @ObservedObject var model: AppModel
@@ -12,7 +13,7 @@ struct MapScreen: View {
             MapViewRepresentable(model: model)
                 .ignoresSafeArea()
 
-            if model.measure == .aiming {
+            if showsCrosshair {
                 Crosshair()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .ignoresSafeArea()
@@ -31,11 +32,15 @@ struct MapScreen: View {
                 }
                 switch model.measure {
                 case .aiming:
-                    Hint(text: "Move the map so the crosshair is on the spot, then tap the measure button again.")
-                case .placed:
+                    Hint(text: "Tap the spot on the map, or move the crosshair onto it and tap the measure button.")
+                case .placed, .pair:
                     MeasurePanel(model: model, recorder: recorder)
                 case .off:
                     EmptyView()
+                }
+                if let p = model.selectedPoint, !model.isDrawingArea {
+                    CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
+                                  onClose: { model.selectedPoint = nil })
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
                     Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
@@ -45,6 +50,12 @@ struct MapScreen: View {
                 Spacer()
                 HStack(alignment: .bottom) {
                     // Map credits are in the Offline maps sheet.
+                    if let loc = recorder.location, !model.isDrawingArea {
+                        CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
+                                      text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
+                                      id: "myCoordinates", compact: true)
+                            .padding(.bottom, 24) // clear of MapKit's "Legal" link in the corner
+                    }
                     Spacer()
                     if !model.isDrawingArea {
                         controls
@@ -99,8 +110,16 @@ struct MapScreen: View {
     private var measureIcon: String {
         switch model.measure {
         case .off: return "ruler"
-        case .aiming: return "scope"
-        case .placed: return "xmark"
+        case .aiming, .placed: return "scope"
+        case .pair: return "xmark"
+        }
+    }
+
+    /// While a (second) point can be placed with the measure button.
+    private var showsCrosshair: Bool {
+        switch model.measure {
+        case .aiming, .placed: return true
+        case .off, .pair: return false
         }
     }
 }
@@ -168,21 +187,38 @@ struct Hint: View {
     }
 }
 
-/// Live distance and height difference from the marker to the current position.
+/// Live distance and height difference from you to the marker, or between two points A and B.
 struct MeasurePanel: View {
     @ObservedObject var model: AppModel
     @ObservedObject var recorder: LocationRecorder
 
+    private var isPair: Bool {
+        if case .pair = model.measure { return true }
+        return false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if isPair {
+                Text("From A to B").font(.caption.weight(.semibold)).opacity(0.85)
+            }
             Text(model.markerDistance.map(Format.distance) ?? "Waiting for GPS…")
                 .font(.system(size: 30, weight: .bold).monospacedDigit())
             Text(heightText)
                 .font(.headline)
-            if let m = model.markerElevation, let u = model.userElevation {
+            if isPair, let a = model.markerElevation, let b = model.secondElevation {
+                Text("A \(Int(a.rounded())) m · B \(Int(b.rounded())) m above sea level")
+                    .font(.caption)
+                    .opacity(0.85)
+            } else if !isPair, let m = model.markerElevation, let u = model.userElevation {
                 Text("Marker \(Int(m.rounded())) m · You \(Int(u.rounded())) m above sea level")
                     .font(.caption)
                     .opacity(0.85)
+            }
+            if !isPair {
+                Text("Tap the map, or use the crosshair and the measure button, for a second point.")
+                    .font(.caption2)
+                    .opacity(0.7)
             }
         }
         .foregroundColor(.white)
@@ -191,17 +227,80 @@ struct MeasurePanel: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.black.opacity(0.7))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(alignment: .topTrailing) {
+            Button(action: model.clearMeasure) {
+                Image(systemName: "xmark")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundColor(.white)
+                    .padding(12)
+            }
+            .accessibilityLabel(Text("Stop measuring"))
+        }
     }
 
     private var heightText: String {
-        guard let m = model.markerElevation, let u = model.userElevation else {
+        let first = model.markerElevation
+        let second = isPair ? model.secondElevation : model.userElevation
+        guard let m = first, let u = second else {
             return Connectivity.shared.isOnline
                 ? "Height: loading elevation…"
                 : "Height: no elevation data here offline (download this area)"
         }
+        if isPair {
+            let diff = (u - m).rounded()
+            if diff == 0 { return "B is level with A" }
+            return diff > 0 ? "▲ B is \(Int(diff)) m higher than A" : "▼ B is \(Int(-diff)) m lower than A"
+        }
         let diff = (m - u).rounded()
         if diff == 0 { return "Marker is level with you" }
         return diff > 0 ? "▲ Marker is \(Int(diff)) m higher than you" : "▼ Marker is \(Int(-diff)) m lower than you"
+    }
+}
+
+/// Coordinates you can copy: tap to put them on the clipboard.
+struct CoordinateBar: View {
+    let icon: String
+    let text: String
+    /// Accessibility identifier, for the UI test.
+    let id: String
+    var compact = false
+    var onClose: (() -> Void)?
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button {
+                UIPasteboard.general.string = text
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                copied = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { copied = false }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                    Text(copied ? "Copied" : text)
+                        .font((compact ? Font.caption : Font.subheadline).monospacedDigit().weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if !copied {
+                        Image(systemName: "doc.on.doc").font(.caption).opacity(0.8)
+                    }
+                }
+            }
+            .accessibilityLabel(Text(copied ? "Copied" : "Copy \(text)"))
+            .accessibilityIdentifier(id)
+            if let onClose = onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark").font(.caption.weight(.bold))
+                }
+                .accessibilityLabel(Text("Hide coordinates"))
+            }
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, compact ? 10 : 12)
+        .padding(.vertical, compact ? 6 : 8)
+        .background(Color.black.opacity(0.65))
+        .clipShape(Capsule())
+        .frame(maxWidth: compact ? nil : .infinity)
     }
 }
 

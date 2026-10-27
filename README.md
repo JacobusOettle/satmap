@@ -20,8 +20,10 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/07-download-area.jpg" width="250"> | <img src="docs/screenshots/08-downloading.jpg" width="250"> | <img src="docs/screenshots/09-offline-areas.jpg" width="250"> |
 | **Drawing an area with the lasso** | **Contour lines switched off** | **Download only along roads** |
 | <img src="docs/screenshots/10-draw-area.jpg" width="250"> | <img src="docs/screenshots/11-contours-off.jpg" width="250"> | <img src="docs/screenshots/12-download-along-roads.jpg" width="250"> |
-| **Whole area and along roads** | **Exporting a backup** | |
-| <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | <img src="docs/screenshots/14-export-backup.jpg" width="250"> | |
+| **Whole area and along roads** | **Exporting a backup** | **Coordinates of a tapped spot and of you** |
+| <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | <img src="docs/screenshots/14-export-backup.jpg" width="250"> | <img src="docs/screenshots/15-coordinates.jpg" width="250"> |
+| **Measuring between two points** | **Kruger National Park roads** | |
+| <img src="docs/screenshots/16-measure-two-points.jpg" width="250"> | <img src="docs/screenshots/17-kruger-roads.jpg" width="250"> | |
 
 ## Features
 
@@ -31,8 +33,9 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | Contour lines | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. Works offline for downloaded areas. The mountain button at the top of the side buttons switches them on and off (remembered); while they are off, no elevation is downloaded for the map. |
 | My location + dotted track | Blue dot (grey while the GPS sleeps) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
 | KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in white with their names. Tap a file to zoom to it. Swipe to remove. |
-| Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap again: a marker is dropped under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Tap a third time to remove it. |
-| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
+| Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap a spot on the map, or tap the ruler again to drop a marker under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Place a second point the same way (tap the map, or the ruler with the crosshair) to measure between the two points instead: A to B, and how much higher or lower B is than A. A third point starts again from you; the ruler (now ✕) clears it all. |
+| Coordinates | Tap a spot on the map: a pin marks it and its coordinates (latitude, longitude in decimal degrees) show at the top. Your own coordinates show at the bottom left and follow you. Tap either to copy it to the clipboard. |
+| Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them), or **Kruger National Park roads** (every tar and gravel road inside the park, shipped with the app; see below). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
 
 ### Offline downloads
 
@@ -48,6 +51,11 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   the imagery within 15 m of each side of them is downloaded, at every zoom level. Away from the roads the map
   shows the nearest coarser imagery that was saved, enlarged. Roads missing from OpenStreetMap are missed too,
   so check the area first: rural tracks are not always mapped.
+- **Kruger National Park roads:** the park's boundary and every road in it (tar, gravel and management
+  tracks, about the same road types as above) come with the app, from OpenStreetMap, so no lookup is needed. Only
+  the parts inside the park are kept. Imagery is saved 15 m to each side of them, elevation for the whole park.
+  Refresh the list with the *Kruger roads* workflow (`tools/extract_kruger_osm.sh`, `tools/build_kruger_roads.py`); roads missing
+  from OpenStreetMap can be added as KML/KMZ files in `tools/kruger-extra`.
 - Keep SatMap open while it downloads; the screen stays on. In the background the download pauses so it
   can't compete with track recording for battery or CPU, and it continues when you return.
 - Downloads resume where they stopped: after **Pause**, losing signal, leaving Wi-Fi, or closing the app.

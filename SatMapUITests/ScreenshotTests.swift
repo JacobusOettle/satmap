@@ -116,9 +116,45 @@ final class ScreenshotTests: XCTestCase {
         setContours(on: false)
         sleep(3)
         snap("11-contours-off")
+        setContours(on: true)
+
+        // Tap a spot: its coordinates at the top (your own at the bottom); tapping them copies them.
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.45)).tap()
+        let tapped = app.buttons["tappedCoordinates"]
+        if tapped.waitForExistence(timeout: 10) {
+            sleep(3)
+            snap("15-coordinates")
+            tapped.tap()
+            XCTAssertEqual(tapped.label, "Copied")
+        } else {
+            XCTFail("No coordinates for the tapped spot")
+        }
+        XCTAssertTrue(app.buttons["myCoordinates"].exists, "No coordinates of your position")
+
+        // Measuring between two tapped points.
+        setMeasure(.aiming)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap()
+        sleep(2)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.62)).tap()
+        sleep(8) // elevations of both points
+        XCTAssertEqual(currentMeasureState(), .pair)
+        snap("16-measure-two-points")
+        setMeasure(.off)
+
+        // The one-tap Kruger National Park roads (not downloaded here: several GB).
+        openOfflineSheet()
+        tap("Kruger National Park roads")
+        if app.staticTexts["Roads and tracks"].waitForExistence(timeout: 120) {
+            sleep(5) // size estimate
+            scrollTo(app.buttons["Download"].firstMatch)
+            snap("17-kruger-roads")
+        } else {
+            XCTFail("Kruger roads didn't load")
+        }
+        app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
+        sleep(1)
 
         // The same blocks again, but satellite imagery only along the roads.
-        openOfflineSheet()
         tap("Use the blocks in a KML file")
         tapRow(startingWith: "Demo farm")
         let name = app.textFields.firstMatch
@@ -167,7 +203,7 @@ final class ScreenshotTests: XCTestCase {
     // MARK: - Helpers
 
     private enum MeasureState {
-        case off, aiming, placed
+        case off, aiming, placed, pair
     }
 
     /// Taps the measure button until the screen shows the wanted state (a tap can be lost while the app is busy).
@@ -181,8 +217,9 @@ final class ScreenshotTests: XCTestCase {
     }
 
     private func currentMeasureState() -> MeasureState {
-        let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Move the map so the crosshair")).firstMatch
+        let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Tap the spot on the map")).firstMatch
         if hint.exists { return .aiming }
+        if app.staticTexts["From A to B"].exists { return .pair }
         let panel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
                                                          "than you", "Height:", "Waiting for GPS")).firstMatch
         return panel.exists ? .placed : .off

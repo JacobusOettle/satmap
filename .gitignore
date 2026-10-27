@@ -5,3 +5,5 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/xcuserdata/
 .DS_Store
 build.log
+__pycache__/
+*.pyc

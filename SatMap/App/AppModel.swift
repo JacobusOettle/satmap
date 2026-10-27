@@ -3,11 +3,24 @@ import CoreLocation
 import Foundation
 import UIKit
 
-/// The measuring tool: off → aiming (crosshair) → placed (marker) → off.
+/// The measuring tool. A point is placed at the crosshair (ruler button) or where the map is tapped.
+/// off → aiming → placed (distance from you to the point) → pair (distance between two points) → off.
 enum MeasureMode: Equatable {
     case off
+    /// Crosshair shown, waiting for the first point.
     case aiming
+    /// One point: the live distance and height from you to it.
     case placed(GeoPoint)
+    /// Two points: the distance and height between them.
+    case pair(GeoPoint, GeoPoint)
+
+    var points: [GeoPoint] {
+        switch self {
+        case .off, .aiming: return []
+        case .placed(let a): return [a]
+        case .pair(let a, let b): return [a, b]
+        }
+    }
 }
 
 /// A shape waiting for the user to confirm an offline download.
@@ -45,8 +58,12 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         didSet { UserDefaults.standard.set(showContours, forKey: "showContours") }
     }
     @Published private(set) var measure: MeasureMode = .off
+    /// Elevation of the first measuring point, of the second, and of where you are.
     @Published private(set) var markerElevation: Double?
+    @Published private(set) var secondElevation: Double?
     @Published private(set) var userElevation: Double?
+    /// The last point tapped on the map (or placed for measuring); its coordinates are shown at the top.
+    @Published var selectedPoint: GeoPoint?
 
     /// Lasso drawing mode for choosing an offline area.
     @Published var isDrawingArea = false
@@ -71,9 +88,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             // Elevations aren't looked up in the background; catch up when the app is opened.
-            guard let self = self, case .placed = self.measure else { return }
-            if self.markerElevation == nil { self.refreshMarkerElevation() }
-            if let loc = self.recorder.location { self.refreshUserElevation(loc) }
+            guard let self = self else { return }
+            if self.markerElevation == nil || self.secondElevation == nil { self.refreshPointElevations() }
+            if case .placed = self.measure, let loc = self.recorder.location { self.refreshUserElevation(loc) }
         }
 
         // Re-publish nested objects so SwiftUI views observing the model update.
@@ -113,40 +130,94 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     // MARK: - Measuring
 
-    /// The measure button: first tap shows the crosshair, second drops the marker at the screen centre, third clears it.
+    /// The measure button: shows the crosshair, then places a point at it (distance from you), then a second point
+    /// (distance between the two), then clears.
     func measureButtonTapped() {
         switch measure {
         case .off:
             measure = .aiming
-        case .aiming:
+        case .aiming, .placed:
             guard let c = map?.centerCoordinate else { return }
-            let p = GeoPoint(lat: c.latitude, lon: c.longitude)
-            measure = .placed(p)
-            recorder.measuring = true
-            markerElevation = nil
-            refreshMarkerElevation()
-            if let loc = recorder.location { refreshUserElevation(loc) }
-        case .placed:
-            measure = .off
-            recorder.measuring = false
-            markerElevation = nil
-            userElevation = nil
+            addMeasurePoint(GeoPoint(lat: c.latitude, lon: c.longitude))
+        case .pair:
+            setMeasure(.off)
+            selectedPoint = nil
         }
     }
 
-    var markerDistance: Double? {
-        guard case .placed(let p) = measure, let loc = recorder.location else { return nil }
-        return loc.distance(from: CLLocation(latitude: p.lat, longitude: p.lon))
+    /// A tap on the map: shows the spot's coordinates, and while measuring places a point there.
+    func mapTapped(_ p: GeoPoint) {
+        if measure == .off {
+            selectedPoint = p
+        } else {
+            addMeasurePoint(p)
+        }
     }
 
-    private func refreshMarkerElevation() {
-        guard case .placed(let p) = measure else { return }
-        Task.detached(priority: .userInitiated) {
-            let e = await TileRepository.shared.elevation(at: p)
-            DispatchQueue.main.async {
-                if case .placed(let current) = self.measure, current == p { self.markerElevation = e }
+    private func addMeasurePoint(_ p: GeoPoint) {
+        selectedPoint = p
+        switch measure {
+        case .placed(let a):
+            setMeasure(.pair(a, p))
+        default:
+            // The first point, or a new start after two points.
+            setMeasure(.placed(p))
+        }
+    }
+
+    private func setMeasure(_ m: MeasureMode) {
+        let old = measure.points
+        measure = m
+        // Faster GPS checks while asleep only matter when the distance is from you.
+        if case .placed = m { recorder.measuring = true } else { recorder.measuring = false }
+        let new = m.points
+        if new.first != old.first { markerElevation = nil }
+        if new.count < 2 || new.last != old.last || old.count < 2 { secondElevation = nil }
+        if new.isEmpty { userElevation = nil }
+        refreshPointElevations()
+        if case .placed = m, let loc = recorder.location { refreshUserElevation(loc) }
+    }
+
+    /// Distance from you to the point, or between the two points.
+    var markerDistance: Double? {
+        switch measure {
+        case .placed(let p):
+            guard let loc = recorder.location else { return nil }
+            return loc.distance(from: CLLocation(latitude: p.lat, longitude: p.lon))
+        case .pair(let a, let b):
+            return Geo.distance(a, b)
+        case .off, .aiming:
+            return nil
+        }
+    }
+
+    /// Looks up the measuring points' elevations that aren't known yet. A failed lookup (no signal) is tried again
+    /// a few times, 15 s apart, while the point stays and the app is on screen.
+    private func refreshPointElevations(attempt: Int = 0) {
+        let points = measure.points
+        for (i, p) in points.enumerated() where (i == 0 ? markerElevation : secondElevation) == nil {
+            Task.detached(priority: .userInitiated) {
+                let e = await TileRepository.shared.elevation(at: p)
+                DispatchQueue.main.async {
+                    let now = self.measure.points
+                    guard i < now.count, now[i] == p else { return }
+                    if i == 0 { self.markerElevation = e } else { self.secondElevation = e }
+                    if e == nil, attempt < 4 {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                            guard UIApplication.shared.applicationState == .active, i < self.measure.points.count,
+                                  self.measure.points[i] == p else { return }
+                            self.refreshPointElevations(attempt: attempt + 1)
+                        }
+                    }
+                }
             }
         }
+    }
+
+    /// The ✕ on the measuring panel.
+    func clearMeasure() {
+        setMeasure(.off)
+        selectedPoint = nil
     }
 
     private func refreshUserElevation(_ loc: CLLocation) {
@@ -157,7 +228,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             guard !Task.isCancelled else { return }
             DispatchQueue.main.async {
                 self.userElevation = e
-                if self.markerElevation == nil { self.refreshMarkerElevation() }
+                if self.markerElevation == nil { self.refreshPointElevations() }
             }
         }
     }
@@ -193,9 +264,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         pendingArea = PendingArea(name: file.name, shape: file.document.coverageShape(bufferMeters: 150))
     }
 
-    /// `roads`: download satellite imagery only along these roads.
-    func startDownload(_ area: PendingArea, roads: [[GeoPoint]]?, maxZoom: Int, allowCellular: Bool) {
-        offline.add(name: area.name, shape: area.shape, roads: roads, maxZoom: maxZoom, allowCellular: allowCellular)
+    /// `roads` or `preset`: download satellite imagery only along these roads (or a road set shipped with the app).
+    func startDownload(_ area: PendingArea, roads: [[GeoPoint]]?, preset: String? = nil, maxZoom: Int, allowCellular: Bool) {
+        offline.add(name: area.name, shape: area.shape, roads: roads, preset: preset, maxZoom: maxZoom, allowCellular: allowCellular)
         pendingArea = nil
         draftArea = nil
     }

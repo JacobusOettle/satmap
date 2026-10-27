@@ -1,0 +1,69 @@
+name: Kruger roads
+
+# Builds the road list the app ships for "Kruger National Park roads" (SatMap/Resources/KrugerRoads.json) from
+# OpenStreetMap (Geofabrik's South Africa extract) plus any KML/KMZ road files in tools/kruger-extra, and commits it
+# to the branch. Run it by hand to refresh the data.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/extract_kruger_osm.sh"
+      - "tools/build_kruger_roads.py"
+      - "tools/kruger-extra/**"
+      - ".github/workflows/kruger-roads.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: kruger-roads-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install osmium
+        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+
+      - name: Download OpenStreetMap data for South Africa
+        run: |
+          curl -fsSL --retry 5 -o sa.osm.pbf https://download.geofabrik.de/africa/south-africa-latest.osm.pbf
+          ls -l sa.osm.pbf
+
+      - name: Cut out Kruger National Park
+        run: tools/extract_kruger_osm.sh sa.osm.pbf osm
+
+      - name: Build the road list
+        run: |
+          mkdir -p SatMap/Resources
+          python3 -I tools/build_kruger_roads.py osm SatMap/Resources/KrugerRoads.json tools/kruger-extra
+          ls -l SatMap/Resources/KrugerRoads.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kruger-roads
+          path: |
+            osm/boundary.geojson
+            osm/roads.geojson
+            SatMap/Resources/KrugerRoads.json
+
+      - name: Commit the road list to the branch
+        run: |
+          cp SatMap/Resources/KrugerRoads.json "$RUNNER_TEMP/KrugerRoads.json"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard FETCH_HEAD
+            mkdir -p SatMap/Resources
+            cp "$RUNNER_TEMP/KrugerRoads.json" SatMap/Resources/KrugerRoads.json
+            git add SatMap/Resources/KrugerRoads.json
+            git commit -m "Update Kruger National Park road list" || { echo "No changes"; exit 0; }
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep 10
+          done
+          exit 1

@@ -648,3 +648,52 @@ final class OfflineBackupTests: XCTestCase {
         XCTAssertEqual(OfflineBackup.fileSafe("  "), "Offline area")
     }
 }
+
+final class PolylineTests: XCTestCase {
+    func testGoogleExample() {
+        // From Google's polyline format documentation.
+        let pts = [GeoPoint(lat: 38.5, lon: -120.2), GeoPoint(lat: 40.7, lon: -120.95), GeoPoint(lat: 43.252, lon: -126.453)]
+        XCTAssertEqual(Polyline.encode(pts), "_p~iF~ps|U_ulLnnqC_mqNvxq`@")
+        XCTAssertEqual(Polyline.decode("_p~iF~ps|U_ulLnnqC_mqNvxq`@"), pts)
+    }
+
+    func testRoundTripAndGarbage() {
+        let pts = [GeoPoint(lat: -24.99512, lon: 31.59212), GeoPoint(lat: -24.99511, lon: 31.59299), GeoPoint(lat: -25.1, lon: 31.6)]
+        XCTAssertEqual(Polyline.decode(Polyline.encode(pts)), pts)
+        XCTAssertEqual(Polyline.decode(""), [])
+        XCTAssertNil(Polyline.decode("_p~iF~ps|U_"))  // cut off half way through a point
+        XCTAssertNil(Polyline.decode("\u{10}abc"))
+    }
+
+    func testPreset() throws {
+        let json = #"{"name":"Park","note":"OSM","boundary":["\#(Polyline.encode([GeoPoint(lat: -24, lon: 31), GeoPoint(lat: -24, lon: 32), GeoPoint(lat: -25, lon: 32)]))"],"roads":["\#(Polyline.encode([GeoPoint(lat: -24.5, lon: 31.5), GeoPoint(lat: -24.6, lon: 31.6)]))"]}"#
+        let p = try RoadPreset(json: Data(json.utf8))
+        XCTAssertEqual(p.name, "Park")
+        XCTAssertEqual(p.boundary[0].count, 3)
+        XCTAssertEqual(p.roads, [[GeoPoint(lat: -24.5, lon: 31.5), GeoPoint(lat: -24.6, lon: 31.6)]])
+        XCTAssertThrowsError(try RoadPreset(json: Data(#"{"name":"P","note":"","boundary":[],"roads":[]}"#.utf8)))
+    }
+}
+
+final class ShippedDataTests: XCTestCase {
+    /// SatMap/Resources/KrugerRoads.json (built by tools/build_kruger_roads.py) decodes, and its roads lie inside the park.
+    func testKrugerRoadList() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("SatMap/Resources/KrugerRoads.json")
+        let preset = try RoadPreset(json: try Data(contentsOf: url))
+        XCTAssertEqual(preset.name, "Kruger National Park roads")
+        let park = CoverageShape(polygons: preset.boundary)
+        let bounds = try XCTUnwrap(park.geometryBounds)
+        // Kruger is about 19,500 km² (1.95 million ha), 22.3–25.5° S, 30.9–32.0° E.
+        XCTAssertEqual(park.polygonAreaSquareMeters / 1e6, 19_500, accuracy: 1_500)
+        XCTAssertTrue(bounds.minLat > -25.6 && bounds.maxLat < -22.2 && bounds.minLon > 30.8 && bounds.maxLon < 32.1)
+        let km = Roads.length(preset.roads) / 1000
+        XCTAssertGreaterThan(km, 3_000)
+        // Roads were cut with the exact boundary; the shipped one is simplified to within 20 m.
+        let coverage = TileCoverage(shape: CoverageShape(polygons: preset.boundary, bufferMeters: 100), zoom: 16)
+        let points = preset.roads.joined()
+        let outside = points.filter { !coverage.contains(TileID.containing($0, z: 16)) }
+        XCTAssertEqual(outside.count, 0, "road points outside the park")
+        print("Kruger road list: \(preset.roads.count) roads, \(Int(km)) km, \(points.count) points")
+    }
+}

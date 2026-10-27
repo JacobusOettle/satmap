@@ -5,7 +5,7 @@ import UIKit
 
 /// Owns the MKMapView: satellite + contour tiles, the recorded track, the measuring line,
 /// imported blocks and the lasso used to choose offline areas.
-final class MapController: NSObject, MKMapViewDelegate {
+final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
     let container = UIView()
     let mapView = MKMapView()
     private let lasso = LassoView()
@@ -18,8 +18,14 @@ final class MapController: NSObject, MKMapViewDelegate {
     private var trackRenderer: TrackRenderer?
     private var measureRenderer: MeasureLineRenderer?
 
+    /// A single tap on the map. It waits until the tap can't be the start of a double-tap zoom, so where the
+    /// finger was is recorded straight away by `touchRecorder` (the map may move meanwhile, e.g. following you).
+    private let tapRecognizer = UITapGestureRecognizer()
+    private let touchRecorder = UITapGestureRecognizer()
+    private var lastTouch: (point: CGPoint, coordinate: CLLocationCoordinate2D)?
     private var userAnnotation: UserLocationAnnotation?
-    private var markerAnnotation: MeasureMarkerAnnotation?
+    private var markerAnnotations: [MeasureMarkerAnnotation] = []
+    private var selectedAnnotation: SelectedPointAnnotation?
     private var draftOverlay: DraftAreaPolygon?
     private var drawnTrackCount = 0
 
@@ -48,6 +54,7 @@ final class MapController: NSObject, MKMapViewDelegate {
         mapView.showsUserLocation = false // MapKit's own location tracking would keep the GPS on at full power
         mapView.register(UserDotView.self, forAnnotationViewWithReuseIdentifier: UserDotView.reuseID)
         mapView.register(MeasureMarkerView.self, forAnnotationViewWithReuseIdentifier: MeasureMarkerView.reuseID)
+        mapView.register(SelectedPointView.self, forAnnotationViewWithReuseIdentifier: SelectedPointView.reuseID)
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
 
         // Later overlays draw on top: imagery, contours (when switched on), (blocks inserted below the track),
@@ -76,6 +83,23 @@ final class MapController: NSObject, MKMapViewDelegate {
         ])
         lasso.onFinish = { [weak self] pts in self?.lassoFinished(pts) }
 
+        tapRecognizer.addTarget(self, action: #selector(mapTapped(_:)))
+        tapRecognizer.delegate = self
+        mapView.addGestureRecognizer(tapRecognizer)
+        // A tap then a second press is a double-tap zoom or a one-finger zoom (tap, then drag): not a tap on a spot.
+        let tapThenPress = UILongPressGestureRecognizer(target: nil, action: nil)
+        tapThenPress.numberOfTapsRequired = 1
+        tapThenPress.minimumPressDuration = 0
+        tapThenPress.cancelsTouchesInView = false
+        tapThenPress.delaysTouchesEnded = false
+        tapThenPress.delegate = self
+        mapView.addGestureRecognizer(tapThenPress)
+        tapRecognizer.require(toFail: tapThenPress)
+        touchRecorder.addTarget(self, action: #selector(touchEnded(_:)))
+        touchRecorder.delegate = self
+        touchRecorder.cancelsTouchesInView = false
+        mapView.addGestureRecognizer(touchRecorder)
+
         restoreCamera()
         bind()
         if let loc = model.recorder.location { locationUpdated(loc) }
@@ -92,6 +116,11 @@ final class MapController: NSObject, MKMapViewDelegate {
         model.$measure
             .removeDuplicates()
             .sink { [weak self] m in DispatchQueue.main.async { self?.measureChanged(m) } }
+            .store(in: &cancellables)
+        model.$selectedPoint.combineLatest(model.$measure.map { $0 == .off })
+            .sink { [weak self] point, notMeasuring in
+                DispatchQueue.main.async { self?.selectedPointChanged(notMeasuring ? point : nil) }
+            }
             .store(in: &cancellables)
         model.$showContours
             .removeDuplicates()
@@ -285,26 +314,69 @@ final class MapController: NSObject, MKMapViewDelegate {
         trackRenderer?.setNeedsDisplay(dirty.insetBy(dx: -margin, dy: -margin))
     }
 
+    // MARK: - Tapping the map
+
+    /// A single tap (not the first tap of a double-tap zoom) on the map, outside lasso drawing.
+    @objc private func touchEnded(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended else { return }
+        let point = g.location(in: mapView)
+        lastTouch = (point, mapView.convert(point, toCoordinateFrom: mapView))
+    }
+
+    @objc private func mapTapped(_ g: UITapGestureRecognizer) {
+        guard g.state == .ended, !model.isDrawingArea else { return }
+        let point = g.location(in: mapView)
+        var c = mapView.convert(point, toCoordinateFrom: mapView)
+        if let t = lastTouch, hypot(t.point.x - point.x, t.point.y - point.y) < 1 { c = t.coordinate }
+        lastTouch = nil
+        model.mapTapped(GeoPoint(lat: c.latitude, lon: c.longitude))
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
+        g === tapRecognizer && (other as? UITapGestureRecognizer)?.numberOfTapsRequired == 2
+    }
+
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
+
+    private func selectedPointChanged(_ p: GeoPoint?) {
+        if let a = selectedAnnotation {
+            mapView.removeAnnotation(a)
+            selectedAnnotation = nil
+        }
+        guard let p = p else { return }
+        let a = SelectedPointAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon))
+        selectedAnnotation = a
+        mapView.addAnnotation(a)
+    }
+
     // MARK: - Measuring
 
     private func measureChanged(_ m: MeasureMode) {
-        if let a = markerAnnotation {
-            mapView.removeAnnotation(a)
-            markerAnnotation = nil
+        mapView.removeAnnotations(markerAnnotations)
+        let points = m.points
+        markerAnnotations = points.enumerated().map { i, p in
+            MeasureMarkerAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
+                                    label: points.count == 2 ? (i == 0 ? "A" : "B") : nil)
         }
-        if case .placed(let p) = m {
-            let a = MeasureMarkerAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon))
-            markerAnnotation = a
-            mapView.addAnnotation(a)
-        }
+        mapView.addAnnotations(markerAnnotations)
         updateMeasureLine()
     }
 
+    /// From you to the point, or between the two points.
     private func updateMeasureLine() {
-        var a: CLLocationCoordinate2D?
-        if case .placed(let p) = model.measure { a = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon) }
+        var ends: (CLLocationCoordinate2D?, CLLocationCoordinate2D?) = (nil, nil)
+        switch model.measure {
+        case .placed(let p):
+            ends = (CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), model.recorder.location?.coordinate)
+        case .pair(let a, let b):
+            ends = (CLLocationCoordinate2D(latitude: a.lat, longitude: a.lon), CLLocationCoordinate2D(latitude: b.lat, longitude: b.lon))
+        case .off, .aiming:
+            break
+        }
         let margin = 8 * mapPointsPerPoint
-        for rect in measureLine.set(a, a == nil ? nil : model.recorder.location?.coordinate) {
+        for rect in measureLine.set(ends.0, ends.1) {
             measureRenderer?.setNeedsDisplay(rect.insetBy(dx: -margin, dy: -margin))
         }
     }
@@ -452,6 +524,8 @@ final class MapController: NSObject, MKMapViewDelegate {
             return v
         case is MeasureMarkerAnnotation:
             return mapView.dequeueReusableAnnotationView(withIdentifier: MeasureMarkerView.reuseID, for: annotation)
+        case is SelectedPointAnnotation:
+            return mapView.dequeueReusableAnnotationView(withIdentifier: SelectedPointView.reuseID, for: annotation)
         case is BlockLabelAnnotation:
             return mapView.dequeueReusableAnnotationView(withIdentifier: BlockLabelView.reuseID, for: annotation)
         default:

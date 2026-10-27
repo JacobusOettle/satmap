@@ -24,6 +24,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         /// Satellite imagery only along these roads (with `Roads.corridorMeters` on each side); nil = the whole
         /// area. Elevation is always downloaded for the whole area.
         var roads: [[GeoPoint]]?
+        /// Or the roads of a set shipped with the app (`RoadPresets`), so they aren't stored again here.
+        var preset: String?
         var maxZoom: Int
         var allowCellular: Bool
         var status: Status
@@ -33,6 +35,13 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         var problem: String?
 
         var directory: URL { AppPaths.offlineArea(id) }
+
+        var alongRoads: Bool { roads != nil || preset != nil }
+
+        /// The roads imagery is downloaded along, or nil for the whole area.
+        var roadLines: [[GeoPoint]]? {
+            roads ?? preset.flatMap(RoadPresets.load)?.roads
+        }
     }
 
     @Published private(set) var areas: [Area] = []
@@ -97,8 +106,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     // MARK: - Public actions
 
     @discardableResult
-    func add(name: String, shape: CoverageShape, roads: [[GeoPoint]]?, maxZoom: Int, allowCellular: Bool) -> Area {
-        let area = Area(id: UUID(), name: name, created: Date(), shape: shape, roads: roads, maxZoom: maxZoom,
+    func add(name: String, shape: CoverageShape, roads: [[GeoPoint]]?, preset: String?, maxZoom: Int, allowCellular: Bool) -> Area {
+        let area = Area(id: UUID(), name: name, created: Date(), shape: shape, roads: roads, preset: preset, maxZoom: maxZoom,
                         allowCellular: allowCellular, status: .queued, failedTiles: 0, bytesOnDisk: 0, problem: nil)
         areas.append(area)
         save()
@@ -402,6 +411,15 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     private func run(_ area: Area) {
+        // Never fall back to the whole area (for a national park, terabytes) if a shipped road list is missing.
+        if area.preset != nil && area.roadLines == nil {
+            update(area.id) {
+                $0.status = .incomplete
+                $0.problem = "This version of SatMap doesn't have the road list for this area."
+            }
+            DispatchQueue.main.async { [weak self] in self?.startNextIfIdle() }
+            return
+        }
         let dir = area.directory
         let imagery: MBTiles
         let terrain: MBTiles
@@ -428,7 +446,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                           zooms: 0...Terrarium.maxZoom, pruneByParent: false),
             DownloadLayer(name: "Satellite", store: imagery,
                           fetcher: HTTPTileFetcher(session: session, url: TileSources.imageryURL),
-                          zooms: 0...area.maxZoom, pruneByParent: true, shape: area.roads.map(Roads.corridor)),
+                          zooms: 0...area.maxZoom, pruneByParent: true, shape: area.roadLines.map(Roads.corridor)),
         ], concurrency: 8)
 
         let id = area.id
