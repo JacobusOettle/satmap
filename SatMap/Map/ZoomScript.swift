@@ -35,6 +35,10 @@ enum ZoomScript {
             map.addSubview(v)
             return v
         }
+        // Logs each time the main thread was held up for over half a second (the screen doesn't update meanwhile).
+        let watch = Watchdog()
+        let timer = Timer(timeInterval: 0.1, repeats: true) { _ in watch.tick() }
+        RunLoop.main.add(timer, forMode: .common)
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
             for (i, step) in steps.enumerated() {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 5) {
@@ -49,5 +53,16 @@ enum ZoomScript {
                 }
             }
         }
+    }
+}
+
+private final class Watchdog {
+    private var last = CACurrentMediaTime()
+    private let log = Logger(subsystem: "com.jacobusoettle.satmap", category: "zoomscript")
+
+    func tick() {
+        let now = CACurrentMediaTime()
+        if now - last > 0.5 { log.info("main thread held up \(Int((now - last) * 1000), privacy: .public) ms") }
+        last = now
     }
 }

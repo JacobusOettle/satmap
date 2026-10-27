@@ -11,6 +11,7 @@ on:
       - "SatMapUITests/ZoomTests.swift"
       - ".github/workflows/zoomtest.yml"
       - "SatMap/Map/SatelliteLayer.swift"
+      - "SatMap/Map/ZoomScript.swift"
 
 concurrency:
   group: zoomtest-${{ github.ref }}
