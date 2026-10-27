@@ -86,6 +86,15 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         tapRecognizer.addTarget(self, action: #selector(mapTapped(_:)))
         tapRecognizer.delegate = self
         mapView.addGestureRecognizer(tapRecognizer)
+        // A tap then a second press is a double-tap zoom or a one-finger zoom (tap, then drag): not a tap on a spot.
+        let tapThenPress = UILongPressGestureRecognizer(target: nil, action: nil)
+        tapThenPress.numberOfTapsRequired = 1
+        tapThenPress.minimumPressDuration = 0
+        tapThenPress.cancelsTouchesInView = false
+        tapThenPress.delaysTouchesEnded = false
+        tapThenPress.delegate = self
+        mapView.addGestureRecognizer(tapThenPress)
+        tapRecognizer.require(toFail: tapThenPress)
         touchRecorder.addTarget(self, action: #selector(touchEnded(_:)))
         touchRecorder.delegate = self
         touchRecorder.cancelsTouchesInView = false
