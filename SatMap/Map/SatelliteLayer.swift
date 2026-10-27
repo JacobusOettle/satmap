@@ -191,8 +191,8 @@ final class SatelliteDrawnOverlay: MKTileOverlay {
 /// patch redrawn, which MapKit empties first (grey): when tiles have arrived that would improve what it shows, a new
 /// layer replaces it. MapKit calls `draw` on several threads at once.
 final class SatelliteRenderer: MKOverlayRenderer {
-    /// Decoded tiles (256 KB each) drawn from, so each is decoded once.
-    private static let decoded = RecentCache<TileID, UIImage>(capacity: 300)
+    /// Decoded tiles (256 KB each) drawn from, so each is decoded once: those in focus, and some.
+    private static let decoded = RecentCache<TileID, UIImage>(capacity: 400)
 
     /// Called on the main queue when a tile has arrived in memory (loaded here or by `ImageryPrefetch`).
     static var onArrival: ((TileID) -> Void)?
@@ -202,12 +202,17 @@ final class SatelliteRenderer: MKOverlayRenderer {
     private static let loads = NSLock()
     private static var loading = Set<TileID>()
     private static var retryAfter: [TileID: CFTimeInterval] = [:]
-    /// Around the screen (set by `MapController`): MapKit paints in large patches, and only their tiles near the
-    /// screen are loaded straight away (the rest when the map stops there, `loadStandIns`).
-    private static var near = MKMapRect.null
+    /// Around the screen and the level drawn there (set by `MapController` as the map moves). MapKit paints in
+    /// large patches, mostly off screen, and keeps patches of other zooms: only spots in focus are loaded, decoded and
+    /// improved by a new layer.
+    private static var focus = (rect: MKMapRect.null, level: -1)
 
-    static func setNear(_ rect: MKMapRect) {
-        loads.withLock { near = rect }
+    static func setFocus(_ rect: MKMapRect, level: Int) {
+        loads.withLock { focus = (rect, level) }
+    }
+
+    private static func inFocus(_ t: TileID, _ f: (rect: MKMapRect, level: Int)) -> Bool {
+        abs(t.z - f.level) <= 1 && f.rect.intersects(mapRect(t))
     }
 
     private let lock = NSLock()
@@ -230,7 +235,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
         let y0 = max(0, Int(floor(mapRect.minY / size))), y1 = min(n - 1, Int(ceil(mapRect.maxY / size)) - 1)
         guard x0 <= x1, y0 <= y1 else { return }
         let began = CACurrentMediaTime()
-        let nearRect = Self.loads.withLock { Self.near }
+        let focus = Self.loads.withLock { Self.focus }
         // Only decoded tiles are copied here, so a patch paints quickly; tiles in memory not decoded yet are decoded
         // off this thread and come with the next layer. Each coarse tile is drawn once, under all the spots it serves.
         var own: [TileID] = [], shownStandIns: [TileID: Int] = [:]
@@ -246,13 +251,11 @@ final class SatelliteRenderer: MKOverlayRenderer {
                     own.append(t)
                     continue
                 }
-                let isNear = nearRect.isNull || nearRect.intersects(Self.mapRect(t))
-                if ImageryMemory.tiles.contains(t) {
-                    Self.prepare([t])
-                } else if isNear {
-                    Self.load(t, urgent: false)
+                let isNear = Self.inFocus(t, focus)
+                if isNear {
+                    if ImageryMemory.tiles.contains(t) { Self.prepare([t]) } else { Self.load(t, urgent: false) }
                 }
-                let deeper = sharperTiles(t)
+                let deeper = sharperTiles(t, decodeMissing: isNear)
                 sharper += deeper.tiles
                 var shown: Int? = deeper.tiles.isEmpty ? nil : t.z + 1
                 if !deeper.covered, let a = TileFallback.ancestor(of: t, maxLevels: 10, has: Self.has) {
@@ -297,11 +300,13 @@ final class SatelliteRenderer: MKOverlayRenderer {
         return Int(min(Double(TileSources.imageryMaxZoom), max(0, log2(pixels / 256).rounded())))
     }
 
-    /// Whether `t` would improve what this layer shows: a spot's own tile, a coarser tile than the one shown there
-    /// (or than nothing), or a sharper one under it.
+    /// Whether `t` would improve what this layer shows in focus: a spot's own tile, a coarser tile than the one shown
+    /// there (or than nothing), or a sharper one under it.
     func wouldImprove(with t: TileID) -> Bool {
-        lock.withLock {
+        let focus = Self.loads.withLock { Self.focus }
+        return lock.withLock {
             standIns.contains { spot, shown in
+                guard Self.inFocus(spot, focus) else { return false }
                 if spot == t { return true }
                 if t.z < spot.z { return t.z > shown && spot.ancestor(levels: spot.z - t.z) == t }
                 return t.z - spot.z <= 2 && t.ancestor(levels: t.z - spot.z) == spot
@@ -309,15 +314,17 @@ final class SatelliteRenderer: MKOverlayRenderer {
         }
     }
 
-    /// Whether this layer shows anything other than spots' own tiles (then a reload may improve it).
+    /// Whether this layer shows anything other than spots' own tiles in focus (then a reload may improve it).
     var hasStandIns: Bool {
-        lock.withLock { !standIns.isEmpty }
+        let focus = Self.loads.withLock { Self.focus }
+        return lock.withLock { standIns.keys.contains { Self.inFocus($0, focus) } }
     }
 
-    /// Loads (or decodes) what is missing for the spots in a rect that this layer shows with a stand-in: the map has
-    /// stopped there, and MapKit doesn't repaint patches it has painted.
-    func loadStandIns(in rect: MKMapRect) {
-        let spots = lock.withLock { standIns.filter { rect.intersects(Self.mapRect($0.key)) } }
+    /// Loads (or decodes) what is missing for the spots in focus that this layer shows with a stand-in: the map has
+    /// stopped, and MapKit doesn't repaint patches it has painted (maybe before they came into focus).
+    func loadStandIns() {
+        let focus = Self.loads.withLock { Self.focus }
+        let spots = lock.withLock { standIns.filter { Self.inFocus($0.key, focus) } }
         for (t, shown) in spots {
             if ImageryMemory.tiles.contains(t) {
                 Self.prepare([t])
@@ -396,27 +403,23 @@ final class SatelliteRenderer: MKOverlayRenderer {
     }
 
     /// The decoded sharper tiles under a spot (after zooming out): each quarter's tile one level down, else what
-    /// there is of its four two levels down; and whether they cover it all. Those in memory not decoded yet are
-    /// decoded for the next layer.
-    private func sharperTiles(_ t: TileID) -> (tiles: [TileID], covered: Bool) {
+    /// there is of its four two levels down; and whether they cover it all. With `decodeMissing`, quarters in memory
+    /// not decoded yet are decoded for the next layer.
+    private func sharperTiles(_ t: TileID, decodeMissing: Bool) -> (tiles: [TileID], covered: Bool) {
         let deepest = TileSources.imageryMaxZoom
         guard t.z < deepest else { return ([], false) }
         func quarters(_ p: TileID) -> [TileID] {
             (0..<4).map { TileID(z: p.z + 1, x: p.x * 2 + $0 % 2, y: p.y * 2 + $0 / 2) }
         }
-        func usable(_ c: TileID) -> Bool {
-            if Self.decoded.contains(c) { return true }
-            if ImageryMemory.tiles.contains(c) { Self.prepare([c]) }
-            return false
-        }
         var tiles: [TileID] = []
         var covered = true
         for c in quarters(t) {
-            if usable(c) {
+            if Self.decoded.contains(c) {
                 tiles.append(c)
             } else {
                 covered = false
-                if c.z < deepest { tiles += quarters(c).filter(usable) }
+                if decodeMissing, ImageryMemory.tiles.contains(c) { Self.prepare([c]) }
+                if c.z < deepest { tiles += quarters(c).filter { Self.decoded.contains($0) } }
             }
         }
         return (tiles, covered)
@@ -441,10 +444,8 @@ enum ImageryPrefetch {
     private static let lock = NSLock()
     private static var loading = Set<TileID>()
 
-    static func mapStopped(visible: MKMapRect, pixelsPerMapPoint: Double, decode: Bool) {
-        let z = SatelliteRenderer.level(pixelsPerMapPoint: pixelsPerMapPoint)
-        // MapKit draws at a zoom of its own, at most a level finer.
-        let onScreen = tiles(z, in: visible) + (z < TileSources.imageryMaxZoom ? tiles(z + 1, in: visible) : [])
+    static func mapStopped(visible: MKMapRect, level z: Int, decode: Bool) {
+        let onScreen = tiles(z, in: visible)
         var surround: [TileID] = []
         for (up, grow) in [(3, 0.5), (6, 3.5)] where z - up >= 0 {
             let r = visible.insetBy(dx: -visible.width * grow, dy: -visible.height * grow)

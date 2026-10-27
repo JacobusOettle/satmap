@@ -317,14 +317,18 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         stopCount += 1
         let n = stopCount
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self = self, n == self.stopCount, self.isForeground,
-                  let perPoint = self.crosshairMapPointsPerPoint else { return }
-            let scale = self.mapView.window?.screen.scale ?? self.mapView.traitCollection.displayScale
-            let visible = self.mapView.visibleMapRect
-            ImageryPrefetch.mapStopped(visible: visible, pixelsPerMapPoint: Double(max(1, scale)) / perPoint,
-                                       decode: self.satelliteMode == .renderer)
-            if let d = self.drawn { (self.mapView.renderer(for: d) as? SatelliteRenderer)?.loadStandIns(in: visible) }
+            guard let self = self, n == self.stopCount, self.isForeground, let level = self.imageryLevel else { return }
+            ImageryPrefetch.mapStopped(visible: self.mapView.visibleMapRect, level: level, decode: self.satelliteMode == .renderer)
+            if let d = self.drawn { (self.mapView.renderer(for: d) as? SatelliteRenderer)?.loadStandIns() }
         }
+    }
+
+    /// The imagery level the drawn layer paints at the zoom on screen (tiles about 256 pixels across).
+    private var imageryLevel: Int? {
+        guard let perPoint = crosshairMapPointsPerPoint else { return nil }
+        var scale = Double(mapView.window?.screen.scale ?? mapView.traitCollection.displayScale)
+        if let d = drawn, let r = mapView.renderer(for: d) { scale = Double(r.contentScaleFactor) } // as it draws
+        return SatelliteRenderer.level(pixelsPerMapPoint: max(1, scale) / perPoint)
     }
 
     /// Map points per screen point at the crosshair, measured like `metersPerPoint` (right however the map is turned).
@@ -342,8 +346,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
         updateScale()
-        let v = mapView.visibleMapRect
-        SatelliteRenderer.setNear(v.insetBy(dx: -v.width / 4, dy: -v.height / 4))
+        if satelliteMode == .renderer, let level = imageryLevel {
+            let v = mapView.visibleMapRect
+            SatelliteRenderer.setFocus(v.insetBy(dx: -v.width / 4, dy: -v.height / 4), level: level)
+        }
     }
 
     private func updateScale() {
