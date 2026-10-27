@@ -2030,6 +2030,252 @@ final class CoordinateParserTests: XCTestCase {
         }
         check("Lions at -24.996931, 31.592312 (-24.997, 31.592)", "decimal degrees", at: GeoPoint(lat: -24.996931, lon: 31.592312))
     }
+
+    // Inputs checked a sixth time, by family. Near Skukuza with five decimals, or in decimal minutes as "S24 59.816".
+    private let typed = GeoPoint(lat: -24.99693, lon: 31.59231), gps = GeoPoint(lat: -24.9969333, lon: 31.5923167)
+
+    func testWhatIsBeforeLettersInFront() {
+        // A date, a time, a temperature or a number with decimals before letters written right before their numbers:
+        // the letters are in front, whatever is before them.
+        let p = GeoPoint(lat: -24.99, lon: 31.59)
+        for t in ["27/10/2026 S24.99 E31.59", "2026/10/27 S24.99 E31.59", "27/10/26 S24.99 E31.59", "27/10/2026 06:45 S24.99 E31.59",
+                  "3/4 S24.99 E31.59", "27/10/2026 E31.59 S24.99", "27/10 S24.99 E31.59", "25° S24.99 E31.59", "12.5 S24.99 E31.59",
+                  "Lions at 06.45, S24.99 E31.59", "Km 14.5, then S24.99 E31.59", "Temp 31.5, lions at S24.99 E31.59",
+                  "Lions 3.5 E31.59 S24.99", "Lions, 31°C, S 24.99 E 31.59"] {
+            check(t, "decimal degrees", at: p)
+        }
+        // With a space after the letters too: a date's last number or a time isn't a half.
+        check("27/10/2026 S 25.09 E 31.43", "decimal degrees", at: GeoPoint(lat: -25.09, lon: 31.43))
+        check("27/10/2026 N 51.50 W 0.12", "decimal degrees", at: GeoPoint(lat: 51.5, lon: -0.12))
+        check("27/10/2026 06:45 S 25 E 31", "decimal degrees", at: GeoPoint(lat: -25, lon: 31))
+        // Fields joined by dashes or colons, and the SANParks form after a temperature or a degree sign.
+        for t in ["06:45 S24:59:48.9 E31:35:32.3", "[06:45] S24-59-48.9 E031-35-32.3", "Gate 2/3 S24-59-48.9 E031-35-32.3",
+                  "27/10/26 S24:59:48.9 E31:35:32.3", "2026-10-27 06:45 S24:59:48.9 E31:35:32.3", "06:45 E31:35:32.3 S24:59:48.9",
+                  "38°C S24 59 48.9 E31 35 32.3", "Hot! 38°C. Lions S24 59 48.9 E31 35 32.3", "Temp 32°C, S 24 59 48.9 E 31 35 32.3",
+                  "38° in the shade, lions at S24 59 48.9 E31 35 32.3", "Dis 34 grade! Leeus by S24 59 48.9 O31 35 32.3",
+                  "Warm 34°. Leeus by S24 59 48.9 O31 35 32.3", "Lions 06.45 S24 59 48.9 E31 35 32.3"] {
+            check(t, at: dms)
+        }
+        check("06:45 S25-05-48.8 E031-26-13.6", "degrees, minutes and seconds", at: GeoPoint(lat: -25.096889, lon: 31.437111))
+        // Both halves written alike: 24° 59.8' S, 31° 35.5' E, not 6.45° S, 24° 59.8' E.
+        check("Leopard 06.45 S 24 59.8 E 31 35.5", "degrees and decimal minutes", at: GeoPoint(lat: -24.996667, lon: 31.591667))
+    }
+
+    func testWhatIsBeforeLettersAfter() {
+        // A count or a name's number before a position in decimals with its letters after them, or a time or a short date.
+        for t in ["Leopard 2 24.99692S, 31.59231E", "Camp 14 24.99692S, 31.59231E", "Stop 3 24.99692S, 31.59231E",
+                  "#3 24.99692S, 31.59231E", "06:45 24.99692S, 31.59231E", "Leopard 2 24.99692 S, 31.59231 E"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -24.99692, lon: 31.59231))
+        }
+        for t in ["06:45 24.99693 S 31.59231 E", "Lions at 06:45 24.99693 S 31.59231 E", "06:45 24.99693S 31.59231E",
+                  "06:45 24.99693 S, 31.59231 E", "06:45 24.99693° S, 31.59231° E 3 lions", "27/10 24.99693 S 31.59231 E (3 lions)",
+                  "27/10 24.99693 S 31.59231 E x2"] {
+            check(t, "decimal degrees", at: typed)
+        }
+        // Not a number that could be the degrees of decimal minutes.
+        XCTAssertNil(CoordinateParser.parse("25 5.8136 S, 31.4371 E"))
+    }
+
+    func testTemperaturesAndBearingsNextToAPosition() {
+        // A temperature or a bearing after a position isn't its longitude, nor the next number of a list.
+        for t in ["24 59 48.9 S 31 35 32.3 E 38°C", "Lions 24 59 48.9 S 31 35 32.3 E (32°C)", "Lions 24 59 48.9 S 31 35 32.3 E 45° bearing",
+                  "Leeus 24 59 48.9 S 31 35 32.3 O 34°", "24 59 48.9 S 31 35 32.3 E 32 grade", "24 59 48.9 S 31 35 32.3 E 1° C cooler",
+                  "24°59'48.9\"S 31°35'32.3\"E 32°C"] {
+            check(t, at: dms)
+        }
+        for t in ["-24.996931, 31.592312, 32°C", "Lions at -24.996931, 31.592312, 32°C", "Sun 27 Oct, 5 lions, -24.996931 31.592312, 32°C",
+                  "Lions -24.996931, 31.592312, 32℃", "-24.996931, 31.592312; 32°C"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -24.996931, lon: 31.592312))
+        }
+        for t in ["24.99693° S, 31.59231° E 32°C", "Lions 24.99693° S, 31.59231° E 32°C", "-24.99693, 31.59231, 32°C, 06:45"] {
+            check(t, "decimal degrees", at: typed)
+        }
+        check("Lions 24 59.816 S 31 35.539 E 32°C", "degrees and decimal minutes", at: gps)
+        // Ranges of temperatures.
+        for t in ["18°-31°", "18° - 31°", "25° and 31°"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+    }
+
+    func testOneCoordinateIsNotAPosition() {
+        // A latitude or a longitude on its own, with its minutes.
+        for t in ["S 24° 59.815'", "25° 05.8136' S", "E 31° 35.539'", "24° 59'", "Lat: S 24° 59.815'", "24° 59.816 S", "S 24° 59.816"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+        // A degree sign read in the wrong encoding ("Â°"), or written with a small o.
+        check("25Â° 05.8136' S, 31Â° 26.2273' E", "degrees and decimal minutes", within: 2)
+        check("25ᵒ05'48.8\"S 31ᵒ26'13.6\"E", "degrees, minutes and seconds", at: GeoPoint(lat: -25.096889, lon: 31.437111))
+    }
+
+    func testOtherDashesAndNumbers() {
+        // A dash of any kind before a number is a minus sign; one with spaces round it, after a half written with a minus
+        // sign, separates the halves.
+        for t in ["\u{2010}25.096893, 31.437121", "\u{2011}25.096893 31.437121", "\u{2012}25.096893, 31.437121",
+                  "\u{FE63}25.096893, 31.437121", "Lat: \u{2010}25.096893 Lon: 31.437121", "-25.096893 - 31.437121",
+                  "-25.096893 – 31.437121"] {
+            check(t, "decimal degrees")
+        }
+        check("-24°59.815' - 31°35.539'", "degrees and decimal minutes", at: ddm)
+        // A fraction, a superscript or a circled number next to a position isn't one of its digits.
+        for t in ["Lions S 24.99 E 31.59, ½ km from gate", "Burn area S 24.99 E 31.59, 2 km²", "Lions 24.99 S 31.59 E (½ km N of camp)",
+                  "Lions S24.99 E31.59 ①"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -24.99, lon: 31.59))
+        }
+    }
+
+    func testListsOfPlacesInMixedForms() {
+        // Two or three places in grid references, links, degrees and decimals, also after the same place written four or
+        // five ways: none of them is meant.
+        for t in ["Lions 36J 342401 7223411\nLeopard 36J 352401 7233411\nCheetah -24.8961, 31.6911",
+                  "Lions 36J UT 42401 23411\nLeopard 36J UT 52401 33411\nCheetah -24.8961, 31.6911",
+                  "Lions 36J 342401 7223411\nLeopard 36J 352401 7233411\nCheetah https://maps.google.com/?q=-24.8961,31.6911",
+                  "25°05'48.8\"S 31°26'13.6\"E\n24°59'46\"S 31°35'28\"E\nhttps://maps.google.com/?q=-24.8961,31.6911",
+                  "S 25.0969 E 31.4371\nS 24.9961 E 31.5911\n36J 362401 7243411",
+                  "36J 342401 7223411\n36J 342401 7223411\n-24.9961, 31.5911",
+                  "36J 342401 7223411\n36J UT 62401 43411\n36J 352401 7233411",
+                  "https://maps.google.com/?q=-25.096893,31.437121\n5G6HWC3P+6R\n2505.8136,S,03126.2273,E\n-2505.8136+03126.2273/\n"
+                    + "36J 342401 7223411\n-24.9961, 31.5911",
+                  "https://maps.google.com/?q=-25.0969,31.4371 \n5G6HWC3P+6R \n2505.8136,S,03126.2273,E \n36J 342401 7223411 \n"
+                    + "lat=-25.0969 lon=31.4371 \nLeopard: -24.9961, 31.5911"] {
+            for near in [nil, kruger] {
+                XCTAssertNil(CoordinateParser.parse(t, near: near), t)
+            }
+        }
+    }
+
+    func testTheSamePlaceInMoreForms() {
+        for t in ["S 25.096893 E 31.437121\n25°05'48.8\"S 31°26'13.6\"E", "S 25.096893 E 31.437121\n25.096893 S 31.437121 E",
+                  "36J 342401 7223411\n36J 342401 7223411", "36J 342401 7223411\n36J UT 42401 23411",
+                  "25°05'48.8\"S 31°26'13.6\"E\n25°05'48.8\"S 31°26'13.6\"E\n25°05'48.8\"S 31°26'13.6\"E",
+                  "https://maps.google.com/?q=-25.096893,31.437121\n5G6HWC3P+6R\n2505.8136,S,03126.2273,E\n36J 342401 7223411\n"
+                    + "lat=-25.096893 lon=31.437121\n-25.096893, 31.437121"] {
+            check(t, within: 10)
+        }
+        check("N 51.500694 W 0.124611\n51°30'02.5\"N 0°07'28.6\"W", within: 10, at: GeoPoint(lat: 51.500694, lon: -0.124611))
+    }
+
+    func testRoadMarkersAndNumbersNextToAPair() {
+        // A road's marker after the position ("km 12"), a number after labelled values, and a distance or an odometer with
+        // decimals before a pair.
+        for t in ["-24.99693, 31.59231 km 12", "S 24.99693 E 31.59231 km 12 H4-1", "Lions S 24.99693 E 31.59231 km 12",
+                  "Leeus S 24,99693 O 31,59231 km 12", "-24.99693; 31.59231 km 12", "-24.99693, 31.59231 km 120",
+                  "-24.99693 31.59231 Km-12", "27/10 S 24.99693 E 31.59231 km 12", "Lat -24.99693 Lon 31.59231 06:45",
+                  "Lat -24.99693 Lon 31.59231 3 lions", "Lat -24.99693 Lon 31.59231 27/10/2026", "Lat -24.99693 Lon 31.59231 km 12",
+                  "Breedte -24,99693 Lengte 31,59231 3 leeus"] {
+            check(t, at: typed)
+        }
+        check("06:45 S 24 59.816 E 31 35.539 km 12", "degrees and decimal minutes", at: gps)
+        for t in ["H1-2 km 23.4, -24.9969, 31.5923", "Lions on H4-1 km 12.5 -24.9969 31.5923", "Odometer 12345.6, -24.9969, 31.5923"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -24.9969, lon: 31.5923))
+        }
+        check("Lions on H4-1 at km 12.5, -24.996931, 31.592312", "decimal degrees", at: GeoPoint(lat: -24.996931, lon: 31.592312))
+        // A list is still a list.
+        XCTAssertNil(CoordinateParser.parse("12.345, -24.9969, 31.5923"))
+    }
+
+    func testDegreesInWordsAndMinutesWithAnMNextToTheLetter() {
+        for t in ["S24 deg 59.816 E31 deg 35.539", "Lions at S24 deg 59.816 E31 deg 35.539",
+                  "S24 degrees 59.816 minutes E31 degrees 35.539 minutes", "S24 deg 59.816 min, E31 deg 35.539 min",
+                  "S24 grad 59.816 E31 grad 35.539", "S24 graad 59.816 E31 graad 35.539", "S24 ° 59.816' E31 ° 35.539'",
+                  "S24 °59.816' E31 °35.539'", "S24 59.816m E31 35.539m", "S24 59.816 m E31 35.539 m", "S24d 59.816m E31d 35.539m",
+                  "S24d59.816m E31d35.539m"] {
+            check(t, "degrees and decimal minutes", at: gps)
+        }
+        check("S25d 05.8136m E31d 26.2273m", "degrees and decimal minutes", within: 2)
+        check("S25 deg 07.182 E31 deg 54.942", "degrees and decimal minutes", at: GeoPoint(lat: -25.1197, lon: 31.9157))
+        check("N40 deg 41.352 W74 deg 2.670", "degrees and decimal minutes", at: newYork)
+        for t in ["S24 deg 59' 48.9\" E31 deg 35' 32.3\"", "S24deg 59' 48.9\" E31deg 35' 32.3\"",
+                  "S24 graad 59' 48.9\" E31 graad 35' 32.3\""] {
+            check(t, "degrees, minutes and seconds", at: dms)
+        }
+    }
+
+    func testSearchLinksTypedInOtherForms() {
+        // A search, a pin or a destination in degrees and minutes, with letters or in DMS: the whole value is read, not its
+        // first two numbers.
+        for t in ["https://maps.google.com/?q=24+59.816+S+31+35.539+E", "https://maps.apple.com/?q=24+59.816+S+31+35.539+E",
+                  "https://www.google.com/maps/search/?api=1&query=24%2059.816%20S%2031%2035.539%20E",
+                  "https://www.google.com/maps/dir/?api=1&destination=24+59.816+S+31+35.539+E",
+                  "https://maps.apple.com/?daddr=24+59.816+S+31+35.539+E", "https://maps.google.com/?q=-24+59.816,+31+35.539",
+                  "https://www.google.com/maps/search/?api=1&query=S24%2059.816%20E31%2035.539",
+                  "https://maps.apple.com/?q=S24%2059.816%20E31%2035.539", "https://maps.google.com/?q=S24+59.816+E31+35.539"] {
+            check(t, "map link", at: gps)
+        }
+        check("geo:0,0?q=24 59.816 S 31 35.539 E", "geo: link", at: gps)
+        check("https://maps.google.com/?q=24+59+48.9+S+31+35+32.3+E", "map link", at: dms)
+        check("https://www.google.com/maps?q=24%C2%B059'48.9%22S+31%C2%B035'32.3%22E", "map link", at: dms)
+        for t in ["https://maps.google.com/?q=24.996931+S+31.592312+E", "https://maps.google.com/?q=S24.996931,E31.592312"] {
+            check(t, "map link", at: GeoPoint(lat: -24.996931, lon: 31.592312))
+        }
+        // A "%" elsewhere in the message doesn't keep the link encoded.
+        check("100% sure https://www.google.com/maps/place/24%C2%B059'48.9%22S+31%C2%B035'32.3%22E/@-24.85,31.2,9z", "map link", at: dms)
+        check("Battery 15% https://www.google.com/maps/place/5G6HWC3P%2B6R", "plus code", within: 8)
+    }
+
+    func testDottedSecondsBeforeAFullStop() {
+        for t in ["Leopard S24.59.48.9 E31.35.32.3. 2 cubs", "Leopard S24.59.48.9, E31.35.32.3. 2 cubs",
+                  "06:45 Lions at S24.59.48.9 E31.35.32.3.", "27/10 S24.59.48.9 E31.35.32.3.", "S24.59.48.9 E31.35.32.3.",
+                  "Lions at S24.59.48.9 E31.35.32.3."] {
+            check(t, "degrees, minutes and seconds", at: dms)
+        }
+    }
+
+    func testShortDatesAndNamedNumbersNextToAPosition() {
+        // A day and a month next to a position aren't another place.
+        let p = GeoPoint(lat: -24.996931, lon: 31.592312)
+        for t in ["27/10 -24.996931, 31.592312", "-24.996931 31.592312\n27/10", "-24.996931, 31.592312 (27/10)",
+                  "-24.996931, 31.592312 12/3"] {
+            check(t, "decimal degrees", at: p)
+        }
+        check("https://maps.google.com/?q=-24.996931,31.592312 27/10", "map link", at: p)
+        check("-24.9969, 31.5923, 27/10", "decimal degrees", at: GeoPoint(lat: -24.9969, lon: 31.5923))
+        // Beside a position, numbers each named by words before them are what the message says, not another place; on their
+        // own the words may be labels in another language.
+        for t in ["USD/ZAR 18.2345, EUR/ZAR 19.8765. Lions at -25.0969, 31.4371", "Temp 25.123, wind 31.456. Lions at -25.0969, 31.4371"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -25.0969, lon: 31.4371))
+        }
+        check("Широта: 55.7558 Долгота: 37.6173", "decimal degrees", at: GeoPoint(lat: 55.7558, lon: 37.6173))
+        check("Lions at -25.096893 and 31.437121", "decimal degrees")
+        XCTAssertNil(CoordinateParser.parse("25° and 31°"))
+    }
+
+    func testTablesWithAHeaderRow() {
+        // Rows under a header that names the latitude and longitude columns, whatever the other columns hold.
+        let p = GeoPoint(lat: -24.996931, lon: 31.592312)
+        for t in ["id,lat,lon\n1,-24.996931,31.592312", "Name,Count,Lat,Lon\nLeopard,2,-24.996931,31.592312",
+                  "id;name;lat;lon\n1;Camp;-24,996931;31,592312", "| lat | lon |\n|---|---|\n| -24.996931 | 31.592312 |",
+                  "id,lat,lon\n1,-24.996931,31.592312\n2,-24.996932,31.592313"] {
+            check(t, "decimal degrees", at: p)
+        }
+        XCTAssertNil(CoordinateParser.parse("id,lat,lon\n1,-24.9969,31.5923\n2,-25.0969,31.4371"))
+    }
+
+    func testCountsAfterLettersInAChatLog() {
+        // More chat messages than the whole text is read for, the last a position with its letters after the numbers and
+        // a count after it.
+        let lines = ["[06:00, 27/10/2026] Jaco: Only 4x4 on the S100 after the rain, 50 m of mud near the bridge",
+                     "[07:01, 27/10/2026] Jaco: Leaving at 5 tomorrow, gates open 05:30",
+                     "[08:02, 27/10/2026] Jaco: Saw 12 elephants and 3 calves at Sunset Dam"]
+        let log = (lines + lines + lines).joined(separator: "\n") + "\n[18:01, 27/10/2026] Jaco: "
+        for t in ["Lions 24.9969 S 31.5923 E 2 males", "24.9969S 31.5923E 2 males"] {
+            check(log + t, "decimal degrees", at: GeoPoint(lat: -24.9969, lon: 31.5923))
+        }
+        check(log + "Lions 24 59 48.9 S 31 35 32.3 E 3 rhino", "degrees, minutes and seconds", at: dms)
+        check(log + "24°59.815' S 31°35.539' E 2 males", "degrees and decimal minutes", at: ddm)
+    }
+
+    func testNumbersWithAPlusAndLongRuns() {
+        // A number with a plus isn't a plus code, nor is a padded code (an area 5 km across or more).
+        for t in ["25000000+ visitors", "22000000+", "Over 25000000+ views", "5G6HWC00+"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+        // Long runs after a grid reference's labels, or of digits in KML: read in a time that grows with the length.
+        let start = Date()
+        XCTAssertNil(CoordinateParser.parse("N" + String(repeating: " ", count: 20_000) + "x E 342401 7223411"))
+        check("36J 342401 7223411 E" + String(repeating: " ", count: 20_000) + "x", "UTM", within: 2)
+        XCTAssertNil(CoordinateParser.parse("<coordinates>" + String(repeating: "1", count: 20_000)))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
 }
 
 final class ScaleBarTests: XCTestCase {

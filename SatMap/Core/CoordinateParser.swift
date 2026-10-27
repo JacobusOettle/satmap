@@ -6,17 +6,19 @@ import Foundation
 ///   ("25°05'48.8\"S 31°26'13.6\"E", "25-05-48.8S 031-26-13.6E", "40d41m21sN", "25 05m 48.8s S", "S24.59.48.9",
 ///   "S24°59.48.9"), with any of the usual symbols or spaces;
 /// - decimal commas ("-25,096893; 31,437121"), digits in other scripts, labels ("lat"/"lon" in either order, "X"/"Y", a
-///   "Lat/Long:" heading or a spreadsheet's header row), and directions and labels in English, Afrikaans, Dutch, German,
-///   French, Spanish, Italian and Portuguese ("sud", "Oeste", "ZB", "Breite"), with a lone O for east or west (see
+///   "Lat/Long:" heading or a table's header row, "id,lat,lon"), and directions and labels in English, Afrikaans, Dutch,
+///   German, French, Spanish, Italian and Portuguese ("sud", "Oeste", "ZB", "Breite"), with a lone O for east or west (see
 ///   `latLon`); altitude, accuracy and the like next to the position are left out, and so are a height, distance or time
 ///   with its unit and the direction after it ("…, 31.59231 (3 km N of Skukuza)"), a road's name or marker ("S3", "H4-1",
-///   "H1-3 km 14"), a time or count written with letters ("06h45", "4x4"), a count, name, time or date before it ("3 rhino
-///   S 24° 59' 48.9\" E …", "WGS 84: S24 59 48.9 E31 35 32.3", "[07:15, 27/10/2026] Jaco: 24 22.872 S 31 50.736 E"), and a
-///   time, date, phone number or count after it ("…, 06:45", "…, 3 males");
+///   "H1-3 km 14", "… km 12"), a time or count written with letters ("06h45", "4x4"), a count, name, time, date or
+///   temperature before it ("3 rhino S 24° 59' 48.9\" E …", "WGS 84: S24 59 48.9 E31 35 32.3", "[07:15, 27/10/2026] Jaco:
+///   24 22.872 S 31 50.736 E", "38°C S24 59 48.9 E31 35 32.3"), and a time, date, phone number, count or temperature after
+///   it ("…, 06:45", "…, 3 males", "…, 32°C");
 /// - GPS (NMEA) fields or whole sentences ("2505.8136,S,03126.2273,E", "$GPGGA,…"), aviation style ("0536.22N 00011.22W")
 ///   and ISO 6709 ("-2505.8136+03126.2273/", "+40.6892-074.0445+545.400/");
 /// - map links (Google Maps, Apple Maps, OpenStreetMap, OsmAnd, Bing, Waze, Yandex, ArcGIS, GeoHack and others with the
-///   position in them), geo: links, Google navigation links and the vCard iMessage sends;
+///   position in them, also a search typed in another form, "?q=24+59.816+S+31+35.539+E"), geo: links, Google navigation
+///   links and the vCard iMessage sends;
 /// - GeoJSON, KML and WKT ("POINT (31.437121 -25.096893)"), which put the longitude first, as does code that names the
 ///   order ("ST_MakePoint(31.437121, -25.096893)", "LngLat(…)"); labelled values in GPX, JSON or XML whatever else is
 ///   with them (a <time>, a name, a zoom);
@@ -25,9 +27,10 @@ import Foundation
 /// - a position inside other text, as in a chat message ("[12:31, 27/10/2026] Jaco: Lions on H4-1 at -25.0969, 31.4371").
 /// Without letters or labels the first number is the latitude, unless only the second can be one.
 /// A text that could be two different places, with nothing in it to say which, isn't read (nil), in whatever forms they are
-/// written (two links, a link and a position typed next to it, a grid reference and a position). Nor are numbers that
-/// could as well be times, dates, years, counts, temperatures or distances. Two exceptions say in the format how they
-/// were read: a lone "O" (east or west) and a directions link to a place by name (the map's centre).
+/// written (two links, a link and a position typed next to it, a grid reference and a position, a list of them). Nor are
+/// numbers that could as well be times, dates, years, counts, temperatures or distances, nor a latitude or longitude on its
+/// own ("S 24° 59.815'"). Two exceptions say in the format how they were read: a lone "O" (east or west) and a directions
+/// link to a place by name (the map's centre).
 enum CoordinateParser {
     struct Result: Equatable {
         let point: GeoPoint
@@ -40,12 +43,19 @@ enum CoordinateParser {
         guard t.contains(where: \.isNumber), case let .place(r, used, resolution)? = place(in: t, near: near) else { return nil }
         // Another place in the rest of the text, in any form ("36J 342401 7223411 and -24.9961, 31.5911", a link and a
         // position typed next to it, two plus codes): it isn't clear which is meant. The same place written again is fine,
-        // as closely as the less precise of the two is written.
+        // as closely as the less precise of the two is written, however often it is written. Two whole numbers left on
+        // their own ("27/10", "12/3") are a date or a count next to it, not another place, nor are numbers each named by
+        // words (see `reading`).
         var rest = t, read = used
-        for _ in 0..<4 {
-            rest = blanked(rest, read)
-            guard rest.contains(where: \.isNumber) else { break }
-            switch place(in: rest, near: near) {
+        while true {
+            let left = blanked(rest, read)
+            // (What a reader read is always blanked; were it not, the same would be read again.)
+            guard left != rest else { return nil }
+            rest = left
+            guard rest.contains(where: \.isNumber), !has(#"^[^\p{L}\d+-]*\d+[^\p{L}\d.,+-]+\d+[^\p{L}\d+-]*$"#, in: rest) else {
+                return r
+            }
+            switch place(in: rest, near: near, beside: true) {
             case nil: return r
             case .unclear?: return nil
             case let .place(other, otherUsed, otherResolution)?:
@@ -53,7 +63,6 @@ enum CoordinateParser {
                 read = otherUsed
             }
         }
-        return r
     }
 
     /// What a text says, as one of the readers reads it.
@@ -64,8 +73,9 @@ enum CoordinateParser {
         case unclear
     }
 
-    /// The first reader that reads the text, and what it read.
-    private static func place(in t: String, near: GeoPoint?) -> Found? {
+    /// The first reader that reads the text, and what it read. `beside`: whether the text is what is left beside a place
+    /// read in it before (see `reading`).
+    private static func place(in t: String, near: GeoPoint?, beside: Bool = false) -> Found? {
         if let found = fromLinks(t, near: near) ?? plusCodes(t, near: near) { return found }
         // The numbers in a link that couldn't be read (a short link, a place by name) don't say where. A small "o" before a
         // word in small letters is Portuguese "the" or Spanish "or", not a direction ("…, 31.4371 o ponto de encontro").
@@ -77,10 +87,9 @@ enum CoordinateParser {
         // A text with more numbers than a position and a message around it can have (a chat log, a file) isn't read as
         // one position as a whole, only by what is in it (a pair that can only be a position, a grid reference, a label).
         let wholeText: (String) -> Found? = { numberGroups(in: $0) > 40 ? nil
-            : latLon($0, near: near).map { .place($0.result, used: whole, resolution: $0.resolution) } }
+            : latLon($0, near: near, beside: beside).map { .place($0.result, used: whole, resolution: $0.resolution) } }
         let readers: [(String) -> Found?] = [nmea, { iso6709($0).map { .place($0.result, used: whole, resolution: $0.resolution) } },
-                                             { mgrs($0).map { .place($0.result, used: whole, resolution: $0.resolution) } }, utm,
-                                             labelled, wholeText, { inText($0, near: near) }]
+                                             mgrs, utm, table, labelled, wholeText, { inText($0, near: near) }]
         return readers.lazy.compactMap { $0(rest) }.first
     }
 
@@ -108,36 +117,50 @@ enum CoordinateParser {
 
     /// Signs written in more than one way, as the one the readers take.
     private static let sameSign: [Unicode.Scalar: String] = [
-        "\u{2212}": "-", "\u{2013}": "-", "\u{2014}": "-", "\u{00A0}": " ", "\u{2009}": " ", "\u{202F}": " ", "\u{FEFF}": "",
-        "\u{200B}": "", "\u{200E}": "", "\u{200F}": "", "\r": "\n", "º": "°", "˚": "°", "⁰": "°", "′": "'", "’": "'", "‘": "'",
-        "`": "'", "´": "'", "″": "\"", "”": "\"", "“": "\"",
+        "\u{2212}": "-", "\u{02D7}": "-", "\u{00A0}": " ", "\u{2009}": " ", "\u{202F}": " ", "\u{FEFF}": "", "\u{200B}": "",
+        "\u{200E}": "", "\u{200F}": "", "\r": "\n", "º": "°", "˚": "°", "⁰": "°", "ᵒ": "°", "′": "'", "’": "'", "‘": "'", "`": "'",
+        "´": "'", "″": "\"", "”": "\"", "“": "\"", "℃": "°C", "℉": "°F",
         // Arabic and fullwidth decimal points, commas and signs.
-        "\u{066B}": ".", "\u{060C}": ",", "\u{FF0E}": ".", "\u{FF0C}": ",", "\u{FF0D}": "-", "\u{FF0B}": "+", "\u{FF0F}": "/",
+        "\u{066B}": ".", "\u{060C}": ",", "\u{FF0E}": ".", "\u{FF0C}": ",", "\u{FF0B}": "+", "\u{FF0F}": "/",
     ]
 
     private static func normalise(_ s: String) -> String {
         var t = s
         // Links come percent-encoded ("%2C", "%C2%B0", "%2B" in a plus code). A space in one ("address=Apple%20Park") is
-        // kept as a +, as in a query, so that the link stays in one piece.
-        if t.unicodeScalars.contains("%"), has("%[0-9A-Fa-f]{2}", in: t),
-           let decoded = t.replacingOccurrences(of: "%20", with: "+").removingPercentEncoding {
-            t = decoded
+        // kept as a +, as in a query, so that the link stays in one piece. Each run of codes on its own, so that a "%" in
+        // the message ("Battery 15%") doesn't keep the link encoded.
+        if t.unicodeScalars.contains("%"), has("%[0-9A-Fa-f]{2}", in: t) {
+            let ns = t.replacingOccurrences(of: "%20", with: "+") as NSString
+            var decoded = "", at = 0
+            for m in matchRanges("(?:%[0-9A-Fa-f]{2})+", in: ns as String) {
+                let run = ns.substring(with: m[0])
+                decoded += ns.substring(with: NSRange(location: at, length: m[0].location - at)) + (run.removingPercentEncoding ?? run)
+                at = NSMaxRange(m[0])
+            }
+            t = decoded + ns.substring(from: at)
         }
         // A vCard escapes its commas ("ll=-24.996931\,31.592312" in the location iMessage sends).
         if t.unicodeScalars.contains("\\") {
             t = replacing(#"(?<=\d)\\,(?=\s*[-+]?\d)"#, in: t, with: ",")
         }
         // In one pass (a long text is read as it is typed): the signs above, a new line written "\r\n" as one, two
-        // apostrophes as a second mark, and digits in other scripts ("٤٠", "４０") as 0-9, which is what the readers and
-        // Double() take.
+        // apostrophes as a second mark, a dash of any kind as "-" ("‐25.0969" with a hyphen, or one that keeps the line
+        // together), a degree sign read in the wrong encoding ("25Â°") as one, digits in other scripts ("٤٠", "４０") as
+        // 0-9, which is what the readers and Double() take, and other numbers ("½", "²", "①") as a letter: they aren't a
+        // coordinate's digits but other text.
         let scalars = Array(t.unicodeScalars)
         var out = String.UnicodeScalarView()
         for (k, u) in scalars.enumerated() {
             if u == "\r", k + 1 < scalars.count, scalars[k + 1] == "\n" { continue }
+            if u == "Â", k + 1 < scalars.count, scalars[k + 1] == "°" || scalars[k + 1] == "º" { continue }
             var mapped = sameSign[u].map { Array($0.unicodeScalars) } ?? [u]
-            if u.value > 127, u.properties.numericType == .decimal, let v = u.properties.numericValue,
-               let ascii = Unicode.Scalar(48 + UInt32(v)) {
+            if u.value > 127, u.properties.generalCategory == .dashPunctuation {
+                mapped = ["-"]
+            } else if u.value > 127, u.properties.numericType == .decimal, let v = u.properties.numericValue,
+                      let ascii = Unicode.Scalar(48 + UInt32(v)) {
                 mapped = [ascii]
+            } else if u.value > 127, sameSign[u] == nil, u.properties.numericType != nil {
+                mapped = ["Ж"]
             }
             for m in mapped {
                 if m == "'", out.last == "'" {
@@ -247,9 +270,9 @@ enum CoordinateParser {
         let num = #"([-+]?\d{1,3}(?:\.\d+)?)(?!\d)"#
         // A parameter whose whole value is "lat,lon" ("lat+lon", "lat lon" once decoded), maybe after "loc:" (Google) or
         // "ll." (Waze); "google.navigation:q=" too.
-        func param(_ names: String) -> String {
+        func param(_ names: String, typed: Bool = false) -> String {
             #"(?:[?&]|navigation:)(?:"# + names + #")=(?:loc:|ll\.)?\s*"# + num + #"(?:,|%2C|\+|\s|%20)+"# + num
-                + #"(?!\w|\.\d)"#
+                + #"(?!\w|\.\d)"# + (typed ? #"(?!(?:,|%2C|\+|[ \t]|%20)+(?:[NSEWnsew](?![A-Za-z])|\d+(?:\.\d+)?(?![\d.A-Za-z])))"# : "")
         }
         // The position, and how precisely it is written there.
         func find(_ pattern: String, lonFirst: Bool = false) -> (GeoPoint, Double)? {
@@ -259,12 +282,19 @@ enum CoordinateParser {
             }
             return nil
         }
+        // A pin, a search or a destination as it was typed ("q=24+59.816+S+31+35.539+E", "query=S24.996931,E31.592312",
+        // "q=24°59'48.9"S+31°35'32.3"E"): its first two numbers are "lat,lon" only when no letter or number goes on with
+        // them (there they are degrees and minutes), else the whole value is read, as a place in a link's path is.
+        func typed(_ names: String) -> (GeoPoint, Double)? {
+            find(param(names, typed: true)) ?? matches(#"(?:[?&]|navigation:)(?:"# + names + #")=([^&#\n]+)"#, in: t,
+                                                       options: [.caseInsensitive]).first?[1].flatMap(pathPoint)
+        }
         let link = { (p: (GeoPoint, Double)) -> Reading in
             (Result(point: p.0, format: t.lowercased().hasPrefix("geo:") ? "geo: link" : "map link"), p.1)
         }
 
         // Directions: where they go to (Waze's to=ll.…, the last stop of OpenStreetMap's route=), not where they start.
-        if let p = find(param("daddr|destination|to")) ?? find(#"[?&]route=[^&#\s]*;"# + num + "," + num + #"(?=&|#|\s|$)"#) {
+        if let p = typed("daddr|destination|to") ?? find(#"[?&]route=[^&#\s]*;"# + num + "," + num + #"(?=&|#|\s|$)"#) {
             return link(p)
         }
         if let m = matches(#"/maps/dir/([^?#]*)"#, in: t, options: [.caseInsensitive]).first, let path = m[1] {
@@ -298,9 +328,8 @@ enum CoordinateParser {
         // The place: a pin or search (also a name with the position after an @), Bing's pushpin (sp=point.lat_lon_name),
         // OpenStreetMap's marker (mlat=, mlon=, not the map's centre in lat=, lon=) and OsmAnd's lat=…&lon=… (in either
         // order, with other parameters between them).
-        let place: [String] = [param("q|query|pin|point|loc|address"), #"[?&](?:q|query)=[^&#\s@]*@"# + num + #"(?:,|\s)+"# + num,
-                               #"[?&]sp=point\."# + num + "_" + num]
-        if let p = place.lazy.compactMap({ find($0) }).first { return link(p) }
+        let place: [String] = [#"[?&](?:q|query)=[^&#\s@]*@"# + num + #"(?:,|\s)+"# + num, #"[?&]sp=point\."# + num + "_" + num]
+        if let p = typed("q|query|pin|point|loc|address") ?? place.lazy.compactMap({ find($0) }).first { return link(p) }
         func value(_ names: String) -> (Double, Double)? {
             let v = matches("[?&](?:" + names + ")=" + num, in: t, options: [.caseInsensitive]).first?[1]
             return v.flatMap(Double.init).map { ($0, lastDigit(v)) }
@@ -393,18 +422,19 @@ enum CoordinateParser {
     private static func plusCode(_ m: [String?], in u: String, near: GeoPoint?) -> Reading? {
         guard let head = m[1], let tail = m[2] else { return nil }
         // (A short code is read as a full one of 8 characters before the "+".)
-        let digits = (head.count == 8 ? head.replacingOccurrences(of: "0", with: "").count : 8) + tail.count
+        let digits = 8 + tail.count
         let size = digits <= 10 ? pow(20, 2 - Double(digits / 2)) : pow(20, -3) / pow(5, Double(digits - 10))
         return plusCodePoint(m, head: head, tail: tail, in: u, near: near).map { ($0, size) }
     }
 
     private static func plusCodePoint(_ m: [String?], head: String, tail: String, in u: String, near: GeoPoint?) -> Result? {
-        var code = head.replacingOccurrences(of: "0", with: "")
-        guard code.count % 2 == 0 || head.count == 8 else { return nil }
+        // A full code padded with zeros is an area 5 km across or more ("5G6HWC00+", "5G000000+"), not a place, and a
+        // number with a plus is more likely ("25000000+ visitors").
+        guard !head.contains("0") else { return nil }
         if head.count < 8 {
             // A short code: the missing first part comes from the reference point (your position). Google writes them
             // with 4 or 6 characters before the "+" and 2 or more after it, so "25+" or "22+22" (a count, a sum) isn't one.
-            guard let ref = near, !head.contains("0"), head.count >= 4, tail.count >= 2 else { return nil }
+            guard let ref = near, head.count >= 4, tail.count >= 2 else { return nil }
             // A place name after it ("WC3P+6R Skukuza") means the code was shortened against that place, which can't be
             // looked up offline. Near you the same short code is a square up to 1° from that place (at Letaba, 110 km
             // north of the Skukuza one; near Cape Town, 1,600 km away), and nothing says which, so it isn't read.
@@ -422,8 +452,7 @@ enum CoordinateParser {
             if p.lon > 180 { p.lon -= 360 } else if p.lon < -180 { p.lon += 360 }
             return valid(p.lat, p.lon).map { Result(point: $0, format: "plus code (near you)") }
         }
-        code += tail
-        guard let p = olcDecode(code) else { return nil }
+        guard let p = olcDecode(head + tail) else { return nil }
         return valid(p.lat, p.lon).map { Result(point: $0, format: "plus code") }
     }
 
@@ -487,19 +516,20 @@ enum CoordinateParser {
     /// Mapbox's "LngLat(lon, lat)", OpenLayers' "fromLonLat([lon, lat])"). Two different places in it (two placemarks,
     /// a line) aren't read (unclear), and nil when the text is in none of these formats.
     private static func lonFirst(_ t: String) -> Found? {
-        let num = #"([-+]?\d+(?:\.\d+)?)"#
+        let num = #"([-+]?\d+(?:\.\d+)?)"#, lead = #"(?<![\d.])"# + num
         // Where the positions are (the first group), and how each one is written in there. WKT's POINT in any case, but
         // not after a word, as "Meeting point (-25.0969 31.4371)" isn't WKT. GeoJSON also when it was copied without
-        // its closing bracket ("coordinates": [\n 31.4371,\n -25.0969).
+        // its closing bracket ("coordinates": [\n 31.4371,\n -25.0969). (A position starts where a number starts, so that
+        // a long run of digits isn't tried from every digit in it.)
         let formats: [(area: String, position: String, name: String)] = [
             (#"["']?\bcoordinates["']?\s*:\s*(\[[\[\]\s\d.,+-]*(?:\]|$))"#, #"\[\s*"# + num + #"\s*,\s*"# + num + #"[^\[\]]*(?:\]|$)"#,
              "GeoJSON"),
-            (#"<coordinates>([^<]*)"#, num + #"\s*,\s*"# + num + #"(?:\s*,\s*[-+]?\d+(?:\.\d+)?)?"#, "KML"),
-            (#"<gx:coord>([^<]*)"#, num + #"\s+"# + num, "KML"),
+            (#"<coordinates>([^<]*)"#, lead + #"\s*,\s*"# + num + #"(?:\s*,\s*[-+]?\d+(?:\.\d+)?)?"#, "KML"),
+            (#"<gx:coord>([^<]*)"#, lead + #"\s+"# + num, "KML"),
             (#"(?i)(?<![A-Z0-9_])(?<![A-Z][ \t]{1,3})(?:MULTI)?POINT\s*(?:ZM|Z|M)?\s*(\([\s\d.,+()-]*\))"#,
-             num + #"\s+"# + num + #"(?:\s+[-+]?\d+(?:\.\d+)?){0,2}"#, "WKT"),
+             lead + #"\s+"# + num + #"(?:\s+[-+]?\d+(?:\.\d+)?){0,2}"#, "WKT"),
             (#"(?i:\bST_(?:Make)?Point|(?:LNG|LON|LONG)LAT\w*)\s*[(\[=:]\s*[(\[]?\s*("# + num + #"\s*,\s*"# + num + ")",
-             num + #"\s*,\s*"# + num, "decimal degrees"),
+             lead + #"\s*,\s*"# + num, "decimal degrees"),
         ]
         let ns = t as NSString
         for (area, position, name) in formats {
@@ -603,49 +633,66 @@ enum CoordinateParser {
         return valid(lat * 180 / .pi, lon * 180 / .pi)
     }
 
+    /// The easting and northing of a UTM grid reference: 5 to 8 digits, not glued to letters other than an "E" or "N"
+    /// label or an "m" ("E342401", "342401mE"; "W252525S" isn't one).
+    private static let gridNumber = #"(?<![\d.A-DF-MO-Z])(\d{5,8}(?:\.\d+)?)(?![\dA-DF-LO-Z])"#
+
+    /// A UTM grid reference: in a list, the first one that reads (the others are read after it, to be the same place).
     private static func utm(_ t: String) -> Found? {
         let u = capitals(t), ns = u as NSString
-        let numbers = matchRanges(#"(?<![\d.])\d{5,8}(?:\.\d+)?(?![\d])"#, in: u)
-        guard let firstNumber = numbers.first?[0].location else { return nil }
+        let numbers = matchRanges(gridNumber, in: u)
+        guard !numbers.isEmpty else { return nil }
+        let zones = matchRanges(#"(?<![\d.])(\d{1,2})\s*(NORTH|SOUTH|NOORD|SUID)(?![A-Z])|(?<![\d.])(\d{1,2})\s?([C-HJ-NP-X])(?![A-Z])"#,
+                                in: u)
+        for number in numbers {
+            if let found = utm(ns, easting: number[0].location, zones: zones) { return found }
+        }
+        return nil
+    }
+
+    /// The grid reference whose easting (or northing) starts at `firstNumber`, after its zone (one of `zones`).
+    private static func utm(_ ns: NSString, easting firstNumber: Int, zones: [[NSRange]]) -> Found? {
         // The zone and a band letter, or the hemisphere in words ("UTM 36 South …"), right before the easting and
         // northing (or their labels), so that "Waypoint 12 N: 36J …" or the road in "R40 N to 36J …" isn't the zone:
-        // it ends in what may be between them (spaces, ",:;=", an "E" or "N" label), which is found once from the easting
-        // back, not again from every number and letter before it.
-        let before = Array(ns.substring(to: firstNumber).utf16)
-        var gap = before.count
-        func isLetter(at k: Int) -> Bool { Unicode.Scalar(before[k]).map { Character($0).isLetter } ?? true }
+        // it ends in what may be between them (spaces, ",:;=", an "E" or "N" label), which is found from the easting back.
+        var gap = firstNumber
+        func isLetter(at k: Int) -> Bool { Unicode.Scalar(ns.character(at: k)).map { Character($0).isLetter } ?? true }
         func skipSeparators() {
-            while gap > 0, let c = Unicode.Scalar(before[gap - 1]), Character(c).isWhitespace || ",:;=".unicodeScalars.contains(c) {
+            while gap > 0, let c = Unicode.Scalar(ns.character(at: gap - 1)),
+                  Character(c).isWhitespace || ",:;=".unicodeScalars.contains(c) {
                 gap -= 1
             }
         }
         skipSeparators()
         var eastLabelled = false
-        for label in ["EASTING", "NORTHING", "E", "N"].map({ Array($0.utf16) }) where gap >= label.count
-            && Array(before[(gap - label.count)..<gap]) == label && (gap == label.count || !isLetter(at: gap - label.count - 1)) {
-            gap -= label.count
-            eastLabelled = label[0] == "E".utf16.first
+        for label in ["EASTING", "NORTHING", "E", "N"] where gap >= label.utf16.count
+            && ns.substring(with: NSRange(location: gap - label.utf16.count, length: label.utf16.count)) == label
+            && (gap == label.utf16.count || !isLetter(at: gap - label.utf16.count - 1)) {
+            gap -= label.utf16.count
+            eastLabelled = label.hasPrefix("E")
             skipSeparators()
             break
         }
         // Within 10 km north of the equator the northing has fewer digits, and its label may come first ("37N N 1500 E
-        // 285000").
+        // 285000"). (The runs of spaces possessive, so that a long one after a label with no number isn't split every way.)
         var shortFirst: [NSRange]?
-        if eastLabelled, let m = matchRanges(#"(?<![\dA-Z])N(?:ORTHING)?\s*[:=]?\s*(\d{1,4}(?:\.\d+)?)[\s,;]*$"#,
-                                             in: ns.substring(to: gap)).first {
-            shortFirst = m
-            gap = m[0].location
+        let from = max(0, gap - 100)
+        if eastLabelled, let m = matchRanges(#"(?<![\dA-Z])N(?:ORTHING)?\s*+[:=]?\s*+(\d{1,4}(?:\.\d+)?)[\s,;]*$"#,
+                                             in: ns.substring(with: NSRange(location: from, length: gap - from))).first {
+            shortFirst = m.map { NSRange(location: $0.location + from, length: $0.length) }
+            gap = m[0].location + from
             skipSeparators()
         }
-        let zones = matchRanges(#"(?<![\d.])(\d{1,2})\s*(NORTH|SOUTH|NOORD|SUID)(?![A-Z])|(?<![\d.])(\d{1,2})\s?([C-HJ-NP-X])(?![A-Z])"#,
-                                in: u)
         guard let zb = zones.last(where: { (gap...firstNumber).contains(NSMaxRange($0[0])) }) else { return nil }
         let spelled = zb[1].location != NSNotFound
         guard let zone = Int(ns.substring(with: spelled ? zb[1] : zb[3])),
               let letter = ns.substring(with: spelled ? zb[2] : zb[4]).first else { return nil }
-        // The rest after it, so that the "N" of "30 N 699568 5709428" isn't taken for a northing label below.
-        let start = NSMaxRange(zb[0]), rest = ns.substring(from: start)
-        var big = matchRanges(#"(?<![\d.])(\d{5,8}(?:\.\d+)?)(?![\d])"#, in: rest)
+        // The rest after it, so that the "N" of "30 N 699568 5709428" isn't taken for a northing label below, up to the
+        // next zone: one grid reference of a list ("36J 342401 7223411\n36J 352401 7233411"), and the others are read after
+        // it, to be the same place or else not clear.
+        let start = NSMaxRange(zb[0]), end = zones.first { $0[0].location >= start }?[0].location ?? ns.length
+        let rest = ns.substring(with: NSRange(location: start, length: end - start))
+        var big = matchRanges(gridNumber, in: rest)
         // That short northing only north of the equator, and only right after the easting ("37N 285000 1500", "37N 285000
         // E 1500 N") or labelled before it.
         if big.count == 1, letter == "N" {
@@ -665,8 +712,8 @@ enum CoordinateParser {
         // Easting first, unless labelled the other way round or only the first can be a northing.
         var e = e0, n = n0
         // "N 7223411 E 342401": labels, not the band letter right after the zone number.
-        let northLabel = matchRanges(#"(?<![\dA-Z])N(?:ORTHING)?\s*[:=]?\s*\d"#, in: rest).first?[0].location
-        let eastLabel = matchRanges(#"(?<![\dA-Z])E(?:ASTING)?\s*[:=]?\s*\d"#, in: rest).first?[0].location
+        let northLabel = matchRanges(#"(?<![\dA-Z])N(?:ORTHING)?\s*+[:=]?\s*+\d"#, in: rest).first?[0].location
+        let eastLabel = matchRanges(#"(?<![\dA-Z])E(?:ASTING)?\s*+[:=]?\s*+\d"#, in: rest).first?[0].location
         let northingFirst = northLabel.map { n in eastLabel.map { n < $0 } ?? true } ?? false
         if northingFirst || (e >= 1_000_000 && n < 1_000_000) { swap(&e, &n) }
         guard (100_000...900_000).contains(e), (0...10_000_000).contains(n) else { return nil }
@@ -684,14 +731,23 @@ enum CoordinateParser {
         return nil
     }
 
-    private static func mgrs(_ t: String) -> Reading? {
+    private static func mgrs(_ t: String) -> Found? {
         // Anywhere in the text ("MGRS: 36J UT 42401 23411", "36J UT 42401 23411 (MGRS)") that has no other numbers. The
         // zone number and band letter are written together, as every tool writes them, and the letters all in capitals or
         // all in small letters, so "Arrive 7 Dec 25" or "4 Mar 26" isn't one. The digits are the easting and northing (in
-        // metres, maybe with an "m"), in two groups or one run split in half ("36JUT42402341").
+        // metres, maybe with an "m"), in two groups or one run split in half ("36JUT42402341"). Several (a list) must all
+        // be one place.
         let pattern = #"(?<![A-Z0-9])(\d{1,2})([C-HJ-NP-X])\s*([A-HJ-NP-Z])([A-HJ-NP-V])\s*(\d{1,10})M?(?:\s+(\d{1,5})M?)?(?![A-Z0-9])"#
-        guard let m = matches(pattern, in: t, options: [.caseInsensitive]).first, let all = m[0],
-              !t.replacingOccurrences(of: all, with: " ").contains(where: \.isNumber) else { return nil }
+        let found = matchRanges(pattern, in: t, options: [.caseInsensitive]), ns = t as NSString
+        guard !found.isEmpty, !blanked(t, found.map { $0[0] }).contains(where: \.isNumber) else { return nil }
+        let read = found.compactMap { m in mgrs(m.map { $0.location == NSNotFound ? nil : ns.substring(with: $0) }) }
+        guard read.count == found.count, let first = read.first else { return nil }
+        guard read.allSatisfy({ samePlace($0, first) }) else { return .unclear }
+        return .place(first.result, used: found.map { $0[0] }, resolution: read.map(\.resolution).max() ?? 0)
+    }
+
+    /// One MGRS grid reference, from its parts as `mgrs` matches them.
+    private static func mgrs(_ m: [String?]) -> Reading? {
         let letters = m[2...4].map { $0 ?? "" }.joined()
         let square = Array(letters.uppercased())
         guard letters == letters.uppercased() || letters == letters.lowercased(), square.count == 3,
@@ -732,7 +788,8 @@ enum CoordinateParser {
     /// <ele> and <time>), JSON ({"name": "Camp 14", "lat": …, "lng": …, "zoom": 12}), XML (<geo:lat>…</geo:lat>) and
     /// "Breite: 52,52 Länge: 13,405". Only plain values: one with minutes, seconds or a letter after it, or (unless in
     /// quotes) a direction or unit in words or brackets ("25 deg 5' 48.81\" S", "25.0969 South", "25.0969 (S)", "120 cm"),
-    /// is read by `latLon`. Several (a track) must all be one place.
+    /// is read by `latLon`. A number after a value with decimals isn't its minutes, nor is a road's marker after it its
+    /// unit ("Lat -24.99693 Lon 31.59231 06:45", "… km 12"). Several (a track) must all be one place.
     private static func labelled(_ t: String) -> Found? {
         let u = capitals(t), ns = u as NSString
         let value = hasDecimalPoint(u) ? #"([-+]?\d+(?:\.\d+)?)"# : #"([-+]?\d+(?:,\d+)?)"#
@@ -740,8 +797,9 @@ enum CoordinateParser {
         // (The runs of spaces possessive, so that a long one after a label with no value isn't split every way.)
         func values(_ names: String) -> [(value: Double, range: NSRange, unit: Double)] {
             matchRanges(#"(?<![A-Z])(?:"# + names + #")(?![A-Z])[ \t]*+(["']?)[ \t]*+[:=>]?[ \t]*+(["']?)[ \t]*+"# + value
-                            + #"\2(?![ \t]*(?:[\d°'"]|[NSEWOZ](?![A-Z])|[.,]\d))"#
-                            + #"(?:(?<=["'])|(?![ \t]*(?:(?:"# + unit + #")(?!\p{L})|\(\s*[NSEWOZ]\s*\))))"#, in: u)
+                            + #"(?!\d)\2(?![ \t]*(?:[°'"]|[NSEWOZ](?![A-Z])|[.,]\d))(?:(?<=[.,]\d{1,30}["']?)|(?![ \t]*\d))"#
+                            + #"(?:(?<=["'])|(?=[ \t]*KM[ \t]*-?[ \t]*\d)|(?![ \t]*(?:(?:"# + unit
+                            + #")(?!\p{L})|\(\s*[NSEWOZ]\s*\))))"#, in: u)
                 .compactMap { m in
                     let v = ns.substring(with: m[3])
                     return Double(v.replacingOccurrences(of: ",", with: ".")).map { ($0, m[0], lastDigit(v)) }
@@ -756,6 +814,46 @@ enum CoordinateParser {
                       resolution: (lats + lons).map { $0.unit }.max() ?? 0)
     }
 
+    /// A table whose header row names the latitude and longitude columns ("id,lat,lon", "Name,Count,Lat,Lon", rows copied
+    /// from a sheet with their header), whatever is in the other columns (an id, a count, a name): the values in those two
+    /// columns of the rows under it, each with as many columns. Several rows must all be one place.
+    private static func table(_ t: String) -> Found? {
+        let u = capitals(t), ns = u as NSString
+        guard u.contains("\n") else { return nil }
+        let lines = matchRanges(#"[^\n]+"#, in: u).map { $0[0] }
+        func columns(_ line: NSRange, _ delimiter: String) -> [String] {
+            ns.substring(with: line).components(separatedBy: delimiter)
+                .map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\"'"))) }
+        }
+        let label = "(?<![A-Z])(?:" + latWords + ")(?![A-Z])"
+        guard has(label, in: u) else { return nil }
+        for (k, header) in lines.enumerated().dropLast() where has(label, in: ns.substring(with: header)) {
+            for delimiter in ["\t", ",", ";", "|"] {
+                let names = columns(header, delimiter)
+                let lat = names.indices.filter { has("^(?:" + latWords + ")$", in: names[$0]) }
+                let lon = names.indices.filter { has("^(?:" + lonWords + ")$", in: names[$0]) }
+                guard lat.count == 1, lon.count == 1 else { continue }
+                var points: [GeoPoint] = [], used = [header], resolution = 0.0
+                for row in lines[(k + 1)...] {
+                    let values = columns(row, delimiter)
+                    guard values.count == names.count else { break }
+                    // (A Markdown table's line under its header: "|---|---|".)
+                    if values.allSatisfy({ $0.allSatisfy { "-:".contains($0) } }) { continue }
+                    let a = values[lat[0]], b = values[lon[0]]
+                    guard let la = Double(a.replacingOccurrences(of: ",", with: ".")),
+                          let lo = Double(b.replacingOccurrences(of: ",", with: ".")), let p = valid(la, lo) else { return nil }
+                    points.append(p)
+                    used.append(row)
+                    resolution = max(resolution, lastDigit(a), lastDigit(b))
+                }
+                guard let first = points.first else { continue }
+                guard points.allSatisfy({ Geo.distance($0, first) < 30 }) else { return .unclear }
+                return .place(Result(point: first, format: "decimal degrees"), used: used, resolution: resolution)
+            }
+        }
+        return nil
+    }
+
     // MARK: - Latitude and longitude
 
     private enum Axis { case lat, lon }
@@ -767,9 +865,12 @@ enum CoordinateParser {
         /// N, S, E or W, and whether a number is written right after it ("S28").
         case hemisphere(Character, glued: Bool)
         case separator
+        /// A slash right between two numbers ("27/10", "3/4", "-25.0969/31.4371"): a separator, or a date's or a fraction's,
+        /// which a half with its letter after it doesn't start right after (see `backStart`).
+        case slash
         /// Other text between the numbers: words, a name, a date, a time written with letters ("06h45"), or a colon after
-        /// a number ("km 14: …").
-        case text
+        /// a number ("km 14: …"); whether it has letters.
+        case text(word: Bool)
         /// A dash or colon between the fields of one half ("25-05-48.8", "25:05:48.8"), or of a time ("12:30").
         case joiner(colon: Bool)
         /// "lat", "lon", or (nil) altitude, accuracy and the like.
@@ -807,9 +908,10 @@ enum CoordinateParser {
     /// A position read from text, and how precisely it is written there (in degrees, the coarser of its two halves).
     private typealias Reading = (result: Result, resolution: Double)
 
-    /// Symbols the words are replaced with before reading: a latitude, longitude and other label.
+    /// Symbols the words are replaced with before reading: a latitude, longitude and other label, and "and" between two
+    /// numbers.
     private static let latSymbol: Character = "\u{24D0}", lonSymbol: Character = "\u{24DE}",
-                       otherSymbol: Character = "\u{24E9}"
+                       otherSymbol: Character = "\u{24E9}", andSymbol: Character = "\u{24D3}"
 
     /// Labels in English, Afrikaans, Dutch, German, Spanish, Italian, French and Portuguese.
     private static let latWords = "LATITUDE|LATITUD|LATITUDINE|LAT|BREEDTEGRAAD|BREEDTE|BREITENGRAD|BREITE",
@@ -819,14 +921,14 @@ enum CoordinateParser {
     private static let directionWords = ["NORTH|NTH|NOORD|NB|NORD|NORTE", "SOUTH|STH|SUID|ZUID|ZB|Z|SÜD|SUED|SUD|SUR|SUL",
                                          "EAST|OOS|OOST|OL|OST|EST|ESTE|LESTE", "WEST|WES|WL|OUEST|OESTE|OVEST"]
     /// Units: degrees, minutes and seconds in words, and lengths.
-    private static let degreeWords = "DEGREES|DEGREE|DEG|GRADEN|GRADE|GRADOS|GRADI|GRAUS|GRAD",
+    private static let degreeWords = "DEGREES|DEGREE|DEG|GRADEN|GRADE|GRAAD|GRADOS|GRADI|GRAUS|GRAD",
                        minuteWords = "MINUTES|MINUTE|MINUTOS|MINUTEN|MINUTI|MINS|MIN",
                        secondWords = "SECONDS|SECOND|SEGUNDOS|SEKUNDEN|SECONDES|SECONDEN|SECONDI|SEKONDES|SECS|SEC",
                        lengthWords = "MM|CM|M|KMS|KM|KILOMETERS?|KILOMETRES?|METERS?|METRES?|FT|FEET"
 
     /// Pairs of numbers, with their letters, labels and units. `language` is the text whose words may say which way a
     /// lone O is meant, when `t` is only a part of it.
-    private static func latLon(_ t: String, near: GeoPoint?, language: String? = nil) -> Reading? {
+    private static func latLon(_ t: String, near: GeoPoint?, language: String? = nil, beside: Bool = false) -> Reading? {
         // "51°30′02.5″N 0°07′28.6″W / 51.500694°N 0.124611°W" (Wikipedia): the same place written in more than one way.
         // The parts that read on their own must agree as closely as the least precise of them is written (Wikipedia
         // gives "31°08′E" as "31.133°E", 34 m from it), and the most precise one is taken. A part with a lone O is read
@@ -835,9 +937,9 @@ enum CoordinateParser {
         let pieces = replacing(#"(?<!\s)\s+/\s+"#, in: t, with: "\u{1}")
             .components(separatedBy: "\u{1}")
         let language = language ?? t
-        let options = (2...4).contains(pieces.count) ? pieces.map { latLonOnce($0, near: near, language: language) }
+        let options = (2...4).contains(pieces.count) ? pieces.map { latLonOnce($0, near: near, language: language, beside: beside) }
             .filter { !$0.isEmpty } : []
-        guard options.count > 1 else { return latLonOnce(t, near: near, language: language).first }
+        guard options.count > 1 else { return latLonOnce(t, near: near, language: language, beside: beside).first }
         // Each way of taking one reading of each part, those with fewer second choices first.
         var ways: [[Int]] = [[]]
         for o in options {
@@ -853,11 +955,11 @@ enum CoordinateParser {
     }
 
     /// The readings of a text, the likelier first: two when it has a lone O (east or west), else one or none.
-    private static func latLonOnce(_ t: String, near: GeoPoint?, language: String) -> [Reading] {
+    private static func latLonOnce(_ t: String, near: GeoPoint?, language: String, beside: Bool) -> [Reading] {
         // Decimal commas only when there are no decimal points; if that reading fails, commas separate.
         let commaDecimal = !hasDecimalPoint(t) && has(#"\d,\d"#, in: t)
-        let r = latLon(t, commaDecimal: commaDecimal, near: near, language: language)
-        return r.isEmpty && commaDecimal ? latLon(t, commaDecimal: false, near: near, language: language) : r
+        let r = latLon(t, commaDecimal: commaDecimal, near: near, language: language, beside: beside)
+        return r.isEmpty && commaDecimal ? latLon(t, commaDecimal: false, near: near, language: language, beside: beside) : r
     }
 
     /// Whether a number in the text has a decimal point: not a full stop at the end of a sentence ("31,59."), nor the
@@ -866,7 +968,7 @@ enum CoordinateParser {
         has(#"(?<![\d.])\d+\.\d+(?!\d|\.\d)"#, in: t)
     }
 
-    private static func latLon(_ text: String, commaDecimal: Bool, near: GeoPoint?, language: String) -> [Reading] {
+    private static func latLon(_ text: String, commaDecimal: Bool, near: GeoPoint?, language: String, beside: Bool) -> [Reading] {
         let s = prepared(text)
         // A lone O is east in Afrikaans, Dutch and German (Oos, Oost, Ost) but west in French, Spanish, Italian and
         // Portuguese (Ouest, Oeste, Ovest), and all of them write decimal commas. What decides, in this order:
@@ -879,10 +981,12 @@ enum CoordinateParser {
         // The format says which way it was read.
         let lone = #"(?<!\p{L})O(?![\p{L}'])"# // not the O of "O'Brien", "Posição" or "año"
         guard has(lone, in: s) else {
-            return read(s, commaDecimal: commaDecimal).map { [$0] } ?? []
+            return read(s, commaDecimal: commaDecimal, beside: beside).map { [$0] } ?? []
         }
+        // (Glued to its number as the O was: "O31 35 32.3" is "E31 35 32.3", a letter in front.)
         func readAs(_ letter: String) -> Reading? {
-            read(replacing(lone, in: s, with: " \(letter) "), commaDecimal: commaDecimal)
+            read(replacing(lone, in: replacing(lone + #"(?=\d)"#, in: s, with: " \(letter)"), with: " \(letter) "),
+                 commaDecimal: commaDecimal, beside: beside)
         }
         let east = readAs("E"), west = readAs("W")
         // Read the same either way, it isn't a direction (Portuguese "O ponto fica em …": "the").
@@ -893,7 +997,7 @@ enum CoordinateParser {
             func uses(_ words: String) -> Bool { has(#"\b(?:"# + words + #")\b"#, in: u) }
             let eastWords = uses("SUID|NOORD|ZUID|ZB|NB|Z|SÜD|SUED|BREEDTE(?:GRAAD)?|LENGTE(?:GRAAD)?|BREITE(?:NGRAD)?"
                                 + "|LÄNGE(?:NGRAD)?|LAENGE|KOORDINATEN?|KOÖRDINATES?|STANDORT|LIGGING|POSISIE|POSITIE|LOCATIE"
-                                + "|GRADEN|UND|WIR|SIND|IST|BEI|IM|DER|MIT|AUF|ONS|NAAR|WIJ|ZIJN|BIJ|HET|EEN")
+                                + "|GRADEN|GRAAD|UND|WIR|SIND|IST|BEI|IM|DER|MIT|AUF|ONS|NAAR|WIJ|ZIJN|BIJ|HET|EEN")
             let westWords = uses("SUR|SUL|SUD|NORTE|LATITUD|LONGITUD|LATITUDINE|LONGITUDINE|COORDENADAS|COORDONN[ÉE]ES"
                                 + "|UBICACI[ÓO]N|LOCALIZA(?:ÇÃO|CAO|CI[ÓO]N)|POSI(?:ÇÃO|CAO|CI[ÓO]N|ZIONE)|DIRECCI[ÓO]N"
                                 + "|ENDEREÇO|ESTAMOS|ESTOY|ESTOU|AQU[ÍI]|ICI|NOUS|SOMMES|SIAMO|QUI|PUNTO|PONTO|GRADOS|GRAUS"
@@ -915,17 +1019,18 @@ enum CoordinateParser {
     /// position.
     private static func prepared(_ text: String) -> String {
         var s = " " + text.uppercased() + " "
-        let spacedFront = #"(?<![A-Z\d.])(?<!\d[ \t])([NSEW])[ \t](\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)(?![\d.])"#,
+        let spacedFront = #"(?<![A-Z\d.])(?<!\d[ \t])([NSEW])[ \t](\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)(?!\d|\.\d)"#,
             spacedAfter = #"(?<![\d.])(\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)[ \t]([NSEW])(?![A-Z\d]|[ \t]+\d{1,3}\.\d)"#
         let words: [(String, String)] = [
             // Degrees, minutes and seconds written with points, with the letter next to them ("S24.59.48.9", "24.59.48.9S",
             // "S 24.59.48.9", "24.59.48.9 S"), or with a degree sign and seconds with decimals ("S24°59.48.9"): not a date
-            // or a version number, nor decimal minutes ("24°59.48'"). A letter with a space on each side goes with the one
-            // that has no other value on its other side, and then with the other ("S 24.59.48.9 E 31.35.32.3").
-            (#"(?<![A-Z\d.])([NSEW])(\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)(?![\d.])"#, "$1$2°$3'$4\""),
+            // or a version number, nor decimal minutes ("24°59.48'"); a full stop after them ends the sentence. A letter with
+            // a space on each side goes with the one that has no other value on its other side, and then with the other ("S
+            // 24.59.48.9 E 31.35.32.3").
+            (#"(?<![A-Z\d.])([NSEW])(\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)(?!\d|\.\d)"#, "$1$2°$3'$4\""),
             (#"(?<![\d.])(\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)([NSEW])(?![A-Z])"#, "$1°$2'$3\"$4"),
             (spacedFront, "$1$2°$3'$4\""), (spacedAfter, "$1°$2'$3\"$4"), (spacedFront, "$1$2°$3'$4\""), (spacedAfter, "$1°$2'$3\"$4"),
-            (#"(?<![\d.])(\d{1,3})[ \t]?°[ \t]?([0-5]\d)\.([0-5]\d\.\d+)(?![\d.'])"#, "$1°$2'$3\""),
+            (#"(?<![\d.])(\d{1,3})[ \t]?°[ \t]?([0-5]\d)\.([0-5]\d\.\d+)(?!\d|\.\d|')"#, "$1°$2'$3\""),
             // Quotes around a value, as in JSON, CSV and GPX ("lat":"-25.0969", lat="-25.0969"): not minutes or seconds.
             (#"(?<=[\s=:,;\[({])(["'])\s*([-+]?\d+(?:[.,]\d+)?)\s*\1(?=[\s,;:)}\]/>])"#, " $2 "),
             // (Not from inside a number, so that a long run of digits isn't tried from every digit in it.)
@@ -950,7 +1055,9 @@ enum CoordinateParser {
         let units: [(String, String)] = [
             // Minutes and seconds in words only after degrees and minutes ("25 deg 5 min 48.81 sec S", "25 05 48 sec S");
             // else a time, left out below ("10 min S of Satara").
-            (#"\b("# + degreeWords + #")\b"#, "°"),
+            (#"(?:\b|(?<=\d))("# + degreeWords + #")(?![A-Z])"#, "°"),
+            // A temperature ("38°C", "32 deg C", "℃"): never part of a position.
+            (#"(?<![\d.,])[-+]?\d+(?:[.,]\d+)?[ \t]*°[ \t]*[CF](?![A-Z])"#, " | "),
             (#"(°\s*\d+(?:[.,]\d+)?|(?<![\d.,])\d{1,3}[ \t]+[0-5]?\d(?:[.,]\d+)?)\s*(?:"# + minuteWords + #")\b"#, "$1'"),
             (#"('\s*\d+(?:[.,]\d+)?|(?<![\d.,])\d{1,3}[ \t]+[0-5]?\d[ \t]+[0-5]?\d(?:[.,]\d+)?)\s*(?:"# + secondWords + #")\b"#,
              "$1\""),
@@ -959,17 +1066,22 @@ enum CoordinateParser {
             // 031°26'13.6", where it is south and the E starts the other half.
             (#"(\d\s*M\s*\d+(?:[.,]\d+)?)S(?=\s*[NSEW](?![A-Z]))"#, "$1\""), (#"('\s*\d+(?:[.,]\d+)?)S(?=[NSEW](?![A-Z]))"#, "$1\""),
             // M for minutes only after degrees ("25d 5.8136m S", "25 05m S", "25 5m 48.8s S"); elsewhere it is metres.
-            (#"(\d)\s*D(?=\s*(?:\d|[NSEW]\b|[,;]|$))"#, "$1°"), (#"(°\s*\d+(?:[.,]\d+)?)\s*M(?=\s*(?:\d|[NSEW]\b|[,;]|$))"#, "$1'"),
-            (#"(?<![\d.,])(\d{1,3}[ \t]+[0-5]?\d(?:[.,]\d+)?)[ \t]*M(?=\s*(?:\d|[NSEW]\b|[,;]|$))"#, "$1'"),
+            // (The letter of the next half may be written right before its number: "S24 59.816m E31 35.539m".)
+            (#"(\d)\s*D(?=\s*(?:\d|[NSEW](?![A-Z])|[,;]|$))"#, "$1°"),
+            (#"(°\s*\d+(?:[.,]\d+)?)\s*M(?=\s*(?:\d|[NSEW](?![A-Z])|[,;]|$))"#, "$1'"),
+            (#"(?<![\d.,])(\d{1,3}[ \t]+[0-5]?\d(?:[.,]\d+)?)[ \t]*M(?=\s*(?:\d|[NSEW](?![A-Z])|[,;]|$))"#, "$1'"),
             // A distance with its direction and no unit ("Lions 5 N of Satara", "W 1 van die brug").
             (#"(?<![\p{L}\d.,])\d+(?:[.,]\d{1,2})?[ \t]*[NSEWO][ \t]+(?:OF|VAN|FROM|VANAF)\b"#, " | "),
             (#"(?<![\p{L}\d.,])[NSEWO][ \t]*\d+(?:[.,]\d{1,2})?[ \t]+(?:OF|VAN|FROM|VANAF)\b"#, " | "),
             // A distance, a height or a time ("Drive S 25 km", "…, 270 m", "S 30° W, distance 120 m", "10 min S of
             // Satara"): not part of the position. It ends the position before it, so that the direction after it ("…,
             // 31.59231 (3 km N of Skukuza)") isn't taken for that position's letter. Not the end of a road's name ("H1-3 km
-            // 14", "S100 km 7").
-            (#"(?<![\p{L}\d.,]|[\p{L}\d]-)[-+]?\d+(?:[.,]\d+)?\s*(?:"# + lengthWords
+            // 14", "S100 km 7"), nor a number before a road's marker ("…, 31.59231 km 12": the marker is after "km").
+            (#"(?<![\p{L}\d.,]|[\p{L}\d]-)[-+]?\d+(?:[.,]\d+)?\s*(?!KM[ \t]*-?[ \t]*\d)(?:"# + lengthWords
                 + #"|MI|MILES?|NM|YDS?|YARDS?|MYL|HOURS?|HRS?|UUR|MINUTES?|MINS?|SECONDS?|SECS?|SEKONDES?)(?![A-Z\d'"°])"#, " | "),
+            // "And" between two numbers ("Lions at -25.0969 and 31.4371") separates them, as a comma does; it is still
+            // a word ("25° and 31°" aren't a position).
+            (#"(?<=[\d°'"])[ \t]+(?:AND|EN|UND|ET|&)[ \t]+(?=[-+]?\d)"#, " \(andSymbol) "),
         ]
         for (p, r) in words + directions + units {
             s = replacing(p, in: s, with: r)
@@ -988,19 +1100,22 @@ enum CoordinateParser {
     }
 
     private static func isWordLetter(_ c: Character?) -> Bool {
-        c.map { $0.isLetter && $0 != latSymbol && $0 != lonSymbol && $0 != otherSymbol } ?? false
+        c.map { $0.isLetter && $0 != latSymbol && $0 != lonSymbol && $0 != otherSymbol && $0 != andSymbol } ?? false
     }
 
     /// Reads a prepared text. With three letters, the first or the last may be the first letter of a road's name ("S3 24
     /// 59.816 S 31 35.539 E", "Lions S25 07.178 E31 55.057 S28 3 males"): each of them written right before a whole number
     /// is tried as one, and the text is read only when the readings that way are one place.
-    private static func read(_ s: String, commaDecimal: Bool) -> Reading? {
+    private static func read(_ s: String, commaDecimal: Bool, beside: Bool) -> Reading? {
         let chars = Array(s)
         guard let all = tokens(chars, commaDecimal: commaDecimal) else { return nil }
-        guard all.letters.count == 3 else { return all.letters.count > 3 ? nil : reading(all.tokens, words: all.words) }
+        guard all.letters.count == 3 else {
+            return all.letters.count > 3 ? nil : reading(all.tokens, words: all.words, beside: beside)
+        }
         var found: Reading?
         for i in [all.letters[0], all.letters[2]] where nameShaped(chars, i) {
-            guard let t = tokens(chars, commaDecimal: commaDecimal, names: [i]), let r = reading(t.tokens, words: t.words) else {
+            guard let t = tokens(chars, commaDecimal: commaDecimal, names: [i]),
+                  let r = reading(t.tokens, words: t.words, beside: beside) else {
                 continue
             }
             if let f = found, !samePlace(f, r) { return nil }
@@ -1021,8 +1136,11 @@ enum CoordinateParser {
         var words = false
         func text(word: Bool = true) {
             words = words || word
-            if case .text? = tokens.last { return }
-            tokens.append(.text)
+            if case let .text(before)? = tokens.last {
+                tokens[tokens.count - 1] = .text(word: before || word)
+            } else {
+                tokens.append(.text(word: word))
+            }
         }
         while i < chars.count {
             let c = chars[i]
@@ -1032,6 +1150,13 @@ enum CoordinateParser {
                 if i > 0, isWordLetter(chars[i - 1]), !"NSEW".contains(chars[i - 1]) {
                     i = afterName(chars, i)
                     text()
+                    pendingNegative = false
+                    continue
+                }
+                // A date ("27/10/2026", "2026/10/27", "27/10/26", "2026-10-27"): other text, not numbers of the position.
+                if let end = dateEnd(chars, i) {
+                    i = end
+                    text(word: false)
                     pendingNegative = false
                     continue
                 }
@@ -1081,16 +1206,26 @@ enum CoordinateParser {
             // Between whole degrees or minutes and 2 digits that can be minutes or seconds ("25-05-48.8S",
             // "031-26-13.6E") a dash joins the fields of one half, and right after a half that ends in its letter
             // ("25.0969 S - 31.4371 E") it separates the halves, unless it is written as a minus sign, after a space and
-            // right before a number ("…E -25.0969, 31.4371": the same place again, in decimals); elsewhere it is a minus
-            // ("40-74.0445").
+            // right before a number ("…E -25.0969, 31.4371": the same place again, in decimals). So it does with a space
+            // on each side after a half with a minus sign before it, whose writer puts a minus sign right before its
+            // number ("-25.0969 - 31.4371", "-24°59.815' - 31°35.539'"; not times, "-25:05 - 31:26", which may be a
+            // range). Between degrees and a number it joins a range ("18°-31°", "18° - 31°"). Elsewhere it is a minus
+            // ("40-74.0445", "\"-25.0969\"").
             case "-":
-                if fieldDash(chars, i) {
+                var back = i - 1, ahead = i + 1
+                while back > 0, chars[back] == " " || chars[back] == "\t" { back -= 1 }
+                while ahead < chars.count, chars[ahead] == " " || chars[ahead] == "\t" { ahead += 1 }
+                if fieldDash(chars, i) || (back > 0 && chars[back] == "°" && chars[back - 1].isNumber && ahead < chars.count
+                                           && chars[ahead].isNumber) {
                     tokens.append(.joiner(colon: false))
                     break
                 }
                 let minus = i > 0 && chars[i - 1].isWhitespace && i + 1 < chars.count
                     && (chars[i + 1].isNumber || chars[i + 1] == ".")
-                if !minus, tokens.count > 1, case .hemisphere = tokens[tokens.count - 1],
+                let spaced = i > 0 && " \t".contains(chars[i - 1]) && i + 1 < chars.count && " \t".contains(chars[i + 1])
+                if spaced, let last = tokens.last, isMark(last) || decimalPlaces(last) > 0, signedRun(tokens) {
+                    tokens.append(.separator)
+                } else if !minus, tokens.count > 1, case .hemisphere = tokens[tokens.count - 1],
                    isNumber(tokens[tokens.count - 2]) || isMark(tokens[tokens.count - 2]) {
                     tokens.append(.separator)
                 } else {
@@ -1109,10 +1244,18 @@ enum CoordinateParser {
             case "°": tokens.append(.degree)
             case "'": tokens.append(.minute)
             case "\"": tokens.append(.second)
-            case ",", ";", "/", "|", "\n", "\t": tokens.append(.separator)
+            case ",", ";", "|", "\n", "\t": tokens.append(.separator)
+            case "/":
+                tokens.append(i > 0 && chars[i - 1].isNumber && i + 1 < chars.count && chars[i + 1].isNumber ? .slash : .separator)
+            // A number sign before a count ("#3"): other text.
+            case "#": text(word: false)
             case latSymbol: tokens.append(.label(.lat))
             case lonSymbol: tokens.append(.label(.lon))
             case otherSymbol: tokens.append(.label(nil))
+            // A word that separates two numbers as a comma does, among other words.
+            case andSymbol:
+                tokens.append(.separator)
+                words = true
             case "N", "S", "E", "W":
                 // A road named by a letter and a number ("S3", "S100", "N4"): other text.
                 if names.contains(i) || isName(chars, i) {
@@ -1136,14 +1279,30 @@ enum CoordinateParser {
         return (tokens, letters, words)
     }
 
+    /// Where a date that starts at `i` ends ("27/10/2026", "2026/10/27", "27/10/26", "2026-10-27"), if one does.
+    private static func dateEnd(_ chars: [Character], _ i: Int) -> Int? {
+        let s = String(chars[i..<min(chars.count, i + 14)])
+        let date = #"^(?:\d{1,4}/\d{1,2}/\d{2,4}|\d{4}-\d{1,2}-\d{1,2}|\d{1,2}-\d{1,2}-\d{4})(?![\d/-]|\.\d)"#
+        return matchRanges(date, in: s).first.map { i + $0[0].length }
+    }
+
+    /// Whether the numbers at the end of the tokens, with their marks and joiners, start with a minus sign.
+    private static func signedRun(_ tokens: [Token]) -> Bool {
+        var k = tokens.count
+        while k > 0, isNumber(tokens[k - 1]) || isMark(tokens[k - 1]) || isJoiner(tokens[k - 1]) { k -= 1 }
+        if k < tokens.count, case .number(_, _, _, true) = tokens[k] { return true }
+        return false
+    }
+
     /// Whether the number at `i` is a UTM zone with its band letter, before an easting or an MGRS square ("36J 342401",
     /// "36J UT 42401", "36JUT4240123411"), not a time or a count written with letters ("06h45", "4x4", "5L water", "12x").
     private static func gridZone(_ chars: [Character], _ i: Int) -> Bool {
         has(#"^\d{1,2}[C-HJ-NP-X](?:\s*[A-HJ-NP-Z][A-HJ-NP-V]\s*\d|[\s,:;]+\d)"#, in: String(chars[i..<min(chars.count, i + 12)]))
     }
 
-    /// A position from the tokens of a text, with other words among them or not.
-    private static func reading(_ all: [Token], words: Bool) -> Reading? {
+    /// A position from the tokens of a text, with other words among them or not. `beside`: whether the text is what is
+    /// left beside a place read in it before.
+    private static func reading(_ all: [Token], words: Bool, beside: Bool = false) -> Reading? {
         var tokens = all, words = words
         // Two or more labels before the first number are a heading ("Lat/Long:", a spreadsheet's header row): they give
         // the order of the values after them, they don't label the first one.
@@ -1213,11 +1372,24 @@ enum CoordinateParser {
                 }
             }
             while cut > 0, isLabel(tokens[cut - 1]) { cut -= 1 }
+            // A number right after degrees, with nothing between them, is their minutes: "24° 59.816 S" and "S 24°
+            // 59.816" are one coordinate, not 24° and 59.816°.
+            if cut > 0, case .degree = tokens[cut - 1] { return nil }
             parts = [Array(tokens[..<cut]), Array(tokens[cut...])]
         } else {
             return nil
         }
         guard let halves = halves(parts) else { return nil }
+        // Beside a place, two numbers without letters or labels, each named by words before it ("USD/ZAR 18.2345, EUR/ZAR
+        // 19.8765. Lions at -25.0969, 31.4371"), are what the message says next to that place, not a second one. (On
+        // their own they are read: the words may be labels in another language, "Широта: 55.7558 Долгота: 37.6173".)
+        if beside, halves.allSatisfy({ $0.axis == nil }), let a = parts[0].firstIndex(where: isNumber),
+           let b = parts[0].lastIndex(where: isNumber), let c = parts[1].firstIndex(where: isNumber) {
+            func named(_ part: ArraySlice<Token>) -> Bool {
+                part.contains { if case .text(true) = $0 { return true } else { return false } }
+            }
+            if named(parts[0][..<a]) && (named(parts[0][(b + 1)...]) || named(parts[1][..<c])) { return nil }
+        }
         // Among other words, numbers that could as well be times, dates, counts or measurements ("Gates open 05:30 close
         // 18:00", "12 lions 3 cubs", "temp 25.5, wind 31.4", "Lions 5 N of Satara") aren't a position. Degrees, minutes and
         // seconds in both halves with a minus sign before the first ("We're at -25 05 48, 31 26 13") can't be a time or a
@@ -1267,7 +1439,8 @@ enum CoordinateParser {
         guard parts.count == 2 else { return nil }
         // Numbers joined by a dash or colon stay in one half: "45-30" or "12:30" isn't 45, 30 or 12, 30.
         if case .joiner? = parts[0].last { return nil }
-        let halves = parts.compactMap(component)
+        let degrees = parts.contains { $0.contains { if case .degree = $0 { return true } else { return false } } }
+        let halves = parts.compactMap { component($0, degrees: degrees) }
         guard halves.count == 2 else { return nil }
         // "Spot 1: 51.5007, -0.1246": a number before the position (a spot or camp number) makes the first half look like
         // 1° 51.5007'. A first half with more numbers than the second is read only when something marks where it starts
@@ -1292,14 +1465,34 @@ enum CoordinateParser {
             // With numbers before the first letter, only with a number right after the second ("…E, 545.4", "…E\n-24.9961"
             // is what comes after a position with its letters after the numbers). Letters after the numbers: what is
             // after the second letter is other text ("…E 2026-10-27", "…E 3 cubs").
-            let (second, rest, _) = ended(Array(tokens[hemis[1]...]))
+            let (second, rest, complete) = ended(Array(tokens[hemis[1]...]))
             let start = backStart(tokens, letter: hemis[0], count: between.filter(isNumber).count)
             let front = [Array(tokens[hemis[0]..<hemis[1]]), second]
             let back = [Array(tokens[start...hemis[0]]), Array(tokens[(hemis[0] + 1)...hemis[1]])]
             func reads(_ parts: [[Token]]) -> Bool { halves(parts).map(isPosition) ?? false }
+            // Whether its halves are written the same way (as many fields), the second complete.
+            func alike(_ parts: [[Token]], _ complete: Bool) -> Bool {
+                complete && halves(parts).map { $0[0].numbers == $0[1].numbers } ?? false
+            }
             let frontReads = after.contains(where: isNumber) && (!before.contains(where: isNumber) || after.first.map(isNumber) == true)
                 && reads(front)
+            let glued = hemis.allSatisfy { if case .hemisphere(_, true) = tokens[$0] { return true } else { return false } }
+            let backTime = back[0].contains { if case .joiner(true) = $0 { return true } else { return false } }
+                && back[0].last(where: isNumber).map { decimalPlaces($0) == 0 } == true
             switch (frontReads, before.contains(where: isNumber) && reads(back)) {
+            // Each letter written right before a number ("27/10/2026 S24.99 E31.59", "38°C S24 59 48.9 E31 35 32.3",
+            // "06:45 S25-05-48.8 E031-26-13.6"): the letters are in front of those numbers, whatever is before them (a date,
+            // a time, a temperature, a count).
+            case (true, _) where glued && complete:
+                chosen = (front, [before, rest])
+            // Both halves written alike rather than differently: "Leopard 06.45 S 24 59.8 E 31 35.5" is 24° 59.8' S, 31°
+            // 35.5' E, not 6.45° S, 24° 59.8' E; "24 59 48.9 S 31 35 32.3 E 45° bearing" isn't 31° 35' 32.3" S, 45° E.
+            case (true, true) where alike(front, complete) != alike(back, ended(back[1]).complete):
+                chosen = alike(front, complete) ? (front, [before, rest]) : (back, [Array(tokens[..<start]), after])
+            // A time before a letter ("27/10/2026 06:45 S 25 E 31") isn't degrees and minutes when the letters can as well
+            // be in front.
+            case (true, true) where backTime:
+                chosen = (front, [before, rest])
             case (true, true):
                 // Both can be read: the one that leaves out less of what can be a position. A count or a name (one whole
                 // number: "Stop 3 S25.0969 E31.4371", "WGS 84: S24 59 48.9 E31 35 32.3") rather than other numbers
@@ -1338,9 +1531,19 @@ enum CoordinateParser {
     private static func backStart(_ tokens: [Token], letter: Int, count: Int) -> Int {
         let numbers = tokens[..<letter].indices.filter { isNumber(tokens[$0]) }
         guard numbers.count > count, count > 0 else { return 0 }
-        if let k = tokens[..<letter].lastIndex(where: { isSeparator($0) || isText($0) }), k < numbers[numbers.count - count],
-           k > numbers[numbers.count - count - 1] {
+        let first = numbers[numbers.count - count], previous = numbers[numbers.count - count - 1]
+        // (Not after the slash of a date or a fraction: "27/10 S 24.99 E 31.59" isn't 10° S.)
+        if let k = tokens[..<letter].lastIndex(where: { isText($0) || (isSeparator($0) && !isSlash($0)) }), k < first, k > previous {
             return k + 1
+        }
+        // Right after a time or a short date ("06:45 24.99693 S 31.59231 E", "27/10 24.99693 S …").
+        if first == previous + 1, previous > 0, isJoiner(tokens[previous - 1]) || isSlash(tokens[previous - 1]) { return first }
+        // A whole number after a word, before one number with decimals, when the other half is one number with decimals
+        // too ("Leopard 2 24.99692S, 31.59231E", "Camp 14 …"): a count or a name's number, as the other half says the
+        // position is written in decimal degrees, not 2° 24.99692'.
+        if count == 1, first == previous + 1, previous > 0, isText(tokens[previous - 1]), decimalPlaces(tokens[previous]) == 0,
+           decimalPlaces(tokens[first]) > 0, tokens[(letter + 1)...].first(where: isNumber).map({ decimalPlaces($0) > 0 }) == true {
+            return first
         }
         return numbers.count > 3 && count <= 3 ? numbers[numbers.count - count] : 0
     }
@@ -1416,7 +1619,10 @@ enum CoordinateParser {
               i + 1 < chars.count, chars[i + 1].isNumber else { return false }
         var k = i + 1
         while k < chars.count, chars[k].isNumber { k += 1 }
-        if k < chars.count, "°'\"".contains(chars[k]) { return false }
+        // (The mark also after a space: "S24 ° 59.816'", "S24 deg 59.816".)
+        var mark = k
+        while mark < chars.count, chars[mark] == " " || chars[mark] == "\t" { mark += 1 }
+        if mark < chars.count, "°'\"".contains(chars[mark]) { return false }
         return !(k + 1 < chars.count && ".,-:".contains(chars[k]) && chars[k + 1].isNumber)
     }
 
@@ -1469,7 +1675,19 @@ enum CoordinateParser {
     }
 
     private static func isSeparator(_ t: Token) -> Bool {
-        if case .separator = t { return true }
+        switch t {
+        case .separator, .slash: return true
+        default: return false
+        }
+    }
+
+    private static func isSlash(_ t: Token) -> Bool {
+        if case .slash = t { return true }
+        return false
+    }
+
+    private static func isJoiner(_ t: Token) -> Bool {
+        if case .joiner = t { return true }
         return false
     }
 
@@ -1512,14 +1730,16 @@ enum CoordinateParser {
     }
 
     /// One half: its value with sign, its axis (from N/S/E/W or a label), its kind and how it is marked (see `Half`).
-    private static func component(_ part: [Token]) -> Half? {
+    /// `degrees`: whether the position has a degree sign, which makes a ' or " after a number a minute or second mark.
+    private static func component(_ part: [Token], degrees: Bool = false) -> Half? {
         var nums: [(value: Double, intDigits: Int, places: Int, negative: Bool, unit: Int?)] = []
         var hemi: Character?
         var label: Axis?
         var lettered = false, glued = false // a letter or label before its first number, the letter right before it
         // A label or other words between its numbers, or a comma, semicolon or slash unless its letter comes after them
         // (CSV columns, "25,05,48.8,S,31,26,13.6,E"): they aren't the fields of one half. "-24,99 31,59." with the commas
-        // read as separators isn't -24, 99° 31' 59", nor is "2026/10/27" 2026, 10° 27'.
+        // read as separators isn't -24, 99° 31' 59", nor is "2026/10/27" 2026, 10° 27'. Nor is a letter after other words
+        // its letter ("Warm 34°. Leeus by S24 59 48.9 …", "06.45 at S24.99 …": that S is the next half's, in front of it).
         var labelAfter = false, separatorAfter = false, separated = false
         var colon = false
         for (k, tok) in part.enumerated() {
@@ -1538,6 +1758,7 @@ enum CoordinateParser {
                 }
                 nums.append((v, digits, places, neg, unit))
             case let .hemisphere(h, next):
+                if labelAfter { return nil }
                 hemi = h
                 if nums.isEmpty {
                     lettered = true
@@ -1550,7 +1771,7 @@ enum CoordinateParser {
                 } else {
                     labelAfter = true
                 }
-            case .separator:
+            case .separator, .slash:
                 if !nums.isEmpty { separatorAfter = true }
             case .text:
                 if !nums.isEmpty { labelAfter = true }
@@ -1564,9 +1785,13 @@ enum CoordinateParser {
         guard !nums.dropFirst().contains(where: { $0.negative }) else { return nil }
         // A minus sign and N or E ("-31.4371 E") say different things.
         if nums[0].negative && (hemi == "N" || hemi == "E") { return nil }
-        // Without a degree sign, a ' or " after a number that can't be minutes or seconds is a quote ('-25.0969').
-        if !nums.contains(where: { $0.unit == 0 }) {
+        // Without a degree sign in the position, a ' or " after a number that can't be minutes or seconds is a quote
+        // ('-25.0969'). With one, they are minutes and seconds, and a half can't start with them: "S 24° 59.815'" is one
+        // coordinate, not 24° S and 59.815° E.
+        if !degrees && !nums.contains(where: { $0.unit == 0 }) {
             for k in nums.indices where (nums[k].unit ?? 0) > nums.count - 1 { nums[k].unit = nil }
+        } else if (nums[0].unit ?? 0) > 0 {
+            return nil
         }
         // Degrees, then minutes, then seconds: "25°05°48.8"" (a degree sign typed for the minute mark) or "31° 32°" (a
         // list of temperatures) isn't one half.
@@ -1629,7 +1854,7 @@ enum CoordinateParser {
     /// position, read on its own. That is decimals with 3 places or more, values with a degree sign and minutes or a
     /// letter, or degrees with minutes with 3 decimal places or more, or with seconds, and a letter ("S24 22.872 E31
     /// 50.736", as a GPS shows them), side by side and not part of a longer list of numbers. When the text has two
-    /// different ones, it isn't clear which is meant, nor with more than 10 (a track, not a place), nor (nil) when another
+    /// different ones, it isn't clear which is meant, nor with more than 10 (a track, not a place), nor when another
     /// number like them is elsewhere in the text.
     private static func inText(_ t: String, near: GeoPoint?) -> Found? {
         let ns = t as NSString
@@ -1652,24 +1877,28 @@ enum CoordinateParser {
                 let halves = [NSRange(location: r.location, length: m[1].location - r.location),
                               NSRange(location: NSMaxRange(m[1]), length: NSMaxRange(r) - NSMaxRange(m[1]))]
                 guard halves.allSatisfy({ has(#"\d[.,]\d{3}|['"]|(?i:[NSEWO])"#, in: ns.substring(with: $0)) }) else { continue }
-                let start = max(0, r.location - 20), end = NSMaxRange(r)
+                // (Not into a pair read before it: "S 25.096893 E 31.437121\n25.096893 S 31.437121 E" is the same place twice.)
+                let start = max(0, r.location - 20, read.last.map(NSMaxRange) ?? 0), end = NSMaxRange(r)
                 let before = ns.substring(with: NSRange(location: start, length: r.location - start))
                 let after = ns.substring(with: NSRange(location: end, length: min(20, ns.length - end)))
                 // Part of a longer list of numbers ("31.4371 -25.0969 545.4": longitude, latitude and altitude; "Lap times:
                 // 12.345 13.456 14.567"): a number after it, or a decimal before it, joined to it by a comma or semicolon
-                // or the way its own two numbers are joined. Not a number in a name ("Cheetah on H4-1, -24.9969, …"), nor a
-                // time, a date, a phone number or a count with a word, which aren't an altitude or a coordinate ("…, 06:45",
-                // "27/10/2026, …", "…, 082 555 1234", "Wild dogs 12, …", "…, 3 males").
+                // or the way its own two numbers are joined. Not a number in a name ("Cheetah on H4-1, -24.9969, …") or
+                // after a word ("H1-2 km 23.4, -24.9969, …"), nor a time, a date, a phone number, a temperature or a count
+                // with a word, which aren't an altitude or a coordinate ("…, 06:45", "27/10/2026, …", "…, 082 555 1234",
+                // "…, 32°C", "Wild dogs 12, …", "…, 3 males"). With its letters a pair says which half is which, and a
+                // number after it is something else ("24.9969 S 31.5923 E 545.4") or another pair.
                 let sep = ns.substring(with: m[1])
                 let own = sep.contains("/") ? [#"\s*/\s*"#] : sep.contains(",") || sep.contains(";") ? [] : [#"\s+"#]
                 let joiners = [#"\s*[,;]\s*"#] + own
-                let number = #"(?!0\d)[-+]?\.?\d+(?:[.,]\d+)?(?![\d:/]|[.,]\d|\s*\p{L})"#
-                // A letter at its end with a number after it may as well be the next one's ("…, 31.4371 o 31 grados": "or").
-                if has(#"(?i)[NSEWO]$"#, in: ns.substring(with: r)) && has(#"^\s*[-+]?\d"#, in: after) { continue }
-                if has(#"(?<![\p{L}\d.,+:/-])(?<!\p{L}[ \t]{1,3})[-+]?\d+(?:[.,]\d+)?\s*[,;]\s*$"#, in: before)
-                    || joiners.contains(where: { j in
-                        has(decimal + #"\d+"# + j + "$", in: before) || has("^" + j + number, in: after)
-                    }) { continue }
+                let number = #"(?!0\d)[-+]?\.?\d+(?:[.,]\d+)?(?![\d:/]|[.,]\d|\s*\p{L}|\s?°\s?[CF](?![A-Za-z]))"#
+                let word = #"(?<![\p{L}\d.,+:/-])(?<!\p{L}[ \t]{1,3})[-+]?\d+"#
+                // An "o" at its end with a number after it may as well be "or" ("…, 31.4371 o 31 grados").
+                if has(#"(?i)(?<![A-Z])O$"#, in: ns.substring(with: r)) && has(#"^\s*[-+]?\d"#, in: after) { continue }
+                let lettered = has(#"(?i)[NSEWO]"#, in: ns.substring(with: r))
+                if has(word + #"(?:[.,]\d+)?\s*[,;]\s*$"#, in: before) || joiners.contains(where: { j in
+                    has(word + decimal + #"\d+"# + j + "$", in: before) || (!lettered && has("^" + j + number, in: after))
+                }) { continue }
                 tried += 1
                 guard tried <= 10 else { return .unclear }
                 guard let p = latLon(ns.substring(with: r), near: near, language: t) else { continue }
@@ -1684,7 +1913,7 @@ enum CoordinateParser {
                 // ("32°C", "270°").
                 let others = matchRanges(#"(?<![\d.,:])[-+]?\d+"# + decimal + #"\d{3,}(?![\d.,]|\s*(?i:k?m|ft|mi)\b)"#
                                          + #"|\d\s?°\s?(?:\d{1,2}(?:[.,]\d+)?\s?'|(?i:[NSEWO])(?![A-Za-z]))"#, in: t)
-                if others.contains(where: { o in !read.contains { NSLocationInRange(o[0].location, $0) } }) { return nil }
+                if others.contains(where: { o in !read.contains { NSLocationInRange(o[0].location, $0) } }) { return .unclear }
                 return .place(f.result, used: read, resolution: f.resolution)
             }
         }
