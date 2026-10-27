@@ -843,6 +843,22 @@ final class TileFallbackTests: XCTestCase {
         cache.trim(to: 1)
         XCTAssertEqual(cache.count, 1)
     }
+
+    func testTouchedValuesOutlastNewerOnes() {
+        // The coarse tiles around the screen are touched at every stop: many newer tiles don't push them out, and
+        // checking for them (contains) doesn't count as use.
+        let cache = RecentCache<Int, String>(capacity: 8)
+        cache.set("coarse", for: 0)
+        cache.set("idle", for: 1)
+        for i in 2..<40 {
+            cache.set("\(i)", for: i)
+            XCTAssertTrue(cache.touch(0))
+            _ = cache.contains(1)
+        }
+        XCTAssertEqual(cache.value(for: 0), "coarse")
+        XCTAssertNil(cache.value(for: 1))
+        XCTAssertFalse(cache.touch(1))
+    }
 }
 
 final class ConcurrencyTests: XCTestCase {

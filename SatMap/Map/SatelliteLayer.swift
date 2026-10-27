@@ -241,8 +241,16 @@ final class SatelliteRenderer: MKOverlayRenderer {
         }
     }
 
+    /// Whether a tile can be drawn from memory (its data, or its decoded image).
+    private static func has(_ t: TileID) -> Bool {
+        ImageryMemory.tiles.contains(t) || decoded.contains(t)
+    }
+
     private static func image(_ t: TileID) -> UIImage? {
-        if let i = decoded.value(for: t) { return i }
+        if let i = decoded.value(for: t) {
+            ImageryMemory.tiles.touch(t) // drawn from: keep its data too
+            return i
+        }
         guard let d = ImageryMemory.tiles.value(for: t), let i = UIImage(data: d)?.preparingForDisplay() else { return nil }
         decoded.set(i, for: t)
         return i
@@ -252,7 +260,6 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// four two levels down; under them, where they don't cover it all, the nearest coarser tile enlarged. False if
     /// there was nothing.
     private func drawStandIn(for t: TileID, in rect: CGRect, context: CGContext) -> Bool {
-        let memory = ImageryMemory.tiles
         let deepest = TileSources.imageryMaxZoom
         func quarters(_ p: TileID) -> [TileID] {
             (0..<4).map { TileID(z: p.z + 1, x: p.x * 2 + $0 % 2, y: p.y * 2 + $0 / 2) }
@@ -261,16 +268,16 @@ final class SatelliteRenderer: MKOverlayRenderer {
         var covered = t.z < deepest
         if t.z < deepest {
             for c in quarters(t) {
-                if memory.contains(c) {
+                if Self.has(c) {
                     sharper.append(c)
                 } else {
                     covered = false
-                    if c.z < deepest { sharper += quarters(c).filter { memory.contains($0) } }
+                    if c.z < deepest { sharper += quarters(c).filter(Self.has) }
                 }
             }
         }
         var drew = false
-        if !covered, let a = TileFallback.ancestor(of: t, maxLevels: 10, has: { memory.contains($0) }),
+        if !covered, let a = TileFallback.ancestor(of: t, maxLevels: 10, has: Self.has),
            let image = Self.image(a) {
             context.saveGState()
             context.clip(to: rect)
@@ -347,7 +354,8 @@ enum ImageryPrefetch {
         if decode { SatelliteRenderer.prepare(onScreen + surround) }
         let memory = ImageryMemory.tiles
         let wanted: [TileID] = lock.withLock {
-            let w = surround.filter { !memory.contains($0) && !loading.contains($0) }
+            // Those already in memory are marked as just used, so the ones around the screen are kept longest.
+            let w = surround.filter { !memory.touch($0) && !loading.contains($0) }
             loading.formUnion(w)
             return w
         }

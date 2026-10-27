@@ -77,7 +77,9 @@ final class TileRepository {
     private var demRetryAfter: [TileID: Date] = [:]
     /// Imagery tiles the server said don't exist (beyond the imagery depth), to skip asking again.
     private var imageryMissing = Set<TileID>()
-    private var imageryInFlight: [TileID: (task: Task<TileFetchResult, Never>, priority: RequestPriority, id: Int)] = [:]
+    /// Imagery requests under way; `started` once one has a connection (then it is shared whatever the priority).
+    private var imageryInFlight: [TileID: (task: Task<TileFetchResult, Never>, priority: RequestPriority, id: Int,
+                                           started: Bool)] = [:]
     private var imageryRequests = 0
 
     private init() {
@@ -187,6 +189,8 @@ final class TileRepository {
         // network for tiles it knows don't exist.
         var beyondDepth = offlineKnowsMissing(t)
         var online = networkUsable && !beyondDepth
+        // Not tried because of a pause after failures: reloaded once the network is back (as for elevation).
+        if !online && !beyondDepth && Connectivity.shared.isOnlineNow { noteRetryNeeded() }
         if online {
             switch await onlineImagery(t, priority: priority) {
             case .data(let d): return (d, .exact)
@@ -232,18 +236,33 @@ final class TileRepository {
     }
 
     /// One network request per imagery tile at a time (many deep tiles share the same ancestor), unless a tile wanted
-    /// sooner is still waiting its turn behind on-screen ones: then it is asked for again, at its own priority. Tiles
-    /// the server doesn't have are remembered.
+    /// sooner is still waiting its turn behind on-screen ones: then it is asked for again, at its own priority, and
+    /// the request it overtook fetches nothing and answers with the new one's result. Tiles the server doesn't have
+    /// are remembered.
     private func onlineImagery(_ t: TileID, priority: RequestPriority) async -> TileFetchResult {
         let pending: (task: Task<TileFetchResult, Never>, id: Int)? = lock.withLock {
             if imageryMissing.contains(t) { return nil }
-            if let existing = imageryInFlight[t], existing.priority >= priority { return (existing.task, existing.id) }
+            if let existing = imageryInFlight[t], existing.started || existing.priority >= priority {
+                return (existing.task, existing.id)
+            }
             imageryRequests += 1
             let id = imageryRequests
-            let task = Task.detached(priority: priority == .background ? .utility : .userInitiated) { [self] in
-                await self.limitedFetch(TileSources.imageryURL(t), priority: priority)
+            let url = TileSources.imageryURL(t)
+            let qos: TaskPriority = priority == .background ? .utility : .userInitiated
+            let task = Task.detached(priority: qos) { [self] () -> TileFetchResult in
+                let fetched = await self.limitedFetch(url, priority: priority) {
+                    self.lock.withLock {
+                        guard self.imageryInFlight[t]?.id == id else { return false }
+                        self.imageryInFlight[t]?.started = true
+                        return true
+                    }
+                }
+                if let r = fetched { return r }
+                // Overtaken while waiting.
+                if let newer = self.lock.withLock({ self.imageryInFlight[t]?.task }) { return await newer.value }
+                return await self.limitedFetch(url, priority: priority)
             }
-            imageryInFlight[t] = (task, priority, id)
+            imageryInFlight[t] = (task, priority, id, false)
             return (task, id)
         }
         guard let request = pending else { return .missing }
@@ -264,9 +283,16 @@ final class TileRepository {
     }
 
     private func limitedFetch(_ url: URL, priority: RequestPriority = .normal) async -> TileFetchResult {
+        await limitedFetch(url, priority: priority, start: { true }) ?? .failed
+    }
+
+    /// A request when a connection is free. `start` is asked then: if it says no, nothing is fetched (nil). Failures
+    /// in the background don't count towards pausing the network: only on-screen ones say it is down.
+    private func limitedFetch(_ url: URL, priority: RequestPriority, start: () -> Bool) async -> TileFetchResult? {
         let limiter = url.host?.hasPrefix("elevation") == true ? terrainLimiter : imageryLimiter
         await limiter.acquire(priority)
-        defer { limiter.release() }
+        defer { limiter.release(priority) }
+        guard start() else { return nil }
         guard networkUsable else { return .offline }
         let started = Date()
         let result = await HTTPTileFetcher.fetch(url, session: browseSession)
@@ -278,6 +304,7 @@ final class TileRepository {
                 lastSuccessAt = Date()
             case .failed, .offline:
                 tileLog.error("fetch failed (\(String(describing: result), privacy: .public)) after \(ms) ms: \(url.path, privacy: .public)")
+                guard priority != .background else { break }
                 lastFailedURL = url
                 consecutiveFailures += 1
                 if consecutiveFailures >= 8 {
@@ -580,12 +607,15 @@ enum RequestPriority: Int, Comparable {
     static func < (a: RequestPriority, b: RequestPriority) -> Bool { a.rawValue < b.rawValue }
 }
 
-/// Limits concurrent requests; waiting callers are served by priority, newest first.
+/// Limits concurrent requests; waiting callers are served by priority, newest first. Background requests get at most
+/// two connections, so on-screen ones never wait behind a slow batch of them.
 final class RequestLimiter {
     private let lock = NSLock()
     private var free: Int
     /// Indexed by `RequestPriority.rawValue`.
     private var waiting: [[CheckedContinuation<Void, Never>]] = [[], [], []]
+    private var background = 0
+    private static let backgroundLimit = 2
 
     init(slots: Int) {
         free = slots
@@ -594,8 +624,9 @@ final class RequestLimiter {
     func acquire(_ priority: RequestPriority = .normal) async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             let now: Bool = lock.withLock {
-                if free > 0 {
+                if free > 0, priority != .background || background < Self.backgroundLimit {
                     free -= 1
+                    if priority == .background { background += 1 }
                     return true
                 }
                 waiting[priority.rawValue].append(c)
@@ -605,9 +636,15 @@ final class RequestLimiter {
         }
     }
 
-    func release() {
+    /// With the priority the connection was acquired with.
+    func release(_ priority: RequestPriority = .normal) {
         let next: CheckedContinuation<Void, Never>? = lock.withLock {
-            for p in waiting.indices.reversed() where !waiting[p].isEmpty { return waiting[p].popLast() }
+            if priority == .background { background -= 1 }
+            for p in [RequestPriority.urgent, .normal] where !waiting[p.rawValue].isEmpty { return waiting[p.rawValue].popLast() }
+            if background < Self.backgroundLimit, let c = waiting[RequestPriority.background.rawValue].popLast() {
+                background += 1
+                return c
+            }
             free += 1
             return nil
         }

@@ -17,7 +17,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     private var satelliteMode = SatelliteMode.current
     /// The imagery: the tile layer, and under it what is shown while its tiles load (`SatelliteMode`).
-    private let satellite = SatelliteTileOverlay(urlTemplate: nil)
+    private var satellite = SatelliteTileOverlay(urlTemplate: nil)
     private lazy var underlay: MKTileOverlay? = Self.underlay(for: satelliteMode)
     private var satelliteRenderer: SatelliteRenderer?
     private let contours = ContourTileOverlay(urlTemplate: nil)
@@ -218,9 +218,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             self.reloadPending = false
             self.lastReload = Date()
             // Only when the imagery layer showed something it should replace: a reload empties it for a moment.
-            if self.satellite.takeNeedsReload() {
-                (self.mapView.renderer(for: self.satellite) as? MKTileOverlayRenderer)?.reloadData()
-            }
+            if self.satellite.takeNeedsReload() { self.reloadSatelliteTiles() }
             self.satelliteRenderer?.reload()
             (self.mapView.renderer(for: self.contours) as? MKTileOverlayRenderer)?.reloadData()
             self.model.aim.retry()
@@ -385,6 +383,22 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         case .backdrop: return SatelliteBackdropOverlay(urlTemplate: nil)
         case .renderer: return SatelliteDrawnOverlay(urlTemplate: nil)
         }
+    }
+
+    /// Loads the tile layer's tiles again. With a layer underneath, without emptying it first (which would show that
+    /// layer's first stand-ins for a moment, often the whole screen): a new tile layer goes on top, its tiles in
+    /// memory come at once and the others are asked for again, and the old one goes once the new one has had time to
+    /// fill in.
+    private func reloadSatelliteTiles() {
+        guard underlay != nil else {
+            (mapView.renderer(for: satellite) as? MKTileOverlayRenderer)?.reloadData()
+            return
+        }
+        let old = satellite
+        satellite = SatelliteTileOverlay(urlTemplate: nil)
+        satellite.canReplaceMapContent = false
+        mapView.insertOverlay(satellite, above: old)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.mapView.removeOverlay(old) }
     }
 
     /// The way of drawing the imagery was switched (Offline maps, while it is being tried out): swap the layer under

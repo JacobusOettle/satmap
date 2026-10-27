@@ -40,6 +40,17 @@ final class RecentCache<Key: Hashable, Value> {
         lock.withLock { values[key] != nil }
     }
 
+    /// Marks a value as just used (so it is kept longer) and says whether there is one.
+    @discardableResult
+    func touch(_ key: Key) -> Bool {
+        lock.withLock {
+            guard let entry = values[key] else { return false }
+            clock += 1
+            values[key] = (entry.value, clock)
+            return true
+        }
+    }
+
     func set(_ value: Value, for key: Key) {
         lock.withLock {
             clock += 1
