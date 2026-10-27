@@ -171,7 +171,7 @@ struct NewAreaView: View {
             }
         case .loaded(_, let km, _):
             if km > 0 {
-                row("Roads and tracks", String(format: km < 10 ? "%.1f km" : "%.0f km", km))
+                row("Roads and tracks", km < 10 ? String(format: "%.1f km", km) : "\(Format.count(Int(km.rounded()))) km")
             } else {
                 Text("No roads or tracks are mapped in this area.").foregroundColor(.orange)
             }

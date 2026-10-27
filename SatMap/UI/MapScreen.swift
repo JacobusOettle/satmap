@@ -41,6 +41,7 @@ struct MapScreen: View {
                 if let p = model.selectedPoint, !model.isDrawingArea {
                     CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
                                   onClose: { model.selectedPoint = nil })
+                        .frame(maxWidth: .infinity)
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
                     Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
@@ -53,7 +54,7 @@ struct MapScreen: View {
                     if let loc = recorder.location, !model.isDrawingArea {
                         CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
                                       text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
-                                      id: "myCoordinates", compact: true)
+                                      id: "myCoordinates")
                             .padding(.bottom, 24) // clear of MapKit's "Legal" link in the corner
                     }
                     Spacer()
@@ -263,7 +264,6 @@ struct CoordinateBar: View {
     let text: String
     /// Accessibility identifier, for the UI test.
     let id: String
-    var compact = false
     var onClose: (() -> Void)?
     @State private var copied = false
 
@@ -278,7 +278,7 @@ struct CoordinateBar: View {
                 HStack(spacing: 6) {
                     Image(systemName: icon)
                     Text(copied ? "Copied" : text)
-                        .font((compact ? Font.caption : Font.subheadline).monospacedDigit().weight(.semibold))
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                     if !copied {
@@ -296,11 +296,10 @@ struct CoordinateBar: View {
             }
         }
         .foregroundColor(.white)
-        .padding(.horizontal, compact ? 10 : 12)
-        .padding(.vertical, compact ? 6 : 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(Color.black.opacity(0.65))
         .clipShape(Capsule())
-        .frame(maxWidth: compact ? nil : .infinity)
     }
 }
 
