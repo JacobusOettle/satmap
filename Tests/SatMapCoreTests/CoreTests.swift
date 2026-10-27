@@ -444,6 +444,29 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertEqual(server.requests.count, before)
     }
 
+    /// One progress bar for the whole run (the system's, while SatMap is in the background): it only goes forward,
+    /// also where the imagery stops early, and ends full.
+    func testOverallProgressOnlyGoesForwardAndEndsFull() async throws {
+        let imagery = try MBTiles(url: tempDir().appendingPathComponent("i.mbtiles"), create: true)
+        let terrain = try MBTiles(url: tempDir().appendingPathComponent("t.mbtiles"), create: true)
+        let patch = TileID.containing(GeoPoint(lat: -25.47, lon: 30.97), z: 16)
+        let job = TileDownloadJob(shape: area, layers: [
+            DownloadLayer(name: "dem", store: terrain, fetcher: FakeServer(deepest: 12, patch: patch), zooms: 0...14, pruneByParent: false),
+            DownloadLayer(name: "sat", store: imagery, fetcher: FakeServer(deepest: 16, patch: patch), zooms: 0...20, pruneByParent: true),
+        ], concurrency: 4, retryDelay: { _ in 0 })
+        var seen: [DownloadProgress] = []
+        let outcome = await job.run { seen.append($0) }
+        XCTAssertEqual(outcome, .completed(failed: 0))
+        let done = seen.map(\.overallDone)
+        XCTAssertEqual(done, done.sorted(), "went backwards")
+        let total = (0...14).reduce(0) { $0 + TileCoverage(shape: area, zoom: $1).tileCount }
+            + (0...20).reduce(0) { $0 + TileCoverage(shape: area, zoom: $1).tileCount }
+        XCTAssertEqual(seen.last?.overallTotal, total)
+        XCTAssertEqual(seen.last?.overallDone, total)
+        // Halfway through the elevation the bar isn't near the end (the imagery is most of the work).
+        XCTAssertTrue(seen.contains { $0.layer == "sat" && $0.overallDone < total / 2 })
+    }
+
     /// Choosing a deeper level for a downloaded area runs the job again with a higher maximum: only the new level
     /// is fetched (stored tiles and tiles known to be missing are skipped).
     func testDeeperLevelFetchesOnlyTheNewLevel() async throws {

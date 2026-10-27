@@ -40,6 +40,10 @@ struct DownloadProgress: Equatable {
     var bytes: Int64 = 0
     var missing: Int = 0
     var failed: Int = 0
+    /// The whole run as one number, for a single progress bar: the tiles planned over every layer and level (an upper
+    /// bound, as deeper levels shrink where the imagery stops), and how many of them are behind.
+    var overallDone: Int = 0
+    var overallTotal: Int = 0
 }
 
 enum DownloadOutcome: Equatable {
@@ -93,13 +97,25 @@ final class TileDownloadJob {
             }
         }
 
-        for layer in layers {
+        // Tiles planned per layer and level, for the overall progress. Levels that turn out smaller (or are skipped
+        // where the imagery stops) count as their planned size once they are done.
+        let planned = layers.map { layer in layer.zooms.map { TileCoverage(shape: layer.shape ?? shape, zoom: $0).tileCount } }
+        progress.overallTotal = planned.joined().reduce(0, +)
+        var behind = 0
+        var levelPlan = 0
+        func updateOverall() {
+            let share = progress.levelTotal > 0 ? Double(progress.levelDone) / Double(progress.levelTotal) : 0
+            progress.overallDone = min(progress.overallTotal, behind + Int(Double(levelPlan) * share))
+        }
+
+        for (li, layer) in layers.enumerated() {
             progress.layer = layer.name
             progress.maxZoom = layer.zooms.upperBound
             defer { layer.store.checkpoint() }
 
-            for z in layer.zooms {
+            for (zi, z) in layer.zooms.enumerated() {
                 if Task.isCancelled { return .cancelled }
+                levelPlan = planned[li][zi]
                 let coverage = TileCoverage(shape: layer.shape ?? shape, zoom: z)
                 let prune = layer.pruneByParent && z > layer.zooms.lowerBound && z > 0
 
@@ -129,11 +145,20 @@ final class TileDownloadJob {
                 progress.zoom = z
                 progress.levelTotal = total
                 progress.levelDone = alreadyDone
+                updateOverall()
                 emit(force: true)
 
                 // Nothing exists at this level, so nothing can exist deeper either.
-                if prune && total == 0 { break }
-                if todo.isEmpty { continue }
+                if prune && total == 0 {
+                    behind += planned[li][zi...].reduce(0, +)
+                    levelPlan = 0
+                    break
+                }
+                if todo.isEmpty {
+                    behind += levelPlan
+                    levelPlan = 0
+                    continue
+                }
 
                 var wentOffline = false
                 var storeFailed = false
@@ -172,6 +197,7 @@ final class TileDownloadJob {
                             wentOffline = true
                         }
                         progress.levelDone += 1
+                        updateOverall()
                         emit()
                         if wentOffline || storeFailed || Task.isCancelled {
                             group.cancelAll()
@@ -183,11 +209,18 @@ final class TileDownloadJob {
                 if !layer.store.flush() || storeFailed {
                     return .storageError(layer.store.writeError ?? "Couldn't save map tiles.")
                 }
+                if wentOffline || Task.isCancelled {
+                    emit(force: true)
+                    return wentOffline ? .offline : .cancelled
+                }
+                behind += levelPlan
+                levelPlan = 0
+                updateOverall()
                 emit(force: true)
-                if wentOffline { return .offline }
-                if Task.isCancelled { return .cancelled }
             }
         }
+        progress.overallDone = progress.overallTotal
+        emit(force: true)
         return .completed(failed: progress.failed)
     }
 

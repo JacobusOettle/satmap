@@ -89,7 +89,7 @@ struct NewAreaView: View {
             Section {
                 Toggle("Allow mobile data", isOn: $allowCellular)
             } footer: {
-                Text("Without mobile data the download waits for Wi-Fi. Keep SatMap open while it downloads (the screen stays on); it pauses in the background and continues when you come back.")
+                Text("Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, with its progress on the Lock Screen (iOS 26 or later; earlier iOS allows about half a minute). If iOS stops it, it continues when you open SatMap again.")
             }
 
             sizeSection

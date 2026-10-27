@@ -62,8 +62,13 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   leave the roads, with elevation under it. It is one area, "Where I've been", that you update: tap it again after
   a trip and the new parts of the track are added; what is already saved is skipped. Parts of earlier trips stay
   in the area even after you clear the track.
-- Keep SatMap open while it downloads; the screen stays on. In the background the download pauses so it
-  can't compete with track recording for battery or CPU, and it continues when you return.
+- **In the background:** a download keeps going when you leave SatMap or lock the phone. From iOS 26 it runs as a
+  *continued processing task*: its progress shows on the Lock Screen and in the Dynamic Island (not while SatMap is
+  open, where the banner on the map shows it), and you can stop it there. Earlier iOS versions allow about half a
+  minute. If iOS ends it (low battery, other apps need the phone, or no progress for a while without signal), or
+  you swipe SatMap away, it continues from where it stopped when you open SatMap again. While SatMap is open the
+  screen stays on. The IPA is built with Xcode 26 for this; it keeps the iOS 18 look on iOS 26
+  (`UIDesignRequiresCompatibility`).
 - **Going deeper later:** tap a downloaded area to open it: *Show on the map*, how deep the imagery it found goes,
   and the zoom levels with the size each deeper one would add. Choose a deeper level and download: what is saved
   is kept, and only the new levels are fetched.

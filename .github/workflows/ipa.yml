@@ -21,10 +21,14 @@ concurrency:
 
 jobs:
   ipa:
-    runs-on: macos-15
+    # Xcode 26 (iOS 26 SDK): needed for downloads that carry on in the background with a Lock Screen progress bar.
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+
+      - name: Xcode version
+        run: xcodebuild -version
 
       - name: Build for iPhone (unsigned)
         run: |

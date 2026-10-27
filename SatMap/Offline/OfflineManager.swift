@@ -51,9 +51,11 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     @Published private(set) var activeID: UUID?
     /// Bumped whenever a download run ends, so the map can reload tiles that weren't available before.
     @Published private(set) var completedRevision = 0
-    /// Downloads only run while the app is open: in the background they would compete with track
-    /// recording for battery and for the CPU time iOS allows background apps.
     private var inForeground = UIApplication.shared.applicationState != .background
+    /// Lets a download carry on in the background (with a progress bar on the Lock Screen from iOS 26).
+    private let background = BackgroundDownload()
+    /// Whether the last run downloaded its whole area, for the system's progress bar as it closes.
+    private var lastRunComplete = false
 
     private var task: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -96,6 +98,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(willEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        background.onExpire = { [weak self] in self?.backgroundTimeEnded() }
         Connectivity.shared.$state
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -437,25 +441,49 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     @objc private func didEnterBackground() {
         inForeground = false
-        if let id = activeID {
-            // Stop now; it continues from where it was when the app is opened again.
-            update(id) { if $0.status == .downloading { $0.status = .queued } }
-            task?.cancel()
-        }
+        // A running download carries on: as a continued processing task (iOS 26), or for the time iOS gives.
+        if activeID != nil { background.enteredBackground() }
     }
 
     @objc private func willEnterForeground() {
         inForeground = true
+        background.enteredForeground()
         networkChanged()
     }
 
+    /// A download that started or went on while SatMap wasn't fully open gets its background task now.
+    @objc private func didBecomeActive() {
+        if let id = activeID, let a = areas.first(where: { $0.id == id }) {
+            background.begin(title: a.name, subtitle: progress.map(Self.progressText) ?? "Starting…")
+        }
+    }
+
+    /// The background time ended, or the download was stopped from the Lock Screen: it stops and continues from where
+    /// it was when SatMap is opened again.
+    private func backgroundTimeEnded() {
+        guard !inForeground, let id = activeID else { return }
+        update(id) { if $0.status == .downloading { $0.status = .queued } }
+        task?.cancel()
+    }
+
+    /// The download's progress in a few words, for the system's progress bar.
+    private static func progressText(_ p: DownloadProgress) -> String {
+        let percent = p.overallTotal > 0 ? Int(Double(p.overallDone) / Double(p.overallTotal) * 100) : 0
+        return "\(p.layer) · zoom \(p.zoom) of \(p.maxZoom) · \(percent)%"
+    }
+
     private func startNextIfIdle() {
-        guard task == nil, inForeground, !holdDownloads else { return }
+        guard task == nil else { return }
+        guard inForeground || background.allowsBackgroundWork, !holdDownloads else {
+            background.end(success: lastRunComplete)
+            return
+        }
         if let free = AppPaths.freeDiskSpace(), free < OfflineManager.minimumFreeSpace {
             for a in areas where a.status == .queued {
                 update(a.id) { $0.status = .incomplete; $0.problem = "Less than 500 MB free on the iPhone. Free up space, then tap ↻." }
             }
             updateIdleTimer()
+            background.end(success: false)
             return
         }
         // Areas that can't use the current network wait; the first one that can, runs.
@@ -466,6 +494,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             run(next)
         } else {
             updateIdleTimer()
+            background.end(success: lastRunComplete)
         }
     }
 
@@ -509,15 +538,21 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         ], concurrency: 8)
 
         let id = area.id
+        let name = area.name
         activeID = id
         progress = DownloadProgress()
         update(id) { $0.status = .downloading }
         updateIdleTimer()
+        background.begin(title: name, subtitle: "Starting…")
 
         task = Task.detached(priority: .utility) { [weak self] in
             var lastSpaceCheck = Date.distantPast
             let outcome = await job.run { p in
-                DispatchQueue.main.async { if self?.activeID == id { self?.progress = p } }
+                DispatchQueue.main.async {
+                    guard let self = self, self.activeID == id else { return }
+                    self.progress = p
+                    self.background.update(title: name, subtitle: Self.progressText(p), done: p.overallDone, total: p.overallTotal)
+                }
                 // Never fill the phone completely: the track log and the rest of the phone need room too.
                 if Date().timeIntervalSince(lastSpaceCheck) > 10 {
                     lastSpaceCheck = Date()
@@ -556,6 +591,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             task = nil
             activeID = nil
             progress = nil
+            lastRunComplete = false
             completedRevision += storedSomething ? 1 : 0
             startNextIfIdle()
             return
@@ -563,6 +599,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         task = nil
         activeID = nil
         progress = nil
+        if case .completed(let failed) = outcome { lastRunComplete = failed == 0 } else { lastRunComplete = false }
         var retry = false
         update(id) { a in
             a.bytesOnDisk = size
