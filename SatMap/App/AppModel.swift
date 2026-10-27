@@ -41,31 +41,60 @@ enum MeasureMode: Equatable {
 /// out of `AppModel` so a pan redraws only the measuring panel, not the whole screen.
 final class CrosshairAim: ObservableObject, @unchecked Sendable {
     @Published private(set) var point: GeoPoint?
+    /// The height last looked up and the spot it is for: while the map moves, an earlier spot's.
     @Published private(set) var elevation: Double?
+    @Published private(set) var elevationPoint: GeoPoint?
     private var lookingUp = false
     private var lookedUp: GeoPoint?
+    /// Bumped when aiming ends, so a lookup still under way then isn't shown when aiming again.
+    private var session = 0
+    private var retries = 0
 
-    /// The spot under the crosshair (nil when not aiming). Its height is looked up one at a time, always for the
-    /// latest spot, so a pan doesn't queue a lookup for every frame.
+    /// The spot under the crosshair (nil when not aiming).
     func set(_ p: GeoPoint?) {
         guard p != point else { return }
         point = p
+        retries = 0
         if p == nil {
+            session += 1
             elevation = nil
+            elevationPoint = nil
             lookedUp = nil
         }
         lookUp()
     }
 
+    /// The network is back: looks up a height that couldn't be found.
+    func retry() {
+        guard point != nil, elevation == nil else { return }
+        lookedUp = nil
+        lookUp()
+    }
+
+    /// One lookup at a time, always for the latest spot, so a pan doesn't queue one for every frame. A failed lookup
+    /// (no signal) is tried again a few times while the crosshair stays on the spot, 31 s apart: after the elevation
+    /// tile's own 30 s wait, which would otherwise answer the same.
     private func lookUp() {
         guard !lookingUp, let p = point, p != lookedUp else { return }
         lookingUp = true
         lookedUp = p
+        let s = session
         Task.detached(priority: .userInitiated) {
             let e = await TileRepository.shared.elevation(at: p)
             DispatchQueue.main.async {
                 self.lookingUp = false
-                if self.point != nil { self.elevation = e }
+                if s == self.session {
+                    self.elevation = e
+                    self.elevationPoint = p
+                    if e == nil, self.point == p, self.retries < 4 {
+                        self.retries += 1
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 31) {
+                            guard s == self.session, self.point == p,
+                                  UIApplication.shared.applicationState == .active else { return }
+                            self.retry()
+                        }
+                    }
+                }
                 self.lookUp()
             }
         }

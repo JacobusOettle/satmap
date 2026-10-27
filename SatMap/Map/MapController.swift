@@ -221,6 +221,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             }
             self.satelliteRenderer?.reload()
             (self.mapView.renderer(for: self.contours) as? MKTileOverlayRenderer)?.reloadData()
+            self.model.aim.retry()
         }
     }
 
@@ -241,19 +242,13 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         mapView.setCenter(c, animated: animated)
     }
 
-    /// Centres on a point with the screen this many metres across, however the map is turned.
+    /// Centres on a point (the map is already near it) with the screen this many metres across, however the map is
+    /// turned. Measured across the whole screen and scaled, rather than asking for a 300 m rect: MapKit lays the map
+    /// out within the safe area (it centres there), so a rect could come out wider on a notched iPhone.
     func zoom(onto c: CLLocationCoordinate2D, metersAcross: Double) {
         let size = mapView.bounds.size
         guard size.width > 0, size.height > 0 else { return }
         keepCameraUntil = CACurrentMediaTime() + 1
-        if abs(mapView.camera.heading) < 0.5 || abs(mapView.camera.heading - 360) < 0.5 {
-            let w = metersAcross * MKMapPointsPerMeterAtLatitude(c.latitude)
-            let h = w * Double(size.height / size.width)
-            let p = MKMapPoint(c)
-            mapView.setVisibleMapRect(MKMapRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h), animated: true)
-            return
-        }
-        // Turned: scale the camera height by how far the screen now reaches across (the map is centred on you).
         let left = mapView.convert(CGPoint(x: 0, y: size.height / 2), toCoordinateFrom: mapView)
         let right = mapView.convert(CGPoint(x: size.width, y: size.height / 2), toCoordinateFrom: mapView)
         let across = CLLocation(latitude: left.latitude, longitude: left.longitude)
@@ -457,14 +452,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         let c = centerCoordinate
         model.aim.set(GeoPoint(lat: c.latitude, lon: c.longitude))
         var path: CGPath?
+        var phase: CGFloat = 0
         if let me = model.recorder.location?.coordinate {
             let a = mapView.convert(me, toPointTo: aimLineView)
             let b = CGPoint(x: aimLineView.bounds.midX, y: aimLineView.bounds.midY)
             let length = hypot(b.x - a.x, b.y - a.y)
             let dot: CGFloat = 11 // from the edge of your dot
             if length > dot + 4 {
+                let edge = CGPoint(x: a.x + (b.x - a.x) / length * dot, y: a.y + (b.y - a.y) / length * dot)
+                // You off screen: from where the line comes onto it, with the dashes where they'd be.
+                let start = Self.entry(from: edge, to: b, into: aimLineView.bounds.insetBy(dx: -20, dy: -20))
+                phase = hypot(start.x - edge.x, start.y - edge.y).truncatingRemainder(dividingBy: 17)
                 let p = CGMutablePath()
-                p.move(to: CGPoint(x: a.x + (b.x - a.x) / length * dot, y: a.y + (b.y - a.y) / length * dot))
+                p.move(to: start)
                 p.addLine(to: b)
                 path = p
             }
@@ -472,7 +472,18 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         aimLine.path = path
+        aimLine.lineDashPhase = phase
         CATransaction.commit()
+    }
+
+    /// Where the line from `a` to `b` (inside `r`) comes into `r`; `a` itself when it is inside.
+    private static func entry(from a: CGPoint, to b: CGPoint, into r: CGRect) -> CGPoint {
+        var t: CGFloat = 0
+        if a.x < r.minX { t = max(t, (r.minX - a.x) / (b.x - a.x)) }
+        if a.x > r.maxX { t = max(t, (a.x - r.maxX) / (a.x - b.x)) }
+        if a.y < r.minY { t = max(t, (r.minY - a.y) / (b.y - a.y)) }
+        if a.y > r.maxY { t = max(t, (a.y - r.maxY) / (a.y - b.y)) }
+        return CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
     }
 
     /// From you to the point, or through the points (back to the first when the shape is closed).

@@ -328,11 +328,14 @@ struct AimPanel: View {
                 .font(.caption.weight(.semibold)).opacity(0.85)
             Text(distanceText)
                 .font(.system(size: 30, weight: .bold).monospacedDigit())
+            // While the map moves, the height is an earlier spot's until the lookup catches up: dimmed.
+            let current = aim.elevationPoint == aim.point
             Text(heightText)
                 .font(.headline)
+                .opacity(current ? 1 : 0.6)
             if let c = aim.elevation, let u = model.userElevation {
                 Text("Crosshair \(Int(c.rounded())) m · You \(Int(u.rounded())) m above sea level")
-                    .font(.caption).opacity(0.85)
+                    .font(.caption).opacity(current ? 0.85 : 0.5)
             }
             Text("Tap the spot on the map, or move the crosshair onto it and tap the measure button, for point A.")
                 .font(.caption2).opacity(0.7)
