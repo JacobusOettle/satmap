@@ -290,6 +290,7 @@ final class TileRepository {
     /// in the background don't count towards pausing the network: only on-screen ones say it is down.
     private func limitedFetch(_ url: URL, priority: RequestPriority, start: () -> Bool) async -> TileFetchResult? {
         let limiter = url.host?.hasPrefix("elevation") == true ? terrainLimiter : imageryLimiter
+        let asked = Date()
         await limiter.acquire(priority)
         defer { limiter.release(priority) }
         guard start() else { return nil }
@@ -297,6 +298,13 @@ final class TileRepository {
         let started = Date()
         let result = await HTTPTileFetcher.fetch(url, session: browseSession)
         let ms = Int(Date().timeIntervalSince(started) * 1000)
+        if url.host?.hasPrefix("elevation") != true {
+            let waited = Int(started.timeIntervalSince(asked) * 1000)
+            let outcome = String(String(describing: result).prefix(7))
+            let kind = String(describing: priority)
+            tileLog.debug(
+                "imagery \(kind, privacy: .public) waited \(waited) ms, \(outcome, privacy: .public) in \(ms) ms: \(url.path, privacy: .public)")
+        }
         lock.withLock {
             switch result {
             case .data, .missing:

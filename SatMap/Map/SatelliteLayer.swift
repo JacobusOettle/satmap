@@ -209,6 +209,8 @@ final class SatelliteRenderer: MKOverlayRenderer {
         let x0 = max(0, Int(floor(mapRect.minX / size))), x1 = min(n - 1, Int(ceil(mapRect.maxX / size)) - 1)
         let y0 = max(0, Int(floor(mapRect.minY / size))), y1 = min(n - 1, Int(ceil(mapRect.maxY / size)) - 1)
         guard x0 <= x1, y0 <= y1 else { return }
+        let began = CACurrentMediaTime()
+        var own = 0, standIn = 0, empty = 0
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         context.interpolationQuality = .medium
@@ -218,11 +220,17 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 let rect = self.rect(for: Self.mapRect(t))
                 if let image = Self.image(t) {
                     image.draw(in: rect)
-                } else if !drawStandIn(for: t, in: rect, context: context), t.z >= 1 {
-                    waitFor(t.ancestor(levels: min(3, t.z)), spot: t, scale: zoomScale)
+                    own += 1
+                } else if drawStandIn(for: t, in: rect, context: context) {
+                    standIn += 1
+                } else {
+                    empty += 1
+                    if t.z >= 1 { waitFor(t.ancestor(levels: min(3, t.z)), spot: t, scale: zoomScale) }
                 }
             }
         }
+        let ms = Int((CACurrentMediaTime() - began) * 1000)
+        tileLog.debug("drawn z\(z): \(own) own, \(standIn) stand-in, \(empty) empty in \(ms) ms")
     }
 
     /// The imagery level drawn at a zoom: tiles about 256 pixels across on screen.
@@ -359,6 +367,7 @@ enum ImageryPrefetch {
             loading.formUnion(w)
             return w
         }
+        tileLog.debug("map stopped at z\(z): \(onScreen.count) on screen, \(surround.count) around, \(wanted.count) to load")
         for t in wanted {
             Task.detached(priority: .utility) {
                 if let d = await TileRepository.shared.imageryInBackground(t) {

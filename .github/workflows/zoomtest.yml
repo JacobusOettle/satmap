@@ -59,6 +59,10 @@ jobs:
             xcrun simctl spawn "$UDID" log stream --level info --style compact \
               --predicate 'subsystem == "com.jacobusoettle.satmap" AND category == "zoomscript"' > "videos/script-$mode.log" 2>&1 &
             LOGPID=$!
+            # Tile requests and drawing, for what lies behind grey in the video.
+            xcrun simctl spawn "$UDID" log stream --level debug --style compact \
+              --predicate 'subsystem == "com.jacobusoettle.satmap" AND category IN {"tiles", "zoomscript"}' > "videos/tiles-$mode.log" 2>&1 &
+            TILEPID=$!
             xcrun simctl uninstall "$UDID" com.jacobusoettle.satmap || true
             xcrun simctl install "$UDID" build/Build/Products/Release-iphonesimulator/SatMap.app
             xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
@@ -71,7 +75,7 @@ jobs:
               || tail -n 30 "videos/test-$mode.log"
             kill -INT $REC
             wait $REC || true
-            kill $LOGPID || true
+            kill $LOGPID $TILEPID || true
             cat "videos/script-$mode.log"
             grep -E "Start Test at|t = .*(Double tap|Two finger|Pinch with|Swipe|Launch)" "videos/test-$mode.log" | tee -a videos/times.txt | head -n 20 || true
           done
