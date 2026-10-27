@@ -482,12 +482,13 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         retryTimer = nil
         saveCamera()
         TileRepository.shared.trimForBackground()
-        SatelliteRenderer.trimForBackground()
+        SatelliteRenderer.enteredBackground()
     }
 
     @objc private func willEnterForeground() {
         isForeground = true
         TileRepository.shared.restoreAfterBackground()
+        SatelliteRenderer.enteredForeground()
         startRetryTimer()
         if reloadPending { requestReload() }
         trackChanged()

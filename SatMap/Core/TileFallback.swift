@@ -4,11 +4,11 @@ import Foundation
 /// memory (enlarged), then sharper tiles from deeper levels that are still in memory (after zooming out). The real
 /// tile is drawn over them, fading in, when it arrives.
 enum TileFallback {
-    /// The tile zoom for a map shown `pointsPerWorld` screen points across the whole world: about 128 points per
-    /// 256-pixel tile, two image pixels per point (as MapKit's own tiles on a Retina screen).
-    static func zoom(pointsPerWorld: Double, maxZoom: Int) -> Int {
-        guard pointsPerWorld > 0 else { return 0 }
-        let z = log2(pointsPerWorld / 128).rounded()
+    /// The tile zoom for a map shown `pixelsPerWorld` screen pixels across the whole world: one image pixel per
+    /// screen pixel, rounded to the nearest level (as MapKit's own tile overlays).
+    static func zoom(pixelsPerWorld: Double, maxZoom: Int) -> Int {
+        guard pixelsPerWorld > 0 else { return 0 }
+        let z = log2(pixelsPerWorld / 256).rounded()
         return Int(min(Double(maxZoom), max(0, z)))
     }
 

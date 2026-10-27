@@ -170,17 +170,25 @@ final class TileRepository {
 
     // MARK: - Imagery for display
 
-    /// The imagery for an on-screen tile: `exact` is false for part of an ancestor enlarged in its place (deeper than
-    /// the imagery goes here, or the tile isn't saved offline and there's no network).
-    func imageryForDisplay(_ t: TileID) async -> (data: Data, exact: Bool)? {
-        if let d = offlineTile(t, layer: .imagery) { return (d, true) }
+    enum ImageryQuality {
+        case exact
+        /// Part of an ancestor enlarged, as the imagery doesn't go this deep here.
+        case enlargedForGood
+        /// Part of an ancestor enlarged for now: the tile isn't saved offline and couldn't be loaded.
+        case enlargedForNow
+    }
+
+    /// The imagery for an on-screen tile. `urgent` requests go before the others.
+    func imageryForDisplay(_ t: TileID, urgent: Bool = false) async -> (data: Data, quality: ImageryQuality)? {
+        if let d = offlineTile(t, layer: .imagery) { return (d, .exact) }
         // Inside a downloaded area the downloader already learnt where the imagery ends: don't wait on the
         // network for tiles it knows don't exist.
-        var online = networkUsable && !offlineKnowsMissing(t)
+        var beyondDepth = offlineKnowsMissing(t)
+        var online = networkUsable && !beyondDepth
         if online {
-            switch await onlineImagery(t) {
-            case .data(let d): return (d, true)
-            case .missing: break // deeper than the imagery goes here: enlarge an ancestor below
+            switch await onlineImagery(t, urgent: urgent) {
+            case .data(let d): return (d, .exact)
+            case .missing: beyondDepth = true // deeper than the imagery goes here: enlarge an ancestor below
             case .failed, .offline:
                 // Don't show (and have MapKit keep) a blurry stand-in for a tile that exists but failed
                 // to load; only offline ancestors are used, and the tile is asked for again later.
@@ -193,7 +201,7 @@ final class TileRepository {
             let a = t.ancestor(levels: k)
             var data = offlineTile(a, layer: .imagery)
             if data == nil && online {
-                switch await onlineImagery(a) {
+                switch await onlineImagery(a, urgent: urgent) {
                 case .data(let d): data = d
                 case .missing: break
                 case .failed, .offline:
@@ -206,7 +214,7 @@ final class TileRepository {
                 let enlarged = await Work.run(on: Work.images) {
                     ImageTools.enlarge(d, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
                 }
-                return enlarged.map { ($0, false) }
+                return enlarged.map { ($0, beyondDepth ? .enlargedForGood : .enlargedForNow) }
             }
         }
         return nil
@@ -214,12 +222,12 @@ final class TileRepository {
 
     /// One network request per imagery tile at a time (many deep tiles share the same ancestor);
     /// tiles the server doesn't have are remembered.
-    private func onlineImagery(_ t: TileID) async -> TileFetchResult {
+    private func onlineImagery(_ t: TileID, urgent: Bool = false) async -> TileFetchResult {
         let pending: Task<TileFetchResult, Never>? = lock.withLock {
             if imageryMissing.contains(t) { return nil }
             if let existing = imageryInFlight[t] { return existing }
             let task = Task.detached(priority: .userInitiated) { [self] in
-                await self.limitedFetch(TileSources.imageryURL(t))
+                await self.limitedFetch(TileSources.imageryURL(t), urgent: urgent)
             }
             imageryInFlight[t] = task
             return task
@@ -241,9 +249,9 @@ final class TileRepository {
         Connectivity.shared.isOnlineNow && lock.withLock { Date() >= networkPausedUntil }
     }
 
-    private func limitedFetch(_ url: URL) async -> TileFetchResult {
+    private func limitedFetch(_ url: URL, urgent: Bool = false) async -> TileFetchResult {
         let limiter = url.host?.hasPrefix("elevation") == true ? terrainLimiter : imageryLimiter
-        await limiter.acquire()
+        await limiter.acquire(urgent: urgent)
         defer { limiter.release() }
         guard networkUsable else { return .offline }
         let started = Date()
@@ -513,24 +521,25 @@ enum Work {
     }
 }
 
-/// Limits concurrent requests; waiting callers are served newest first.
+/// Limits concurrent requests; waiting callers are served newest first, urgent ones before the rest.
 final class RequestLimiter {
     private let lock = NSLock()
     private var free: Int
     private var waiting: [CheckedContinuation<Void, Never>] = []
+    private var urgentWaiting: [CheckedContinuation<Void, Never>] = []
 
     init(slots: Int) {
         free = slots
     }
 
-    func acquire() async {
+    func acquire(urgent: Bool = false) async {
         await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
             let now: Bool = lock.withLock {
                 if free > 0 {
                     free -= 1
                     return true
                 }
-                waiting.append(c)
+                if urgent { urgentWaiting.append(c) } else { waiting.append(c) }
                 return false
             }
             if now { c.resume() }
@@ -539,7 +548,7 @@ final class RequestLimiter {
 
     func release() {
         let next: CheckedContinuation<Void, Never>? = lock.withLock {
-            if let c = waiting.popLast() { return c }
+            if let c = urgentWaiting.popLast() ?? waiting.popLast() { return c }
             free += 1
             return nil
         }

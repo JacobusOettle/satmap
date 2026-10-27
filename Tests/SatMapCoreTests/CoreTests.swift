@@ -816,15 +816,15 @@ final class ShippedDataTests: XCTestCase {
 }
 
 final class TileFallbackTests: XCTestCase {
-    func testZoomGivesAbout128PointsPerTile() {
-        // The whole world 256 points wide: zoom 1 (two tiles of 128 points).
-        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 256, maxZoom: 22), 1)
-        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 18), maxZoom: 22), 18)
-        // Rounded: between 91 and 181 points per tile.
-        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 18) * 1.4, maxZoom: 22), 18)
-        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 18) * 1.5, maxZoom: 22), 19)
-        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 25), maxZoom: 22), 22)
-        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 1, maxZoom: 22), 0)
+    func testZoomGivesAboutOneImagePixelPerScreenPixel() {
+        // The whole world 512 pixels wide: zoom 1 (two tiles of 256 pixels).
+        XCTAssertEqual(TileFallback.zoom(pixelsPerWorld: 512, maxZoom: 22), 1)
+        XCTAssertEqual(TileFallback.zoom(pixelsPerWorld: 256 * Double(1 << 18), maxZoom: 22), 18)
+        // Rounded: between 181 and 362 screen pixels per tile.
+        XCTAssertEqual(TileFallback.zoom(pixelsPerWorld: 256 * Double(1 << 18) * 1.4, maxZoom: 22), 18)
+        XCTAssertEqual(TileFallback.zoom(pixelsPerWorld: 256 * Double(1 << 18) * 1.5, maxZoom: 22), 19)
+        XCTAssertEqual(TileFallback.zoom(pixelsPerWorld: 256 * Double(1 << 25), maxZoom: 22), 22)
+        XCTAssertEqual(TileFallback.zoom(pixelsPerWorld: 1, maxZoom: 22), 0)
     }
 
     func testTilesCoveringARect() {
