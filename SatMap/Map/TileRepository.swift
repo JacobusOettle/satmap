@@ -586,8 +586,8 @@ enum Work {
     static let contours: OperationQueue = makeQueue("satmap.contours", 3, .userInitiated)
     // The backdrop under the imagery answers from memory; it must keep up with a whole screen of tiles at once.
     static let backdrop: OperationQueue = makeQueue("satmap.backdrop", 4, .userInitiated)
-    // Getting imagery ready for the next zoom or pan, after what is on screen.
-    static let prepare: OperationQueue = makeQueue("satmap.prepare", 1, .utility)
+    // Decoding imagery for the drawn layer, off the threads MapKit draws on.
+    static let prepare: OperationQueue = makeQueue("satmap.prepare", 2, .userInitiated)
 
     private static func makeQueue(_ name: String, _ width: Int, _ qos: QualityOfService) -> OperationQueue {
         let q = OperationQueue()

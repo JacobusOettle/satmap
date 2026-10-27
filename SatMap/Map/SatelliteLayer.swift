@@ -202,6 +202,13 @@ final class SatelliteRenderer: MKOverlayRenderer {
     private static let loads = NSLock()
     private static var loading = Set<TileID>()
     private static var retryAfter: [TileID: CFTimeInterval] = [:]
+    /// Around the screen (set by `MapController`): MapKit paints in large patches, and only their tiles near the
+    /// screen are loaded straight away (the rest when the map stops there, `loadStandIns`).
+    private static var near = MKMapRect.null
+
+    static func setNear(_ rect: MKMapRect) {
+        loads.withLock { near = rect }
+    }
 
     private let lock = NSLock()
     /// Spots painted without their own tile, with the level of the coarse tile shown there (-1: nothing).
@@ -223,24 +230,51 @@ final class SatelliteRenderer: MKOverlayRenderer {
         let y0 = max(0, Int(floor(mapRect.minY / size))), y1 = min(n - 1, Int(ceil(mapRect.maxY / size)) - 1)
         guard x0 <= x1, y0 <= y1 else { return }
         let began = CACurrentMediaTime()
+        let nearRect = Self.loads.withLock { Self.near }
+        // Only decoded tiles are copied here, so a patch paints quickly; tiles in memory not decoded yet are decoded
+        // off this thread and come with the next layer. Each coarse tile is drawn once, under all the spots it serves.
         var own: [TileID] = [], shownStandIns: [TileID: Int] = [:]
+        var coarse: [TileID: [TileID]] = [:], sharper: [TileID] = []
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         context.interpolationQuality = .medium
         for y in y0...y1 {
             for x in x0...x1 {
                 let t = TileID(z: z, x: x, y: y)
-                let rect = self.rect(for: Self.mapRect(t))
-                if let image = Self.image(t) {
-                    image.draw(in: rect)
+                if let image = Self.decoded.value(for: t) {
+                    image.draw(in: self.rect(for: Self.mapRect(t)))
                     own.append(t)
                     continue
                 }
-                let shown = drawStandIn(for: t, in: rect, context: context)
+                let isNear = nearRect.isNull || nearRect.intersects(Self.mapRect(t))
+                if ImageryMemory.tiles.contains(t) {
+                    Self.prepare([t])
+                } else if isNear {
+                    Self.load(t, urgent: false)
+                }
+                let deeper = sharperTiles(t)
+                sharper += deeper.tiles
+                var shown: Int? = deeper.tiles.isEmpty ? nil : t.z + 1
+                if !deeper.covered, let a = TileFallback.ancestor(of: t, maxLevels: 10, has: Self.has) {
+                    coarse[a, default: []].append(t)
+                    shown = a.z
+                }
                 shownStandIns[t] = shown ?? -1
-                Self.load(t, urgent: false)
-                if shown == nil, t.z >= 1 { Self.load(t.ancestor(levels: min(3, t.z)), urgent: true) }
+                if shown == nil, isNear, t.z >= 1 { Self.load(t.ancestor(levels: min(3, t.z)), urgent: true) }
             }
+        }
+        for (a, spots) in coarse {
+            guard let image = Self.image(a) else {
+                for t in spots where shownStandIns[t] == a.z { shownStandIns[t] = -1 }
+                continue
+            }
+            context.saveGState()
+            context.clip(to: spots.map { self.rect(for: Self.mapRect($0)) })
+            image.draw(in: self.rect(for: Self.mapRect(a)))
+            context.restoreGState()
+        }
+        for c in sharper {
+            Self.decoded.value(for: c)?.draw(in: self.rect(for: Self.mapRect(c)))
         }
         lock.withLock {
             if zoomScale != paintedScale {
@@ -280,6 +314,20 @@ final class SatelliteRenderer: MKOverlayRenderer {
         lock.withLock { !standIns.isEmpty }
     }
 
+    /// Loads (or decodes) what is missing for the spots in a rect that this layer shows with a stand-in: the map has
+    /// stopped there, and MapKit doesn't repaint patches it has painted.
+    func loadStandIns(in rect: MKMapRect) {
+        let spots = lock.withLock { standIns.filter { rect.intersects(Self.mapRect($0.key)) } }
+        for (t, shown) in spots {
+            if ImageryMemory.tiles.contains(t) {
+                Self.prepare([t])
+            } else {
+                Self.load(t, urgent: false)
+                if shown < 0, t.z >= 1 { Self.load(t.ancestor(levels: min(3, t.z)), urgent: true) }
+            }
+        }
+    }
+
     /// Whether this layer has painted all these points at the latest zoom.
     func hasPainted(_ points: [MKMapPoint]) -> Bool {
         lock.withLock {
@@ -304,9 +352,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 // Not there for now: asked for again in a while, or much later if the imagery doesn't go this deep.
                 if !exact { retryAfter[t] = CACurrentMediaTime() + (r?.quality == .enlargedForGood ? 600 : 30) }
             }
-            guard exact else { return }
-            prepare([t])
-            DispatchQueue.main.async { onArrival?(t) }
+            if exact { prepare([t]) }
         }
     }
 
@@ -315,14 +361,24 @@ final class SatelliteRenderer: MKOverlayRenderer {
         loads.withLock { retryAfter.removeAll() }
     }
 
-    /// Decodes tiles in memory ahead of drawing (off the drawing threads), so the next zoom or pan paints at once.
+    /// Decodes tiles in memory (off the drawing threads), so they can be drawn at once: each is announced
+    /// (`onArrival`) when it is ready.
     static func prepare(_ tiles: [TileID]) {
-        let wanted = tiles.filter { !decoded.contains($0) && ImageryMemory.tiles.contains($0) }
-        guard !wanted.isEmpty else { return }
-        Work.prepare.addOperation {
-            for t in wanted where !decoded.contains(t) { _ = image(t) }
+        let wanted: [TileID] = loads.withLock {
+            let w = tiles.filter { !decoding.contains($0) && !decoded.contains($0) && ImageryMemory.tiles.contains($0) }
+            decoding.formUnion(w)
+            return w
+        }
+        for t in wanted {
+            Work.prepare.addOperation {
+                let ready = image(t) != nil
+                _ = loads.withLock { decoding.remove(t) }
+                if ready { DispatchQueue.main.async { onArrival?(t) } }
+            }
         }
     }
+
+    private static var decoding = Set<TileID>()
 
     /// Whether a tile can be drawn from memory (its data, or its decoded image).
     private static func has(_ t: TileID) -> Bool {
@@ -339,41 +395,31 @@ final class SatelliteRenderer: MKOverlayRenderer {
         return i
     }
 
-    /// The sharper tiles in memory (after zooming out): each quarter's tile one level down, else what there is of its
-    /// four two levels down; under them, where they don't cover it all, the nearest coarser tile enlarged. The level
-    /// of the coarsest imagery painted, or nil if there was nothing.
-    private func drawStandIn(for t: TileID, in rect: CGRect, context: CGContext) -> Int? {
+    /// The decoded sharper tiles under a spot (after zooming out): each quarter's tile one level down, else what
+    /// there is of its four two levels down; and whether they cover it all. Those in memory not decoded yet are
+    /// decoded for the next layer.
+    private func sharperTiles(_ t: TileID) -> (tiles: [TileID], covered: Bool) {
         let deepest = TileSources.imageryMaxZoom
+        guard t.z < deepest else { return ([], false) }
         func quarters(_ p: TileID) -> [TileID] {
             (0..<4).map { TileID(z: p.z + 1, x: p.x * 2 + $0 % 2, y: p.y * 2 + $0 / 2) }
         }
-        var sharper: [TileID] = []
-        var covered = t.z < deepest
-        if t.z < deepest {
-            for c in quarters(t) {
-                if Self.has(c) {
-                    sharper.append(c)
-                } else {
-                    covered = false
-                    if c.z < deepest { sharper += quarters(c).filter(Self.has) }
-                }
+        func usable(_ c: TileID) -> Bool {
+            if Self.decoded.contains(c) { return true }
+            if ImageryMemory.tiles.contains(c) { Self.prepare([c]) }
+            return false
+        }
+        var tiles: [TileID] = []
+        var covered = true
+        for c in quarters(t) {
+            if usable(c) {
+                tiles.append(c)
+            } else {
+                covered = false
+                if c.z < deepest { tiles += quarters(c).filter(usable) }
             }
         }
-        var shown: Int?
-        if !covered, let a = TileFallback.ancestor(of: t, maxLevels: 10, has: Self.has), let image = Self.image(a) {
-            context.saveGState()
-            context.clip(to: rect)
-            image.draw(in: self.rect(for: Self.mapRect(a)))
-            context.restoreGState()
-            shown = a.z
-        }
-        for c in sharper {
-            if let image = Self.image(c) {
-                image.draw(in: self.rect(for: Self.mapRect(c)))
-                shown = shown ?? c.z
-            }
-        }
-        return shown
+        return (tiles, covered)
     }
 
     static func trim(to count: Int) {
@@ -417,10 +463,7 @@ enum ImageryPrefetch {
             Task.detached(priority: .utility) {
                 if let d = await TileRepository.shared.imageryInBackground(t) {
                     memory.set(d, for: t)
-                    if decode {
-                        SatelliteRenderer.prepare([t])
-                        DispatchQueue.main.async { SatelliteRenderer.onArrival?(t) }
-                    }
+                    if decode { SatelliteRenderer.prepare([t]) }
                 }
                 _ = lock.withLock { loading.remove(t) }
             }

@@ -25,6 +25,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var drawnOutgoing: SatelliteDrawnOverlay?
     private var swapScheduled = false
     private var lastSwap: CFTimeInterval = 0
+    /// Between MapKit's region-will-change and did-change: swaps wait, leaving MapKit's drawing to what comes into view.
+    private var mapMoving = false
+    private var movingSince: CFTimeInterval = 0
+    private var swapWaiting = false
     private let contours = ContourTileOverlay(urlTemplate: nil)
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
@@ -289,12 +293,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
         if userIsTouchingMap() { model.following = false }
+        if !mapMoving { movingSince = CACurrentMediaTime() }
+        mapMoving = true
     }
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
         saveCamera()
         updateAim()
         updateScale()
+        mapMoving = false
+        if swapWaiting {
+            swapWaiting = false
+            scheduleSwap()
+        }
         mapStopped()
     }
 
@@ -309,8 +320,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             guard let self = self, n == self.stopCount, self.isForeground,
                   let perPoint = self.crosshairMapPointsPerPoint else { return }
             let scale = self.mapView.window?.screen.scale ?? self.mapView.traitCollection.displayScale
-            ImageryPrefetch.mapStopped(visible: self.mapView.visibleMapRect, pixelsPerMapPoint: Double(max(1, scale)) / perPoint,
+            let visible = self.mapView.visibleMapRect
+            ImageryPrefetch.mapStopped(visible: visible, pixelsPerMapPoint: Double(max(1, scale)) / perPoint,
                                        decode: self.satelliteMode == .renderer)
+            if let d = self.drawn { (self.mapView.renderer(for: d) as? SatelliteRenderer)?.loadStandIns(in: visible) }
         }
     }
 
@@ -329,6 +342,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
         updateScale()
+        let v = mapView.visibleMapRect
+        SatelliteRenderer.setNear(v.insetBy(dx: -v.width / 4, dy: -v.height / 4))
     }
 
     private func updateScale() {
@@ -451,8 +466,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         scheduleSwap()
     }
 
-    /// At most about once a second, so tiles arriving one after another come in together.
+    /// At most about once a second, so tiles arriving one after another come in together; not while the map moves.
     private func scheduleSwap() {
+        if mapMoving, CACurrentMediaTime() - movingSince < 3 { // (in case MapKit misses a region-did-change)
+            swapWaiting = true
+            return
+        }
         guard !swapScheduled else { return }
         swapScheduled = true
         let wait = max(0.25, 1 - (CACurrentMediaTime() - lastSwap))

@@ -1,4 +1,5 @@
 import MapKit
+import UIKit
 import os
 
 /// For the zoom test (.github/workflows/zoomtest.yml): with the launch setting `zoomScript`, the map runs through the
@@ -18,13 +19,26 @@ enum ZoomScript {
         (14, 0, -1), // and on to a new place
     ]
 
+    /// The step under way, shown in the top left corner as four squares (white for 1: step + 1 in binary, bit 0 on
+    /// the left), outside the part of the screen measured, so a recording can be matched to the steps frame by frame.
+    static let markerOrigin = CGPoint(x: 8, y: 110), markerPitch: CGFloat = 12, markerSize: CGFloat = 10
+
     static func runIfAsked(on map: MKMapView, model: AppModel) {
         guard UserDefaults.standard.bool(forKey: "zoomScript") else { return }
         let start = CLLocationCoordinate2D(latitude: -33.9183, longitude: 18.9212)
         var center = MKMapPoint(start)
+        let squares = (0..<4).map { i -> UIView in
+            let v = UIView(frame: CGRect(x: markerOrigin.x + CGFloat(i) * markerPitch, y: markerOrigin.y,
+                                         width: markerSize, height: markerSize))
+            v.backgroundColor = .black
+            v.isUserInteractionEnabled = false
+            map.addSubview(v)
+            return v
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
             for (i, step) in steps.enumerated() {
                 DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 5) {
+                    for (bit, v) in squares.enumerated() { v.backgroundColor = (i + 1) >> bit & 1 == 1 ? .white : .black }
                     model.following = false
                     let width = MKMapSize.world.width / pow(2, step.zoom) * Double(map.bounds.width) / 256
                     let height = width * Double(map.bounds.height / max(1, map.bounds.width))
