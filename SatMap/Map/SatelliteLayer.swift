@@ -1,3 +1,4 @@
+import ImageIO
 import MapKit
 import UIKit
 
@@ -72,6 +73,8 @@ final class SatelliteBackdropOverlay: MKTileOverlay {
     /// How far up to look for a coarser tile in memory, and which one to ask for in a new place.
     private static let ancestorLevels = 8
     private static let seedLevels = 3
+    /// Decoded tiles the backdrop cuts from (many tiles share one), so each is decoded once.
+    private static let decoded = RecentCache<TileID, CGImage>(capacity: 64)
 
     private static func backdrop(for t: TileID) async -> Data? {
         let memory = ImageryMemory.tiles
@@ -81,25 +84,40 @@ final class SatelliteBackdropOverlay: MKTileOverlay {
             let children = (0..<4).map { TileID(z: t.z + 1, x: t.x * 2 + $0 % 2, y: t.y * 2 + $0 / 2) }
             let found = children.compactMap { memory.value(for: $0) }
             if found.count == 4 {
-                return await Work.run(on: Work.images) { ImageTools.combine(found) }
+                return await Work.run(on: Work.backdrop) { ImageTools.combine(found) }
             }
         }
-        // After zooming in: the nearest coarser tile, enlarged.
+        // After zooming in: the nearest coarser tile, the part of it under this one.
         if let a = TileFallback.ancestor(of: t, maxLevels: ancestorLevels, has: { memory.contains($0) }),
            let d = memory.value(for: a) {
-            return await enlarge(d, from: a, to: t)
+            return await cut(d, from: a, to: t)
         }
         // A new place: one tile a few levels up, asked for before the others.
         let seed = t.ancestor(levels: min(seedLevels, t.z))
         guard let r = await TileRepository.shared.imageryForDisplay(seed, urgent: true) else { return nil }
         if r.quality == .exact { memory.set(r.data, for: seed) }
-        return seed == t ? r.data : await enlarge(r.data, from: seed, to: t)
+        return seed == t ? r.data : await cut(r.data, from: seed, to: t)
     }
 
-    private static func enlarge(_ data: Data, from a: TileID, to t: TileID) async -> Data? {
-        let k = t.z - a.z
-        return await Work.run(on: Work.images) {
-            ImageTools.enlarge(data, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
+    /// The part of ancestor `a`'s image under tile `t`, at its own size: MapKit enlarges it to the tile, which is much
+    /// quicker than enlarging it here (the backdrop has to answer a whole screen of tiles at once).
+    private static func cut(_ data: Data, from a: TileID, to t: TileID) async -> Data? {
+        await Work.run(on: Work.backdrop) {
+            let image: CGImage
+            if let i = decoded.value(for: a) {
+                image = i
+            } else {
+                guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+                      let i = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+                else { return nil }
+                decoded.set(i, for: a)
+                image = i
+            }
+            let k = t.z - a.z
+            let side = max(1, image.width >> k)
+            let rect = CGRect(x: (t.x - (a.x << k)) * side, y: (t.y - (a.y << k)) * side, width: side, height: side)
+            guard let part = image.cropping(to: rect) else { return nil }
+            return ImageTools.jpeg(part)
         }
     }
 }

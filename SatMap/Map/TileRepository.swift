@@ -500,6 +500,14 @@ enum ImageTools {
 }
 
 extension ImageTools {
+    /// JPEG data of an image as it is.
+    static func jpeg(_ image: CGImage) -> Data? {
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? out as Data : nil
+    }
+
     /// Four tiles (top left, top right, bottom left, bottom right) shrunk into one 256 px tile.
     static func combine(_ quarters: [Data]) -> Data? {
         let images = quarters.compactMap { d -> CGImage? in
@@ -527,6 +535,8 @@ enum Work {
     static let images: OperationQueue = makeQueue("satmap.images", 3, .userInitiated)
     // Contours are on-screen content the user is waiting for, like imagery.
     static let contours: OperationQueue = makeQueue("satmap.contours", 3, .userInitiated)
+    // The backdrop under the imagery answers from memory; it must keep up with a whole screen of tiles at once.
+    static let backdrop: OperationQueue = makeQueue("satmap.backdrop", 4, .userInitiated)
 
     private static func makeQueue(_ name: String, _ width: Int, _ qos: QualityOfService) -> OperationQueue {
         let q = OperationQueue()

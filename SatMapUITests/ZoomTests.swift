@@ -9,18 +9,19 @@ final class ZoomTests: XCTestCase {
     func testZoomSingle() { zoomAround(mode: "single") }
     func testZoomBackdrop() { zoomAround(mode: "backdrop") }
     func testZoomRenderer() { zoomAround(mode: "renderer") }
+    func testZoomBackdropContours() { zoomAround(mode: "backdrop", contours: true) }
 
-    private func zoomAround(mode: String) {
+    private func zoomAround(mode: String, contours: Bool = false) {
         continueAfterFailure = true
         XCUIDevice.shared.location = XCUILocation(location: CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: -33.918292, longitude: 18.921204),
             altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date()))
-        app.launchArguments = ["-satelliteMode", mode, "-showContours", "NO"]
+        app.launchArguments = ["-satelliteMode", mode, "-showContours", contours ? "YES" : "NO"]
         app.launch()
         allowPermissionPrompts()
         let map = app.maps.firstMatch
         XCTAssertTrue(map.waitForExistence(timeout: 30), "No map")
-        sleep(15) // the first screen of tiles
+        sleep(25) // the first screen of tiles, and the zoom in on the first location fix
         // Zoom in one level at a time, then out, then a pinch each way and a pan, waiting after each.
         for _ in 0..<3 {
             map.doubleTap()
