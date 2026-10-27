@@ -542,8 +542,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             let painted = self.isForeground
                 && (self.mapView.renderer(for: new) as? SatelliteRenderer)?.hasPainted(self.screenPoints) == true
             if painted {
-                // A moment more for MapKit to show the last patch painted.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                // A moment more for MapKit to show the last patch painted; less when the old layer shows grey on part of
+                // the screen (what a pan or zoom brought into view), as it hides the new one there until it goes.
+                let points = self.screenPoints
+                let shown = (self.mapView.renderer(for: old) as? SatelliteRenderer)?.paintedShare(points) ?? 1
+                DispatchQueue.main.asyncAfter(deadline: .now() + (shown < 0.95 ? 0.1 : 0.4)) { [weak self] in
                     guard let self = self, self.drawnOutgoing === old else { return }
                     self.mapView.removeOverlay(old)
                     self.drawnOutgoing = nil

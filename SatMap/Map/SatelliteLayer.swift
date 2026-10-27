@@ -234,7 +234,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
 
     /// The focus for imagery tiles, and for contour tiles.
     private static var focuses: (imagery: (rect: MKMapRect, level: Int), contours: (rect: MKMapRect, level: Int)) {
-        loads.withLock { (focus, (focus.rect, contourLevel)) }
+        loads.withLock { (imagery: focus, contours: (rect: focus.rect, level: contourLevel)) }
     }
 
     /// MapKit's zoom scale and pixels per point in its latest paint: it paints finer than the zoom on screen, and
@@ -254,9 +254,10 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// painted with it.
     private var standIns: [TileID: Int] = [:]
     private var ownSpots = Set<TileID>()
-    /// The patches painted at the latest zoom.
+    /// The patches painted at the latest zoom, and the latest ones at any zoom.
     private var painted: [MKMapRect] = []
     private var paintedScale: MKZoomScale = 0
+    private var paintedAny: [MKMapRect] = []
     /// Whether this layer draws contour lines (fixed: switching them on or off brings a new layer); the spots it drew
     /// without their own contour tile (true: with it, its edges approximated), and those with it.
     let drawsContours: Bool
@@ -277,7 +278,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
         typealias Focus = (rect: MKMapRect, level: Int)
         let (focus, contourFocus): (Focus, Focus) = Self.loads.withLock {
             Self.paintScale = (zoomScale, contentScaleFactor)
-            return (Self.focus, (Self.focus.rect, Self.contourLevel))
+            return (Self.focus, (rect: Self.focus.rect, level: Self.contourLevel))
         }
         // The level for the zoom on screen (`MapController.imageryLevels`): MapKit paints at the next whole zoom level
         // at or above it, so this is the level for that, or one below.
@@ -339,6 +340,8 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 paintedScale = zoomScale
             }
             painted.append(mapRect)
+            paintedAny.append(mapRect)
+            if paintedAny.count > 400 { paintedAny.removeFirst(100) }
             for t in own { standIns[t] = nil }
             ownSpots.formUnion(own)
             standIns.merge(shownStandIns) { _, new in new }
@@ -465,6 +468,14 @@ final class SatelliteRenderer: MKOverlayRenderer {
     func hasPainted(_ points: [MKMapPoint]) -> Bool {
         lock.withLock {
             !painted.isEmpty && points.allSatisfy { p in painted.contains { $0.contains(p) } }
+        }
+    }
+
+    /// The share of these points this layer has painted at any zoom (what MapKit may show of it).
+    func paintedShare(_ points: [MKMapPoint]) -> Double {
+        lock.withLock {
+            guard !points.isEmpty else { return 1 }
+            return Double(points.filter { p in paintedAny.contains { $0.contains(p) } }.count) / Double(points.count)
         }
     }
 
