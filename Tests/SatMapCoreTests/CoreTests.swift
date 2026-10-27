@@ -1656,6 +1656,172 @@ final class CoordinateParserTests: XCTestCase {
         XCTAssertNil(CoordinateParser.parse("36J" + String(repeating: " ", count: 20_000) + "X 342401 7223411"))
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
+
+    // Inputs checked a fourth time, by family. Near Skukuza: S 24° 59' 48.9" E 31° 35' 32.3", or in decimal minutes
+    // S 24° 59.815' E 31° 35.539'.
+    private let dms = GeoPoint(lat: -24.9969167, lon: 31.5923056), ddm = GeoPoint(lat: -24.9969167, lon: 31.5923167)
+
+    func testACountOrNameBeforeTheLetters() {
+        // A sighting's count, a camp or waypoint number, a datum or a year before a position with its letters in front:
+        // not its latitude.
+        for t in ["3 rhino S 24° 59' 48.9\" E 31° 35' 32.3\"", "Leopard 2 S 24° 59' 48.9\" E 31° 35' 32.3\"",
+                  "2 lions S24 59 48.9 E31 35 32.3", "Camp 14 S24 59 48.9 E31 35 32.3", "Site 14: S24 59 48.9 E31 35 32.3",
+                  "Sighting 2:\nS24°59'48.9\"\nE31°35'32.3\"", "2. S 24° 59' 48.9\" E 31° 35' 32.3\"",
+                  "WP 02 S 24° 59' 48.9\" E 31° 35' 32.3\"", "Pride of 6 S24°59'48.9\" E31°35'32.3\"",
+                  "WGS 84: S 24° 59' 48.9\" E 31° 35' 32.3\"", "GPS (WGS 84): S24 59 48.9 E31 35 32.3", "WGS-84: S24 59 48.9 E31 35 32.3",
+                  "Datum: WGS 84\nS24 59 48.9 E31 35 32.3", "Kruger 2026: S 24° 59' 48.9\" E 31° 35' 32.3\"",
+                  "EPSG:4326: S24 59 48.9 E31 35 32.3", "Lions 2 E 31° 35' 32.3\" S 24° 59' 48.9\""] {
+            check(t, "degrees, minutes and seconds", at: dms)
+        }
+        for t in ["Camp 14 S24.99 E31.59", "2 lions S 24.99 E 31.59", "Leopard 2 S24.99, E31.59"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -24.99, lon: 31.59))
+        }
+        check("Site 3 S 25.0 E 31.5", "decimal degrees", at: GeoPoint(lat: -25, lon: 31.5))
+        for t in ["3 rhino S 24 59.8 E 31 35.5", "3 rhino S24°59.8' E31°35.5'"] {
+            check(t, "degrees and decimal minutes", at: GeoPoint(lat: -24.9966667, lon: 31.5916667))
+        }
+        // A chat message's time and date before it.
+        check("[05:31, 27/10/2026] Jaco: S24 59.815 E31 35.539 2 lions", "degrees and decimal minutes", at: ddm)
+        // With the letters after the numbers, what follows the last letter is other text; unless the last half could go on
+        // with it ("24 59 E 31 35"), which makes it unclear.
+        check("24.99 S 31.59 E 12.5", "decimal degrees", at: GeoPoint(lat: -24.99, lon: 31.59))
+        check("25.096893 S 31.437121 E 3 cubs", "decimal degrees")
+        check("Lions 25.0969 S 31.4371 E, 30° bearing", "decimal degrees", at: GeoPoint(lat: -25.0969, lon: 31.4371))
+        XCTAssertNil(CoordinateParser.parse("12.5 S 24 59 E 31 35"))
+    }
+
+    func testRoadNames() {
+        // Kruger's roads (S3, S100, H4-1) next to a position aren't a third letter or a number of it.
+        for t in ["S3 S24 59.815 E31 35.539", "S24 59.815 E31 35.539 on S3", "S24 59.815 E31 35.539 (S3)",
+                  "Lions on the S3 at S24 59.815 E31 35.539", "Leopard on H4-1 at S24 59.815 E31 35.539"] {
+            check(t, "degrees and decimal minutes", at: ddm)
+        }
+        for t in ["Lions on S3: S24 59 48.9 E31 35 32.3", "S100: S24 59 48.9 E31 35 32.3"] {
+            check(t, "degrees, minutes and seconds", at: dms)
+        }
+        for t in ["Cheetah on H4-1, -24.99693, 31.59231", "H4-1, -24.99693, 31.59231",
+                  "Cheetah! 2km past Nkuhlu picnic spot on H4-1, -24.99693, 31.59231 at 07:45"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -24.99693, lon: 31.59231))
+        }
+        // A letter right after a number is its direction.
+        check("5130N00007W", "GPS (NMEA)", at: GeoPoint(lat: 51.5, lon: -0.1166667))
+    }
+
+    func testNumbersAfterAPosition() {
+        // A phone number, a count or a height after a position with its letters in front.
+        check("Skukuza Rest Camp GPS: S24 59 48.9 E31 35 32.3 Tel: 013 735 4152", "degrees, minutes and seconds", at: dms)
+        check("S 24° 59' 48.9\" E 31° 35' 32.3\" 3 rhino", "degrees, minutes and seconds", at: dms)
+        check("S24 59.815 E31 35.539 2 lions", "degrees and decimal minutes", at: ddm)
+        check("S 24° 59' 48.9\", E 31° 35' 32.3\", 270.5 m", "degrees, minutes and seconds", at: dms)
+        check("S24 59.815 E31 35.539 270m", "degrees and decimal minutes", at: ddm)
+        check("N 51° 30' 2.5\" W 0° 7' 28.6\" 12 m", "degrees, minutes and seconds", at: GeoPoint(lat: 51.5006944, lon: -0.1246111))
+        // A height with its unit is written for people, who put the latitude first.
+        for t in ["-24.996931, 31.592312, 270 m", "Lat -24.996931 Lon 31.592312 270 m"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -24.996931, lon: 31.592312))
+        }
+        // Without one, it can't be told from KML's longitude, latitude and altitude.
+        XCTAssertNil(CoordinateParser.parse("-24.996931,31.592312,270.5"))
+    }
+
+    func testMoreWaysOfWritingIt() {
+        // The location iMessage sends (a vCard, with its commas escaped).
+        check("item1.URL;type=pref:http://maps.apple.com/?ll=-24.996931\\,31.592312&q=-24.996931\\,31.592312", "map link",
+              at: GeoPoint(lat: -24.996931, lon: 31.592312))
+        check("BEGIN:VCARD\r\nVERSION:3.0\r\nN:;Current Location;;;\r\nFN:Current Location\r\nitem1.URL;type=pref:http://maps.apple.com/"
+              + "?ll=-24.996931\\,31.592312&q=-24.996931\\,31.592312\r\nitem1.X-ABLabel:map url\r\nEND:VCARD\r\n", "map link",
+              at: GeoPoint(lat: -24.996931, lon: 31.592312))
+        // Degrees, minutes and seconds with points, the letter right next to them.
+        for t in ["S24.59.48.9 E31.35.32.3", "24.59.48.9S 31.35.32.3E"] {
+            check(t, "degrees, minutes and seconds", at: dms)
+        }
+        // UTM within 10 km north of the equator, where the northing has fewer digits.
+        check("31N 166021 0", "UTM", within: 2, at: GeoPoint(lat: 0, lon: 0))
+        check("31 N 500000 0", "UTM", within: 2, at: GeoPoint(lat: 0, lon: 3))
+        check("37N 285000 1500", "UTM", within: 2, at: GeoPoint(lat: 0.0135632, lon: 37.0682178))
+        // GeoJSON copied without its closing bracket is still longitude first.
+        check("\"coordinates\": [\n  31.4371,\n  -25.0969", "GeoJSON", at: GeoPoint(lat: -25.0969, lon: 31.4371))
+        check("{\"type\": \"Point\", \"coordinates\": [31.4371, -25.0969", "GeoJSON", at: GeoPoint(lat: -25.0969, lon: 31.4371))
+    }
+
+    func testTemperaturesAndAngles() {
+        // A degree sign, or degrees in words, on whole or one-decimal numbers among words: temperatures and angles.
+        for t in ["Dis 25 grade in die oggend en 31 grade in die middag", "Dit was 38 grade by Satara en 41 grade by Letaba",
+                  "Min 12 grade, maks 31 grade", "Draai 90 grade links, dan 45 grade regs", "Heute 25 Grad, morgen 31 Grad",
+                  "It was 25 degrees this morning and 31 degrees by noon", "Temp 31 deg, humidity 25 deg",
+                  "Satara 38°C, Letaba 41°C", "Max 31°C min 18°C", "Skukuza: 34°C / 21°C", "Skukuza 38°/22°", "Min -5° max 31°",
+                  "77°F / 88°F", "Water temp 18.5°, air 25.3°", "Pool 26°, sea 19°", "Slope 25°, aspect 31°",
+                  "Wind veering from 20° to 45°", "Pitch 12.5°, roll 3.2°", "Field of view 63.4° x 44.1°"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+        // Lists of degrees, and a degree sign typed for the minute mark: the second one isn't minutes.
+        for t in ["Max temps: 31° 32° 33° 34°", "25° 25° 25° 25°", "Day 1: 25°, day 2: 31°", "Bearing 10° 20° 30° 40°",
+                  "Skukuza Mon 34° 21°, Tue 33° 20°", "25°05°48.8\"S 31°26°13.6\"E", "25° 05° S, 31° 26° E"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+    }
+
+    func testDistancesTimesAndYears() {
+        // A distance after a direction, and a surveyor's bearing.
+        for t in ["Drive S 25 km, then E 31 km", "Drive S 25 km then E 31 km to the hide", "Drive N 2 km, E 3 km",
+                  "From the gate go N 3 km, then W 2 km", "S 30° W, distance 120 m", "Course S 30° E 12 nm"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+        // Times, durations and time zones; years, opening hours, postal codes and a screen size.
+        for t in ["05:30 - 18:30", "05:30 - 08:45", "05:30, 18:15", "05:31 / 18:12", "12:30 - 14:45", "12:30:45 - 13:15:20",
+                  "10:15:30, 11:20:40", "02:15:30, 01:45:20", "+02:00 -05:00", "3:2, 16:9", "2015-2020", "2010-2020", "2000-2024",
+                  "2023/24", "2019/20", "2001/2002", "0800-1700", "0800 - 1700", "0530-1830", "0600-1800", "1200 1430",
+                  "1350 1242", "1350, 1242", "0800 1234", "1920×1200"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+        // Fields with colons and a minus sign, with seconds in both halves, can't be times.
+        check("-24:59:41, 31:35:32", "degrees, minutes and seconds", at: GeoPoint(lat: -24.9947222, lon: 31.5922222))
+    }
+
+    func testTwoDifferentPlaces() {
+        // Two places 19 km apart in any two forms: links, a link and a position, plus codes, a grid reference, labelled
+        // values, WKT or degrees and a position elsewhere in the text.
+        for t in ["https://www.google.com/maps?q=-25.0969,31.4371 https://www.google.com/maps?q=-24.9961,31.5911",
+                  "Location: https://www.google.com/maps?q=-25.0969,31.4371\nLocation: https://www.google.com/maps?q=-24.9961,31.5911",
+                  "https://maps.apple.com/?ll=-25.0969,31.4371 https://maps.apple.com/?ll=-24.9961,31.5911",
+                  "geo:-25.0969,31.4371 geo:-24.9961,31.5911", "https://www.google.com/maps?q=-25.0969,31.4371 or -24.9961, 31.5911",
+                  "-25.0969, 31.4371\nhttps://maps.google.com/?q=-24.9961,31.5911",
+                  "5G6HWC3P+6R\n5G6HXC5P+2Q", "5G6HWC3P+6R or 5G6HWC4Q+2X", "5G6HWC3P+6R and -24.9961, 31.5911",
+                  "Lions WC3P+6R, leopard XC5P+2Q",
+                  "36J 342401 7223411\n-24.9961 31.5911", "36J 342401 7223411 and -24.9961, 31.5911",
+                  "From -24.9961, 31.5911 to 36J 352401 7233411", "36J UT 42401 23411 and -24.9961 31.5911",
+                  "Camp at 36JUT4240123411; sighting at -24.9961 31.5911",
+                  "lat: -25.0969, lon: 31.4371 (Skukuza: -24.9961, 31.5911)", "<trkpt lat=\"-25.0969\" lon=\"31.4371\"/> -24.9961, 31.5911",
+                  "lat=-25.0969 lon=31.4371 then go to -24.9961, 31.5911", "POINT (31.4371 -25.0969) and -24.9961, 31.5911",
+                  "25°05'48.8\"S 31°26'13.6\"E\n-24.9961, 31.5911", "25°05'48.8\"S 31°26'13.6\"E or -24.9961, 31.5911",
+                  "Camp: -25.0969, 31.4371\nS24 59 48.9 E31 35 32.3"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+        // The same place twice is read.
+        check("https://www.google.com/maps?q=-25.096893,31.437121 https://www.google.com/maps?q=-25.096893,31.437121", "map link")
+        check("-25.096893, 31.437121\nhttps://maps.google.com/?q=-25.096893,31.437121", "map link")
+        check("5G6HWC3P+6R, 5G6HWC3P+6R", "plus code", within: 8)
+        check("36J UT 42401 23411 / -25.096893, 31.437121", "decimal degrees")
+    }
+
+    func testLongPastesAreReadQuickly() {
+        // A label with a long run of spaces after it, many zone-like words before a grid reference, a long list of degrees
+        // and a 20 KB chat log: each read in a time that grows with the length, not faster (it is read as you type).
+        let lines = ["Only 4x4 on the S100 after the rain, 50 m of mud near the bridge", "Leaving at 5 p.m., 2 x 2 litres of water each",
+                     "Saw 12 elephants and 3 calves at the dam, about 400 m from the H4-1", "Gate opens 05:30, closes 18:30",
+                     "Booked site 14 for 27/10/2026, R 1234.50 paid", "Temp 34°C at noon, 21°C tonight"]
+        var log: [String] = []
+        while log.joined(separator: "\n").count < 20_000 {
+            log.append("[12:\(10 + log.count % 50), 27/10/2026] Jaco: " + lines[log.count % lines.count])
+        }
+        log.append("[13:01, 27/10/2026] Jaco: Booking ref 1234567, lions at -25.0969, 31.4371")
+        let start = Date()
+        XCTAssertNil(CoordinateParser.parse("lat" + String(repeating: " ", count: 20_000) + "x 1"))
+        XCTAssertNil(CoordinateParser.parse("latitude" + String(repeating: " ", count: 200) + "S 25"))
+        XCTAssertNil(CoordinateParser.parse(String(repeating: "1C ", count: 10_000) + "x 342401 7223411"))
+        XCTAssertNil(CoordinateParser.parse(String(repeating: "25° ", count: 5_000)))
+        check(log.joined(separator: "\n"), "decimal degrees", at: GeoPoint(lat: -25.0969, lon: 31.4371))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
 }
 
 final class ScaleBarTests: XCTestCase {
