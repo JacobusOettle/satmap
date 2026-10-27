@@ -64,6 +64,8 @@ struct AreaDetailView: View {
             .navigationTitle(area.name)
             .navigationBarTitleDisplayMode(.inline)
             .task(id: "\(area.maxZoom)-\(area.status.rawValue)") {
+                // A lower level to stop at only makes sense while the download runs.
+                if area.status == .complete, let z = chosenZoom, z < area.maxZoom { chosenZoom = nil }
                 savedDepth = await offline.savedImageryDepth(areaID)
                 guard area.maxZoom < TileSources.imageryMaxZoom else { return }
                 let shape = area.roadLines.map(Roads.corridor) ?? area.shape

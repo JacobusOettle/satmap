@@ -141,13 +141,14 @@ final class ScreenshotTests: XCTestCase {
         snap("16-measure-two-points")
 
         // Two more points, then tap A again: the shape's area.
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.45)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.45)).tap() // C
         sleep(2)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.33)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.4)).tap() // D: below the taller panel and its bar
         sleep(2)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap() // A again: close
         sleep(3)
         XCTAssertEqual(currentMeasureState(), .shape)
+        XCTAssertTrue(app.staticTexts["Shape A–D · 4 corners"].exists, "The shape didn't get four corners")
         snap("19-measure-area")
         setMeasure(.off)
 

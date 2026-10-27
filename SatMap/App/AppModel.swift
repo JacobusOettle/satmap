@@ -24,10 +24,16 @@ enum MeasureMode: Equatable {
         }
     }
 
-    /// "A", "B", … "Z", "AA", "AB", …
+    /// "A", "B", … "Z", "AA", "AB", … "ZZ", "AAA", …
     static func label(_ i: Int) -> String {
         let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        return i < 26 ? String(letters[i]) : String(letters[i / 26 - 1]) + String(letters[i % 26])
+        var n = i + 1, s = ""
+        while n > 0 {
+            n -= 1
+            s = String(letters[n % 26]) + s
+            n /= 26
+        }
+        return s
     }
 }
 
