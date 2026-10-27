@@ -237,6 +237,7 @@ private struct TrackAreaView: View {
                 guard !lines.isEmpty else { return nil }
                 return TrackDownload(lines: lines,
                                      newLines: completeTo == nil ? lines : Roads.newParts(of: latest, comparedWith: previous),
+                                     previousLines: previous,
                                      maxZoom: existing?.maxZoom, allowCellular: existing?.allowCellular, completeTo: completeTo)
             }.value
             download = result

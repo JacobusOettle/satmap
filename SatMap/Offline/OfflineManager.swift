@@ -453,6 +453,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     @objc private func willEnterForeground() {
         inForeground = true
+        signalWait = nil
         background.enteredForeground()
         networkChanged()
     }
@@ -500,7 +501,27 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             run(next)
         } else {
             updateIdleTimer()
-            background.end(success: lastRunComplete)
+            if !inForeground && background.allowsBackgroundWork && areas.contains(where: { $0.status == .waitingForNetwork }) {
+                waitForSignalInBackground()
+            } else {
+                background.end(success: lastRunComplete)
+            }
+        }
+    }
+
+    /// Set while SatMap, in the background, waits for the signal to come back before giving up its background time:
+    /// a few seconds without signal (a dip, a dead spot) shouldn't stop the download until SatMap is opened.
+    private var signalWait: UUID?
+
+    private func waitForSignalInBackground() {
+        guard signalWait == nil else { return }
+        let token = UUID()
+        signalWait = token
+        // Under the half minute after which iOS ends a background task that shows no progress.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self = self, self.signalWait == token else { return }
+            self.signalWait = nil
+            if self.task == nil { self.background.end(success: false) }
         }
     }
 
@@ -545,6 +566,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
         let id = area.id
         let name = area.name
+        signalWait = nil
         activeID = id
         progress = DownloadProgress()
         update(id) { $0.status = .downloading }

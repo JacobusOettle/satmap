@@ -139,16 +139,36 @@ final class TileDownloadJob {
             }
         }
 
-        // Tiles planned per layer and level, for the overall progress. Levels that turn out smaller (or are skipped
-        // where the imagery stops) count as their planned size once they are done.
+        // Overall progress, in tiles: the levels done, the one under way, and an estimate of the rest. Where imagery
+        // stops (most of the deepest levels on farms), a level only has tiles under the ones that exist one level up,
+        // so deeper levels are estimated from the share of tiles found at this one (starting from the share found one
+        // level up); levels not started yet count at their full size.
         let planned = layers.map { layer in layer.zooms.map { TileCoverage(shape: layer.shape ?? shape, zoom: $0).tileCount } }
-        progress.overallTotal = planned.joined().reduce(0, +)
         var behind = 0
-        var levelPlan = 0
+        var currentLayer = 0
+        var currentLevel = -1
+        var pruning = false
+        var levelStored = 0
+        var previousShare = 1.0
         func updateOverall() {
-            let share = progress.levelTotal > 0 ? Double(progress.levelDone) / Double(progress.levelTotal) : 0
-            progress.overallDone = min(progress.overallTotal, behind + Int(Double(levelPlan) * share))
+            var rest = 0
+            for li in currentLayer..<planned.count {
+                for zi in planned[li].indices where li > currentLayer || zi > currentLevel {
+                    guard li == currentLayer && pruning else {
+                        rest += planned[li][zi]
+                        continue
+                    }
+                    // Tiles found at this level so far, weighed against the share found one level up.
+                    let share = (Double(levelStored) + previousShare * 8) / (Double(progress.levelDone) + 8)
+                    let expected = Double(progress.levelTotal) * share * pow(4, Double(zi - currentLevel))
+                    rest += min(planned[li][zi], Int(min(expected, Double(Int.max / 4))))
+                }
+            }
+            progress.overallDone = behind + progress.levelDone
+            progress.overallTotal = behind + progress.levelTotal + rest
         }
+        progress.levelTotal = 0
+        updateOverall()
 
         for (li, layer) in layers.enumerated() {
             progress.layer = layer.name
@@ -156,16 +176,18 @@ final class TileDownloadJob {
             defer { layer.store.checkpoint() }
             // Each layer comes from its own server.
             var parallel = ConcurrencyController(start: min(16, concurrency), min: min(4, concurrency), max: concurrency)
+            currentLayer = li
+            previousShare = 1
 
             for (zi, z) in layer.zooms.enumerated() {
                 if Task.isCancelled { return .cancelled }
-                levelPlan = planned[li][zi]
                 let coverage = TileCoverage(shape: layer.shape ?? shape, zoom: z)
                 let prune = layer.pruneByParent && z > layer.zooms.lowerBound && z > 0
 
                 var todo: [Packed] = []
                 var total = 0
                 var alreadyDone = 0
+                var alreadyStored = 0
                 for row in coverage.rows {
                     if Task.isCancelled { return .cancelled }
                     for range in row.ranges {
@@ -177,7 +199,10 @@ final class TileDownloadJob {
                         for x in range {
                             if let p = parents, !p.contains(x >> 1) { continue }
                             total += 1
-                            if existing.contains(x) || missing.contains(x) {
+                            if existing.contains(x) {
+                                alreadyDone += 1
+                                alreadyStored += 1
+                            } else if missing.contains(x) {
                                 alreadyDone += 1
                             } else {
                                 todo.append(Packed(x: Int32(x), y: Int32(row.y)))
@@ -189,18 +214,25 @@ final class TileDownloadJob {
                 progress.zoom = z
                 progress.levelTotal = total
                 progress.levelDone = alreadyDone
+                currentLevel = zi
+                pruning = layer.pruneByParent
+                levelStored = alreadyStored
                 updateOverall()
                 emit(force: true)
 
                 // Nothing exists at this level, so nothing can exist deeper either.
                 if prune && total == 0 {
-                    behind += planned[li][zi...].reduce(0, +)
-                    levelPlan = 0
+                    currentLevel = layer.zooms.count - 1
+                    progress.levelTotal = 0
+                    progress.levelDone = 0
+                    updateOverall()
                     break
                 }
                 if todo.isEmpty {
-                    behind += levelPlan
-                    levelPlan = 0
+                    behind += total
+                    previousShare = total > 0 ? Double(levelStored) / Double(total) : previousShare
+                    progress.levelTotal = 0
+                    progress.levelDone = 0
                     continue
                 }
 
@@ -240,6 +272,7 @@ final class TileDownloadJob {
                             if layer.store.put(tile, data: d) {
                                 progress.fetched += 1
                                 progress.bytes += Int64(d.count)
+                                levelStored += 1
                             } else {
                                 storeFailed = true
                             }
@@ -267,13 +300,20 @@ final class TileDownloadJob {
                     emit(force: true)
                     return wentOffline ? .offline : .cancelled
                 }
-                behind += levelPlan
-                levelPlan = 0
+                behind += total
+                previousShare = total > 0 ? Double(levelStored) / Double(total) : previousShare
+                progress.levelTotal = 0
+                progress.levelDone = 0
                 updateOverall()
                 emit(force: true)
             }
+            // The layer is done (or stopped where its imagery stops): nothing more of it is to come.
+            currentLevel = layer.zooms.count - 1
+            pruning = false
         }
-        progress.overallDone = progress.overallTotal
+        currentLayer = layers.count
+        progress.overallTotal = behind
+        progress.overallDone = behind
         emit(force: true)
         return .completed(failed: progress.failed)
     }

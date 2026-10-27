@@ -444,27 +444,31 @@ final class DownloadEngineTests: XCTestCase {
         XCTAssertEqual(server.requests.count, before)
     }
 
-    /// One progress bar for the whole run (the system's, while SatMap is in the background): it only goes forward,
-    /// also where the imagery stops early, and ends full.
+    /// One progress bar for the whole run (the system's, while SatMap is in the background): it only goes forward and
+    /// ends full, and where the imagery stops early it doesn't sit near zero until the end.
     func testOverallProgressOnlyGoesForwardAndEndsFull() async throws {
         let imagery = try MBTiles(url: tempDir().appendingPathComponent("i.mbtiles"), create: true)
         let terrain = try MBTiles(url: tempDir().appendingPathComponent("t.mbtiles"), create: true)
         let patch = TileID.containing(GeoPoint(lat: -25.47, lon: 30.97), z: 16)
         let job = TileDownloadJob(shape: area, layers: [
             DownloadLayer(name: "dem", store: terrain, fetcher: FakeServer(deepest: 12, patch: patch), zooms: 0...14, pruneByParent: false),
-            DownloadLayer(name: "sat", store: imagery, fetcher: FakeServer(deepest: 16, patch: patch), zooms: 0...20, pruneByParent: true),
+            DownloadLayer(name: "sat", store: imagery, fetcher: FakeServer(deepest: 16, patch: patch), zooms: 0...22, pruneByParent: true),
         ], concurrency: 4, retryDelay: { _ in 0 })
         var seen: [DownloadProgress] = []
         let outcome = await job.run { seen.append($0) }
         XCTAssertEqual(outcome, .completed(failed: 0))
         let done = seen.map(\.overallDone)
         XCTAssertEqual(done, done.sorted(), "went backwards")
-        let total = (0...14).reduce(0) { $0 + TileCoverage(shape: area, zoom: $1).tileCount }
-            + (0...20).reduce(0) { $0 + TileCoverage(shape: area, zoom: $1).tileCount }
-        XCTAssertEqual(seen.last?.overallTotal, total)
-        XCTAssertEqual(seen.last?.overallDone, total)
-        // Halfway through the elevation the bar isn't near the end (the imagery is most of the work).
-        XCTAssertTrue(seen.contains { $0.layer == "sat" && $0.overallDone < total / 2 })
+        XCTAssertGreaterThan(seen.last!.overallTotal, 0)
+        XCTAssertEqual(seen.last?.overallDone, seen.last?.overallTotal)
+        // At the start everything up to zoom 22 counts; once the imagery runs out the deeper levels stop counting.
+        let planned = (0...14).reduce(0) { $0 + TileCoverage(shape: area, zoom: $1).tileCount }
+            + (0...22).reduce(0) { $0 + TileCoverage(shape: area, zoom: $1).tileCount }
+        XCTAssertEqual(seen.first?.overallTotal, planned)
+        XCTAssertLessThan(seen.last!.overallTotal, planned / 100)
+        // The level where the imagery stops (z17: all missing but the patch) fills the bar, rather than a jump at the end.
+        let lastAt17 = try XCTUnwrap(seen.last { $0.layer == "sat" && $0.zoom == 17 })
+        XCTAssertGreaterThan(Double(lastAt17.overallDone) / Double(lastAt17.overallTotal), 0.5)
     }
 
     /// Choosing a deeper level for a downloaded area runs the job again with a higher maximum: only the new level
@@ -923,5 +927,28 @@ extension ConcurrencyTests {
         XCTAssertGreaterThan(probe.most, 16) // grew past the starting 16
         XCTAssertLessThanOrEqual(probe.most, 32)
         XCTAssertGreaterThan(last.parallel, 16)
+    }
+}
+
+final class CoverageDifferenceTests: XCTestCase {
+    func testTilesNotInAnotherCoverage() {
+        let road = [GeoPoint(lat: -24.99, lon: 31.59), GeoPoint(lat: -24.99, lon: 31.60)]
+        let same = TileCoverage(shape: Roads.corridor([road]), zoom: 22)
+        XCTAssertEqual(same.count(notIn: same), 0)
+        // The same road recorded 12 m to the side: a strip of new tiles (about 9 m each at zoom 22), not nothing.
+        let shifted = road.map { GeoPoint(lat: $0.lat + 12 / 110_574, lon: $0.lon) }
+        let moved = TileCoverage(shape: Roads.corridor([shifted]), zoom: 22)
+        let extra = moved.count(notIn: same)
+        XCTAssertGreaterThan(extra, 0)
+        XCTAssertLessThan(extra, moved.tileCount / 3)
+        // Somewhere else entirely: all of it is new.
+        let elsewhere = TileCoverage(shape: Roads.corridor([road.map { GeoPoint(lat: $0.lat - 0.1, lon: $0.lon) }]), zoom: 22)
+        XCTAssertEqual(elsewhere.count(notIn: same), elsewhere.tileCount)
+    }
+
+    func testBufferNearThePoleStaysSmall() {
+        // A KML line to the South Pole with the usual 150 m margin must not cover the whole world.
+        let line = CoverageShape(lines: [[GeoPoint(lat: -89.9, lon: 0), GeoPoint(lat: -90, lon: 0)]], bufferMeters: 150)
+        XCTAssertLessThan(TileCoverage(shape: line, zoom: 8).tileCount, 1 << 10)
     }
 }

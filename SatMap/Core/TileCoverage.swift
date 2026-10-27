@@ -60,7 +60,8 @@ struct TileCoverage {
         /// The buffer in tiles at a latitude. Each piece uses its own (at the largest |latitude| it reaches, so it is
         /// never narrower than asked): one shape can hold places far apart, e.g. trips months apart in one track area.
         func bufAt(_ lat: Double) -> Double {
-            max(0, shape.bufferMeters) / Geo.metersPerWorldUnit(atLatitude: lat) * n
+            // Clamped as the map is: at the poles the buffer would cover the whole world.
+            max(0, shape.bufferMeters) / Geo.metersPerWorldUnit(atLatitude: min(abs(lat), WebMercator.maxLatitude)) * n
         }
 
         /// Per row, x-extents already grown by their buffer.
@@ -185,6 +186,28 @@ struct TileCoverage {
         }
         rows = builtRows
         tileCount = count
+    }
+
+    /// How many of these tiles are not in `other` (same zoom): for what a download adds to an area.
+    func count(notIn other: TileCoverage) -> Int {
+        precondition(zoom == other.zoom)
+        var otherRows: [Int: [ClosedRange<Int>]] = [:]
+        for r in other.rows { otherRows[r.y] = r.ranges }
+        var out = 0
+        for row in rows {
+            guard let theirs = otherRows[row.y] else {
+                out += row.ranges.reduce(0) { $0 + $1.count }
+                continue
+            }
+            for r in row.ranges {
+                var covered = 0
+                for o in theirs where o.upperBound >= r.lowerBound && o.lowerBound <= r.upperBound {
+                    covered += min(o.upperBound, r.upperBound) - max(o.lowerBound, r.lowerBound) + 1
+                }
+                out += r.count - covered
+            }
+        }
+        return out
     }
 
     func contains(x: Int, y: Int) -> Bool {

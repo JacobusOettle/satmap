@@ -127,13 +127,19 @@ struct NewAreaView: View {
             }
         }
         .task {
+            let shape = area.shape
             // Elevation already saved for your track isn't downloaded again.
-            let shape = track.map { Roads.corridor($0.newLines) } ?? area.shape
+            let saved = track?.completeTo != nil ? track.map { Roads.corridor($0.previousLines) } : nil
             // Along a road list or your track the whole area only matters for elevation; its imagery counts for a big
             // park would take long to work out.
             let zooms = fixedLines ? 0...Terrarium.maxZoom : 0...TileSources.imageryMaxZoom
-            let result = await Task.detached(priority: .userInitiated) {
-                (TileCoverage.tileCounts(shape: shape, zooms: zooms), AppPaths.freeDiskSpace())
+            let result = await Task.detached(priority: .userInitiated) { () -> ([Int: Int], Int64?) in
+                var counts: [Int: Int] = [:]
+                for z in zooms {
+                    let c = TileCoverage(shape: shape, zoom: z)
+                    counts[z] = saved.map { c.count(notIn: TileCoverage(shape: $0, zoom: z)) } ?? c.tileCount
+                }
+                return (counts, AppPaths.freeDiskSpace())
             }.value
             freeSpace = result.1
             counts = result.0
@@ -283,14 +289,19 @@ struct NewAreaView: View {
             } else {
                 lines = try await RoadFetcher.roads(in: shape)
             }
-            // For your track, the levels the area already has are only needed for the new parts.
-            let fresh = track.map { Roads.corridor($0.newLines) }
+            // For your track, the levels the area already has are only needed where its corridor is new.
+            let saved = track.map { Roads.corridor($0.previousLines) }
             let savedTo = track?.completeTo ?? -1
             let result = await Task.detached(priority: .userInitiated) { () -> (Double, [Int: Int]) in
                 let whole = Roads.corridor(lines)
                 var counts: [Int: Int] = [:]
                 for z in 0...TileSources.imageryMaxZoom {
-                    counts[z] = TileCoverage(shape: z <= savedTo ? fresh ?? whole : whole, zoom: z).tileCount
+                    let c = TileCoverage(shape: whole, zoom: z)
+                    if z <= savedTo, let saved = saved {
+                        counts[z] = c.count(notIn: TileCoverage(shape: saved, zoom: z))
+                    } else {
+                        counts[z] = c.tileCount
+                    }
                 }
                 return (Roads.length(lines) / 1000, counts)
             }.value
@@ -327,8 +338,10 @@ struct NewAreaView: View {
 struct TrackDownload {
     /// The area's lines after this download: your track plus the parts of earlier trips already in the area.
     var lines: [[GeoPoint]]
-    /// The parts not saved yet: the parts of your track away from the area's lines, or all of `lines`.
+    /// The parts of your track away from the area's lines (for the distance shown), or all of `lines`.
     var newLines: [[GeoPoint]]
+    /// The track area's lines before this download (empty without one).
+    var previousLines: [[GeoPoint]]
     /// The track area's own settings, if it exists.
     var maxZoom: Int?
     var allowCellular: Bool?
