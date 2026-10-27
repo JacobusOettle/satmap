@@ -1,0 +1,26 @@
+name: Kruger roads
+
+# Fetches Kruger National Park's boundary and roads from OpenStreetMap and builds the road file the app ships
+# (SatMap/Resources/KrugerRoads.json). Run it by hand to refresh the data.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/fetch_kruger_osm.py"
+      - ".github/workflows/kruger-roads.yml"
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download from OpenStreetMap
+        run: |
+          mkdir -p osm
+          python3 tools/fetch_kruger_osm.py osm
+          ls -l osm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kruger-osm
+          path: osm
