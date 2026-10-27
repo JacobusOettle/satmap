@@ -1,324 +1,375 @@
+#!/usr/bin/env python3
 """Draws SatMap's app icon (SatMap/Assets.xcassets/AppIcon.appiconset/AppIcon.png).
 
-Satellite-style farm patchwork seen from above, two white field-block
-outlines, a cyan dotted track weaving between them and ending at the blue
-location dot. No contour lines, no text.
+The white quadcopter of proposal 1 ("drone over the bush") hovering over the bush and sandy gravel road of proposal 5
+("bush road"), seen from above. No text. Drawn at 4096 px, saved at 1024 px.
 
-    python3 tools/icon/app_icon.py <output folder>   # writes blocks-and-track.png (1024 px) and small previews
+    python3 tools/icon/app_icon.py <output.png>
 """
 import math
-import os
 import random
 import sys
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 S = 4096
-OUT_DIR = sys.argv[1] if len(sys.argv) > 1 else "."
-SLUG = "blocks-and-track"
+OUT = 1024
+OUT_PATH = sys.argv[1] if len(sys.argv) > 1 else "AppIcon.png"
 
+rng = random.Random(7)
 random.seed(20261027)
 
-ROT = math.radians(-14)
-CX = CY = S / 2.0
-COS, SIN = math.cos(ROT), math.sin(ROT)
 
-
-def to_canvas(u, v):
-    return (CX + u * COS - v * SIN, CY + u * SIN + v * COS)
-
-
-def to_field(x, y):
-    dx, dy = x - CX, y - CY
-    return (dx * COS + dy * SIN, -dx * SIN + dy * COS)
-
-
-def hex2rgb(h):
+def hexrgb(h):
     h = h.lstrip("#")
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def jitter_col(c, amt):
-    return tuple(max(0, min(255, int(ch + random.uniform(-amt, amt)))) for ch in c)
+def lerp(a, b, t):
+    return a + (b - a) * t
 
 
-# --------------------------------------------------------------------------
-# 1. Field patchwork (in rotated "field space")
-# --------------------------------------------------------------------------
-ROAD = hex2rgb("#93825e")
-FIELD_TYPES = {
-    "orchard": dict(ground=hex2rgb("#5b6336"), tree=hex2rgb("#41582a")),
-    "pasture": dict(ground=hex2rgb("#4d6a2b")),
-    "bush": dict(ground=hex2rgb("#6c6542"), tree=hex2rgb("#4b5530")),
-    "soil": dict(ground=hex2rgb("#6e6148")),
-    "dry": dict(ground=hex2rgb("#7f7649")),
-}
-
-cols = [-3500, -2300, -1580, -250, 1250, 2550, 3500]
-fixed_rows = {
-    2: [-650, 600],    # column holding block A
-    3: [450, 1550],    # column holding block B
-}
-cells = []  # (u0, v0, u1, v1, type)
-type_cycle = ["orchard", "pasture", "soil", "orchard", "dry", "bush", "pasture", "orchard"]
-ti = 0
-for ci in range(len(cols) - 1):
-    u0, u1 = cols[ci], cols[ci + 1]
-    bounds = []
-    if ci in fixed_rows:
-        a, b = fixed_rows[ci]
-        v = a
-        while v > -3500:
-            bounds.insert(0, v)
-            v -= random.uniform(1050, 1500)
-        bounds.insert(0, v)
-        bounds.append(b)
-        v = b
-        while v < 3500:
-            v += random.uniform(1050, 1500)
-            bounds.append(v)
-    else:
-        v = -3500 + random.uniform(-600, 0)
-        bounds.append(v)
-        while v < 3500:
-            v += random.uniform(1050, 1600)
-            bounds.append(v)
-    for va, vb in zip(bounds, bounds[1:]):
-        cells.append([u0, va, u1, vb, type_cycle[ti % len(type_cycle)]])
-        ti += 3
-
-base = Image.new("RGB", (S, S), ROAD)
-d = ImageDraw.Draw(base)
-INSET = 22  # half road width
-
-for c in cells:
-    u0, v0, u1, v1, t = c
-    spec = FIELD_TYPES[t]
-    g = jitter_col(spec["ground"], 10)
-    poly = [to_canvas(u0 + INSET, v0 + INSET), to_canvas(u1 - INSET, v0 + INSET),
-            to_canvas(u1 - INSET, v1 - INSET), to_canvas(u0 + INSET, v1 - INSET)]
-    d.polygon(poly, fill=g)
-    if t == "orchard":
-        sp = 64
-        r = 21
-        u = u0 + INSET + sp * 0.7
-        while u < u1 - INSET - sp * 0.4:
-            v = v0 + INSET + sp * 0.7
-            while v < v1 - INSET - sp * 0.4:
-                x, y = to_canvas(u + random.uniform(-6, 6), v + random.uniform(-6, 6))
-                rr = r * random.uniform(0.8, 1.15)
-                d.ellipse([x - rr, y - rr, x + rr, y + rr], fill=jitter_col(spec["tree"], 8))
-                v += sp
-            u += sp
-    elif t == "bush":
-        n = int((u1 - u0) * (v1 - v0) / 5000)
-        for _ in range(n):
-            u = random.uniform(u0 + INSET + 40, u1 - INSET - 40)
-            v = random.uniform(v0 + INSET + 40, v1 - INSET - 40)
-            x, y = to_canvas(u, v)
-            rr = random.uniform(10, 28)
-            d.ellipse([x - rr, y - rr, x + rr, y + rr], fill=jitter_col(spec["tree"], 10))
-
-base = base.filter(ImageFilter.GaussianBlur(4))
+def mix(c1, c2, t):
+    return tuple(int(round(lerp(a, b, t))) for a, b in zip(c1, c2))
 
 
-def noise_layer(n, size_up, blur=0):
-    img = Image.frombytes("L", (n, n), random.randbytes(n * n))
-    if blur:
-        img = img.filter(ImageFilter.GaussianBlur(blur))
-    return img.resize((size_up, size_up), Image.BICUBIC)
+# ---------------------------------------------------------------- palette
+GROUND_TOP = hexrgb("#1f3418")
+GROUND_BOT = hexrgb("#0f1c0c")
+# (dark, light) pairs per tree: muted savanna greens
+TREE_COLS = [(hexrgb(a), hexrgb(b)) for a, b in (
+    ("#1a3317", "#41672d"), ("#1d3819", "#4a7333"), ("#18301a", "#3c6230"),
+    ("#213c1b", "#527838"), ("#1b3518", "#456c30"))]
+ROAD_MID = hexrgb("#e2bb82")
+ROAD_EDGE = hexrgb("#b9864f")
+WHITE = (255, 255, 255)
+ACCENT = hexrgb("#FFD60A")
 
 
-# low frequency mottling + fine grain
-low = noise_layer(24, S, blur=1.2)
-low = low.point(lambda p: int(max(0, min(255, 128 + (p - 128) * 3.0))))
-fine = noise_layer(1024, S)
-fine = fine.point(lambda p: int(128 + (p - 128) * 0.18))
+# ---------------------------------------------------------------- road path
+def bezier(p0, p1, p2, p3, t):
+    u = 1 - t
+    x = u**3 * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t**3 * p3[0]
+    y = u**3 * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t**3 * p3[1]
+    return x, y
 
 
-def apply_mod(img, mod, strength):
-    # multiply-ish modulation around mid-grey: factor = 1 + strength*(m-128)/128
-    lut = [int(max(0, min(255, 128 + (i - 128) * strength))) for i in range(256)]
-    m = mod.point(lut)
-    m3 = Image.merge("RGB", (m, m, m))
-    # overlay-ish: result = img * (m/128)
-    out = ImageChops.multiply(img, m3)
-    return ImageChops.add(out, out)  # *2 => img * m/128
+P0 = (0.74 * S, 1.12 * S)
+P1 = (1.10 * S, 0.60 * S)
+P2 = (-0.10 * S, 0.42 * S)
+P3 = (0.30 * S, -0.12 * S)
+
+N = 3000
+road_pts = [bezier(P0, P1, P2, P3, i / (N - 1)) for i in range(N)]
+ROAD_W = 0.165 * S
 
 
-base = apply_mod(base, low, 0.35)
-base = apply_mod(base, fine, 1.0)
-
-# grade: slightly darker + vignette so foreground pops
-vig = Image.new("L", (S, S), 0)
-vd = ImageDraw.Draw(vig)
-vd.ellipse([-S * 0.25, -S * 0.25, S * 1.25, S * 1.25], fill=255)
-vig = vig.filter(ImageFilter.GaussianBlur(S * 0.12))
-dark = Image.new("RGB", (S, S), (14, 18, 10))
-base = Image.composite(base, Image.blend(base, dark, 0.55), vig)
-base = Image.blend(base, Image.new("RGB", (S, S), (20, 24, 16)), 0.12)
-
-canvas = base.convert("RGBA")
-
-# --------------------------------------------------------------------------
-# 2. Field-block outlines
-# --------------------------------------------------------------------------
-
-
-def find_cell(x, y):
-    u, v = to_field(x, y)
-    for c in cells:
-        if c[0] <= u < c[2] and c[1] <= v < c[3]:
-            return c
-    raise ValueError
-
-
-def block_poly(c, cut_corner=None, cut=0.35, pad=110):
-    u0, v0, u1, v1 = c[0] + pad, c[1] + pad, c[2] - pad, c[3] - pad
-    pts = [(u0, v0), (u1, v0), (u1, v1), (u0, v1)]
-    if cut_corner is not None:
-        i = cut_corner
-        p = pts[i]
-        prev = pts[i - 1]
-        nxt = pts[(i + 1) % 4]
-        a = (p[0] + (prev[0] - p[0]) * cut, p[1] + (prev[1] - p[1]) * cut)
-        b = (p[0] + (nxt[0] - p[0]) * cut, p[1] + (nxt[1] - p[1]) * cut)
-        pts = pts[:i] + [a, b] + pts[i + 1:]
-    return [to_canvas(*q) for q in pts]
-
-
-blockA = block_poly(find_cell(1150, 2250), cut_corner=2, cut=0.38)
-blockB = block_poly(find_cell(2850, 2900), cut_corner=0, cut=0.38)
-blocks = [blockA, blockB]
-
-LINE_W = 96
-
-
-def stroke_poly(draw, pts, width, fill):
-    draw.line(pts + [pts[0]], fill=fill, width=width, joint="curve")
-    r = width / 2
-    for x, y in pts:
-        draw.ellipse([x - r, y - r, x + r, y + r], fill=fill)
-
-
-# shadow + fill + stroke
-sh = Image.new("L", (S, S), 0)
-sd = ImageDraw.Draw(sh)
-for b in blocks:
-    stroke_poly(sd, [(x, y + 26) for x, y in b], LINE_W + 30, 150)
-sh = sh.filter(ImageFilter.GaussianBlur(34))
-canvas.paste((0, 0, 0, 255), (0, 0), sh)
-
-fill = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-fd = ImageDraw.Draw(fill)
-for b in blocks:
-    fd.polygon(b, fill=(255, 255, 255, 34))
-canvas = Image.alpha_composite(canvas, fill)
-
-lines = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-ld = ImageDraw.Draw(lines)
-for b in blocks:
-    stroke_poly(ld, b, LINE_W, (255, 255, 255, 255))
-canvas = Image.alpha_composite(canvas, lines)
-
-# --------------------------------------------------------------------------
-# 3. Cyan dotted track (Catmull-Rom through waypoints)
-# --------------------------------------------------------------------------
-DOT_POS = (2760, 1340)
-waypoints = [(-150, 3800), (700, 3560), (1400, 3260), (1800, 2830), (2010, 2450), (2240, 1950),
-             (2470, 1560), DOT_POS]
-
-
-def catmull(pts, steps=60):
-    p = [pts[0]] + pts + [pts[-1]]
+def normals(pts):
     out = []
-    for i in range(1, len(p) - 2):
-        p0, p1, p2, p3 = p[i - 1], p[i], p[i + 1], p[i + 2]
-        for s in range(steps):
-            t = s / steps
-            t2, t3 = t * t, t * t * t
-            x = 0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
-                       + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3)
-            y = 0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
-                       + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3)
-            out.append((x, y))
-    out.append(pts[-1])
+    for i in range(len(pts)):
+        a = pts[max(0, i - 1)]
+        b = pts[min(len(pts) - 1, i + 1)]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        L = math.hypot(dx, dy) or 1
+        out.append((-dy / L, dx / L))
     return out
 
 
-curve = catmull(waypoints)
-SPACING = 166
-DOT_R = 50
-dots = []
-acc = 0.0
-for (x0, y0), (x1, y1) in zip(curve, curve[1:]):
-    seg = math.hypot(x1 - x0, y1 - y0)
-    t = 0.0
-    while acc + (seg - t) >= SPACING:
-        t += SPACING - acc
-        acc = 0.0
-        f = t / seg
-        dots.append((x0 + (x1 - x0) * f, y0 + (y1 - y0) * f))
-    acc += seg - t
+road_nrm = normals(road_pts)
 
-TRACK = (64, 224, 255, 255)
-tsh = Image.new("L", (S, S), 0)
-tsd = ImageDraw.Draw(tsh)
-for x, y in dots:
-    r = DOT_R + 14
-    tsd.ellipse([x - r, y - r + 14, x + r, y + r + 14], fill=170)
-tsh = tsh.filter(ImageFilter.GaussianBlur(16))
-canvas.paste((0, 0, 0, 255), (0, 0), tsh)
 
-tl = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-tld = ImageDraw.Draw(tl)
-for x, y in dots:
-    tld.ellipse([x - DOT_R, y - DOT_R, x + DOT_R, y + DOT_R], fill=TRACK)
-canvas = Image.alpha_composite(canvas, tl)
+def stroke_mask(pts, radius, size=S):
+    m = Image.new("L", (size, size), 0)
+    d = ImageDraw.Draw(m)
+    for x, y in pts:
+        d.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
+    return m
 
-# --------------------------------------------------------------------------
-# 4. Location dot
-# --------------------------------------------------------------------------
-x, y = DOT_POS
-R_OUT, R_IN, R_HALO = 470, 340, 900
 
-halo = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-hd = ImageDraw.Draw(halo)
-# (halo removed: muddied the background)
-canvas = Image.alpha_composite(canvas, halo)
+def offset_pts(pts, nrm, off):
+    return [(x + nx * off, y + ny * off) for (x, y), (nx, ny) in zip(pts, nrm)]
 
+
+coarse = road_pts[::10]
+
+
+def dist_to_road(x, y):
+    best = 1e18
+    for px, py in coarse:
+        d = (px - x) ** 2 + (py - y) ** 2
+        if d < best:
+            best = d
+    return math.sqrt(best)
+
+
+# ---------------------------------------------------------------- ground
+def vertical_gradient(c_top, c_bot, size=S):
+    g = Image.new("RGB", (1, 256))
+    for i in range(256):
+        g.putpixel((0, i), mix(c_top, c_bot, i / 255))
+    return g.resize((size, size), Image.BICUBIC)
+
+
+canvas = vertical_gradient(GROUND_TOP, GROUND_BOT)
+
+# soft noise texture on ground (generated small, upscaled)
+def noise_layer(n, size, amp, seed):
+    r = random.Random(seed)
+    im = Image.new("L", (n, n))
+    im.putdata([int(128 + r.uniform(-amp, amp)) for _ in range(n * n)])
+    return im.resize((size, size), Image.BICUBIC)
+
+
+# ---------------------------------------------------------------- trees
+trees = []
+cell = 0.098 * S
+y = -0.06 * S
+row = 0
+while y < 1.10 * S:
+    x = -0.06 * S + (cell * 0.5 if row % 2 else 0)
+    while x < 1.10 * S:
+        cx = x + rng.uniform(-0.35, 0.35) * cell
+        cy = y + rng.uniform(-0.35, 0.35) * cell
+        r = rng.uniform(0.056, 0.080) * S
+        dr = dist_to_road(cx, cy)
+        if dr > ROAD_W / 2 + r * 0.80:
+            trees.append((cx, cy, r))
+        x += cell
+    y += cell * 0.87
+    row += 1
+
+trees.sort(key=lambda t: t[1])
+
+# one radial gradient, reused for every canopy (light spot at upper-left)
+G = 512
+grad = Image.new("L", (G, G), 0)
+gdr = ImageDraw.Draw(grad)
+for i in range(60, 0, -1):
+    t = i / 60
+    rr = G * 0.62 * t
+    cx0, cy0 = G * 0.40, G * 0.36
+    gdr.ellipse((cx0 - rr, cy0 - rr, cx0 + rr, cy0 + rr), fill=int(255 * (1 - t) ** 0.8))
+grad = grad.filter(ImageFilter.GaussianBlur(10))
+
+# canopy shadow layer
 shadow = Image.new("L", (S, S), 0)
-shd = ImageDraw.Draw(shadow)
-shd.ellipse([x - R_OUT, y - R_OUT + 60, x + R_OUT, y + R_OUT + 60], fill=190)
-shadow = shadow.filter(ImageFilter.GaussianBlur(80))
-canvas.paste((0, 0, 0, 255), (0, 0), shadow)
+sd = ImageDraw.Draw(shadow)
+for cx, cy, r in trees:
+    ox, oy = r * 0.32, r * 0.40
+    sd.ellipse((cx - r + ox, cy - r + oy, cx + r + ox, cy + r + oy), fill=230)
+shadow = shadow.filter(ImageFilter.GaussianBlur(S * 0.010))
 
-dl = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-dd = ImageDraw.Draw(dl)
-dd.ellipse([x - R_OUT, y - R_OUT, x + R_OUT, y + R_OUT], fill=(255, 255, 255, 255))
-dd.ellipse([x - R_IN, y - R_IN, x + R_IN, y + R_IN], fill=(10, 132, 255, 255))
-canvas = Image.alpha_composite(canvas, dl)
+canopy = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+for cx, cy, r in trees:
+    dark, lite = rng.choice(TREE_COLS)
+    box = int(r * 2.6)
+    m = Image.new("L", (box, box), 0)
+    md = ImageDraw.Draw(m)
+    c = box / 2
+    md.ellipse((c - r * 0.78, c - r * 0.78, c + r * 0.78, c + r * 0.78), fill=255)
+    for k in range(7):
+        a = k / 7 * math.tau + rng.uniform(-0.3, 0.3)
+        rr = r * rng.uniform(0.42, 0.55)
+        ox, oy = math.cos(a) * r * 0.55, math.sin(a) * r * 0.55
+        md.ellipse((c + ox - rr, c + oy - rr, c + ox + rr, c + oy + rr), fill=255)
+    m = m.filter(ImageFilter.GaussianBlur(r * 0.025))
+    g = grad.resize((box, box), Image.BICUBIC)
+    tree = Image.composite(Image.new("RGB", (box, box), lite),
+                           Image.new("RGB", (box, box), dark), g).convert("RGBA")
+    tree.putalpha(m)
+    canopy.alpha_composite(tree, (int(cx - c), int(cy - c)))
 
-# soft inner shading on the blue disc: light from the top-left, a touch deeper bottom-right
-disc = Image.new("L", (S, S), 0)
-ImageDraw.Draw(disc).ellipse([x - R_IN, y - R_IN, x + R_IN, y + R_IN], fill=255)
-hi = Image.new("L", (S, S), 0)
-hr = R_IN * 0.9
-hx, hy = x - R_IN * 0.38, y - R_IN * 0.42
-ImageDraw.Draw(hi).ellipse([hx - hr, hy - hr, hx + hr, hy + hr], fill=70)
-hi = hi.filter(ImageFilter.GaussianBlur(R_IN * 0.35))
-hi = ImageChops.multiply(hi, disc)
-canvas.paste((120, 190, 255, 255), (0, 0), hi)
-lo = Image.new("L", (S, S), 0)
-lx, ly = x + R_IN * 0.55, y + R_IN * 0.6
-ImageDraw.Draw(lo).ellipse([lx - hr, ly - hr, lx + hr, ly + hr], fill=60)
-lo = lo.filter(ImageFilter.GaussianBlur(R_IN * 0.4))
-lo = ImageChops.multiply(lo, disc)
-canvas.paste((0, 70, 190, 255), (0, 0), lo)
+# ---------------------------------------------------------------- road
+road_mask = stroke_mask(road_pts[::2], ROAD_W / 2)
+road_mask = road_mask.filter(ImageFilter.GaussianBlur(S * 0.0025))
 
-final = canvas.convert("RGB").resize((1024, 1024), Image.LANCZOS)
-os.makedirs(OUT_DIR, exist_ok=True)
-final.save(os.path.join(OUT_DIR, SLUG + ".png"))
-final.resize((180, 180), Image.LANCZOS).save(os.path.join(OUT_DIR, SLUG + "_180.png"))
-final.resize((60, 60), Image.LANCZOS).save(os.path.join(OUT_DIR, SLUG + "_60.png"))
-print("ok")
+# colour across road: edge -> mid -> edge, via blurred inner mask
+inner = stroke_mask(road_pts[::2], ROAD_W * 0.30).filter(ImageFilter.GaussianBlur(S * 0.02))
+road_rgb = Image.composite(Image.new("RGB", (S, S), ROAD_MID),
+                           Image.new("RGB", (S, S), ROAD_EDGE), inner)
+
+# wheel ruts: two slightly darker soft lines
+ruts = Image.new("L", (S, S), 0)
+for off in (-ROAD_W * 0.20, ROAD_W * 0.20):
+    rp = offset_pts(road_pts[::3], road_nrm[::3], off)
+    m = stroke_mask(rp, ROAD_W * 0.045)
+    ruts = ImageChops.lighter(ruts, m)
+ruts = ruts.filter(ImageFilter.GaussianBlur(S * 0.006))
+rut_col = Image.new("RGB", (S, S), hexrgb("#c49460"))
+road_rgb = Image.composite(rut_col, road_rgb, ruts.point(lambda v: int(v * 0.55)))
+
+# gravel speckle
+gravel = Image.new("L", (S, S), 0)
+gd = ImageDraw.Draw(gravel)
+for _ in range(9000):
+    i = rng.randrange(len(road_pts))
+    px, py = road_pts[i]
+    nx, ny = road_nrm[i]
+    o = rng.uniform(-0.5, 0.5) * ROAD_W
+    gx, gy = px + nx * o, py + ny * o
+    gr = rng.uniform(3, 9)
+    gd.ellipse((gx - gr, gy - gr, gx + gr, gy + gr), fill=rng.randint(60, 140))
+road_rgb = Image.composite(Image.new("RGB", (S, S), hexrgb("#8f6a42")), road_rgb, gravel)
+light = Image.new("L", (S, S), 0)
+ld = ImageDraw.Draw(light)
+for _ in range(6000):
+    i = rng.randrange(len(road_pts))
+    px, py = road_pts[i]
+    nx, ny = road_nrm[i]
+    o = rng.uniform(-0.45, 0.45) * ROAD_W
+    gx, gy = px + nx * o, py + ny * o
+    gr = rng.uniform(3, 8)
+    ld.ellipse((gx - gr, gy - gr, gx + gr, gy + gr), fill=rng.randint(60, 140))
+road_rgb = Image.composite(Image.new("RGB", (S, S), hexrgb("#f4dcb0")), road_rgb, light)
+
+# ---------------------------------------------------------------- compose landscape
+# ground noise
+gn = noise_layer(256, S, 18, 3)
+canvas = ImageChops.overlay(canvas, Image.merge("RGB", (gn, gn, gn)))
+
+# road (under tree shadows so canopy overhang shades it)
+canvas = Image.composite(road_rgb, canvas, road_mask)
+
+# tree shadows
+canvas = Image.composite(Image.new("RGB", (S, S), hexrgb("#08120a")), canvas,
+                         shadow.point(lambda v: int(v * 0.75)))
+canvas = canvas.convert("RGBA")
+canvas.alpha_composite(canopy)
+
+# ---------------------------------------------------------------- drone
+CX, CY = S / 2, S / 2 - 40
+OFF = 850          # rotor centre offset along x and y
+R = 556            # rotor guard outer radius
+RIM = 128          # guard ring thickness
+ROTORS = [(CX - OFF, CY - OFF), (CX + OFF, CY - OFF),
+          (CX - OFF, CY + OFF), (CX + OFF, CY + OFF)]
+BW, BH = 860, 1320  # body
+
+
+def arm_poly(rx, ry, w_body, w_tip):
+    ux, uy = rx - CX, ry - CY
+    L = math.hypot(ux, uy)
+    ux, uy = ux / L, uy / L
+    nx, ny = -uy, ux
+    return [(CX + nx * w_body / 2, CY + ny * w_body / 2),
+            (rx + nx * w_tip / 2, ry + ny * w_tip / 2),
+            (rx - nx * w_tip / 2, ry - ny * w_tip / 2),
+            (CX - nx * w_body / 2, CY - ny * w_body / 2)]
+
+
+def drone_layers():
+    solid = Image.new("L", (S, S), 0)
+    sd = ImageDraw.Draw(solid)
+    disc = Image.new("L", (S, S), 0)
+    dd = ImageDraw.Draw(disc)
+
+    for rx, ry in ROTORS:
+        sd.polygon(arm_poly(rx, ry, 330, 190), fill=255)
+    for rx, ry in ROTORS:
+        sd.ellipse((rx - R, ry - R, rx + R, ry + R), fill=255)
+        ri = R - RIM
+        sd.ellipse((rx - ri, ry - ri, rx + ri, ry + ri), fill=0)
+        dd.ellipse((rx - ri, ry - ri, rx + ri, ry + ri), fill=255)
+    for rx, ry in ROTORS:
+        # inner arm segment to motor + motor bell
+        ux, uy = CX - rx, CY - ry
+        L = math.hypot(ux, uy)
+        ux, uy = ux / L, uy / L
+        ex, ey = rx + ux * (R - RIM / 2), ry + uy * (R - RIM / 2)
+        nx, ny = -uy, ux
+        w = 170
+        sd.polygon([(rx + nx * w / 2, ry + ny * w / 2), (ex + nx * w / 2, ey + ny * w / 2),
+                    (ex - nx * w / 2, ey - ny * w / 2), (rx - nx * w / 2, ry - ny * w / 2)], fill=255)
+        h = 150
+        sd.ellipse((rx - h, ry - h, rx + h, ry + h), fill=255)
+
+    # body: rounded hull
+    sd.rounded_rectangle((CX - BW / 2, CY - BH / 2, CX + BW / 2, CY + BH / 2), radius=400, fill=255)
+
+    # details drawn on top of the shaded white
+    det = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    dt = ImageDraw.Draw(det)
+    # prop blur: two soft blade sweeps per rotor
+    ri = R - RIM - 6
+    for i, (rx, ry) in enumerate(ROTORS):
+        a0 = [200, 250, 160, 290][i]
+        for k in range(2):
+            a = a0 + k * 180
+            for j in range(10):  # fading trail
+                dt.pieslice((rx - ri, ry - ri, rx + ri, ry + ri), a + j * 4, a + j * 4 + 5,
+                            fill=(255, 255, 255, int(20 + 9 * j)))
+    # motor caps
+    for rx, ry in ROTORS:
+        dt.ellipse((rx - 62, ry - 62, rx + 62, ry + 62), fill=(178, 186, 198, 255))
+        dt.ellipse((rx - 26, ry - 26, rx + 26, ry + 26), fill=(120, 128, 140, 255))
+    # top shell: crisp inset cover, a touch cooler than the frame
+    m = 150
+    dt.rounded_rectangle((CX - BW / 2 + m, CY - BH / 2 + 300, CX + BW / 2 - m, CY + BH / 2 - 330),
+                         radius=BW / 2 - m, fill=(234, 238, 244, 255))
+    dt.rounded_rectangle((CX - BW / 2 + m, CY - BH / 2 + 300, CX + BW / 2 - m, CY + BH / 2 - 330),
+                         radius=BW / 2 - m, outline=(250, 251, 253, 255), width=14)
+    # yellow tail status light (small pill at the rear)
+    ty = CY + BH / 2 - 170
+    gl = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(gl)
+    gd.rounded_rectangle((CX - 210, ty - 90, CX + 210, ty + 90), radius=90, fill=(255, 214, 10, 120))
+    gl = gl.filter(ImageFilter.GaussianBlur(40))
+    det = Image.alpha_composite(det, gl)
+    dt = ImageDraw.Draw(det)
+    dt.rounded_rectangle((CX - 150, ty - 48, CX + 150, ty + 48), radius=48, fill=(255, 214, 10, 255))
+    # front gimbal camera, mostly outside the hull so it reads as a camera not an eye
+    gy = CY - BH / 2 + 30
+    dt.rounded_rectangle((CX - 190, gy - 150, CX + 190, gy + 110), radius=110, fill=(34, 38, 46, 255))
+    dt.ellipse((CX - 80, gy - 110, CX + 80, gy + 50), fill=(58, 76, 100, 255))
+    dt.ellipse((CX - 50, gy - 92, CX - 8, gy - 50), fill=(190, 210, 235, 210))
+    return solid, disc, det
+
+
+def shade_white(mask):
+    """Near-white with top-left light, soft bevel darkening near edges, crisp outline."""
+    grad = Image.linear_gradient("L").rotate(45, resample=Image.BICUBIC)
+    grad = grad.resize((S, S), Image.BICUBIC)
+    lit = grad.point(lambda v: int(255 - v * 40 / 255))
+    base = Image.merge("RGB", [lit, lit, lit.point(lambda v: min(255, v + 3))])
+    inner = mask.filter(ImageFilter.GaussianBlur(40))
+    edge = ImageChops.subtract(mask, inner).point(lambda v: int(min(255, v * 1.6) * 0.45))
+    base = Image.composite(Image.new("RGB", (S, S), (150, 158, 170)), base, edge)
+    out = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    out.paste(base, (0, 0), mask)
+    # thin dark contour so it stays crisp over pale ground
+    ring = ImageChops.subtract(mask.filter(ImageFilter.MaxFilter(15)), mask)
+    outline = Image.new("RGBA", (S, S), (20, 26, 18, 0))
+    outline.putalpha(ring.point(lambda v: int(v * 0.35)))
+    return Image.alpha_composite(outline, out)
+
+
+# ---------------------------------------------------------------- the drone over the bush road
+solid, disc, det = drone_layers()
+
+# shadow on the bush (hovering low: offset down-right, soft)
+sh_alpha = ImageChops.lighter(solid, disc.point(lambda v: v // 4))
+sh = sh_alpha.filter(ImageFilter.GaussianBlur(46))
+sh = ImageChops.offset(sh, 120, 170).point(lambda v: int(v * 0.62))
+drone_shadow = Image.new("RGBA", (S, S), (8, 12, 6, 0))
+drone_shadow.putalpha(sh)
+canvas = Image.alpha_composite(canvas, drone_shadow)
+
+# translucent prop discs
+disc_layer = Image.new("RGBA", (S, S), (240, 244, 248, 0))
+disc_layer.putalpha(disc.point(lambda v: int(v * 0.18)))
+canvas = Image.alpha_composite(canvas, disc_layer)
+
+canvas = Image.alpha_composite(canvas, shade_white(solid))
+canvas = Image.alpha_composite(canvas, det)
+
+# ---------------------------------------------------------------- finishing
+# light from top-left, vignette to bottom-right
+vig = Image.new("L", (S, S), 0)
+vd = ImageDraw.Draw(vig)
+vd.ellipse((-0.25 * S, -0.25 * S, 1.25 * S, 1.25 * S), fill=255)
+vig = vig.filter(ImageFilter.GaussianBlur(S * 0.12))
+canvas = Image.composite(canvas, Image.alpha_composite(canvas, Image.new("RGBA", (S, S), (0, 0, 0, 110))), vig)
+
+final = canvas.convert("RGB").resize((OUT, OUT), Image.LANCZOS)
+final.save(OUT_PATH, optimize=True)
+print("wrote", OUT_PATH)
