@@ -2,9 +2,17 @@ name: Zoom test
 
 # Records the iPhone simulator's screen while SatMapUITests/ZoomTests zooms and pans the map, once for each way of
 # drawing the imagery, from a fresh install each time (nothing cached). The videos are uploaded for frame-by-frame
-# checks of empty blocks while tiles load. Started by hand (workflow_dispatch).
+# checks of empty blocks while tiles load. Runs when the test or this file changes (or by hand from main).
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "SatMapUITests/ZoomTests.swift"
+      - ".github/workflows/zoomtest.yml"
+
+concurrency:
+  group: zoomtest-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   zoom:
