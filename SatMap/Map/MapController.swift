@@ -12,9 +12,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private let model: AppModel
 
     private var satelliteMode = SatelliteMode.current
-    /// The imagery: the tile layer, and under it what is shown while its tiles load (`SatelliteMode`).
-    private let satellite = SatelliteTileOverlay(urlTemplate: nil)
-    private lazy var underlay: MKTileOverlay? = Self.underlay(for: satelliteMode)
+    private let backdrop = SatelliteBackdropOverlay(urlTemplate: nil)
+    private lazy var satellite: MKTileOverlay = Self.satelliteOverlay(for: satelliteMode)
     private var satelliteRenderer: SatelliteRenderer?
     private let contours = ContourTileOverlay(urlTemplate: nil)
     private let track = TrackOverlay()
@@ -41,6 +40,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     /// No saved camera yet: zoom in on the first GPS fix.
     private let firstLaunch = UserDefaults.standard.array(forKey: "camera") == nil
     private var hasCentredOnFirstFix = false
+    /// Until then a new position doesn't recentre the map, which would cut short a zoom onto you.
+    private var keepCameraUntil: CFTimeInterval = 0
 
     init(model: AppModel) {
         self.model = model
@@ -63,7 +64,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
         // Later overlays draw on top: imagery, contours (when switched on), (blocks inserted below the track),
         // track, measuring line.
-        if let u = underlay { mapView.addOverlay(u, level: .aboveLabels) }
+        if satelliteMode == .backdrop { mapView.addOverlay(backdrop, level: .aboveLabels) }
         mapView.addOverlay(satellite, level: .aboveLabels)
         NotificationCenter.default.addObserver(forName: SatelliteMode.changed, object: nil, queue: .main) { [weak self] _ in
             self?.satelliteModeChanged()
@@ -202,7 +203,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             self.reloadPending = false
             self.lastReload = Date()
             // Only when the imagery layer showed something it should replace: a reload empties it for a moment.
-            if self.satellite.takeNeedsReload() {
+            if (self.satellite as? SatelliteTileOverlay)?.takeNeedsReload() == true {
                 (self.mapView.renderer(for: self.satellite) as? MKTileOverlayRenderer)?.reloadData()
             }
             self.satelliteRenderer?.reload()
@@ -225,6 +226,29 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func center(on c: CLLocationCoordinate2D, animated: Bool) {
         mapView.setCenter(c, animated: animated)
+    }
+
+    /// Centres on a point with the screen this many metres across, however the map is turned.
+    func zoom(onto c: CLLocationCoordinate2D, metersAcross: Double) {
+        let size = mapView.bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        keepCameraUntil = CACurrentMediaTime() + 1
+        if abs(mapView.camera.heading) < 0.5 || abs(mapView.camera.heading - 360) < 0.5 {
+            let w = metersAcross * MKMapPointsPerMeterAtLatitude(c.latitude)
+            let h = w * Double(size.height / size.width)
+            let p = MKMapPoint(c)
+            mapView.setVisibleMapRect(MKMapRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h), animated: true)
+            return
+        }
+        // Turned: scale the camera height by how far the screen now reaches across (the map is centred on you).
+        let left = mapView.convert(CGPoint(x: 0, y: size.height / 2), toCoordinateFrom: mapView)
+        let right = mapView.convert(CGPoint(x: size.width, y: size.height / 2), toCoordinateFrom: mapView)
+        let across = CLLocation(latitude: left.latitude, longitude: left.longitude)
+            .distance(from: CLLocation(latitude: right.latitude, longitude: right.longitude))
+        guard across > 0, let camera = mapView.camera.copy() as? MKMapCamera else { return }
+        camera.centerCoordinate = c
+        camera.centerCoordinateDistance *= metersAcross / across
+        mapView.setCamera(camera, animated: true)
     }
 
     func zoom(to b: GeoBounds) {
@@ -281,7 +305,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         if model.following {
             if firstLaunch && !hasCentredOnFirstFix {
                 mapView.setRegion(MKCoordinateRegion(center: loc.coordinate, latitudinalMeters: 1500, longitudinalMeters: 1500), animated: false)
-            } else {
+            } else if CACurrentMediaTime() >= keepCameraUntil {
                 mapView.setCenter(loc.coordinate, animated: true)
             }
             hasCentredOnFirstFix = true
@@ -296,24 +320,21 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     // MARK: - Satellite imagery
 
-    private static func underlay(for mode: SatelliteMode) -> MKTileOverlay? {
-        switch mode {
-        case .single: return nil
-        case .backdrop: return SatelliteBackdropOverlay(urlTemplate: nil)
-        case .renderer: return SatelliteDrawnOverlay(urlTemplate: nil)
-        }
+    private static func satelliteOverlay(for mode: SatelliteMode) -> MKTileOverlay {
+        mode == .renderer ? SatelliteDrawnOverlay(urlTemplate: nil) : SatelliteTileOverlay(urlTemplate: nil)
     }
 
-    /// The way of drawing the imagery was switched (Offline maps, while it is being tried out): swap the layer under
-    /// the tile layer.
+    /// The way of drawing the imagery was switched (Offline maps, while it is being tried out): swap the layers at the
+    /// bottom of the map.
     private func satelliteModeChanged() {
         let mode = SatelliteMode.current
         guard mode != satelliteMode else { return }
         satelliteMode = mode
-        if let u = underlay { mapView.removeOverlay(u) }
+        mapView.removeOverlays([backdrop, satellite])
         satelliteRenderer = nil
-        underlay = Self.underlay(for: mode)
-        if let u = underlay { mapView.insertOverlay(u, at: 0, level: .aboveLabels) }
+        satellite = Self.satelliteOverlay(for: mode)
+        mapView.insertOverlay(satellite, at: 0, level: .aboveLabels)
+        if mode == .backdrop { mapView.insertOverlay(backdrop, at: 0, level: .aboveLabels) }
     }
 
     // MARK: - Contours

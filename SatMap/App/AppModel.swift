@@ -139,7 +139,13 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         if case .placed = measure, UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
     }
 
+    /// My location: centres the map on you and follows you. Tapped again while it does (also a quick second tap), it
+    /// zooms in until the screen is 300 m across.
     func centerOnUser() {
+        if following, let loc = recorder.location {
+            map?.zoom(onto: loc.coordinate, metersAcross: 300)
+            return
+        }
         following = true
         if let loc = recorder.location { map?.center(on: loc.coordinate, animated: true) }
     }
