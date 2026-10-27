@@ -243,17 +243,14 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     }
 
     /// Centres on a point (the map is already near it) with the screen this many metres across, however the map is
-    /// turned. Measured across the whole screen and scaled, rather than asking for a 300 m rect: MapKit lays the map
-    /// out within the safe area (it centres there), so a rect could come out wider on a notched iPhone.
+    /// turned: the camera height scaled by how far the screen reaches now, rather than asking for a 300 m rect, which
+    /// MapKit lays out within the safe area (it centres there), so it could come out wider on a notched iPhone.
     func zoom(onto c: CLLocationCoordinate2D, metersAcross: Double) {
         let size = mapView.bounds.size
         guard size.width > 0, size.height > 0 else { return }
         keepCameraUntil = CACurrentMediaTime() + 1
-        let left = mapView.convert(CGPoint(x: 0, y: size.height / 2), toCoordinateFrom: mapView)
-        let right = mapView.convert(CGPoint(x: size.width, y: size.height / 2), toCoordinateFrom: mapView)
-        let across = CLLocation(latitude: left.latitude, longitude: left.longitude)
-            .distance(from: CLLocation(latitude: right.latitude, longitude: right.longitude))
-        guard across > 0, let camera = mapView.camera.copy() as? MKMapCamera else { return }
+        guard let perPoint = metersPerPoint, let camera = mapView.camera.copy() as? MKMapCamera else { return }
+        let across = perPoint * Double(size.width)
         camera.centerCoordinate = c
         camera.centerCoordinateDistance *= metersAcross / across
         mapView.setCamera(camera, animated: true)
@@ -297,15 +294,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         updateScale()
     }
 
-    /// The scale bar: ground metres per screen point at the crosshair, measured across 100 points (right however the
-    /// map is turned).
     private func updateScale() {
+        if let m = metersPerPoint { model.scale.update(metersPerPoint: m) }
+    }
+
+    /// Ground metres per screen point at the crosshair, measured across 100 points around it: right however the map
+    /// is turned, and at any zoom (edge to edge, a zoomed-out map's sides can be half the globe apart or more).
+    private var metersPerPoint: Double? {
         let b = mapView.bounds
-        guard b.width > 100 else { return }
+        guard b.width > 100 else { return nil }
         let l = mapView.convert(CGPoint(x: b.midX - 50, y: b.midY), toCoordinateFrom: mapView)
         let r = mapView.convert(CGPoint(x: b.midX + 50, y: b.midY), toCoordinateFrom: mapView)
         let m = Geo.distance(GeoPoint(lat: l.latitude, lon: l.longitude), GeoPoint(lat: r.latitude, lon: r.longitude))
-        model.scale.update(metersPerPoint: m / 100)
+        return m > 0 ? m / 100 : nil
     }
 
     private func userIsTouchingMap() -> Bool {
