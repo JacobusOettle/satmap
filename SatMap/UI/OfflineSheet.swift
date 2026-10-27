@@ -201,16 +201,17 @@ private struct PresetAreaView: View {
 /// the track area (the track may have been cleared since). Worked out once when shown.
 private struct TrackAreaView: View {
     @ObservedObject var model: AppModel
-    @State private var lines: [[GeoPoint]]?
+    @State private var download: TrackDownload?
+    @State private var worked = false
 
     var body: some View {
         Group {
-            if let lines = lines, !lines.isEmpty {
+            if let download = download {
                 NewAreaView(model: model,
                             area: PendingArea(name: model.offline.areas.first { $0.isTrack == true }?.name ?? "Where I've been",
-                                              shape: Roads.corridor(lines)),
-                            trackLines: lines)
-            } else if lines != nil {
+                                              shape: Roads.corridor(download.lines)),
+                            track: download)
+            } else if worked {
                 Text("No track recorded yet. Your dotted track is recorded while SatMap knows where you are.")
                     .foregroundColor(.secondary)
                     .padding()
@@ -219,12 +220,21 @@ private struct TrackAreaView: View {
             }
         }
         .task {
-            guard lines == nil else { return }
+            guard !worked else { return }
             let track = model.track
-            let previous = model.offline.areas.first { $0.isTrack == true }?.roads ?? []
-            lines = await Task.detached(priority: .userInitiated) {
-                Roads.mergeTrack(previous: previous, latest: Roads.trackLines(track))
+            let existing = model.offline.areas.first { $0.isTrack == true }
+            let previous = existing?.roads ?? []
+            let completeTo = existing?.status == .complete ? existing?.maxZoom : nil
+            let result = await Task.detached(priority: .userInitiated) { () -> TrackDownload? in
+                let latest = Roads.trackLines(track)
+                let lines = Roads.mergeTrack(previous: previous, latest: latest)
+                guard !lines.isEmpty else { return nil }
+                return TrackDownload(lines: lines,
+                                     newLines: completeTo == nil ? lines : Roads.newParts(of: latest, comparedWith: previous),
+                                     maxZoom: existing?.maxZoom, allowCellular: existing?.allowCellular, completeTo: completeTo)
             }.value
+            download = result
+            worked = true
         }
     }
 }

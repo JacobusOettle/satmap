@@ -85,30 +85,34 @@ enum Roads {
     /// The parts of the roads inside the area: each road is checked every 10 m or less against the area's
     /// tiles at zoom 21 (about 15 m), and the result is simplified to within 1 m.
     static func clip(_ roads: [[GeoPoint]], to area: CoverageShape) -> [[GeoPoint]] {
-        clip(roads, to: area, keepInside: true)
-    }
-
-    /// The parts of the roads inside the area (`keepInside`) or outside it, checked as in `clip(_:to:)`.
-    private static func clip(_ roads: [[GeoPoint]], to area: CoverageShape, keepInside: Bool) -> [[GeoPoint]] {
         let z = 21
         let coverage = TileCoverage(shape: area, zoom: z)
-        func inside(_ p: GeoPoint) -> Bool { coverage.contains(TileID.containing(p, z: z)) == keepInside }
+        return parts(of: roads.filter { $0.count >= 2 }, step: 10) { coverage.contains(TileID.containing($0, z: z)) }
+    }
+
+    /// The parts of the lines where `keep` holds, checked every `step` metres or less and simplified to within 1 m.
+    /// A one-point line is kept whole or not at all.
+    private static func parts(of lines: [[GeoPoint]], step: Double, keep: (GeoPoint) -> Bool) -> [[GeoPoint]] {
         func lerp(_ a: GeoPoint, _ b: GeoPoint, _ t: Double) -> GeoPoint {
             GeoPoint(lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t)
         }
 
         var out: [[GeoPoint]] = []
-        for road in roads where road.count >= 2 {
+        for line in lines where !line.isEmpty {
+            if line.count == 1 {
+                if keep(line[0]) { out.append(line) }
+                continue
+            }
             var run: [GeoPoint] = []
             func flush() {
                 if run.count >= 2 { out.append(simplify(run, toleranceMeters: 1)) }
                 run = []
             }
-            for i in 0..<(road.count - 1) {
-                let a = road[i], b = road[i + 1]
-                let n = max(1, Int((Geo.distance(a, b) / 10).rounded(.up)))
+            for i in 0..<(line.count - 1) {
+                let a = line[i], b = line[i + 1]
+                let n = max(1, Int((Geo.distance(a, b) / step).rounded(.up)))
                 for k in 0..<n {
-                    if inside(lerp(a, b, (Double(k) + 0.5) / Double(n))) {
+                    if keep(lerp(a, b, (Double(k) + 0.5) / Double(n))) {
                         if run.isEmpty { run.append(lerp(a, b, Double(k) / Double(n))) }
                         run.append(lerp(a, b, Double(k + 1) / Double(n)))
                     } else {
@@ -149,12 +153,23 @@ enum Roads {
         return lines.map { simplify($0, toleranceMeters: 2) }
     }
 
+    /// How close a part of an earlier track must be to the latest one to count as the same path (both lie within 2 m
+    /// of where you were, after simplifying).
+    static let sameTrackMeters = 5.0
+
     /// The lines of the area along your track after an update: the latest track plus the parts of the earlier lines
-    /// it doesn't cover (the track may have been cleared since), so imagery saved before stays part of the area.
+    /// away from it (the track may have been cleared since), so imagery saved before stays part of the area.
     static func mergeTrack(previous: [[GeoPoint]], latest: [[GeoPoint]]) -> [[GeoPoint]] {
         guard !previous.isEmpty else { return latest }
         guard !latest.isEmpty else { return previous }
-        return latest + clip(previous, to: corridor(latest), keepInside: false)
+        return latest + newParts(of: previous, comparedWith: latest)
+    }
+
+    /// The parts of `lines` farther than `sameTrackMeters` from every one of `others` (checked every 5 m or less).
+    static func newParts(of lines: [[GeoPoint]], comparedWith others: [[GeoPoint]]) -> [[GeoPoint]] {
+        guard !others.isEmpty else { return lines }
+        let near = NearLines(others, within: sameTrackMeters)
+        return parts(of: lines, step: 5) { !near.contains($0) }
     }
 
     /// Douglas–Peucker in local metres around the line's first point.
@@ -166,6 +181,49 @@ enum Roads {
         return Simplify.douglasPeucker(planar, tolerance: toleranceMeters).map {
             GeoPoint(lat: o.lat + $0.y / my, lon: o.lon + $0.x / mx)
         }
+    }
+}
+
+/// Whether a point is within some metres of a set of lines, quick for long tracks: the segments are filed under the
+/// zoom-16 tiles (about 600 m) they come near.
+private struct NearLines {
+    private let meters: Double
+    private var cells: [Int64: [(GeoPoint, GeoPoint)]] = [:]
+    private static let z = 16
+
+    init(_ lines: [[GeoPoint]], within meters: Double) {
+        self.meters = meters
+        for line in lines where !line.isEmpty {
+            let segments = line.count == 1 ? [(line[0], line[0])] : Array(zip(line, line.dropFirst()))
+            for (a, b) in segments {
+                let dLat = meters / 110_574
+                let dLon = meters / (111_320 * max(0.01, cos(max(abs(a.lat), abs(b.lat)) * .pi / 180)))
+                let nw = TileID.containing(GeoPoint(lat: max(a.lat, b.lat) + dLat, lon: min(a.lon, b.lon) - dLon), z: Self.z)
+                let se = TileID.containing(GeoPoint(lat: min(a.lat, b.lat) - dLat, lon: max(a.lon, b.lon) + dLon), z: Self.z)
+                for y in nw.y...se.y {
+                    for x in nw.x...se.x { cells[Self.key(x, y), default: []].append((a, b)) }
+                }
+            }
+        }
+    }
+
+    private static func key(_ x: Int, _ y: Int) -> Int64 { Int64(x) << 32 | Int64(y) }
+
+    func contains(_ p: GeoPoint) -> Bool {
+        let t = TileID.containing(p, z: Self.z)
+        guard let segments = cells[Self.key(t.x, t.y)] else { return false }
+        // Local metres around p.
+        let mx = 111_320 * cos(p.lat * .pi / 180), my = 110_574.0
+        for (a, b) in segments {
+            let ax = (a.lon - p.lon) * mx, ay = (a.lat - p.lat) * my
+            let bx = (b.lon - p.lon) * mx, by = (b.lat - p.lat) * my
+            let dx = bx - ax, dy = by - ay
+            let len2 = dx * dx + dy * dy
+            let t = len2 > 0 ? min(1, max(0, -(ax * dx + ay * dy) / len2)) : 0
+            let cx = ax + t * dx, cy = ay + t * dy
+            if cx * cx + cy * cy <= meters * meters { return true }
+        }
+        return false
     }
 }
 

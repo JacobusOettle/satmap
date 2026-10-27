@@ -10,13 +10,15 @@ struct NewAreaView: View {
     /// A road set shipped with the app (`RoadPresets`): imagery is always downloaded along its roads.
     var presetID: String?
     /// Your recorded track ("Where I've been"): imagery along it, updating the one track area.
-    var trackLines: [[GeoPoint]]?
+    var track: TrackDownload?
 
     @State private var name: String
     /// The deepest zoom level to download; remembered for the next area.
     @AppStorage("offlineMaxZoom") private var maxZoom = TileSources.imageryMaxZoom
     /// Zoom levels offered, most detailed first: from about 3 cm to 5 m per pixel.
     private let zoomChoices = Array((15...TileSources.imageryMaxZoom).reversed())
+    /// For your track: the track area's own zoom, kept apart from the one remembered for other areas.
+    @State private var trackZoom: Int?
     @State private var allowCellular = false
     @State private var alongRoads = false
     @State private var roads: RoadsState = .notLoaded
@@ -38,18 +40,20 @@ struct NewAreaView: View {
         case failed(String)
     }
 
-    init(model: AppModel, area: PendingArea, showsCancel: Bool = false, presetID: String? = nil, trackLines: [[GeoPoint]]? = nil) {
+    init(model: AppModel, area: PendingArea, showsCancel: Bool = false, presetID: String? = nil, track: TrackDownload? = nil) {
         self.model = model
         self.area = area
         self.showsCancel = showsCancel
         self.presetID = presetID
-        self.trackLines = trackLines
+        self.track = track
         _name = State(initialValue: area.name)
-        _alongRoads = State(initialValue: presetID != nil || trackLines != nil)
+        _alongRoads = State(initialValue: presetID != nil || track != nil)
+        _trackZoom = State(initialValue: track?.maxZoom)
+        _allowCellular = State(initialValue: track?.allowCellular ?? false)
     }
 
     /// Imagery always goes along given lines (a shipped road list or your track), never the whole area.
-    private var fixedLines: Bool { presetID != nil || trackLines != nil }
+    private var fixedLines: Bool { presetID != nil || track != nil }
 
     var body: some View {
         Form {
@@ -59,7 +63,7 @@ struct NewAreaView: View {
 
             detailSection
 
-            if trackLines != nil {
+            if track != nil {
                 Section {
                     roadsStatus
                 } footer: {
@@ -93,8 +97,8 @@ struct NewAreaView: View {
             Section {
                 Button {
                     let trimmed = name.trimmingCharacters(in: .whitespaces)
-                    if let lines = trackLines {
-                        model.startTrackDownload(name: trimmed, lines: lines, maxZoom: chosenZoom, allowCellular: allowCellular)
+                    if let track = track {
+                        model.startTrackDownload(name: trimmed, lines: track.lines, maxZoom: chosenZoom, allowCellular: allowCellular)
                     } else {
                         model.startDownload(PendingArea(name: trimmed, shape: area.shape),
                                             roads: presetID == nil && alongRoads ? roadLines : nil, preset: presetID,
@@ -123,7 +127,8 @@ struct NewAreaView: View {
             }
         }
         .task {
-            let shape = area.shape
+            // Elevation already saved for your track isn't downloaded again.
+            let shape = track.map { Roads.corridor($0.newLines) } ?? area.shape
             // Along a road list or your track the whole area only matters for elevation; its imagery counts for a big
             // park would take long to work out.
             let zooms = fixedLines ? 0...Terrarium.maxZoom : 0...TileSources.imageryMaxZoom
@@ -142,7 +147,9 @@ struct NewAreaView: View {
     private var detailSection: some View {
         Section {
             ForEach(zoomChoices, id: \.self) { z in
-                Button { maxZoom = z } label: { zoomRow(z) }
+                Button {
+                    if track != nil { trackZoom = z } else { maxZoom = z }
+                } label: { zoomRow(z) }
                     .accessibilityAddTraits(z == chosenZoom ? .isSelected : [])
             }
         } header: {
@@ -187,9 +194,13 @@ struct NewAreaView: View {
                 Text("Finding roads…").foregroundColor(.secondary)
             }
         case .loaded(_, let km, _):
-            if km > 0 {
-                row(trackLines != nil ? "Your track" : "Roads and tracks",
-                    km < 10 ? String(format: "%.1f km", km) : "\(Format.count(Int(km.rounded()))) km")
+            if let track = track {
+                row("Your track", kilometres(km))
+                if track.completeTo != nil {
+                    row("New since the last download", kilometres(Roads.length(track.newLines) / 1000))
+                }
+            } else if km > 0 {
+                row("Roads and tracks", kilometres(km))
             } else {
                 Text("No roads or tracks are mapped in this area.").foregroundColor(.orange)
             }
@@ -200,7 +211,11 @@ struct NewAreaView: View {
     }
 
     private var chosenZoom: Int {
-        min(max(maxZoom, zoomChoices.last!), zoomChoices.first!)
+        min(max(trackZoom ?? maxZoom, zoomChoices.last!), zoomChoices.first!)
+    }
+
+    private func kilometres(_ km: Double) -> String {
+        km < 10 ? String(format: "%.1f km", km) : "\(Format.count(Int(km.rounded()))) km"
     }
 
     private func zoomRow(_ z: Int) -> some View {
@@ -231,7 +246,9 @@ struct NewAreaView: View {
             if alongRoads, case .failed = roads { return "–" }
             return "…"
         }
-        let bytes = Format.bytes(estimate(imagery: imagery, terrain: counts, depth: z).bytes)
+        let e = estimate(imagery: imagery, terrain: counts, depth: z)
+        if e.tiles == 0 { return "Nothing new" } // your track, already saved to this level
+        let bytes = Format.bytes(e.bytes)
         return z <= typicalDepth ? "≈ \(bytes)" : "up to \(bytes)"
     }
 
@@ -259,15 +276,23 @@ struct NewAreaView: View {
         let preset = presetID.flatMap(RoadPresets.load)
         do {
             let lines: [[GeoPoint]]
-            if let track = trackLines {
-                lines = track
+            if let track = track {
+                lines = track.lines
             } else if let preset = preset {
                 lines = preset.roads
             } else {
                 lines = try await RoadFetcher.roads(in: shape)
             }
-            let result = await Task.detached(priority: .userInitiated) {
-                (Roads.length(lines) / 1000, TileCoverage.tileCounts(shape: Roads.corridor(lines), zooms: 0...TileSources.imageryMaxZoom))
+            // For your track, the levels the area already has are only needed for the new parts.
+            let fresh = track.map { Roads.corridor($0.newLines) }
+            let savedTo = track?.completeTo ?? -1
+            let result = await Task.detached(priority: .userInitiated) { () -> (Double, [Int: Int]) in
+                let whole = Roads.corridor(lines)
+                var counts: [Int: Int] = [:]
+                for z in 0...TileSources.imageryMaxZoom {
+                    counts[z] = TileCoverage(shape: z <= savedTo ? fresh ?? whole : whole, zoom: z).tileCount
+                }
+                return (Roads.length(lines) / 1000, counts)
             }.value
             roads = .loaded(lines: lines, km: result.0, counts: result.1)
         } catch is CancellationError {
@@ -296,4 +321,17 @@ struct NewAreaView: View {
             Text(value).foregroundColor(.secondary).monospacedDigit()
         }
     }
+}
+
+/// "Where I've been": what a download along your track covers.
+struct TrackDownload {
+    /// The area's lines after this download: your track plus the parts of earlier trips already in the area.
+    var lines: [[GeoPoint]]
+    /// The parts not saved yet: the parts of your track away from the area's lines, or all of `lines`.
+    var newLines: [[GeoPoint]]
+    /// The track area's own settings, if it exists.
+    var maxZoom: Int?
+    var allowCellular: Bool?
+    /// The zoom the track area is completely downloaded to, or nil (no area yet, or its download didn't finish).
+    var completeTo: Int?
 }

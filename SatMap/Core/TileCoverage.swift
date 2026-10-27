@@ -50,21 +50,25 @@ struct TileCoverage {
 
     init(shape: CoverageShape, zoom: Int) {
         self.zoom = zoom
-        guard let gb = shape.geometryBounds, !shape.isEmpty else {
+        guard !shape.isEmpty else {
             rows = []
             tileCount = 0
             return
         }
         let n = Double(1 << zoom)
         let maxIndex = (1 << zoom) - 1
-        let metersPerWorld = Geo.metersPerWorldUnit(atLatitude: gb.center.lat)
-        let buf = max(0, shape.bufferMeters) / metersPerWorld * n
+        /// The buffer in tiles at a latitude. Each piece uses its own (at the largest |latitude| it reaches, so it is
+        /// never narrower than asked): one shape can hold places far apart, e.g. trips months apart in one track area.
+        func bufAt(_ lat: Double) -> Double {
+            max(0, shape.bufferMeters) / Geo.metersPerWorldUnit(atLatitude: lat) * n
+        }
 
+        /// Per row, x-extents already grown by their buffer.
         var extents: [Int: [(Double, Double)]] = [:]
 
-        func add(row: Int, _ x0: Double, _ x1: Double) {
+        func add(row: Int, _ x0: Double, _ x1: Double, buf: Double) {
             guard row >= 0, row <= maxIndex else { return }
-            extents[row, default: []].append((min(x0, x1), max(x0, x1)))
+            extents[row, default: []].append((min(x0, x1) - buf, max(x0, x1) + buf))
         }
 
         func toTile(_ p: GeoPoint) -> (x: Double, y: Double) {
@@ -72,7 +76,7 @@ struct TileCoverage {
             return (w.x * n, w.y * n)
         }
 
-        func rowSpan(_ minY: Double, _ maxY: Double) -> ClosedRange<Int>? {
+        func rowSpan(_ minY: Double, _ maxY: Double, buf: Double) -> ClosedRange<Int>? {
             let r0 = max(0, Int(floor(minY - buf)))
             let r1 = min(maxIndex, Int(floor(maxY + buf)))
             return r0 <= r1 ? r0...r1 : nil
@@ -97,15 +101,16 @@ struct TileCoverage {
         // Interior uses the non-zero winding rule, so a hand-drawn lasso that loops past its start
         // still covers the doubly-encircled part (as it looks on screen).
         for ring in shape.polygons where ring.count >= 3 {
+            let buf = bufAt(ring.map { abs($0.lat) }.max()!)
             var pts = ring.map(toTile)
             if pts.first! != pts.last! { pts.append(pts.first!) }
             let ys = pts.map(\.y)
-            guard let span = rowSpan(ys.min()!, ys.max()!) else { continue }
+            guard let span = rowSpan(ys.min()!, ys.max()!, buf: buf) else { continue }
             for row in span {
                 let top = Double(row) - buf
                 let bottom = Double(row + 1) + buf
                 for i in 0..<(pts.count - 1) {
-                    if let e = clip(pts[i], pts[i + 1], top, bottom) { add(row: row, e.0, e.1) }
+                    if let e = clip(pts[i], pts[i + 1], top, bottom) { add(row: row, e.0, e.1, buf: buf) }
                 }
                 for lineY in [top, bottom] {
                     var crossings: [(x: Double, dir: Int)] = []
@@ -124,7 +129,7 @@ struct TileCoverage {
                         if before == 0 && winding != 0 {
                             spanStart = c.x
                         } else if before != 0 && winding == 0 {
-                            add(row: row, spanStart, c.x)
+                            add(row: row, spanStart, c.x, buf: buf)
                         }
                     }
                 }
@@ -134,24 +139,27 @@ struct TileCoverage {
         for line in shape.lines where !line.isEmpty {
             let pts = line.map(toTile)
             if pts.count == 1 {
-                if let span = rowSpan(pts[0].y, pts[0].y) {
-                    for row in span { add(row: row, pts[0].x, pts[0].x) }
+                let buf = bufAt(line[0].lat)
+                if let span = rowSpan(pts[0].y, pts[0].y, buf: buf) {
+                    for row in span { add(row: row, pts[0].x, pts[0].x, buf: buf) }
                 }
                 continue
             }
             for i in 0..<(pts.count - 1) {
                 let p = pts[i], q = pts[i + 1]
-                guard let span = rowSpan(min(p.y, q.y), max(p.y, q.y)) else { continue }
+                let buf = bufAt(max(abs(line[i].lat), abs(line[i + 1].lat)))
+                guard let span = rowSpan(min(p.y, q.y), max(p.y, q.y), buf: buf) else { continue }
                 for row in span {
-                    if let e = clip(p, q, Double(row) - buf, Double(row + 1) + buf) { add(row: row, e.0, e.1) }
+                    if let e = clip(p, q, Double(row) - buf, Double(row + 1) + buf) { add(row: row, e.0, e.1, buf: buf) }
                 }
             }
         }
 
         for point in shape.points {
             let p = toTile(point)
-            if let span = rowSpan(p.y, p.y) {
-                for row in span { add(row: row, p.x, p.x) }
+            let buf = bufAt(point.lat)
+            if let span = rowSpan(p.y, p.y, buf: buf) {
+                for row in span { add(row: row, p.x, p.x, buf: buf) }
             }
         }
 
@@ -159,8 +167,8 @@ struct TileCoverage {
         var count = 0
         for y in extents.keys.sorted() {
             var ranges: [ClosedRange<Int>] = extents[y]!.map { e in
-                let start = max(0, Int(floor(e.0 - buf)))
-                let end = min(maxIndex, max(start, Int(ceil(e.1 + buf)) - 1))
+                let start = max(0, Int(floor(e.0)))
+                let end = min(maxIndex, max(start, Int(ceil(e.1)) - 1))
                 return start...max(start, end)
             }
             ranges.sort { $0.lowerBound < $1.lowerBound }

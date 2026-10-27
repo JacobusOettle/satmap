@@ -634,6 +634,34 @@ final class RoadsTests: XCTestCase {
         XCTAssertEqual(Roads.length(partly), Roads.length([longer]), accuracy: 40)
         XCTAssertEqual(Roads.mergeTrack(previous: [], latest: [east]), [east])
         XCTAssertEqual(Roads.mergeTrack(previous: [east], latest: []), [east])
+
+        // A lone point from an earlier trip stays, unless the new track passes it.
+        let lone = [GeoPoint(lat: -25.10, lon: 31.80)]
+        XCTAssertEqual(Roads.mergeTrack(previous: [east, lone], latest: [elsewhere]).filter { $0.count == 1 }, [lone])
+        let through = [GeoPoint(lat: -25.10, lon: 31.799), GeoPoint(lat: -25.10, lon: 31.801)]
+        XCTAssertEqual(Roads.mergeTrack(previous: [lone], latest: [through]), [through])
+        // An earlier path 20 m beside the new one (another track, the other side of a river) is kept whole;
+        // one 3 m off (the same path, recorded again) is not.
+        let beside = east.map { GeoPoint(lat: $0.lat + 20 / 110_574, lon: $0.lon) }
+        XCTAssertEqual(Roads.length(Roads.mergeTrack(previous: [beside], latest: [east])), 2 * Roads.length([east]), accuracy: 2)
+        let same = east.map { GeoPoint(lat: $0.lat + 3 / 110_574, lon: $0.lon) }
+        XCTAssertEqual(Roads.mergeTrack(previous: [same], latest: [east]), [east])
+        // What a download adds: only the part of the track away from what the area has.
+        XCTAssertEqual(Roads.length(Roads.newParts(of: [longer], comparedWith: [east])), Roads.length([longer]) - Roads.length([east]), accuracy: 12)
+        XCTAssertEqual(Roads.newParts(of: [east], comparedWith: []), [east])
+    }
+
+    func testCorridorWidthDoesNotDependOnOtherPartsOfTheShape() {
+        // One track area can hold trips far apart: the corridor near London must not narrow because of a trip in
+        // the Kruger (the buffer used to be worked out at the middle latitude of the whole shape).
+        let london = [GeoPoint(lat: 51.5, lon: -0.12), GeoPoint(lat: 51.5, lon: -0.11)]
+        let kruger = [GeoPoint(lat: -24.99, lon: 31.59), GeoPoint(lat: -24.99, lon: 31.60)]
+        for z in [19, 21] {
+            let alone = TileCoverage(shape: Roads.corridor([london]), zoom: z).tileCount
+            let both = TileCoverage(shape: Roads.corridor([london, kruger]), zoom: z).tileCount
+            let krugerAlone = TileCoverage(shape: Roads.corridor([kruger]), zoom: z).tileCount
+            XCTAssertEqual(both, alone + krugerAlone, "zoom \(z)")
+        }
     }
 
     func testDownloadsImageryOnlyAlongTheRoads() async throws {
