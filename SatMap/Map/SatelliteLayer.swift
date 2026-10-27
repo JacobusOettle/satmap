@@ -1,11 +1,18 @@
 import MapKit
 import UIKit
 
-/// The satellite imagery layer. Replaces Apple's map entirely, so MapKit doesn't download its own tiles.
-final class SatelliteOverlay: NSObject, MKOverlay {
-    let coordinate = CLLocationCoordinate2D(latitude: 0, longitude: 0)
-    let boundingMapRect = MKMapRect.world
-    let canReplaceMapContent = true
+/// The satellite imagery layer. Replaces Apple's map entirely, so MapKit doesn't download its own tiles (or show its
+/// logo). A tile overlay, because MapKit only leaves out its own map for those; drawn by `SatelliteRenderer`.
+final class SatelliteOverlay: MKTileOverlay {
+    init() {
+        super.init(urlTemplate: nil)
+        canReplaceMapContent = true
+    }
+
+    // Not used: SatelliteRenderer loads the tiles itself.
+    override func loadTile(at path: MKTileOverlayPath, result: @escaping (Data?, Error?) -> Void) {
+        result(nil, TileUnavailable())
+    }
 }
 
 /// Draws the satellite imagery itself rather than with MapKit's tile renderer, which shows black wherever a tile of the
