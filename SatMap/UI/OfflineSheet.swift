@@ -9,6 +9,7 @@ struct OfflineSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var freeSpace: Int64?
     @State private var importing = false
+    @AppStorage("satelliteMode") private var satelliteMode = SatelliteMode.renderer.rawValue
 
     var body: some View {
         NavigationStack {
@@ -97,6 +98,21 @@ struct OfflineSheet: View {
                     Text("Backup")
                 } footer: {
                     Text("Saves each area as two MBTiles files, satellite and elevation, to Files, iCloud Drive or a USB drive, or AirDrop them to a computer. To restore, choose both files of each area. Long-press an area to export only that one.")
+                }
+
+                Section {
+                    Picker("Map drawing", selection: $satelliteMode) {
+                        Text("Drawn").tag(SatelliteMode.renderer.rawValue)
+                        Text("Tiles").tag(SatelliteMode.backdrop.rawValue)
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: satelliteMode) { _ in
+                        NotificationCenter.default.post(name: SatelliteMode.changed, object: nil)
+                    }
+                } header: {
+                    Text("Map drawing (test)")
+                } footer: {
+                    Text("Two ways of drawing the satellite map while zooming: try both, zooming in and out, and keep the one that shows no grey blocks. Switches straight away.")
                 }
 
                 Section {

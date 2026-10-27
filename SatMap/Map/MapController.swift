@@ -11,10 +11,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private let lasso = LassoView()
     private let model: AppModel
 
-    private let satelliteMode = SatelliteMode.current
+    private var satelliteMode = SatelliteMode.current
     private let backdrop = SatelliteBackdropOverlay(urlTemplate: nil)
-    private lazy var satellite: MKTileOverlay = satelliteMode == .renderer
-        ? SatelliteDrawnOverlay(urlTemplate: nil) : SatelliteTileOverlay(urlTemplate: nil)
+    private lazy var satellite: MKTileOverlay = Self.satelliteOverlay(for: satelliteMode)
     private var satelliteRenderer: SatelliteRenderer?
     private let contours = ContourTileOverlay(urlTemplate: nil)
     private let track = TrackOverlay()
@@ -65,6 +64,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         // track, measuring line.
         if satelliteMode == .backdrop { mapView.addOverlay(backdrop, level: .aboveLabels) }
         mapView.addOverlay(satellite, level: .aboveLabels)
+        NotificationCenter.default.addObserver(forName: SatelliteMode.changed, object: nil, queue: .main) { [weak self] _ in
+            self?.satelliteModeChanged()
+        }
         if model.showContours { mapView.addOverlay(contours, level: .aboveLabels) }
         track.reset(model.track)
         drawnTrackCount = model.track.count
@@ -198,7 +200,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             guard let self = self, self.reloadPending, self.isForeground else { return }
             self.reloadPending = false
             self.lastReload = Date()
-            (self.mapView.renderer(for: self.satellite) as? MKTileOverlayRenderer)?.reloadData()
+            // Only when the imagery layer showed something it should replace: a reload empties it for a moment.
+            if (self.satellite as? SatelliteTileOverlay)?.takeNeedsReload() == true {
+                (self.mapView.renderer(for: self.satellite) as? MKTileOverlayRenderer)?.reloadData()
+            }
             self.satelliteRenderer?.reload()
             (self.mapView.renderer(for: self.contours) as? MKTileOverlayRenderer)?.reloadData()
         }
@@ -286,6 +291,25 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private func powerChanged(_ power: LocationRecorder.Power) {
         guard let a = userAnnotation, let v = mapView.view(for: a) as? UserDotView else { return }
         v.sleeping = power == .sleeping
+    }
+
+    // MARK: - Satellite imagery
+
+    private static func satelliteOverlay(for mode: SatelliteMode) -> MKTileOverlay {
+        mode == .renderer ? SatelliteDrawnOverlay(urlTemplate: nil) : SatelliteTileOverlay(urlTemplate: nil)
+    }
+
+    /// The way of drawing the imagery was switched (Offline maps, while it is being tried out): swap the layers at the
+    /// bottom of the map.
+    private func satelliteModeChanged() {
+        let mode = SatelliteMode.current
+        guard mode != satelliteMode else { return }
+        satelliteMode = mode
+        mapView.removeOverlays([backdrop, satellite])
+        satelliteRenderer = nil
+        satellite = Self.satelliteOverlay(for: mode)
+        mapView.insertOverlay(satellite, at: 0, level: .aboveLabels)
+        if mode == .backdrop { mapView.insertOverlay(backdrop, at: 0, level: .aboveLabels) }
     }
 
     // MARK: - Contours

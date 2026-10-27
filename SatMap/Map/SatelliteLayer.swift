@@ -34,16 +34,30 @@ final class SatelliteTileOverlay: MKTileOverlay {
         tileSize = CGSize(width: 256, height: 256)
     }
 
+    private let lock = NSLock()
+    private var needsReload = false
+
+    /// Whether a tile was answered with nothing or a stand-in since the last call (then a reload can improve it).
+    func takeNeedsReload() -> Bool {
+        lock.withLock {
+            defer { needsReload = false }
+            return needsReload
+        }
+    }
+
     // MapKit calls this concurrently on background queues; `result` may be called on any queue.
     override func loadTile(at path: MKTileOverlayPath, result: @escaping (Data?, Error?) -> Void) {
         guard let t = TileID(path) else { return result(nil, TileUnavailable()) }
+        // Tiles shown before come straight from memory (also when MapKit asks again after a reload).
+        if let d = ImageryMemory.tiles.value(for: t) { return result(d, nil) }
         Task.detached(priority: .userInitiated) {
-            if let r = await TileRepository.shared.imageryForDisplay(t) {
-                if r.quality == .exact { ImageryMemory.tiles.set(r.data, for: t) }
-                result(r.data, nil)
+            let r = await TileRepository.shared.imageryForDisplay(t)
+            if let r = r, r.quality == .exact {
+                ImageryMemory.tiles.set(r.data, for: t)
             } else {
-                result(nil, TileUnavailable())
+                self.lock.withLock { self.needsReload = true }
             }
+            if let r = r { result(r.data, nil) } else { result(nil, TileUnavailable()) }
         }
     }
 }
@@ -131,7 +145,8 @@ extension TileID {
     }
 }
 
-/// Which way the imagery is drawn (a setting for measuring them against each other; see ZoomTests).
+/// Which way the imagery is drawn: a setting while the ways are tried out against each other (Offline maps, and the
+/// zoom test, see ZoomTests).
 enum SatelliteMode: String {
     /// One tile layer, as before the backdrop.
     case single
@@ -140,8 +155,10 @@ enum SatelliteMode: String {
     /// SatMap draws the imagery itself (`SatelliteRenderer`).
     case renderer
 
+    static let changed = Notification.Name("SatelliteModeChanged")
+
     static var current: SatelliteMode {
-        UserDefaults.standard.string(forKey: "satelliteMode").flatMap(SatelliteMode.init) ?? .backdrop
+        UserDefaults.standard.string(forKey: "satelliteMode").flatMap(SatelliteMode.init) ?? .renderer
     }
 }
 
