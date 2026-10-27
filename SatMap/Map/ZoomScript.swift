@@ -62,7 +62,8 @@ private final class Watchdog {
 
     func tick() {
         let now = CACurrentMediaTime()
-        if now - last > 0.5 { log.info("main thread held up \(Int((now - last) * 1000), privacy: .public) ms") }
+        let ms = Int((now - last) * 1000)
+        if ms > 500 { log.info("main thread held up \(ms, privacy: .public) ms") }
         last = now
     }
 }
