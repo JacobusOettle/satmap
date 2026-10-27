@@ -55,7 +55,7 @@ final class TileRepository {
     /// MapKit asks for dozens of tiles at once. Requests queued inside URLSession time out while they wait,
     /// so only a few are started at a time per server, newest first (the tiles for where the map is now).
     /// Imagery and elevation have separate queues so elevation (contours) isn't starved while the map moves.
-    private let imageryLimiter = RequestLimiter(slots: 6)
+    private let imageryLimiter = RequestLimiter(slots: 10)
     private let terrainLimiter = RequestLimiter(slots: 4)
 
     /// A network that is "connected" but can't reach the internet (e.g. a drone controller's Wi-Fi) makes every
@@ -86,7 +86,7 @@ final class TileRepository {
         let config = URLSessionConfiguration.default
         config.urlCache = urlCache
         config.requestCachePolicy = .useProtocolCachePolicy
-        config.httpMaximumConnectionsPerHost = 6
+        config.httpMaximumConnectionsPerHost = 10
         config.timeoutIntervalForRequest = 15
         config.waitsForConnectivity = false
         browseSession = URLSession(configuration: config)
@@ -170,14 +170,16 @@ final class TileRepository {
 
     // MARK: - Imagery for display
 
-    func imageryForDisplay(_ t: TileID) async -> Data? {
-        if let d = offlineTile(t, layer: .imagery) { return d }
+    /// The imagery for an on-screen tile: `exact` is false for part of an ancestor enlarged in its place (deeper than
+    /// the imagery goes here, or the tile isn't saved offline and there's no network).
+    func imageryForDisplay(_ t: TileID) async -> (data: Data, exact: Bool)? {
+        if let d = offlineTile(t, layer: .imagery) { return (d, true) }
         // Inside a downloaded area the downloader already learnt where the imagery ends: don't wait on the
         // network for tiles it knows don't exist.
         var online = networkUsable && !offlineKnowsMissing(t)
         if online {
             switch await onlineImagery(t) {
-            case .data(let d): return d
+            case .data(let d): return (d, true)
             case .missing: break // deeper than the imagery goes here: enlarge an ancestor below
             case .failed, .offline:
                 // Don't show (and have MapKit keep) a blurry stand-in for a tile that exists but failed
@@ -201,9 +203,10 @@ final class TileRepository {
                 }
             }
             if let d = data {
-                return await Work.run(on: Work.images) {
+                let enlarged = await Work.run(on: Work.images) {
                     ImageTools.enlarge(d, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
                 }
+                return enlarged.map { ($0, false) }
             }
         }
         return nil

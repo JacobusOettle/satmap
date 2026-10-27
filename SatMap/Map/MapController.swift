@@ -11,7 +11,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private let lasso = LassoView()
     private let model: AppModel
 
-    private let satellite = SatelliteTileOverlay(urlTemplate: nil)
+    private let satellite = SatelliteOverlay()
+    private var satelliteRenderer: SatelliteRenderer?
     private let contours = ContourTileOverlay(urlTemplate: nil)
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
@@ -192,7 +193,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             guard let self = self, self.reloadPending, self.isForeground else { return }
             self.reloadPending = false
             self.lastReload = Date()
-            (self.mapView.renderer(for: self.satellite) as? MKTileOverlayRenderer)?.reloadData()
+            self.satelliteRenderer?.reload()
             (self.mapView.renderer(for: self.contours) as? MKTileOverlayRenderer)?.reloadData()
         }
     }
@@ -481,6 +482,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         retryTimer = nil
         saveCamera()
         TileRepository.shared.trimForBackground()
+        SatelliteRenderer.trimForBackground()
     }
 
     @objc private func willEnterForeground() {
@@ -496,6 +498,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         switch overlay {
+        case let o as SatelliteOverlay:
+            let r = SatelliteRenderer(overlay: o)
+            satelliteRenderer = r
+            return r
         case let o as MKTileOverlay:
             return MKTileOverlayRenderer(tileOverlay: o)
         case let o as TrackOverlay:

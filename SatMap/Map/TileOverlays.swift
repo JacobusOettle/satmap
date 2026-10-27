@@ -5,35 +5,8 @@ import UIKit
 struct TileUnavailable: Error {}
 
 /// MapKit stops requesting tiles past `maximumZ` (and doesn't reliably enlarge the last level),
-/// so both overlays accept very deep zooms and enlarge ancestor data themselves.
+/// so the contour overlay accepts very deep zooms and works from ancestor data itself.
 private let deepestTileZoom = 25
-
-/// Satellite imagery: offline areas first, then Esri online, then an enlarged ancestor tile.
-/// Replaces Apple's map entirely, so MapKit doesn't download its own tiles.
-final class SatelliteTileOverlay: MKTileOverlay {
-    /// Create with `SatelliteTileOverlay(urlTemplate: nil)`; tiles come from `loadTile`, not a URL template.
-    override init(urlTemplate: String?) {
-        super.init(urlTemplate: nil)
-        canReplaceMapContent = true
-        minimumZ = 0
-        maximumZ = deepestTileZoom
-        tileSize = CGSize(width: 256, height: 256)
-    }
-
-    // MapKit calls this concurrently on background queues; `result` may be called on any queue.
-    override func loadTile(at path: MKTileOverlayPath, result: @escaping (Data?, Error?) -> Void) {
-        let n = 1 << path.z
-        guard path.y >= 0, path.y < n else { return result(nil, TileUnavailable()) }
-        let t = TileID(z: path.z, x: ((path.x % n) + n) % n, y: path.y)
-        Task.detached(priority: .userInitiated) {
-            if let data = await TileRepository.shared.imageryForDisplay(t) {
-                result(data, nil)
-            } else {
-                result(nil, TileUnavailable())
-            }
-        }
-    }
-}
 
 /// Contour lines drawn on the device from elevation tiles (offline areas or online).
 final class ContourTileOverlay: MKTileOverlay {

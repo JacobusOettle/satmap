@@ -814,3 +814,53 @@ final class ShippedDataTests: XCTestCase {
         print("Kruger road list: \(preset.roads.count) roads, \(Int(km)) km, \(points.count) points")
     }
 }
+
+final class TileFallbackTests: XCTestCase {
+    func testZoomGivesAbout128PointsPerTile() {
+        // The whole world 256 points wide: zoom 1 (two tiles of 128 points).
+        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 256, maxZoom: 22), 1)
+        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 18), maxZoom: 22), 18)
+        // Rounded: between 91 and 181 points per tile.
+        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 18) * 1.4, maxZoom: 22), 18)
+        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 18) * 1.5, maxZoom: 22), 19)
+        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 128 * Double(1 << 25), maxZoom: 22), 22)
+        XCTAssertEqual(TileFallback.zoom(pointsPerWorld: 1, maxZoom: 22), 0)
+    }
+
+    func testTilesCoveringARect() {
+        let t = TileFallback.tiles(minX: 0.5, minY: 0.25, maxX: 0.75, maxY: 0.5, z: 3)
+        XCTAssertEqual(Set(t), [TileID(z: 3, x: 4, y: 2), TileID(z: 3, x: 5, y: 2), TileID(z: 3, x: 4, y: 3), TileID(z: 3, x: 5, y: 3)])
+        XCTAssertEqual(TileFallback.tiles(minX: 0.51, minY: 0.26, maxX: 0.52, maxY: 0.27, z: 3), [TileID(z: 3, x: 4, y: 2)])
+        XCTAssertEqual(TileFallback.tiles(minX: -1, minY: -1, maxX: 2, maxY: 2, z: 1).count, 4)
+    }
+
+    func testFallbackUsesNearestAncestorAndDeeperTiles() {
+        let t = TileID(z: 18, x: 140_000, y: 150_000)
+        let parent = t.ancestor(levels: 1), far = t.ancestor(levels: 5)
+        XCTAssertEqual(TileFallback.ancestor(of: t, maxLevels: 10) { $0 == far || $0 == parent }, parent)
+        XCTAssertEqual(TileFallback.ancestor(of: t, maxLevels: 10) { $0 == far }, far)
+        XCTAssertNil(TileFallback.ancestor(of: t, maxLevels: 4) { $0 == far })
+        XCTAssertNil(TileFallback.ancestor(of: TileID(z: 0, x: 0, y: 0), maxLevels: 4) { _ in true })
+
+        let child = TileID(z: 19, x: 280_001, y: 300_000), grandchild = TileID(z: 20, x: 560_003, y: 600_001)
+        let outside = TileID(z: 19, x: 280_002, y: 300_000)
+        let found = TileFallback.descendants(of: t, levels: 2) { [child, grandchild, outside].contains($0) }
+        XCTAssertEqual(found, [child, grandchild]) // coarsest first, only inside t
+        XCTAssertEqual(TileFallback.descendants(of: t, levels: 2) { _ in true }.count, 4 + 16)
+    }
+
+    func testRecentCacheKeepsWhatWasUsedLast() {
+        let cache = RecentCache<Int, String>(capacity: 4)
+        for i in 0..<4 { cache.set("\(i)", for: i) }
+        _ = cache.value(for: 0) // used again: kept
+        cache.set("4", for: 4) // over capacity: down to 3, the least recently used go
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertNotNil(cache.value(for: 0))
+        XCTAssertNotNil(cache.value(for: 4))
+        XCTAssertNil(cache.value(for: 1))
+        cache.remove { key, _ in key == 4 }
+        XCTAssertFalse(cache.contains(4))
+        cache.trim(to: 1)
+        XCTAssertEqual(cache.count, 1)
+    }
+}
