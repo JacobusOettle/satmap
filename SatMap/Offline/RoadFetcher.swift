@@ -3,6 +3,26 @@ import os
 
 private let roadLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "roads")
 
+/// Road sets shipped with the app (SatMap/Resources/<id>.json), loaded once.
+enum RoadPresets {
+    static let kruger = "KrugerRoads"
+    private static let lock = NSLock()
+    private static var loaded: [String: RoadPreset] = [:]
+
+    static func load(_ id: String) -> RoadPreset? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let p = loaded[id] { return p }
+        guard let url = Bundle.main.url(forResource: id, withExtension: "json"),
+              let data = try? Data(contentsOf: url), let p = try? RoadPreset(json: data) else {
+            roadLog.error("road preset \(id, privacy: .public) missing or unreadable")
+            return nil
+        }
+        loaded[id] = p
+        return p
+    }
+}
+
 /// Roads and tracks in an area from OpenStreetMap, through the public Overpass API (no account needed).
 enum RoadFetcher {
     /// The main server, then mirrors for when it is busy (public Overpass servers are often overloaded). The main

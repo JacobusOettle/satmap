@@ -24,6 +24,11 @@ struct OfflineSheet: View {
                     } label: {
                         Label("Use the blocks in a KML file", systemImage: "square.dashed")
                     }
+                    NavigationLink {
+                        PresetAreaView(model: model, presetID: RoadPresets.kruger)
+                    } label: {
+                        Label("Kruger National Park roads", systemImage: "car")
+                    }
                 } footer: {
                     Text("Saves satellite imagery at the highest detail available plus elevation data for contours and heights, so the map works with no signal.")
                 }
@@ -130,7 +135,7 @@ private struct AreaRow: View {
                 Text(statusText)
                     .font(.caption)
                     .foregroundColor(statusColor)
-                Text("\(Format.bytes(area.bytesOnDisk)) · up to zoom \(area.maxZoom)\(area.roads != nil ? " · along roads" : "")\(area.allowCellular ? " · mobile data allowed" : "")")
+                Text("\(Format.bytes(area.bytesOnDisk)) · up to zoom \(area.maxZoom)\(area.alongRoads ? " · along roads" : "")\(area.allowCellular ? " · mobile data allowed" : "")")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -169,6 +174,21 @@ private struct AreaRow: View {
         case .complete: return .green
         case .incomplete: return .orange
         default: return .secondary
+        }
+    }
+}
+
+/// A road set shipped with the app, opened in the download screen (loaded when shown).
+private struct PresetAreaView: View {
+    @ObservedObject var model: AppModel
+    let presetID: String
+
+    var body: some View {
+        if let preset = RoadPresets.load(presetID) {
+            NewAreaView(model: model, area: PendingArea(name: preset.name, shape: CoverageShape(polygons: preset.boundary)),
+                        presetID: presetID)
+        } else {
+            Text("The road list is missing from this build of SatMap.").foregroundColor(.secondary)
         }
     }
 }

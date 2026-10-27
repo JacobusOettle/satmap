@@ -20,6 +20,19 @@ final class UserLocationAnnotation: NSObject, MKAnnotation {
 
 final class MeasureMarkerAnnotation: NSObject, MKAnnotation {
     let coordinate: CLLocationCoordinate2D
+    /// "A" or "B" when two points are measured.
+    let label: String?
+
+    init(coordinate: CLLocationCoordinate2D, label: String?) {
+        self.coordinate = coordinate
+        self.label = label
+        super.init()
+    }
+}
+
+/// A spot tapped on the map (its coordinates are shown at the top).
+final class SelectedPointAnnotation: NSObject, MKAnnotation {
+    let coordinate: CLLocationCoordinate2D
 
     init(coordinate: CLLocationCoordinate2D) {
         self.coordinate = coordinate
@@ -75,13 +88,25 @@ final class UserDotView: MKAnnotationView {
     }
 }
 
-/// The measuring marker: a red ring with a centre point, placed where the crosshair was.
+/// A measuring point: a red ring with a centre point, labelled A or B when there are two.
 final class MeasureMarkerView: MKAnnotationView {
     static let reuseID = "marker"
+    private let letter = UILabel()
+
+    override var annotation: MKAnnotation? {
+        didSet { letter.text = (annotation as? MeasureMarkerAnnotation)?.label }
+    }
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
         frame = CGRect(x: 0, y: 0, width: 30, height: 30)
+        letter.frame = CGRect(x: 18, y: -14, width: 20, height: 18)
+        letter.font = .systemFont(ofSize: 15, weight: .heavy)
+        letter.textColor = .white
+        letter.shadowColor = UIColor(white: 0, alpha: 0.9)
+        letter.shadowOffset = CGSize(width: 0, height: 1)
+        letter.text = (annotation as? MeasureMarkerAnnotation)?.label
+        addSubview(letter)
         let ring = CAShapeLayer()
         ring.path = UIBezierPath(ovalIn: bounds.insetBy(dx: 3, dy: 3)).cgPath
         ring.fillColor = UIColor(red: 1, green: 0.18, blue: 0.4, alpha: 0.25).cgColor
@@ -90,6 +115,37 @@ final class MeasureMarkerView: MKAnnotationView {
         layer.addSublayer(ring)
         let centre = CAShapeLayer()
         centre.path = UIBezierPath(ovalIn: CGRect(x: 12, y: 12, width: 6, height: 6)).cgPath
+        centre.fillColor = UIColor.white.cgColor
+        layer.addSublayer(centre)
+        canShowCallout = false
+        zPriority = .defaultSelected
+        displayPriority = .required
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+}
+
+/// A tapped spot: a small white ring with a dark centre.
+final class SelectedPointView: MKAnnotationView {
+    static let reuseID = "selected"
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        frame = CGRect(x: 0, y: 0, width: 22, height: 22)
+        let ring = CAShapeLayer()
+        ring.path = UIBezierPath(ovalIn: bounds.insetBy(dx: 2, dy: 2)).cgPath
+        ring.fillColor = UIColor(white: 0, alpha: 0.25).cgColor
+        ring.strokeColor = UIColor.white.cgColor
+        ring.lineWidth = 3
+        ring.shadowColor = UIColor.black.cgColor
+        ring.shadowOpacity = 0.5
+        ring.shadowRadius = 2
+        ring.shadowOffset = .zero
+        layer.addSublayer(ring)
+        let centre = CAShapeLayer()
+        centre.path = UIBezierPath(ovalIn: CGRect(x: 9, y: 9, width: 4, height: 4)).cgPath
         centre.fillColor = UIColor.white.cgColor
         layer.addSublayer(centre)
         canShowCallout = false

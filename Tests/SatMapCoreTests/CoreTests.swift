@@ -648,3 +648,29 @@ final class OfflineBackupTests: XCTestCase {
         XCTAssertEqual(OfflineBackup.fileSafe("  "), "Offline area")
     }
 }
+
+final class PolylineTests: XCTestCase {
+    func testGoogleExample() {
+        // From Google's polyline format documentation.
+        let pts = [GeoPoint(lat: 38.5, lon: -120.2), GeoPoint(lat: 40.7, lon: -120.95), GeoPoint(lat: 43.252, lon: -126.453)]
+        XCTAssertEqual(Polyline.encode(pts), "_p~iF~ps|U_ulLnnqC_mqNvxq`@")
+        XCTAssertEqual(Polyline.decode("_p~iF~ps|U_ulLnnqC_mqNvxq`@"), pts)
+    }
+
+    func testRoundTripAndGarbage() {
+        let pts = [GeoPoint(lat: -24.99512, lon: 31.59212), GeoPoint(lat: -24.99511, lon: 31.59299), GeoPoint(lat: -25.1, lon: 31.6)]
+        XCTAssertEqual(Polyline.decode(Polyline.encode(pts)), pts)
+        XCTAssertEqual(Polyline.decode(""), [])
+        XCTAssertNil(Polyline.decode("_p~iF~ps|U_"))  // cut off half way through a point
+        XCTAssertNil(Polyline.decode("\u{10}abc"))
+    }
+
+    func testPreset() throws {
+        let json = #"{"name":"Park","note":"OSM","boundary":["\#(Polyline.encode([GeoPoint(lat: -24, lon: 31), GeoPoint(lat: -24, lon: 32), GeoPoint(lat: -25, lon: 32)]))"],"roads":["\#(Polyline.encode([GeoPoint(lat: -24.5, lon: 31.5), GeoPoint(lat: -24.6, lon: 31.6)]))"]}"#
+        let p = try RoadPreset(json: Data(json.utf8))
+        XCTAssertEqual(p.name, "Park")
+        XCTAssertEqual(p.boundary[0].count, 3)
+        XCTAssertEqual(p.roads, [[GeoPoint(lat: -24.5, lon: 31.5), GeoPoint(lat: -24.6, lon: 31.6)]])
+        XCTAssertThrowsError(try RoadPreset(json: Data(#"{"name":"P","note":"","boundary":[],"roads":[]}"#.utf8)))
+    }
+}

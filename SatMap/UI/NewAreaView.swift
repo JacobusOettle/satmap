@@ -7,6 +7,8 @@ struct NewAreaView: View {
     let area: PendingArea
     /// Presented on its own (lasso) rather than pushed inside the Offline sheet (KML).
     var showsCancel = false
+    /// A road set shipped with the app (`RoadPresets`): imagery is always downloaded along its roads.
+    var presetID: String?
 
     @State private var name: String
     /// The deepest zoom level to download; remembered for the next area.
@@ -34,11 +36,13 @@ struct NewAreaView: View {
         case failed(String)
     }
 
-    init(model: AppModel, area: PendingArea, showsCancel: Bool = false) {
+    init(model: AppModel, area: PendingArea, showsCancel: Bool = false, presetID: String? = nil) {
         self.model = model
         self.area = area
         self.showsCancel = showsCancel
+        self.presetID = presetID
         _name = State(initialValue: area.name)
+        _alongRoads = State(initialValue: presetID != nil)
     }
 
     var body: some View {
@@ -49,13 +53,21 @@ struct NewAreaView: View {
 
             detailSection
 
-            Section {
-                Toggle("Only along roads", isOn: $alongRoads)
-                if alongRoads {
+            if let preset = presetID.flatMap(RoadPresets.load) {
+                Section {
                     roadsStatus
+                } footer: {
+                    Text("Satellite imagery \(Int(Roads.corridorMeters)) m to each side of every tar and gravel road in the park, including management tracks: \(preset.note). Elevation for contours and heights is saved for the whole park.")
                 }
-            } footer: {
-                Text("Saves satellite imagery only \(Int(Roads.corridorMeters)) m to each side of every road and track in the area, including gravel and farm roads, as mapped on OpenStreetMap. Elevation for contours and heights is still saved for the whole area.")
+            } else {
+                Section {
+                    Toggle("Only along roads", isOn: $alongRoads)
+                    if alongRoads {
+                        roadsStatus
+                    }
+                } footer: {
+                    Text("Saves satellite imagery only \(Int(Roads.corridorMeters)) m to each side of every road and track in the area, including gravel and farm roads, as mapped on OpenStreetMap. Elevation for contours and heights is still saved for the whole area.")
+                }
             }
 
             Section {
@@ -69,7 +81,8 @@ struct NewAreaView: View {
             Section {
                 Button {
                     model.startDownload(PendingArea(name: name.trimmingCharacters(in: .whitespaces), shape: area.shape),
-                                        roads: alongRoads ? roadLines : nil, maxZoom: chosenZoom, allowCellular: allowCellular)
+                                        roads: presetID == nil && alongRoads ? roadLines : nil, preset: presetID,
+                                        maxZoom: chosenZoom, allowCellular: allowCellular)
                     // Back to the map, where the download banner shows progress.
                     model.sheet = nil
                     dismiss()
@@ -94,8 +107,11 @@ struct NewAreaView: View {
         }
         .task {
             let shape = area.shape
+            // Along a preset's roads the whole area only matters for elevation; its imagery counts for a big
+            // park would take long to work out.
+            let zooms = presetID == nil ? 0...TileSources.imageryMaxZoom : 0...Terrarium.maxZoom
             let result = await Task.detached(priority: .userInitiated) {
-                (TileCoverage.tileCounts(shape: shape, zooms: 0...TileSources.imageryMaxZoom), AppPaths.freeDiskSpace())
+                (TileCoverage.tileCounts(shape: shape, zooms: zooms), AppPaths.freeDiskSpace())
             }.value
             freeSpace = result.1
             counts = result.0
@@ -225,8 +241,14 @@ struct NewAreaView: View {
     private func loadRoads() async {
         roads = .loading
         let shape = area.shape
+        let preset = presetID.flatMap(RoadPresets.load)
         do {
-            let lines = try await RoadFetcher.roads(in: shape)
+            let lines: [[GeoPoint]]
+            if let preset = preset {
+                lines = preset.roads
+            } else {
+                lines = try await RoadFetcher.roads(in: shape)
+            }
             let result = await Task.detached(priority: .userInitiated) {
                 (Roads.length(lines) / 1000, TileCoverage.tileCounts(shape: Roads.corridor(lines), zooms: 0...TileSources.imageryMaxZoom))
             }.value

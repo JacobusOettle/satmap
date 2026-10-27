@@ -139,3 +139,83 @@ enum Roads {
         }
     }
 }
+
+/// Google's encoded polyline format (5 decimals, about 1 m): a compact text form for road lines.
+enum Polyline {
+    static func encode(_ points: [GeoPoint]) -> String {
+        var out = ""
+        var lastLat = 0, lastLon = 0
+        for p in points {
+            let lat = Int((p.lat * 1e5).rounded()), lon = Int((p.lon * 1e5).rounded())
+            for delta in [lat - lastLat, lon - lastLon] {
+                var v = delta < 0 ? ~(delta << 1) : delta << 1
+                while v >= 0x20 {
+                    out.unicodeScalars.append(Unicode.Scalar(UInt8((0x20 | (v & 0x1f)) + 63)))
+                    v >>= 5
+                }
+                out.unicodeScalars.append(Unicode.Scalar(UInt8(v + 63)))
+            }
+            lastLat = lat
+            lastLon = lon
+        }
+        return out
+    }
+
+    /// Nil if the text isn't a valid polyline.
+    static func decode(_ text: String) -> [GeoPoint]? {
+        let bytes = Array(text.utf8)
+        var i = 0
+        func next() -> Int? {
+            var result = 0, shift = 0
+            while i < bytes.count {
+                let b = Int(bytes[i]) - 63
+                i += 1
+                guard b >= 0, b < 64, shift < 60 else { return nil }
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20 { return (result & 1) != 0 ? ~(result >> 1) : result >> 1 }
+            }
+            return nil
+        }
+        var points: [GeoPoint] = []
+        var lat = 0, lon = 0
+        while i < bytes.count {
+            guard let dLat = next(), let dLon = next() else { return nil }
+            lat += dLat
+            lon += dLon
+            points.append(GeoPoint(lat: Double(lat) / 1e5, lon: Double(lon) / 1e5))
+        }
+        return points
+    }
+}
+
+/// Roads shipped with the app for a place (e.g. every road in Kruger National Park), with the place's boundary.
+/// Stored as JSON: {"name", "note", "boundary": [polyline], "roads": [polyline]}.
+struct RoadPreset {
+    let name: String
+    /// Where the roads come from and when, shown to the user.
+    let note: String
+    /// Outer rings of the place.
+    let boundary: [[GeoPoint]]
+    let roads: [[GeoPoint]]
+
+    struct Invalid: Error {}
+
+    private struct File: Decodable {
+        let name: String
+        let note: String
+        let boundary: [String]
+        let roads: [String]
+    }
+
+    init(json: Data) throws {
+        let f = try JSONDecoder().decode(File.self, from: json)
+        let boundary = f.boundary.compactMap(Polyline.decode)
+        let roads = f.roads.compactMap(Polyline.decode)
+        guard boundary.count == f.boundary.count, roads.count == f.roads.count, !boundary.isEmpty else { throw Invalid() }
+        name = f.name
+        note = f.note
+        self.boundary = boundary
+        self.roads = roads
+    }
+}
