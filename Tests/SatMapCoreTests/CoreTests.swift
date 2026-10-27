@@ -1018,13 +1018,16 @@ extension ConcurrencyTests {
 final class CoordinateParserTests: XCTestCase {
     /// A spot in the Kruger: -25.096893, 31.437121 (25° 5' 48.815" S, 31° 26' 13.636" E).
     private let lat = -25.096893, lon = 31.437121
+    /// Elsewhere: Big Ben, the Statue of Liberty.
+    private let london = GeoPoint(lat: 51.5007, lon: -0.1246), newYork = GeoPoint(lat: 40.6892, lon: -74.0445)
 
+    /// Read as `at` (the Kruger spot if not given), within `metres`, with the format if given.
     private func check(_ text: String, _ format: String? = nil, within metres: Double = 1, near: GeoPoint? = nil,
-                       file: StaticString = #filePath, line: UInt = #line) {
+                       at point: GeoPoint? = nil, file: StaticString = #filePath, line: UInt = #line) {
         guard let r = CoordinateParser.parse(text, near: near) else {
             return XCTFail("Not read: \(text)", file: file, line: line)
         }
-        let d = Geo.distance(r.point, GeoPoint(lat: lat, lon: lon))
+        let d = Geo.distance(r.point, point ?? GeoPoint(lat: lat, lon: lon))
         XCTAssertLessThan(d, metres, "\(text) read as \(r.point) (\(r.format)), \(Int(d)) m off", file: file, line: line)
         if let f = format { XCTAssertEqual(r.format, f, text, file: file, line: line) }
     }
@@ -1112,6 +1115,145 @@ final class CoordinateParserTests: XCTestCase {
         for t in ["", "hello", "25", "123.4, 456.7", "25° 75' S, 31° 26' E", "91, 181", "25 S 31 S", "1 2 3", "https://example.com/x"] {
             XCTAssertNil(CoordinateParser.parse(t), t)
         }
+    }
+
+    // Inputs found misread or not read by a sweep of real-world sources, by family.
+
+    func testMoreLinks() {
+        // Apple Maps (iOS 18 and its documented examples): coordinate=, after an address that has numbers in it.
+        check("https://maps.apple.com/place?address=Apple%20Inc.,%201%20Apple%20Park%20Way,%20Cupertino,%20CA%2095014,"
+              + "%20United%20States&coordinate=37.334859,-122.009040&name=Apple%20Park&place-id=I7C250D2CDCB364A&map=explore",
+              "map link", at: GeoPoint(lat: 37.334859, lon: -122.009040))
+        check("https://maps.apple.com/place?coordinate=-25.096893,31.437121&name=Marked%20Location", "map link")
+        check("https://maps.apple.com/?coordinate=-25.096893,31.437121", "map link")
+        // Android geo: links: the q= pin, not the map centre or the geo:0,0 placeholder.
+        check("geo:0,0?q=-25.096893,31.437121(Dropped pin)", "geo: link")
+        check("geo:0,0?q=-25.096893%2C31.437121%28Camp%29", "geo: link")
+        check("geo:50.123456,-120.123456?q=40.7127400,-74.0059965", "geo: link", at: GeoPoint(lat: 40.71274, lon: -74.0059965))
+        XCTAssertNil(CoordinateParser.parse("geo:0,0?q=Skukuza")) // a place by name, not 0,0
+        check("google.navigation:q=-25.096893,31.437121&mode=w", "map link")
+        // Google Maps: the place or search in the path, not the map centre after /@; a DMS place; where directions go.
+        check("https://www.google.com/maps/place/-25.096893,31.437121/@-25.0968930,31.4345295,17z", "map link")
+        check("https://www.google.com/maps/search/-25.096893,+31.437121/@-25.0968930,31.4345295,17z?entry=ttu", "map link")
+        check("https://www.google.com/maps/place/25%C2%B005'48.8%22S+31%C2%B026'13.6%22E/@-25.0968930,31.4345295,17z/data=!3m1!1e3",
+              "map link", within: 2)
+        check("https://www.google.com/maps/dir//-25.096893,31.437121/@-25.1105930,31.3998210,13z?entry=ttu", "map link")
+        check("https://www.google.com/maps?saddr=-24.976893,31.517121&daddr=-25.096893,31.437121", "map link")
+        check("https://www.google.com/maps/dir/Hermannstra%C3%9Fe+1,+12049+Berlin/Reuterstra%C3%9Fe+1,+Berlin/@52.4844406,13.4217121,16z"
+              + "/data=!4m14!4m13!1m5!1m1!1s0x0:0x1!2m2!1d13.4236883!2d52.4858222!1m5!1m1!1s0x0:0x2!2m2!1d13.4300356!2d52.4807739!3e2",
+              "map link", at: GeoPoint(lat: 52.4807739, lon: 13.4300356)) // the last stop's position in the data
+        check("https://www.google.com/maps/dir//The+Station,+1+Mends+St,+South+Perth+WA+6151/@-31.9614112,115.8523381,14z",
+              "map link (centre of the route)", at: GeoPoint(lat: -31.9614112, lon: 115.8523381))
+        check("https://www.google.com/maps/place/5G6HWC3P%2B6R", "plus code", within: 8)
+        check("https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=-25.096893,31.437121", "map link")
+        check("https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3600.5!2d31.437121!3d-25.096893!2m3!1f0!2f0!3f0!3m2!1i1024"
+              + "!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2z!5e1!3m2!1sen!2sza!4v1730000000000!5m2!1sen!2sza", "map link")
+        // OsmAnd.
+        check("https://osmand.net/map?pin=-25.09689,31.43712#15/-25.09689/31.43712", "map link")
+        check("https://osmand.net/go?lat=-25.096893&lon=31.437121&z=15", "map link")
+        // A short link needs the internet to follow.
+        XCTAssertNil(CoordinateParser.parse("https://maps.app.goo.gl/q8w1k9mH3qFz7Dxq8"))
+    }
+
+    func testMoreFieldNMEAAndISO6709() {
+        // Military and aviation degrees, minutes and seconds with dashes (not minus signs).
+        check("25-05-48.8S 031-26-13.6E", "degrees, minutes and seconds", within: 2)
+        check("S25-05-48.8 E031-26-13.6", "degrees, minutes and seconds", within: 2)
+        check("40-41-21.1200N 074-02-40.2000W", "degrees, minutes and seconds", at: newYork)
+        // NMEA and aviation within 1° or 2° of the equator or Greenwich (leading zeros).
+        check("5130.0420,N,00007.4760,W", "GPS (NMEA)", at: london)
+        check("0010.8392,S,07828.0700,W", "GPS (NMEA)", at: GeoPoint(lat: -0.180653, lon: -78.467834))
+        check("0536.22N 00011.22W", "GPS (NMEA)", at: GeoPoint(lat: 5.603667, lon: -0.187))
+        // Whole NMEA sentences.
+        check("$GPGGA,123519,2505.8136,S,03126.2273,E,1,08,0.9,545.4,M,46.9,M,,*47", "GPS (NMEA)")
+        check("$GPRMC,123519,A,2505.8136,S,03126.2273,E,022.4,084.4,230394,003.1,W*6A", "GPS (NMEA)")
+        // ISO 6709: degrees and minutes, from the time zone database, and with an altitude (iPhone video).
+        check("-0117.5240+03649.3168/", "ISO 6709", at: GeoPoint(lat: -1.292066, lon: 36.821946))
+        check("-0117+03649", "ISO 6709", at: GeoPoint(lat: -1.283333, lon: 36.816667))
+        check("+40.6892-074.0445+545.400/", "ISO 6709", at: newYork)
+        // exiftool's video GPS Coordinates, with the altitude after them.
+        check("25 deg 5' 48.81\" S, 31 deg 26' 13.64\" E, 545.4 m Above Sea Level", "degrees, minutes and seconds")
+    }
+
+    func testMoreGrids() {
+        // UTM with a space between the zone and N (band or hemisphere), or the hemisphere in words.
+        check("30 N 699568 5709428", "UTM", within: 2, at: london)
+        check("48 N 372280 142646", "UTM", within: 2, at: GeoPoint(lat: 1.2903, lon: 103.852001))
+        check("UTM 36 South 342402 7223412", "UTM", within: 2)
+        // MGRS as one run of digits (10 m), and with a label or a note.
+        check("36JUT42402341", "MGRS", within: 15)
+        check("MGRS: 36J UT 42401 23411", "MGRS", within: 2)
+        check("36J UT 42401 23411 (MGRS)", "MGRS", within: 2)
+    }
+
+    func testDataSnippets() {
+        // A heading gives the order of the values: "Lat/Long:", "Long/Lat:", a spreadsheet's header row.
+        for t in ["Lat/Long: -25.096893, 31.437121", "Lat Long (-25.096893, 31.437121)", "lat/lng: (-25.096893,31.437121)",
+                  "Latitude\tLongitude\n-25.096893\t31.437121\n", "Long/Lat: 31.437121, -25.096893",
+                  "X: 31.437121, Y: -25.096893"] {
+            check(t, "decimal degrees")
+        }
+        // Quoted values (CSV, JSON, GPX), not seconds; altitude, accuracy and the like left out.
+        for t in [#""-25.096893","31.437121""#, #""-25,096893","31,437121""#, #""lat":"-25.0968930","lon":"31.4371210""#,
+                  #"{"lat":"-25.0968930","lon":"31.4371210"}"#, #"<wpt lat="-25.096893" lon="31.437121">"#,
+                  #"{"location": {"lat": -25.096893, "lng": 31.437121}, "accuracy": 20}"#,
+                  "Latitude: -25.096893\nLongitude: 31.437121\nAltitude: 545.4 m",
+                  "Latitude: -25.096893\nLongitude: 31.437121\nAltitude: 312 m\nAccuracy: 5 m",
+                  "CLLocationCoordinate2D(latitude: -25.096893, longitude: 31.437121)"] {
+            check(t, "decimal degrees")
+        }
+        // Longitude first: GeoJSON, KML, WKT.
+        check(#"{"type":"Point","coordinates":[31.437121,-25.096893]}"#, "GeoJSON")
+        check(#"{"type": "Point", "coordinates": [31.437121, -25.096893, 312.0]}"#, "GeoJSON")
+        check("<coordinates>31.437121,-25.096893,0</coordinates>", "KML")
+        check("<Point><coordinates>31.437121,-25.096893,312</coordinates></Point>", "KML")
+        check("""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+            <Placemark>
+            \t<name>Untitled Placemark</name>
+            \t<LookAt>
+            \t\t<longitude>31.43712100</longitude>
+            \t\t<latitude>-25.09689300</latitude>
+            \t\t<altitude>0</altitude>
+            \t\t<range>1000</range>
+            \t</LookAt>
+            \t<Point>
+            \t\t<gx:drawOrder>1</gx:drawOrder>
+            \t\t<coordinates>31.437121,-25.096893,0</coordinates>
+            \t</Point>
+            </Placemark>
+            </kml>
+            """, "KML")
+        check("Point (31.437121 -25.096893)", "WKT")
+        check("POINT (31.437121 -25.096893)", "WKT")
+        // lon, lat, alt or lat, lon, alt: it can't be told which.
+        XCTAssertNil(CoordinateParser.parse("31.437121,-25.096893,0"))
+    }
+
+    func testPositionInText() {
+        check("25°05'48.8\"S 31°26'13.6\"E\nhttps://maps.app.goo.gl/q8w1k9mH3qFz7Dxq8", "degrees, minutes and seconds", within: 2)
+        for t in ["Camp site 14: -25.096893, 31.437121", "Saw leopard at 06:45 -25.096893, 31.437121",
+                  "Lions on H4-1 at -25.096893, 31.437121", "[12:31, 27/10/2026] Jaco: -25.096893, 31.437121",
+                  "27/10/2026, 12:31 - Jaco: -25.096893, 31.437121"] {
+            check(t, "decimal degrees")
+        }
+        check("Spot 1: 51.5007, -0.1246", "decimal degrees", at: london) // not 1° 51.5007'
+        // Wikipedia: the same place twice.
+        check("51°30′02.5″N 0°07′28.6″W / 51.500694°N 0.124611°W", "degrees, minutes and seconds",
+              at: GeoPoint(lat: 51.500694, lon: -0.124611))
+        // Two different places: it isn't clear which is meant.
+        XCTAssertNil(CoordinateParser.parse("Camp at -25.096893, 31.437121; sighting at -25.196893, 31.537121"))
+    }
+
+    func testTheEvidenceDecides() {
+        // A lone O: east (Afrikaans Oos, German Ost) unless your position says west (French Ouest, Spanish Oeste).
+        check("25,096893° S, 31,437121° O", "decimal degrees (O = east)")
+        check("40,68920° N, 74,04450° O", "decimal degrees (O = west)", near: GeoPoint(lat: 45.5017, lon: -73.5673), at: newYork)
+        check("51,50070° N, 0,12460° O", "decimal degrees (O = west)", near: london, at: london)
+        // A short plus code with a place name: read near you only when you are close enough to have shortened it.
+        XCTAssertNil(CoordinateParser.parse("WC3P+6R Skukuza, South Africa", near: GeoPoint(lat: -33.918292, lon: 18.921204)))
+        check("WC3P+6R Skukuza, South Africa", "plus code (near you)", within: 8, near: GeoPoint(lat: -24.99, lon: 31.59))
     }
 }
 
