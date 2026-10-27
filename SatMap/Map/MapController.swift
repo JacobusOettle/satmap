@@ -11,8 +11,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private let lasso = LassoView()
     private let model: AppModel
 
+    private let satelliteMode = SatelliteMode.current
     private let backdrop = SatelliteBackdropOverlay(urlTemplate: nil)
-    private let satellite = SatelliteTileOverlay(urlTemplate: nil)
+    private lazy var satellite: MKTileOverlay = satelliteMode == .renderer
+        ? SatelliteDrawnOverlay(urlTemplate: nil) : SatelliteTileOverlay(urlTemplate: nil)
+    private var satelliteRenderer: SatelliteRenderer?
     private let contours = ContourTileOverlay(urlTemplate: nil)
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
@@ -60,7 +63,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
         // Later overlays draw on top: imagery, contours (when switched on), (blocks inserted below the track),
         // track, measuring line.
-        mapView.addOverlay(backdrop, level: .aboveLabels)
+        if satelliteMode == .backdrop { mapView.addOverlay(backdrop, level: .aboveLabels) }
         mapView.addOverlay(satellite, level: .aboveLabels)
         if model.showContours { mapView.addOverlay(contours, level: .aboveLabels) }
         track.reset(model.track)
@@ -195,6 +198,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             self.reloadPending = false
             self.lastReload = Date()
             (self.mapView.renderer(for: self.satellite) as? MKTileOverlayRenderer)?.reloadData()
+            self.satelliteRenderer?.reload()
             (self.mapView.renderer(for: self.contours) as? MKTileOverlayRenderer)?.reloadData()
         }
     }
@@ -499,6 +503,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         switch overlay {
+        case let o as SatelliteDrawnOverlay:
+            let r = SatelliteRenderer(overlay: o)
+            satelliteRenderer = r
+            return r
         case let o as MKTileOverlay:
             return MKTileOverlayRenderer(tileOverlay: o)
         case let o as TrackOverlay:
