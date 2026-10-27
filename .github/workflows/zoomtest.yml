@@ -52,7 +52,7 @@ jobs:
       - name: Zoom and pan, recording the screen
         run: |
           mkdir -p videos
-          # Drawn (the default) and Tiles; testScriptSingle and testScriptBackdropContours can be added back here.
+          # Drawn (the default) and Tiles. Single and BackdropContours (ZoomTests) can be added back to the list.
           for mode in Renderer Backdrop; do
             xcrun simctl spawn "$UDID" log stream --level info --style compact \
               --predicate 'subsystem == "com.jacobusoettle.satmap" AND category == "zoomscript"' > "videos/script-$mode.log" 2>&1 &

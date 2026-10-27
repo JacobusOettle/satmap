@@ -299,15 +299,16 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         stopCount += 1
         let n = stopCount
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self = self, n == self.stopCount, self.isForeground, let perPoint = self.mapPointsPerPoint else { return }
+            guard let self = self, n == self.stopCount, self.isForeground,
+                  let perPoint = self.crosshairMapPointsPerPoint else { return }
             let scale = self.mapView.window?.screen.scale ?? self.mapView.traitCollection.displayScale
             ImageryPrefetch.mapStopped(visible: self.mapView.visibleMapRect, pixelsPerMapPoint: Double(max(1, scale)) / perPoint,
                                        decode: self.satelliteMode == .renderer)
         }
     }
 
-    /// Map points per screen point at the crosshair, measured like `metersPerPoint`.
-    private var mapPointsPerPoint: Double? {
+    /// Map points per screen point at the crosshair, measured like `metersPerPoint` (right however the map is turned).
+    private var crosshairMapPointsPerPoint: Double? {
         let b = mapView.bounds
         guard b.width > 100 else { return nil }
         let l = MKMapPoint(mapView.convert(CGPoint(x: b.midX - 50, y: b.midY), toCoordinateFrom: mapView))
