@@ -39,9 +39,11 @@ struct MapScreen: View {
                 case .off:
                     EmptyView()
                 }
-                if let p = model.selectedPoint, !model.isDrawingArea {
-                    CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
-                                  onClose: { model.selectedPoint = nil })
+                // Your own coordinates at the top; a tapped spot's at the bottom, within reach to copy.
+                if let loc = recorder.location, !model.isDrawingArea {
+                    CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
+                                  text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
+                                  id: "myCoordinates")
                         .frame(maxWidth: .infinity)
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
@@ -57,17 +59,16 @@ struct MapScreen: View {
                         controls
                     }
                     // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
-                    // bottom of the screen to your coordinates.
+                    // bottom of the screen to a tapped spot's coordinates.
                     .padding(.bottom, Self.controlsLift)
                 }
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
             .overlay(alignment: .bottom) {
-                if let loc = recorder.location, !model.isDrawingArea {
-                    CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
-                                  text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
-                                  id: "myCoordinates")
+                if let p = model.selectedPoint, !model.isDrawingArea {
+                    CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
+                                  onClose: { model.selectedPoint = nil })
                         .padding(.bottom, 8)
                 }
             }
