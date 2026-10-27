@@ -190,18 +190,28 @@ final class SatelliteDrawnOverlay: MKTileOverlay {
 /// it lacks (for a spot with nothing at all, first the tile three levels up, which covers 64 spots). It never has a
 /// patch redrawn, which MapKit empties first (grey): when tiles have arrived that would improve what it shows, a new
 /// layer replaces it. MapKit calls `draw` on several threads at once.
+/// It draws the contour lines over the imagery too (when switched on): a tile layer of them over this one would hold
+/// up its paints after each change of zoom level (MapKit's, 0.2–0.4 s of grey).
 final class SatelliteRenderer: MKOverlayRenderer {
     /// Decoded tiles (256 KB each) drawn from, so each is decoded once: those in focus, and some.
     private static let decoded = RecentCache<TileID, UIImage>(capacity: 400)
+    /// Decoded contour tiles (256 KB each; `ContourRenderer`), and those with nothing to draw.
+    private static let contourImages = RecentCache<TileID, (image: UIImage, complete: Bool)>(capacity: 240)
+    private static let noContours = RecentCache<TileID, Bool>(capacity: 4000)
 
-    /// Called on the main queue when a tile has arrived in memory (loaded here or by `ImageryPrefetch`).
-    static var onArrival: ((TileID) -> Void)?
+    enum Content { case imagery, contours }
+
+    /// Called on the main queue when a tile has arrived in memory (loaded here or by `ImageryPrefetch`), or its
+    /// contour lines.
+    static var onArrival: ((TileID, Content) -> Void)?
 
     /// Tiles being loaded, and those to leave for a while (failed, or deeper than the imagery goes): shared by the
     /// layers, so a new one doesn't ask again for what its predecessor is loading.
     private static let loads = NSLock()
     private static var loading = Set<TileID>()
     private static var retryAfter: [TileID: (until: CFTimeInterval, beyondDepth: Bool)] = [:]
+    private static var contoursLoading = Set<TileID>()
+    private static var contoursRetryAfter: [TileID: CFTimeInterval] = [:]
     /// Around the screen and the level drawn there (set by `MapController` as the map moves). MapKit paints in
     /// large patches, mostly off screen, and keeps patches of other zooms: only spots in focus are loaded, decoded and
     /// improved by a new layer.
@@ -231,6 +241,16 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// The patches painted at the latest zoom.
     private var painted: [MKMapRect] = []
     private var paintedScale: MKZoomScale = 0
+    /// Whether this layer draws contour lines (fixed: switching them on or off brings a new layer); the spots it drew
+    /// without their own contour tile (true: with it, its edges approximated), and those with it.
+    let drawsContours: Bool
+    private var contoursLacking: [TileID: Bool] = [:]
+    private var contourSpots = Set<TileID>()
+
+    init(overlay: SatelliteDrawnOverlay, contours: Bool) {
+        drawsContours = contours
+        super.init(overlay: overlay)
+    }
 
     override func canDraw(_ mapRect: MKMapRect, zoomScale: MKZoomScale) -> Bool {
         true
@@ -252,13 +272,14 @@ final class SatelliteRenderer: MKOverlayRenderer {
         // Only decoded tiles are copied here, so a patch paints quickly; tiles in memory not decoded yet are decoded
         // off this thread and come with the next layer. Each coarse tile is drawn once, under all the spots it serves.
         var own: [TileID] = [], shownStandIns: [TileID: Int] = [:]
-        var coarse: [TileID: [TileID]] = [:], sharper: [TileID] = []
+        var coarse: [TileID: [TileID]] = [:], sharper: [TileID] = [], spots: [TileID] = []
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
         context.interpolationQuality = .medium
         for y in y0...y1 {
             for x in x0...x1 {
                 let t = TileID(z: z, x: x, y: y)
+                spots.append(t)
                 if let image = Self.decoded.value(for: t) {
                     image.draw(in: self.rect(for: Self.mapRect(t)))
                     ImageryMemory.tiles.touch(t) // on screen: keep its data longest
@@ -293,6 +314,9 @@ final class SatelliteRenderer: MKOverlayRenderer {
         for c in sharper {
             Self.decoded.value(for: c)?.draw(in: self.rect(for: Self.mapRect(c)))
         }
+        let contours = drawsContours && z >= ContourPolicy.minTileZoom && ContourPolicy.intervals(
+            forPointZoom: ContourPolicy.pointZoom(tileZoom: z, screenScale: Double(contentScaleFactor))) != nil
+        let lacking = contours ? drawContours(over: spots, focus: focus, in: context) : [:]
         lock.withLock {
             if zoomScale != paintedScale {
                 painted = []
@@ -303,15 +327,67 @@ final class SatelliteRenderer: MKOverlayRenderer {
             ownSpots.formUnion(own)
             standIns.merge(shownStandIns) { _, new in new }
             ownSpots.subtract(shownStandIns.keys)
+            if contours {
+                for t in spots { contoursLacking[t] = lacking[t] }
+                contourSpots.formUnion(spots.filter { lacking[$0] == nil })
+                contourSpots.subtract(lacking.keys)
+            }
         }
         // A tile that arrived while this patch was painting found no stand-in here to improve yet: announce it again.
         let late = shownStandIns.first { spot, shown in
             Self.decoded.contains(spot) || (TileFallback.ancestor(of: spot, maxLevels: 10, has: Self.has)?.z ?? -1) > shown
         }
-        if let spot = late?.key { DispatchQueue.main.async { Self.onArrival?(spot) } }
+        if let spot = late?.key { DispatchQueue.main.async { Self.onArrival?(spot, .imagery) } }
+        if let spot = lacking.first(where: { Self.contoursBetter($0.key, than: $0.value) })?.key {
+            DispatchQueue.main.async { Self.onArrival?(spot, .contours) }
+        }
         let ms = Int((CACurrentMediaTime() - began) * 1000)
         let empty = shownStandIns.values.filter { $0 < 0 }.count
-        tileLog.debug("drawn z\(z): \(own.count) own, \(shownStandIns.count - empty) stand-in, \(empty) empty in \(ms) ms")
+        tileLog.debug("drawn z\(z): \(own.count) own, \(shownStandIns.count - empty) stand-in, \(empty) empty, \(lacking.count) without contours in \(ms) ms")
+    }
+
+    /// Draws the contour lines over these spots: each one's own tile, else for now its parent's enlarged or its
+    /// children's; and loads those missing in focus. Returns the spots drawn without their own tile (true: with it,
+    /// its edges approximated).
+    private func drawContours(over spots: [TileID], focus: (rect: MKMapRect, level: Int), in context: CGContext) -> [TileID: Bool] {
+        var lacking: [TileID: Bool] = [:]
+        var parents: [TileID: [TileID]] = [:]
+        for t in spots {
+            let isNear = Self.inFocus(t, focus)
+            if let c = Self.contourImages.value(for: t) {
+                c.image.draw(in: rect(for: Self.mapRect(t)))
+                if !c.complete {
+                    lacking[t] = true
+                    if isNear { Self.loadContours(t, scale: contentScaleFactor) }
+                }
+                continue
+            }
+            if Self.noContours.contains(t) { continue }
+            lacking[t] = false
+            if isNear { Self.loadContours(t, scale: contentScaleFactor) }
+            let p = t.ancestor(levels: 1)
+            if p.z >= ContourPolicy.minTileZoom, Self.contourImages.contains(p) {
+                parents[p, default: []].append(t)
+            } else {
+                for c in Self.quarters(t) { Self.contourImages.value(for: c)?.image.draw(in: rect(for: Self.mapRect(c))) }
+            }
+        }
+        for (p, under) in parents {
+            guard let c = Self.contourImages.value(for: p) else { continue }
+            context.saveGState()
+            context.clip(to: under.map { rect(for: Self.mapRect($0)) })
+            c.image.draw(in: rect(for: Self.mapRect(p)))
+            context.restoreGState()
+        }
+        return lacking
+    }
+
+    /// Whether the contours in memory for a spot are better than what was drawn there (`approximate`: its own tile,
+    /// its edges approximated; else none of its own).
+    private static func contoursBetter(_ t: TileID, than approximate: Bool) -> Bool {
+        if noContours.contains(t) { return true }
+        guard let c = contourImages.value(for: t) else { return false }
+        return c.complete || !approximate
     }
 
     /// The imagery level drawn at a zoom: tiles about 256 pixels across on screen.
@@ -322,9 +398,13 @@ final class SatelliteRenderer: MKOverlayRenderer {
     }
 
     /// Whether `t` would improve what this layer shows in focus: a spot's own tile, a coarser tile than the one shown
-    /// there (or than nothing), or a sharper one under it.
-    func wouldImprove(with t: TileID) -> Bool {
+    /// there (or than nothing), or a sharper one under it; or a spot's contour lines.
+    func wouldImprove(with t: TileID, _ content: Content) -> Bool {
         let focus = Self.loads.withLock { Self.focus }
+        if content == .contours {
+            guard Self.inFocus(t, focus), let approximate = lock.withLock({ contoursLacking[t] }) else { return false }
+            return Self.contoursBetter(t, than: approximate)
+        }
         return lock.withLock {
             standIns.contains { spot, shown in
                 guard Self.inFocus(spot, focus) else { return false }
@@ -335,17 +415,23 @@ final class SatelliteRenderer: MKOverlayRenderer {
         }
     }
 
-    /// Whether this layer shows anything other than spots' own tiles in focus (then a reload may improve it).
+    /// Whether this layer shows anything other than spots' own tiles in focus, contour lines included (then a reload
+    /// may improve it).
     var hasStandIns: Bool {
         let focus = Self.loads.withLock { Self.focus }
-        return lock.withLock { standIns.keys.contains { Self.inFocus($0, focus) } }
+        return lock.withLock {
+            standIns.keys.contains { Self.inFocus($0, focus) } || contoursLacking.keys.contains { Self.inFocus($0, focus) }
+        }
     }
 
     /// Loads (or decodes) what is missing for the spots in focus that this layer shows with a stand-in: the map has
     /// stopped, and MapKit doesn't repaint patches it has painted (maybe before they came into focus).
     func loadStandIns() {
         let focus = Self.loads.withLock { Self.focus }
-        let spots = lock.withLock { standIns.filter { $0.key.z == focus.level && Self.inFocus($0.key, focus) } }
+        let (spots, contours) = lock.withLock {
+            (standIns.filter { $0.key.z == focus.level && Self.inFocus($0.key, focus) },
+             contoursLacking.keys.filter { $0.z == focus.level && Self.inFocus($0, focus) })
+        }
         for (t, shown) in spots {
             if ImageryMemory.tiles.contains(t) {
                 Self.prepare([t])
@@ -354,6 +440,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 if shown < 0, t.z >= 1 { Self.load(t.ancestor(levels: min(3, t.z)), urgent: true) }
             }
         }
+        for t in contours { Self.loadContours(t, scale: contentScaleFactor) }
     }
 
     /// Whether this layer has painted all these points at the latest zoom.
@@ -389,9 +476,48 @@ final class SatelliteRenderer: MKOverlayRenderer {
         }
     }
 
+    /// Draws a spot's contour lines into memory (`ContourRenderer`), once at a time, and announces them. Those that
+    /// can't be had, or only with their edges approximated, are asked for again in a while.
+    private static func loadContours(_ t: TileID, scale: CGFloat) {
+        let now = CACurrentMediaTime()
+        let start: Bool = loads.withLock {
+            if let until = contoursRetryAfter[t], now < until { return false }
+            return contoursLoading.insert(t).inserted
+        }
+        guard start else { return }
+        Task.detached(priority: .userInitiated) {
+            let tile = await ContourRenderer.shared.tile(t, contentScale: Double(scale))
+            let had = contourImages.contains(t)
+            var arrived = true, again = false
+            switch tile {
+            case .lines(let png, let complete):
+                if let i = UIImage(data: png)?.preparingForDisplay() {
+                    contourImages.set((i, complete), for: t)
+                    arrived = complete || !had
+                } else {
+                    arrived = false
+                }
+                again = !complete
+            case .blank:
+                noContours.set(true, for: t)
+            case .unavailable:
+                arrived = false
+                again = true
+            }
+            loads.withLock {
+                contoursLoading.remove(t)
+                contoursRetryAfter[t] = again ? CACurrentMediaTime() + 30 : nil
+            }
+            if arrived { DispatchQueue.main.async { onArrival?(t, .contours) } }
+        }
+    }
+
     /// Tiles that failed may be asked for again at once (the network is back); not those deeper than the imagery.
     static func reload() {
-        loads.withLock { retryAfter = retryAfter.filter { $0.value.beyondDepth } }
+        loads.withLock {
+            retryAfter = retryAfter.filter { $0.value.beyondDepth }
+            contoursRetryAfter = [:]
+        }
     }
 
     /// Whether every spot this layer shows with its own tile in focus is decoded, so a new layer would show it too
@@ -399,11 +525,15 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// loaded again, for the next try.
     func ownSpotsReady() -> Bool {
         let focus = Self.loads.withLock { Self.focus }
-        let missing = lock.withLock { ownSpots.filter { Self.inFocus($0, focus) && !Self.decoded.contains($0) } }
-        guard !missing.isEmpty else { return true }
+        let (missing, missingContours) = lock.withLock {
+            (ownSpots.filter { Self.inFocus($0, focus) && !Self.decoded.contains($0) },
+             contourSpots.filter { Self.inFocus($0, focus) && !Self.contourImages.contains($0) && !Self.noContours.contains($0) })
+        }
+        guard !missing.isEmpty || !missingContours.isEmpty else { return true }
         for t in missing {
             if ImageryMemory.tiles.contains(t) { Self.prepare([t]) } else { Self.load(t, urgent: true) }
         }
+        for t in missingContours { Self.loadContours(t, scale: contentScaleFactor) }
         return false
     }
 
@@ -419,7 +549,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
             Work.prepare.addOperation {
                 let ready = image(t) != nil
                 _ = loads.withLock { decoding.remove(t) }
-                if ready { DispatchQueue.main.async { onArrival?(t) } }
+                if ready { DispatchQueue.main.async { onArrival?(t, .imagery) } }
             }
         }
     }
@@ -447,25 +577,28 @@ final class SatelliteRenderer: MKOverlayRenderer {
     private func sharperTiles(_ t: TileID, decodeMissing: Bool) -> (tiles: [TileID], covered: Bool) {
         let deepest = TileSources.imageryMaxZoom
         guard t.z < deepest else { return ([], false) }
-        func quarters(_ p: TileID) -> [TileID] {
-            (0..<4).map { TileID(z: p.z + 1, x: p.x * 2 + $0 % 2, y: p.y * 2 + $0 / 2) }
-        }
         var tiles: [TileID] = []
         var covered = true
-        for c in quarters(t) {
+        for c in Self.quarters(t) {
             if Self.decoded.contains(c) {
                 tiles.append(c)
             } else {
                 covered = false
                 if decodeMissing, ImageryMemory.tiles.contains(c) { Self.prepare([c]) }
-                if c.z < deepest { tiles += quarters(c).filter { Self.decoded.contains($0) } }
+                if c.z < deepest { tiles += Self.quarters(c).filter { Self.decoded.contains($0) } }
             }
         }
         return (tiles, covered)
     }
 
+    /// The four tiles one level down.
+    private static func quarters(_ p: TileID) -> [TileID] {
+        (0..<4).map { TileID(z: p.z + 1, x: p.x * 2 + $0 % 2, y: p.y * 2 + $0 / 2) }
+    }
+
     static func trim(to count: Int) {
         decoded.trim(to: count)
+        contourImages.trim(to: count)
     }
 
     private static func mapRect(_ t: TileID) -> MKMapRect {

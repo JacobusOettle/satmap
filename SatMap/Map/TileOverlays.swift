@@ -47,7 +47,7 @@ final class ContourRenderer {
     private let lock = NSLock()
     private var scale: Double = 3
     /// MapKit sometimes asks for the same tile again before the first answer: share the work.
-    private var inFlight: [String: Task<Data?, Never>] = [:]
+    private var inFlight: [String: Task<Tile, Never>] = [:]
 
     private let minorColor = UIColor(red: 1.0, green: 0.84, blue: 0.32, alpha: 0.85)
     private let indexColor = UIColor(red: 1.0, green: 0.74, blue: 0.16, alpha: 1.0)
@@ -72,25 +72,40 @@ final class ContourRenderer {
         emptyCache.removeAllObjects()
     }
 
+    /// What there is to draw on a tile.
+    enum Tile {
+        /// The lines (PNG); not `complete` when an elevation tile around it was missing, so its edges are approximated.
+        case lines(Data, complete: Bool)
+        /// Nothing: flat ground, or a zoom without contours.
+        case blank
+        /// No elevation for it (offline and not downloaded, or the fetch failed).
+        case unavailable
+    }
+
     func render(_ t: TileID, contentScale: Double) async -> Data? {
+        if case .lines(let data, _) = await tile(t, contentScale: contentScale) { return data }
+        return nil
+    }
+
+    func tile(_ t: TileID, contentScale: Double) async -> Tile {
         let key = "\(t.z)/\(t.x)/\(t.y)"
-        let task: Task<Data?, Never> = lock.withLock {
+        let task: Task<Tile, Never> = lock.withLock {
             if let existing = inFlight[key] { return existing }
             let new = Task.detached(priority: .userInitiated) { [self] in await self.renderNow(t, contentScale: contentScale) }
             inFlight[key] = new
             return new
         }
-        let data = await task.value
+        let tile = await task.value
         lock.withLock { inFlight[key] = nil }
-        return data
+        return tile
     }
 
-    private func renderNow(_ t: TileID, contentScale: Double) async -> Data? {
+    private func renderNow(_ t: TileID, contentScale: Double) async -> Tile {
         let s = contentScale >= 1 ? min(contentScale, 3) : screenScale
-        guard let interval = ContourPolicy.intervals(forPointZoom: ContourPolicy.pointZoom(tileZoom: t.z, screenScale: s)) else { return nil }
+        guard let interval = ContourPolicy.intervals(forPointZoom: ContourPolicy.pointZoom(tileZoom: t.z, screenScale: s)) else { return .blank }
         let key = "\(t.z)/\(t.x)/\(t.y)" as NSString
-        if let d = cache.object(forKey: key) { return d as Data }
-        if emptyCache.object(forKey: key) != nil { return nil }
+        if let d = cache.object(forKey: key) { return .lines(d as Data, complete: true) }
+        if emptyCache.object(forKey: key) != nil { return .blank }
 
         let started = Date()
         let dz = ContourPolicy.demZoom(forTileZoom: t.z)
@@ -100,7 +115,7 @@ final class ContourRenderer {
         guard !tiles.isEmpty else {
             // No elevation data (offline and not downloaded, or the fetch failed).
             tileLog.error("contours \(t.description, privacy: .public): no elevation tiles after \(fetchedMs) ms")
-            return nil
+            return .unavailable
         }
 
         let cells = ContourPolicy.gridCells(forTileZoom: t.z)
@@ -121,7 +136,7 @@ final class ContourRenderer {
         let totalMs = Int(Date().timeIntervalSince(started) * 1000)
         guard let result = result else {
             tileLog.error("contours \(t.description, privacy: .public): no grid (\(tiles.count) elevation tiles)")
-            return nil
+            return .unavailable
         }
         tileLog.debug("contours \(t.description, privacy: .public) scale \(s) \(result.empty ? "empty" : "drawn", privacy: .public) complete=\(complete) elevation \(fetchedMs) ms compute \(computeMs) ms total \(totalMs) ms")
         // With a neighbour missing, edges are approximated: show it, but don't keep it.
@@ -129,7 +144,9 @@ final class ContourRenderer {
             if result.empty { emptyCache.setObject(1, forKey: key) }
             if let png = result.png { cache.setObject(png as NSData, forKey: key, cost: png.count) }
         }
-        return result.png
+        if result.empty { return .blank }
+        guard let png = result.png else { return .unavailable }
+        return .lines(png, complete: complete)
     }
 
     private func draw(_ lines: [ContourLine], cells: Int, interval: (step: Double, index: Double),

@@ -84,8 +84,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         NotificationCenter.default.addObserver(forName: SatelliteMode.changed, object: nil, queue: .main) { [weak self] _ in
             self?.satelliteModeChanged()
         }
-        SatelliteRenderer.onArrival = { [weak self] t in self?.tileArrived(t) }
-        if model.showContours { mapView.addOverlay(contours, level: .aboveLabels) }
+        SatelliteRenderer.onArrival = { [weak self] t, content in self?.tileArrived(t, content) }
+        contoursChanged(model.showContours)
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
@@ -307,6 +307,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         if swapWaiting {
             swapWaiting = false
             scheduleSwap()
+        } else if let d = drawn, drawnOutgoing == nil,
+                  (mapView.renderer(for: d) as? SatelliteRenderer)?.hasPainted(screenPoints) == false {
+            // MapKit can take a second or more to paint what a pan brought into view (it paints a new layer at once).
+            tileLog.debug("drawn layer hasn't painted the screen: new layer")
+            swapDrawn()
         }
         mapStopped()
     }
@@ -458,6 +463,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         drawn = nil
         drawnOutgoing = nil
         addImagery()
+        contoursChanged(model.showContours) // Drawn draws them itself
     }
 
     /// Loads the tile layer's tiles again. Over a backdrop, without emptying it first (which would show the backdrop's
@@ -478,8 +484,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     /// Drawn: a tile has arrived in memory. If the drawn layer shows a stand-in where it would show better, a new
     /// layer replaces it.
-    private func tileArrived(_ t: TileID) {
-        guard let d = drawn, let r = mapView.renderer(for: d) as? SatelliteRenderer, r.wouldImprove(with: t) else { return }
+    private func tileArrived(_ t: TileID, _ content: SatelliteRenderer.Content) {
+        guard let d = drawn, let r = mapView.renderer(for: d) as? SatelliteRenderer, r.wouldImprove(with: t, content) else { return }
         scheduleSwap()
     }
 
@@ -531,7 +537,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
                 && (self.mapView.renderer(for: new) as? SatelliteRenderer)?.hasPainted(self.screenPoints) == true
             if painted {
                 // A moment more for MapKit to show the last patch painted.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     guard let self = self, self.drawnOutgoing === old else { return }
                     self.mapView.removeOverlay(old)
                     self.drawnOutgoing = nil
@@ -561,16 +567,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     /// Removing the overlay (rather than hiding it) stops MapKit asking for contour tiles, so no elevation is
     /// downloaded or processed for them. Rendered tiles stay cached, so switching back on is quick.
+    /// Drawn: the drawn layer draws them, so a new one comes, with or without.
     private func contoursChanged(_ show: Bool) {
+        if let d = drawn, let r = mapView.renderer(for: d) as? SatelliteRenderer, r.drawsContours != show { swapDrawn() }
         let shown = mapView.overlays.contains { $0 === contours }
-        if show && !shown {
+        let overlay = show && satelliteMode != .renderer
+        if overlay && !shown {
             // Under the blocks, track and measuring line.
             if let top = topImagery {
                 mapView.insertOverlay(contours, above: top)
             } else {
                 mapView.insertOverlay(contours, at: 0, level: .aboveLabels)
             }
-        } else if !show && shown {
+        } else if !overlay && shown {
             mapView.removeOverlay(contours)
         }
     }
@@ -828,7 +837,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         switch overlay {
         case let o as SatelliteDrawnOverlay:
-            return SatelliteRenderer(overlay: o)
+            return SatelliteRenderer(overlay: o, contours: model.showContours)
         case let o as MKTileOverlay:
             return MKTileOverlayRenderer(tileOverlay: o)
         case let o as TrackOverlay:
