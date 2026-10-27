@@ -102,8 +102,8 @@ struct AreaDetailView: View {
     private func extraSize(to z: Int, from: Int) -> String {
         guard let counts = counts else { return "…" }
         let tiles = ((from + 1)...z).reduce(0) { $0 + (counts[$1] ?? 0) }
-        let bytes = "+ " + Format.bytes(Int64(Double(tiles) * imageryTileBytes))
-        return z <= typicalDepth ? "≈ \(bytes)" : "up to \(bytes)"
+        let bytes = Format.bytes(Int64(Double(tiles) * imageryTileBytes))
+        return z <= typicalDepth ? "+ ≈ \(bytes)" : "+ up to \(bytes)"
     }
 
     private func buttonTitle(_ area: OfflineManager.Area) -> String {
