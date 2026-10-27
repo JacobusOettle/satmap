@@ -1020,6 +1020,9 @@ final class CoordinateParserTests: XCTestCase {
     private let lat = -25.096893, lon = 31.437121
     /// Elsewhere: Big Ben, the Statue of Liberty.
     private let london = GeoPoint(lat: 51.5007, lon: -0.1246), newYork = GeoPoint(lat: 40.6892, lon: -74.0445)
+    /// Where you might be: in the Kruger, Cape Town, Madrid, Rio de Janeiro.
+    private let kruger = GeoPoint(lat: -25, lon: 31.5), capeTown = GeoPoint(lat: -33.9249, lon: 18.4241),
+                madrid = GeoPoint(lat: 40.4168, lon: -3.7038), rio = GeoPoint(lat: -22.9068, lon: -43.1729)
 
     /// Read as `at` (the Kruger spot if not given), within `metres`, with the format if given.
     private func check(_ text: String, _ format: String? = nil, within metres: Double = 1, near: GeoPoint? = nil,
@@ -1354,7 +1357,7 @@ final class CoordinateParserTests: XCTestCase {
 
     func testLongitudeFirstAndSeveralPlaces() {
         check("{ type: 'Point', coordinates: [-77.032, 38.913] }", "GeoJSON", at: GeoPoint(lat: 38.913, lon: -77.032))
-        check("coordinates: [31.437121, -25.096893]", "GeoJSON")
+        check(#""coordinates": [31.437121, -25.096893]"#, "GeoJSON")
         check(#"{"type":"MultiPoint","coordinates":[[31.437121,-25.096893]]}"#, "GeoJSON")
         check("MULTIPOINT((31.437121 -25.096893))", "WKT")
         check("point(31.437121 -25.096893)", "WKT")
@@ -1425,6 +1428,158 @@ final class CoordinateParserTests: XCTestCase {
         let start = Date()
         XCTAssertNil(CoordinateParser.parse(String(repeating: "1", count: 20_000)))
         check("Ref " + String(repeating: "7", count: 5_000) + " at -25.096893, 31.437121", "decimal degrees")
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
+    // Inputs checked a third time, by family.
+
+    func testLabelsJoinedByAnd() {
+        // Two labels joined by "and" are a heading, as "Lat/Long:" is: they don't label the first value.
+        for t in ["Lat & Long: -25.096893, 31.437121", "Lat and Long: -25.096893, 31.437121",
+                  "Latitude and longitude: -25.096893, 31.437121", "lat & lng -25.096893, 31.437121",
+                  "Breite und Länge: -25,096893; 31,437121", "Latitud y longitud: -25.096893, 31.437121",
+                  "Breedte en lengte: -25,096893; 31,437121", "Longitude and latitude: 31.437121, -25.096893"] {
+            check(t, "decimal degrees")
+        }
+        check("Lat & Long: -24.996931, 31.592312", "decimal degrees", near: kruger, at: GeoPoint(lat: -24.996931, lon: 31.592312))
+    }
+
+    func testFieldsOfOneHalf() {
+        // A full stop at the end of a sentence isn't a decimal point: the commas are.
+        check("-24,99 31,59.", "decimal degrees", at: GeoPoint(lat: -24.99, lon: 31.59))
+        check("Breite 52,52, Länge 13,41.", "decimal degrees", at: GeoPoint(lat: 52.52, lon: 13.41))
+        // Numbers with a comma, semicolon or slash between them, or a second point, aren't the fields of one half; a dash
+        // or colon keeps them in one (a time, a score).
+        for t in ["2026/10/27", "27/10/26", "10/27/26", "2026/1/5", "-24, 31, 45", "27.10.2026", "2026.10.27", "27.10.26", "45-30",
+                  "12:30", "23:59", "00:00"] {
+            XCTAssertNil(CoordinateParser.parse(t), t)
+        }
+        // Unless the half's letter comes after them (CSV columns); fields with colons.
+        check("25,05,48.815,S,31,26,13.636,E", "degrees, minutes and seconds")
+        check("25:05:48.815 S 31:26:13.636 E", "degrees, minutes and seconds")
+        // A dash before a number that can't be minutes is a minus sign.
+        check("40-74.0445", "decimal degrees", at: GeoPoint(lat: 40, lon: -74.0445))
+        check("-33-70", "decimal degrees", at: GeoPoint(lat: -33, lon: -70))
+        // A date after the position is other text.
+        check("25.096893 S 31.437121 E 27.10.2026", "decimal degrees")
+    }
+
+    func testSouthOrSeconds() {
+        // An S after minutes is south when the other half starts with its letter; "s" for seconds is written right after
+        // the number (see testDashesAndUnitLetters).
+        check("25°05'48.8 S E 031°26'13.6", "degrees, minutes and seconds", at: GeoPoint(lat: -25.096889, lon: 31.437111))
+        check("34°36'12 S W 58°22'54", "degrees, minutes and seconds", at: GeoPoint(lat: -34.603333, lon: -58.381667))
+        check("25 05' 48 S E 31 26' 13", "degrees, minutes and seconds", at: GeoPoint(lat: -25.096667, lon: 31.436944))
+        check("40°41'21sN 74°02'40sW", "degrees, minutes and seconds", at: GeoPoint(lat: 40.689167, lon: -74.044444))
+        // Degrees, minutes and seconds among words, with a minus sign: not a time or a count.
+        check("We're at -25 05 48, 31 26 13", "degrees, minutes and seconds", at: GeoPoint(lat: -25.096667, lon: 31.436944))
+    }
+
+    func testLoneOWithMoreEvidence() {
+        // A Spanish, Portuguese or French word says west, a German or Afrikaans one east, wherever you are.
+        check("Coordenadas: 23° 32′ 51″ S, 46° 38′ 10″ O", "degrees, minutes and seconds (O = west)", near: capeTown,
+              at: GeoPoint(lat: -23.5475, lon: -46.636111))
+        check("Coordenadas: 22,9068 S 43,1729 O", "decimal degrees (O = west)", at: rio)
+        check("Estamos en 40,4168 N 3,7038 O. Ven pronto.", "decimal degrees (O = west)", at: madrid)
+        check("Coordonnées : 47,2184 N 1,5536 O", "decimal degrees (O = west)", at: GeoPoint(lat: 47.2184, lon: -1.5536))
+        check("Koordinaten: 25,096893 S 31,437121 O", "decimal degrees (O = east)", near: rio)
+        // Without one, the reading nearer to you: from Madrid, New York rather than 74° east.
+        check("40,68920° N, 74,04450° O", "decimal degrees (O = west)", near: madrid, at: newYork)
+        // The place written twice: the reading of the O that agrees with the other.
+        check("23°32′51″S 46°38′10″O / -23.5475, -46.6361", "decimal degrees", at: GeoPoint(lat: -23.5475, lon: -46.6361))
+        check("40°25′08″N 3°41′31″O / 40.418888888889, -3.6919444444444", "decimal degrees",
+              at: GeoPoint(lat: 40.418889, lon: -3.691944))
+        // The O of a word ("Posição", "Estação", "año"), or one that reads the same either way, isn't a direction.
+        for near in [nil, kruger] {
+            check("Posição: -25.096893, 31.437121", "decimal degrees", near: near)
+        }
+        check("Localização: -22.9068, -43.1729", "decimal degrees", near: rio, at: rio)
+        check("Estação -23.5505, -46.6333", "decimal degrees", at: GeoPoint(lat: -23.5505, lon: -46.6333))
+        check("Sitio del año -25.096893, 31.437121", "decimal degrees")
+        check("O ponto fica em -25.096893, 31.437121", "decimal degrees")
+        check("-25.096893, 31.437121 o ponto de encontro", "decimal degrees", near: madrid)
+        // The words of the whole text count, also when the position is read from a part of it.
+        check("Sichtung um 12:30 bei 25,096893 S 31,437121 O", "decimal degrees (O = east)", near: madrid)
+    }
+
+    func testLabelledValuesWithWordsAfterThem() {
+        // A direction or unit in words or brackets after a labelled value: read with it, not as a plain value.
+        for t in ["Latitude: 25.096893 South, Longitude: 31.437121 East", "Lat 25.096893 Suid, Lon 31.437121 Oos",
+                  "lat 25.096893 south lon 31.437121 east", "Latitude: 25.096893 (S)\nLongitude: 31.437121 (E)",
+                  "Latitude: 25.096893 deg S, Longitude: 31.437121 deg E"] {
+            check(t, "decimal degrees")
+        }
+        // exiftool's default output, and the like.
+        for t in ["GPS Latitude                    : 25 deg 5' 48.81\" S\nGPS Longitude                   : 31 deg 26' 13.64\" E",
+                  "Latitude: 25 deg 5 min 48.81 sec S\nLongitude: 31 deg 26 min 13.64 sec E",
+                  "Latitude: 25 degrees 5 minutes 48.81 seconds South, Longitude: 31 degrees 26 minutes 13.64 seconds East",
+                  "Breite: 25 Grad 5' 48.81\" S, Länge: 31 Grad 26' 13.64\" O"] {
+            check(t, within: 2)
+        }
+        check("Lat: 25 deg 5.8135 min S\nLon: 31 deg 26.2273 min E", "degrees and decimal minutes", within: 2)
+        // Other words after them are still read as before.
+        for t in ["Lat: -25.096893 Lon: 31.437121 at 12:30", "Camp 14: Lat: -25.096893 Lon: 31.437121 (25+)"] {
+            check(t, "decimal degrees")
+        }
+        // Length and width in German and Afrikaans.
+        XCTAssertNil(CoordinateParser.parse("Länge: 120 cm, Breite: 60 cm"))
+        XCTAssertNil(CoordinateParser.parse("Lengte 2,10 m breedte 0,90 m"))
+    }
+
+    func testNumbersAroundAPosition() {
+        // A stop or camp number before letters that go before the numbers.
+        check("Stop 3 S25.0969 E31.4371", "decimal degrees", at: GeoPoint(lat: -25.0969, lon: 31.4371))
+        check("Gate 4 S 25.096893 E 31.437121", "decimal degrees")
+        check("Site 12 N 51.5007 W 0.1246", "decimal degrees", at: london)
+        // A list of places in degrees and minutes or seconds: none of them is meant.
+        let a = "25°05'48.8\"S 31°26'13.6\"E", b = "24°59'46.0\"S 31°35'28.0\"E"
+        for t in [a + "\n" + b, a + " " + b, "Waypoints:\n" + a + "\n" + b + "\n25°10'00.0\"S 31°30'00.0\"E", "1. " + a + "\n2. " + b,
+                  "25°05'S 31°26'E\n24°59'S 31°35'E", "25°S 31°E\n24°S 32°E"] {
+            XCTAssertNil(CoordinateParser.parse(t), t)
+        }
+        // "25+" or "22+22" is a count or a sum, not a short plus code near you.
+        for t in ["Elephants at -25.096893, 31.437121 (25+)", "-25.096893, 31.437121\n\nCount: 25+"] {
+            check(t, "decimal degrees", near: kruger)
+        }
+        for t in ["Temp 35+", "Age 25+", "22+22=44"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+    }
+
+    func testLongitudeFirstOnlyWhereTheFormatSaysSo() {
+        // "coordinates: [a, b]" on its own may be latitude first as well: it can't be told which.
+        XCTAssertNil(CoordinateParser.parse("coordinates: [-25.096893, 31.437121]"))
+        XCTAssertNil(CoordinateParser.parse("coordinates: [31.437121, -25.096893]"))
+        // A Google Earth path, or two placemarks: the camera's <LookAt> isn't the place either.
+        let lookAt = "<LookAt><longitude>31.50412</longitude><latitude>-25.04501</latitude><range>21345.6</range></LookAt>"
+        for t in ["<kml><Document><Placemark><name>Untitled Path</name>" + lookAt
+                    + "<LineString><coordinates>31.437121,-25.096893,0 31.591110,-24.996110,0</coordinates></LineString>"
+                    + "</Placemark></Document></kml>",
+                  "<kml><Document>" + lookAt + "<Placemark><Point><coordinates>31.437121,-25.096893,0</coordinates></Point>"
+                    + "</Placemark><Placemark><Point><coordinates>31.591110,-24.996110,0</coordinates></Point></Placemark></Document></kml>"] {
+            XCTAssertNil(CoordinateParser.parse(t), t)
+        }
+    }
+
+    func testThePinInAMapLink() {
+        // Not the map's centre, wherever it is in the link.
+        for t in ["https://yandex.ru/maps/?ll=31.500000%2C-25.050000&z=12&pt=31.437121%2C-25.096893",
+                  "https://yandex.ru/maps/?ll=31.500000%2C-25.050000&mode=whatshere&whatshere%5Bpoint%5D=31.437121%2C-25.096893",
+                  "https://www.arcgis.com/home/webmap/viewer.html?center=31.5,-25.05&level=12&marker=31.437121,-25.096893",
+                  "https://www.openstreetmap.org/?lat=-25.05&lon=31.5&zoom=12&layers=M&mlat=-25.096893&mlon=31.437121",
+                  "https://www.bing.com/maps?cp=-25.05~31.5&lvl=11&sp=point.-25.096893_31.437121_Camp"] {
+            check(t, "map link")
+        }
+    }
+
+    func testLongRunsOfSpaces() {
+        // A spreadsheet's empty cells, a message with many empty lines: read quickly (it is read as you type).
+        let start = Date()
+        check("Latitude\tLongitude" + String(repeating: "\t", count: 25) + "\n-25.096893\t31.437121" + String(repeating: "\t", count: 25)
+              + String(repeating: "\n" + String(repeating: "\t", count: 25), count: 400) + "\nSource: GPS", "decimal degrees")
+        check("Lions at -25.096893, 31.437121" + String(repeating: "\n", count: 20_000) + "ok", "decimal degrees")
+        XCTAssertNil(CoordinateParser.parse("1" + String(repeating: " ", count: 20_000) + "N"))
+        XCTAssertNil(CoordinateParser.parse("36J" + String(repeating: " ", count: 20_000) + "X 342401 7223411"))
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
 }
