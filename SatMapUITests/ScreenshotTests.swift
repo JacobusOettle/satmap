@@ -131,21 +131,24 @@ final class ScreenshotTests: XCTestCase {
         }
         XCTAssertTrue(app.buttons["myCoordinates"].exists, "No coordinates of your position")
 
-        // Measuring between two tapped points.
+        // Measuring between two points: a tap anywhere puts a point at the crosshair; the map is moved between them.
         setMeasure(.aiming)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap() // A, in the middle
         sleep(2)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.62)).tap()
+        dragMap(dx: 0.25, dy: 0)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.62)).tap() // B
         sleep(8) // elevations of both points
         XCTAssertEqual(currentMeasureState(), .pair)
         snap("16-measure-two-points")
 
         // Two more points, then tap A again: the shape's area.
+        dragMap(dx: 0, dy: 0.2)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.45)).tap() // C
         sleep(2)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.4)).tap() // D: below the taller panel and its bar
+        dragMap(dx: -0.25, dy: 0)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.45)).tap() // D
         sleep(2)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap() // A again: close
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7)).tap() // A (moved down with the map): close
         sleep(3)
         XCTAssertEqual(currentMeasureState(), .shape)
         XCTAssertTrue(app.staticTexts["Shape A–D · 4 corners"].exists, "The shape didn't get four corners")
@@ -281,8 +284,15 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertEqual(currentMeasureState(), wanted)
     }
 
+    /// Moves the map by dragging it, a share of the screen each way (slowly, so it doesn't glide on).
+    private func dragMap(dx: CGFloat, dy: CGFloat) {
+        let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        from.press(forDuration: 0.2, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5 + dx, dy: 0.45 + dy)))
+        sleep(2)
+    }
+
     private func currentMeasureState() -> MeasureState {
-        let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Tap the spot on the map")).firstMatch
+        let hint = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Move the crosshair onto the spot")).firstMatch
         if hint.exists { return .aiming }
         if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "From A to")).firstMatch.exists { return .pair }
         if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Shape A")).firstMatch.exists { return .shape }

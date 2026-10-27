@@ -249,8 +249,8 @@ struct MeasurePanel: View {
                         .font(.caption).opacity(0.85)
                 }
                 actions(close: points.count >= 3)
-                Text(points.count >= 3 ? "Tap the map for more points, or tap A to close the shape and see its area."
-                                       : "Tap the map (or use the crosshair and the measure button) for more points.")
+                Text(points.count >= 3 ? "Move the crosshair and tap the map for more points, or tap A to close the shape and see its area."
+                                       : "Move the crosshair and tap the map for more points.")
                     .font(.caption2).opacity(0.7)
             default:
                 Text(model.markerDistance.map(Format.distance) ?? "Waiting for GPS…")
@@ -262,7 +262,7 @@ struct MeasurePanel: View {
                         .font(.caption)
                         .opacity(0.85)
                 }
-                Text("Tap the map, or use the crosshair and the measure button, for a second point.")
+                Text("Move the crosshair to the next spot and tap the map for point B.")
                     .font(.caption2)
                     .opacity(0.7)
             }
@@ -374,7 +374,7 @@ struct AimPanel: View {
                 Text("Crosshair \(Int(c.rounded())) m · You \(Int(u.rounded())) m above sea level")
                     .font(.caption).opacity(current ? 0.85 : 0.5)
             }
-            Text("Tap the spot on the map, or move the crosshair onto it and tap the measure button, for point A.")
+            Text("Move the crosshair onto the spot and tap the map (or the measure button) for point A.")
                 .font(.caption2).opacity(0.7)
         }
         .foregroundColor(.white)

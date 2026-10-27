@@ -3,7 +3,7 @@ import CoreLocation
 import Foundation
 import UIKit
 
-/// The measuring tool. A point is placed at the crosshair (ruler button) or where the map is tapped.
+/// The measuring tool. A point is placed at the crosshair, with the measure button or a tap anywhere on the map.
 /// off → aiming → placed (distance from you to A) → path (A → B → C …, total distance) → closed (back to A: area).
 enum MeasureMode: Equatable {
     case off
@@ -243,23 +243,32 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         case .off:
             setMeasure(.aiming)
         case .aiming, .placed, .path:
-            guard let c = map?.centerCoordinate else { return }
-            addMeasurePoint(GeoPoint(lat: c.latitude, lon: c.longitude))
+            addPointAtCrosshair()
         case .closed:
             clearMeasure()
         }
     }
 
-    /// A tap on the map: shows the spot's coordinates, and while measuring places a point there.
+    /// A tap on the map: shows the spot's coordinates; while measuring, places a point at the crosshair wherever the tap
+    /// was (a finger covers the spot it taps).
     func mapTapped(_ p: GeoPoint) {
         if measure == .off {
             selectedPoint = p
         } else {
-            addMeasurePoint(p)
+            addPointAtCrosshair()
         }
     }
 
+    private func addPointAtCrosshair() {
+        guard let c = map?.centerCoordinate else { return }
+        addMeasurePoint(GeoPoint(lat: c.latitude, lon: c.longitude))
+    }
+
     private func addMeasurePoint(_ p: GeoPoint) {
+        // With the crosshair on A (three or more points): the shape closes.
+        if case .path(let pts) = measure, pts.count >= 3, let apart = map?.pointsApart(p, pts[0]), apart < 20 {
+            return closeMeasureShape()
+        }
         selectedPoint = p
         switch measure {
         case .placed(let a):

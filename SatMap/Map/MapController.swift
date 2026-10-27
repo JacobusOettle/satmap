@@ -245,6 +245,13 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         mapView.convert(CGPoint(x: mapView.bounds.midX, y: mapView.bounds.midY), toCoordinateFrom: mapView)
     }
 
+    /// How far apart two places are on the screen, in points.
+    func pointsApart(_ a: GeoPoint, _ b: GeoPoint) -> CGFloat {
+        let pa = mapView.convert(CLLocationCoordinate2D(latitude: a.lat, longitude: a.lon), toPointTo: mapView)
+        let pb = mapView.convert(CLLocationCoordinate2D(latitude: b.lat, longitude: b.lon), toPointTo: mapView)
+        return hypot(pa.x - pb.x, pa.y - pb.y)
+    }
+
     /// Map points per screen point at the current zoom, for redraw margins.
     private var mapPointsPerPoint: Double {
         mapView.bounds.width > 0 ? mapView.visibleMapRect.width / Double(mapView.bounds.width) : 1
