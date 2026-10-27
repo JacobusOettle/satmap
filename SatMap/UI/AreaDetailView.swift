@@ -38,6 +38,16 @@ struct AreaDetailView: View {
                 }
 
                 Section {
+                    Toggle("Allow mobile data", isOn: Binding(
+                        get: { area.allowCellular },
+                        set: { offline.setAllowCellular(areaID, $0) }))
+                } footer: {
+                    Text(area.status == .complete
+                         ? "Used when you add a deeper level."
+                         : "Without mobile data the download waits for Wi-Fi. Switch it on to carry on over mobile data; what is saved is kept.")
+                }
+
+                Section {
                     ForEach(zoomChoices, id: \.self) { z in
                         Button { chosenZoom = z } label: { zoomRow(z, area: area) }
                             // Deeper levels can be added; while a download runs, a lower one stops it there.

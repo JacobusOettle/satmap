@@ -77,7 +77,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   (`UIDesignRequiresCompatibility`).
 - **Going deeper later:** tap a downloaded area to open it: *Show on the map*, how deep the imagery it found goes,
   and the zoom levels with the size each deeper one would add. Choose a deeper level and download: what is saved
-  is kept, and only the new levels are fetched.
+  is kept, and only the new levels are fetched. The same screen has **Allow mobile data**: switch it on for an area
+  waiting for Wi-Fi (or downloading on it) and it carries on over mobile data from where it was.
 - Downloads resume where they stopped: after **Pause**, losing signal, leaving Wi-Fi, or closing the app.
   If the Wi-Fi is up but the internet behind it is down, the download waits and retries by itself.
   If the phone runs out of space, it stops and tells you.

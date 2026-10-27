@@ -155,6 +155,23 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Lets an area download over mobile data, or makes it wait for Wi-Fi again. A download under way starts again on
+    /// the new terms (what is saved is kept); one waiting for Wi-Fi goes on over mobile data.
+    func setAllowCellular(_ id: UUID, _ allowed: Bool) {
+        guard areas.contains(where: { $0.id == id && $0.allowCellular != allowed }) else { return }
+        update(id) {
+            $0.allowCellular = allowed
+            if $0.status == .waitingForNetwork { $0.status = .queued }
+        }
+        if activeID == id {
+            // The run's connection was chosen for the old setting.
+            update(id) { if $0.status == .downloading { $0.status = .queued } }
+            task?.cancel()
+        } else {
+            startNextIfIdle()
+        }
+    }
+
     /// Downloads an area to a different (deeper) zoom level. Tiles already saved are kept and skipped, so only the
     /// new levels are fetched.
     func changeMaxZoom(_ id: UUID, to zoom: Int) {
