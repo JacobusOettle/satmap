@@ -24,8 +24,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | <img src="docs/screenshots/14-export-backup.jpg" width="250"> | <img src="docs/screenshots/15-coordinates.jpg" width="250"> |
 | **Measuring between two points** | **Kruger National Park roads** | **One level deeper for an area** |
 | <img src="docs/screenshots/16-measure-two-points.jpg" width="250"> | <img src="docs/screenshots/17-kruger-roads.jpg" width="250"> | <img src="docs/screenshots/18-area-deeper-level.jpg" width="250"> |
-| **Measuring a shape's area** | **Where I've been** | |
-| <img src="docs/screenshots/19-measure-area.jpg" width="250"> | <img src="docs/screenshots/20-where-ive-been.jpg" width="250"> | |
+| **Measuring a shape's area** | **Where I've been** | **Go to coordinates** |
+| <img src="docs/screenshots/19-measure-area.jpg" width="250"> | <img src="docs/screenshots/20-where-ive-been.jpg" width="250"> | <img src="docs/screenshots/21-go-to-coordinates.jpg" width="250"> |
 
 ## Features
 
@@ -36,6 +36,7 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | My location + dotted track | Blue dot (grey while the GPS sleeps) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
 | KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in white with their names. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Tap a spot on the map, or tap the ruler again to drop a marker under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Add more points the same way (B, C, D …): the panel shows the total distance along the line, the last leg, and how much higher or lower the last point is than A. Tap A again (or **Close shape**) to close the shape: its area (hectares and m²) and perimeter. **Undo** removes the last point; ✕ clears it all. |
+| Go to coordinates | The button with the magnifying glass: paste or type a position in any common format (decimal degrees signed or with N/S/E/W; degrees and minutes; degrees, minutes and seconds with any symbols; decimal commas; GPS/NMEA; Google, Apple, OpenStreetMap and geo: links; UTM; MGRS; plus codes). It shows how it was read and how far it is from you; **Show and measure from here** puts it on the map as measuring point A, with the live distance from you, as if you had tapped it. |
 | Coordinates | Your own coordinates (latitude, longitude in decimal degrees) show at the top and follow you. Tap a spot on the map: a pin marks it and its coordinates show at the bottom, within easy reach. Tap either to copy it to the clipboard. |
 | Offline maps | **Offline** button → **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them), or **Kruger National Park roads** (every tar and gravel road inside the park, shipped with the app; see below), or **Where I've been** (along your dotted track; see below). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
 

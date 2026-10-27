@@ -79,6 +79,8 @@ struct MapScreen: View {
                 BlocksSheet(model: model, library: model.kml)
             case .offline:
                 OfflineSheet(model: model, offline: offline, library: model.kml)
+            case .coordinates:
+                CoordinateEntryView(model: model)
             }
         }
         .background(
@@ -108,6 +110,7 @@ struct MapScreen: View {
             MapButton(systemImage: "square.dashed", label: "Blocks") { model.sheet = .blocks }
             MapButton(systemImage: offline.activeID == nil ? "arrow.down.circle" : "arrow.down.circle.fill",
                       label: "Offline maps", active: offline.activeID != nil) { model.sheet = .offline }
+            MapButton(systemImage: "location.magnifyingglass", label: "Go to coordinates") { model.sheet = .coordinates }
             MapButton(systemImage: measureIcon, label: "Measure", active: model.measure != .off) { model.measureButtonTapped() }
             MapButton(systemImage: model.following ? "location.fill" : "location", label: "My location") { model.centerOnUser() }
                 .contextMenu {

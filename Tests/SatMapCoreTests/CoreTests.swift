@@ -978,3 +978,103 @@ extension ConcurrencyTests {
         XCTAssertEqual(outcome, .completed(failed: 16))
     }
 }
+
+final class CoordinateParserTests: XCTestCase {
+    /// A spot in the Kruger: -25.096893, 31.437121 (25° 5' 48.815" S, 31° 26' 13.636" E).
+    private let lat = -25.096893, lon = 31.437121
+
+    private func check(_ text: String, _ format: String? = nil, within metres: Double = 1, near: GeoPoint? = nil,
+                       file: StaticString = #filePath, line: UInt = #line) {
+        guard let r = CoordinateParser.parse(text, near: near) else {
+            return XCTFail("Not read: \(text)", file: file, line: line)
+        }
+        let d = Geo.distance(r.point, GeoPoint(lat: lat, lon: lon))
+        XCTAssertLessThan(d, metres, "\(text) read as \(r.point) (\(r.format)), \(Int(d)) m off", file: file, line: line)
+        if let f = format { XCTAssertEqual(r.format, f, text, file: file, line: line) }
+    }
+
+    func testDecimalDegrees() {
+        for t in ["-25.096893, 31.437121", "-25.096893,31.437121", "-25.096893 31.437121", "-25.096893;31.437121",
+                  "25.096893 S, 31.437121 E", "25.096893S 31.437121E", "S25.096893 E31.437121", "S 25.096893° E 31.437121°",
+                  "25.096893°S 31.437121°E", "-25.096893° 31.437121°", "(-25.096893, 31.437121)", "−25.096893, +31.437121",
+                  "lat -25.096893 lon 31.437121", "Latitude: -25.096893, Longitude: 31.437121",
+                  "lon 31.437121 lat -25.096893", "31.437121 E, 25.096893 S", "E 31.437121 S 25.096893",
+                  "-25,096893; 31,437121", "-25,096893 31,437121", "25.096893 South 31.437121 East", "25.096893 Suid 31.437121 Oos",
+                  "📍 -25.096893, 31.437121", "  -25.096893 ,\n 31.437121  "] {
+            check(t, "decimal degrees")
+        }
+        // Longitude first, where only the second number can be a latitude.
+        XCTAssertEqual(CoordinateParser.parse("131.5, -25.1")?.point, GeoPoint(lat: -25.1, lon: 131.5))
+    }
+
+    func testDegreesAndMinutes() {
+        for t in ["25° 05.81358' S, 31° 26.22726' E", "S 25° 5.81358′ E 31° 26.22726′", "25 05.81358 S 31 26.22726 E",
+                  "-25 5.81358, 31 26.22726", "-25° 5.81358' 31° 26.22726'", "S25 05.81358 E031 26.22726",
+                  "25°05.81358'S 031°26.22726'E", "25d 5.81358m S 31d 26.22726m E"] {
+            check(t, "degrees and decimal minutes")
+        }
+    }
+
+    func testDegreesMinutesSeconds() {
+        for t in ["25°05'48.815\"S 31°26'13.636\"E", "25°05′48.815″S 31°26′13.636″E", "25º 5' 48.815'' S, 31º 26' 13.636'' E",
+                  "S 25° 5' 48.815\" E 31° 26' 13.636\"", "25 05 48.815 S 31 26 13.636 E", "-25 05 48.815 31 26 13.636",
+                  "-25° 05' 48.815\", 31° 26' 13.636\"", "25°5’48.815”S 31°26’13.636”E", "Lat: 25°05'48.815\"S Long: 31°26'13.636\"E",
+                  "25 deg 5 min 48.815 sec S, 31 deg 26 min 13.636 sec E"] {
+            check(t, "degrees, minutes and seconds")
+        }
+    }
+
+    func testGPSAndLinks() {
+        check("2505.81358,S,03126.22726,E", "GPS (NMEA)")
+        check("$GPGGA,123519,2505.81358,S,03126.22726,E,1,08,0.9,545.4,M,46.9,M,,*47".components(separatedBy: ",")[2...5].joined(separator: ","), "GPS (NMEA)")
+        check("https://www.google.com/maps/place/-25.096893,31.437121", "map link")
+        check("https://www.google.com/maps/@-25.096893,31.437121,15z", "map link")
+        check("https://www.google.com/maps/place/Somewhere/@-25.1,31.4,17z/data=!3m1!4b1!4m6!3m5!3d-25.096893!4d31.437121", "map link")
+        check("https://maps.google.com/?q=-25.096893,31.437121", "map link")
+        check("https://maps.apple.com/?ll=-25.096893,31.437121&q=Pin", "map link")
+        check("https://www.openstreetmap.org/?mlat=-25.096893&mlon=31.437121#map=16/-25.1/31.4", "map link")
+        check("https://www.openstreetmap.org/#map=18/-25.096893/31.437121", "map link")
+        check("https://www.bing.com/maps?cp=-25.096893~31.437121&lvl=16", "map link")
+        check("geo:-25.096893,31.437121?z=17", "geo: link")
+    }
+
+    func testUTMAndMGRS() {
+        // Reference values from pyproj and the mgrs library.
+        check("36J 342401.64 7223411.52", "UTM")
+        check("36 J 342401 7223411", "UTM", within: 2)
+        check("UTM 36J 342401mE 7223411mN", "UTM", within: 2)
+        check("Zone 36J, E 342401, N 7223411", "UTM", within: 2)
+        check("36J N 7223411 E 342401", "UTM", within: 2)
+        check("36S 342401 7223411", "UTM", within: 2) // S as "south", as some tools write it
+        check("36JUT4240123411", "MGRS", within: 2)
+        check("36J UT 42401 23411", "MGRS", within: 2)
+        check("MGRS 36J UT 4240 2341", "MGRS", within: 15)
+        // Elsewhere: Stellenbosch, London, New York, Tromsø, near the equator.
+        let others: [(String, Double, Double)] = [
+            ("34H 307828.05 6244957.75", -33.918292, 18.921204), ("30U 699567.54 5709427.56", 51.5007, -0.1246),
+            ("18T 580735.87 4504695.17", 40.6892, -74.0445), ("34W 420682.24 7728124.9", 69.6496, 18.956),
+            ("17N 811683.01 55331.54", 0.5, -78.2), ("34HCH0782844957", -33.918292, 18.921204), ("30UXC9956709427", 51.5007, -0.1246),
+            ("18TWL8073504695", 40.6892, -74.0445), ("34WDC2068228124", 69.6496, 18.956), ("17NRA1168355331", 0.5, -78.2),
+        ]
+        for (text, la, lo) in others {
+            guard let r = CoordinateParser.parse(text) else { XCTFail("Not read: \(text)"); continue }
+            XCTAssertLessThan(Geo.distance(r.point, GeoPoint(lat: la, lon: lo)), 2, text)
+        }
+    }
+
+    func testPlusCodes() {
+        // Reference values from Google's openlocationcode library (the centre of the code's area, within ~7 m).
+        check("5G6HWC3P+6R", "plus code", within: 8)
+        check("5G6HWC3P+6RX", "plus code", within: 3)
+        check("WC3P+6R Kruger", "plus code (near you)", within: 8, near: GeoPoint(lat: -25.0, lon: 31.54))
+        XCTAssertNil(CoordinateParser.parse("WC3P+6R")) // a short code needs your position
+        guard let s = CoordinateParser.parse("4FRW3WJC+MF") else { return XCTFail("Not read") }
+        XCTAssertLessThan(Geo.distance(s.point, GeoPoint(lat: -33.9183125, lon: 18.9211875)), 1)
+    }
+
+    func testNotPositions() {
+        for t in ["", "hello", "25", "123.4, 456.7", "25° 75' S, 31° 26' E", "91, 181", "25 S 31 S", "1 2 3", "https://example.com/x"] {
+            XCTAssertNil(CoordinateParser.parse(t), t)
+        }
+    }
+}

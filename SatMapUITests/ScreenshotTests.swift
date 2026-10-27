@@ -152,6 +152,22 @@ final class ScreenshotTests: XCTestCase {
         snap("19-measure-area")
         setMeasure(.off)
 
+        // A position pasted in (any format, here degrees, minutes and seconds): measuring from it.
+        tap("Go to coordinates")
+        let field = app.descendants(matching: .any)["coordinateText"].firstMatch
+        if field.waitForExistence(timeout: 10) {
+            field.tap()
+            field.typeText("33°55'10\"S 18°55'20\"E")
+            sleep(1)
+            snap("21-go-to-coordinates")
+            tap("Show and measure from here")
+            sleep(3)
+            XCTAssertEqual(currentMeasureState(), .placed)
+            setMeasure(.off)
+        } else {
+            XCTFail("No field for coordinates")
+        }
+
         // The one-tap Kruger National Park roads (not downloaded here: several GB).
         openOfflineSheet()
         tap("Kruger National Park roads")

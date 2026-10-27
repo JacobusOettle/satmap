@@ -47,6 +47,7 @@ struct PendingArea: Identifiable {
 enum ActiveSheet: String, Identifiable {
     case blocks
     case offline
+    case coordinates
 
     var id: String { rawValue }
 }
@@ -265,6 +266,23 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// A position typed or pasted in: measuring starts from it (point A, with the live distance from you), and the map
+    /// shows it, with you too if you are within 50 km.
+    func measure(from p: GeoPoint) {
+        sheet = nil
+        following = false
+        setMeasure(.placed(p))
+        selectedPoint = p
+        if let loc = recorder.location {
+            let me = GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
+            if Geo.distance(me, p) < 50_000, let b = GeoBounds(points: [me, p]) {
+                map?.zoom(to: b)
+                return
+            }
+        }
+        map?.center(on: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), animated: true)
     }
 
     /// The ✕ on the measuring panel.
