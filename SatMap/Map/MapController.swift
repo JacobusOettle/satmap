@@ -387,8 +387,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         var c = mapView.convert(point, toCoordinateFrom: mapView)
         if let t = lastTouch, hypot(t.point.x - point.x, t.point.y - point.y) < 1 { c = t.coordinate }
         lastTouch = nil
-        // A tap on a point in a KML file (a launch point …) selects it: its own position, with its name.
-        if model.measure == .off, let k = kmlPoint(near: point) {
+        // A tap on a point in a KML file (a launch point …) selects it: its own position, with its name. Where the finger
+        // was on the map, which may have moved since (following you).
+        if model.measure == .off, let k = kmlPoint(near: mapView.convert(c, toPointTo: mapView)) {
             model.pointTapped(GeoPoint(lat: k.coordinate.latitude, lon: k.coordinate.longitude), name: k.title)
             return
         }
@@ -403,12 +404,16 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         model.mapTapped(GeoPoint(lat: c.latitude, lon: c.longitude))
     }
 
-    /// The KML point whose dot is nearest a spot on the screen, within a fingertip.
+    /// The KML point whose dot is nearest a spot on the screen: within a fingertip of the dot, or on its name.
     private func kmlPoint(near spot: CGPoint) -> BlockLabelAnnotation? {
         var best: (a: BlockLabelAnnotation, d: CGFloat)?
         for case let a as BlockLabelAnnotation in mapView.annotations where a.isPoint {
             let p = mapView.convert(a.coordinate, toPointTo: mapView)
-            let d = hypot(p.x - spot.x, p.y - spot.y)
+            var d = hypot(p.x - spot.x, p.y - spot.y)
+            if d >= 26, let v = mapView.view(for: a), !v.isHidden, v.alpha > 0.01,
+               v.convert(v.bounds, to: mapView).insetBy(dx: -6, dy: -6).contains(spot) {
+                d = 25 // on its name
+            }
             if d < 26, d < (best?.d ?? .infinity) { best = (a, d) }
         }
         return best?.a

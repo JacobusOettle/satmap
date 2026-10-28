@@ -222,6 +222,7 @@ final class SelectedPointView: MKAnnotationView {
         canShowCallout = false
         zPriority = .defaultSelected
         displayPriority = .required
+        collisionMode = .none // a selected KML point keeps its own dot and name under the ring
     }
 
     required init?(coder: NSCoder) {
