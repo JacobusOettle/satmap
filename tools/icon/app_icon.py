@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Draws SatMap's app icon (SatMap/Assets.xcassets/AppIcon.appiconset/AppIcon.png).
+"""Draws SatMap's app icon (SatMap/Assets.xcassets/AppIcon.appiconset/AppIcon.png, and AppIcon-Dark.png for the
+dark Home Screen).
 
 The white quadcopter of proposal 1 ("drone over the bush") hovering over the bush and sandy gravel road of proposal 5
-("bush road"), seen from above. No text. Drawn at 4096 px, saved at 1024 px.
+("bush road"), seen from above. No text. Drawn at 4096 px, saved at 1024 px. With --dark: the same scene at night,
+the bush and road by moonlight, the drone dimmer and its tail light glowing.
 
-    python3 tools/icon/app_icon.py <output.png>
+    python3 tools/icon/app_icon.py <output.png> [--dark]
 """
 import math
 import random
@@ -14,7 +16,9 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 S = 4096
 OUT = 1024
-OUT_PATH = sys.argv[1] if len(sys.argv) > 1 else "AppIcon.png"
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+OUT_PATH = ARGS[0] if ARGS else "AppIcon.png"
+DARK = "--dark" in sys.argv[1:]
 
 rng = random.Random(7)
 random.seed(20261027)
@@ -42,8 +46,23 @@ TREE_COLS = [(hexrgb(a), hexrgb(b)) for a, b in (
     ("#213c1b", "#527838"), ("#1b3518", "#456c30"))]
 ROAD_MID = hexrgb("#e2bb82")
 ROAD_EDGE = hexrgb("#b9864f")
+RUT = hexrgb("#c49460")
+GRAVEL_DARK = hexrgb("#8f6a42")
+GRAVEL_LIGHT = hexrgb("#f4dcb0")
 WHITE = (255, 255, 255)
 ACCENT = hexrgb("#FFD60A")
+if DARK:
+    # Night: a cool, dark bush and a moonlit grey-sand road.
+    GROUND_TOP = hexrgb("#0b150f")
+    GROUND_BOT = hexrgb("#040806")
+    TREE_COLS = [(hexrgb(a), hexrgb(b)) for a, b in (
+        ("#08120c", "#1b3024"), ("#0a150d", "#1f3628"), ("#07110b", "#182c21"),
+        ("#0b170f", "#23392b"), ("#09130c", "#1d3225"))]
+    ROAD_MID = hexrgb("#6e6a5e")
+    ROAD_EDGE = hexrgb("#4a463c")
+    RUT = hexrgb("#5a554a")
+    GRAVEL_DARK = hexrgb("#38342c")
+    GRAVEL_LIGHT = hexrgb("#8a857a")
 
 
 # ---------------------------------------------------------------- road path
@@ -195,7 +214,7 @@ for off in (-ROAD_W * 0.20, ROAD_W * 0.20):
     m = stroke_mask(rp, ROAD_W * 0.045)
     ruts = ImageChops.lighter(ruts, m)
 ruts = ruts.filter(ImageFilter.GaussianBlur(S * 0.006))
-rut_col = Image.new("RGB", (S, S), hexrgb("#c49460"))
+rut_col = Image.new("RGB", (S, S), RUT)
 road_rgb = Image.composite(rut_col, road_rgb, ruts.point(lambda v: int(v * 0.55)))
 
 # gravel speckle
@@ -209,7 +228,7 @@ for _ in range(9000):
     gx, gy = px + nx * o, py + ny * o
     gr = rng.uniform(3, 9)
     gd.ellipse((gx - gr, gy - gr, gx + gr, gy + gr), fill=rng.randint(60, 140))
-road_rgb = Image.composite(Image.new("RGB", (S, S), hexrgb("#8f6a42")), road_rgb, gravel)
+road_rgb = Image.composite(Image.new("RGB", (S, S), GRAVEL_DARK), road_rgb, gravel)
 light = Image.new("L", (S, S), 0)
 ld = ImageDraw.Draw(light)
 for _ in range(6000):
@@ -220,7 +239,7 @@ for _ in range(6000):
     gx, gy = px + nx * o, py + ny * o
     gr = rng.uniform(3, 8)
     ld.ellipse((gx - gr, gy - gr, gx + gr, gy + gr), fill=rng.randint(60, 140))
-road_rgb = Image.composite(Image.new("RGB", (S, S), hexrgb("#f4dcb0")), road_rgb, light)
+road_rgb = Image.composite(Image.new("RGB", (S, S), GRAVEL_LIGHT), road_rgb, light)
 
 # ---------------------------------------------------------------- compose landscape
 # ground noise
@@ -305,15 +324,19 @@ def drone_layers():
     # top shell: crisp inset cover, a touch cooler than the frame
     m = 150
     dt.rounded_rectangle((CX - BW / 2 + m, CY - BH / 2 + 300, CX + BW / 2 - m, CY + BH / 2 - 330),
-                         radius=BW / 2 - m, fill=(234, 238, 244, 255))
+                         radius=BW / 2 - m, fill=(198, 203, 210, 255) if DARK else (234, 238, 244, 255))
     dt.rounded_rectangle((CX - BW / 2 + m, CY - BH / 2 + 300, CX + BW / 2 - m, CY + BH / 2 - 330),
-                         radius=BW / 2 - m, outline=(250, 251, 253, 255), width=14)
+                         radius=BW / 2 - m, outline=(214, 218, 224, 255) if DARK else (250, 251, 253, 255), width=14)
     # yellow tail status light (small pill at the rear)
     ty = CY + BH / 2 - 170
     gl = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     gd = ImageDraw.Draw(gl)
-    gd.rounded_rectangle((CX - 210, ty - 90, CX + 210, ty + 90), radius=90, fill=(255, 214, 10, 120))
-    gl = gl.filter(ImageFilter.GaussianBlur(40))
+    if DARK:
+        gd.rounded_rectangle((CX - 330, ty - 190, CX + 330, ty + 190), radius=190, fill=(255, 214, 10, 150))
+        gl = gl.filter(ImageFilter.GaussianBlur(110))
+    else:
+        gd.rounded_rectangle((CX - 210, ty - 90, CX + 210, ty + 90), radius=90, fill=(255, 214, 10, 120))
+        gl = gl.filter(ImageFilter.GaussianBlur(40))
     det = Image.alpha_composite(det, gl)
     dt = ImageDraw.Draw(det)
     dt.rounded_rectangle((CX - 150, ty - 48, CX + 150, ty + 48), radius=48, fill=(255, 214, 10, 255))
@@ -329,7 +352,8 @@ def shade_white(mask):
     """Near-white with top-left light, soft bevel darkening near edges, crisp outline."""
     grad = Image.linear_gradient("L").rotate(45, resample=Image.BICUBIC)
     grad = grad.resize((S, S), Image.BICUBIC)
-    lit = grad.point(lambda v: int(255 - v * 40 / 255))
+    top, fall = (214, 70) if DARK else (255, 40)
+    lit = grad.point(lambda v: int(top - v * fall / 255))
     base = Image.merge("RGB", [lit, lit, lit.point(lambda v: min(255, v + 3))])
     inner = mask.filter(ImageFilter.GaussianBlur(40))
     edge = ImageChops.subtract(mask, inner).point(lambda v: int(min(255, v * 1.6) * 0.45))
@@ -349,14 +373,14 @@ solid, disc, det = drone_layers()
 # shadow on the bush (hovering low: offset down-right, soft)
 sh_alpha = ImageChops.lighter(solid, disc.point(lambda v: v // 4))
 sh = sh_alpha.filter(ImageFilter.GaussianBlur(46))
-sh = ImageChops.offset(sh, 120, 170).point(lambda v: int(v * 0.62))
+sh = ImageChops.offset(sh, 120, 170).point(lambda v: int(v * (0.45 if DARK else 0.62)))
 drone_shadow = Image.new("RGBA", (S, S), (8, 12, 6, 0))
 drone_shadow.putalpha(sh)
 canvas = Image.alpha_composite(canvas, drone_shadow)
 
 # translucent prop discs
 disc_layer = Image.new("RGBA", (S, S), (240, 244, 248, 0))
-disc_layer.putalpha(disc.point(lambda v: int(v * 0.18)))
+disc_layer.putalpha(disc.point(lambda v: int(v * (0.10 if DARK else 0.18))))
 canvas = Image.alpha_composite(canvas, disc_layer)
 
 canvas = Image.alpha_composite(canvas, shade_white(solid))
@@ -368,7 +392,7 @@ vig = Image.new("L", (S, S), 0)
 vd = ImageDraw.Draw(vig)
 vd.ellipse((-0.25 * S, -0.25 * S, 1.25 * S, 1.25 * S), fill=255)
 vig = vig.filter(ImageFilter.GaussianBlur(S * 0.12))
-canvas = Image.composite(canvas, Image.alpha_composite(canvas, Image.new("RGBA", (S, S), (0, 0, 0, 110))), vig)
+canvas = Image.composite(canvas, Image.alpha_composite(canvas, Image.new("RGBA", (S, S), (0, 0, 0, 150 if DARK else 110))), vig)
 
 final = canvas.convert("RGB").resize((OUT, OUT), Image.LANCZOS)
 final.save(OUT_PATH, optimize=True)
