@@ -161,8 +161,9 @@ object TileLevels {
  *
  *  Every answer is a 200 or a 204 (DESIGN.md D19): the only exception MapLibre sees is `IOException("Canceled")`,
  *  for a request it cancelled itself. Anything else that goes wrong becomes a 204 asked again in 30 s, as a tile
- *  that is unavailable for now. (OkHttp would also rethrow an exception that isn't an `IOException` on its dispatcher
- *  thread, which ends the process.) */
+ *  that is unavailable for now: any `Throwable`, so an `Error` too (running out of memory while decoding or cropping
+ *  a stand-in, a stack overflow). OkHttp rethrows anything that isn't an `IOException` on its dispatcher thread, and
+ *  that ends the process. */
 class TileInterceptor(
     private val answer: suspend (TileRoute, TileLayer) -> TileAnswer = SatelliteRenderer::answer,
 ) : Interceptor {
@@ -176,8 +177,9 @@ class TileInterceptor(
             val layer = TileLayers[route.gen] ?: return TileAnswer.empty(maxAge = null).response(request) // source removed
             asked = Pair(layer, route.tile)
             runBlocking { awaitUnlessCanceled(call) { answer(route, layer) } } ?: throw IOException("Canceled")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // Cancelled by MapLibre (a coroutine CancellationException included): the one failure it is told of.
+            // Anything else, an Error included, is a tile unavailable for now.
             if (call.isCanceled()) throw e as? IOException ?: IOException("Canceled", e)
             Log.w("tiles", "Tile request failed, answered with nothing for 30 s: ${request.url.encodedPath}", e)
             TileAnswer.empty(maxAge = 30, lacking = false)

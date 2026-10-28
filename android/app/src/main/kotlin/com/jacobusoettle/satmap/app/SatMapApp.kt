@@ -2,11 +2,13 @@ package com.jacobusoettle.satmap.app
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import com.jacobusoettle.satmap.core.MBTiles
 import com.jacobusoettle.satmap.map.ContourRenderer
 import com.jacobusoettle.satmap.map.ImageryMemory
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.TileInterceptor
 import com.jacobusoettle.satmap.map.TileRepository
+import com.jacobusoettle.satmap.offline.AndroidSqlDriver
 import org.maplibre.android.MapLibre
 import org.maplibre.android.module.http.HttpRequestUtil
 
@@ -16,11 +18,14 @@ class SatMapApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         // 1. Preferences, folders, the network, and the app state (ProcessLifecycleOwner is already set up by App
-        //    Startup here).
+        //    Startup here). Then SQLite for every tile store (the read-write mode, DESIGN.md D17), before anything
+        //    opens one: TileRepository's offline readers, OfflineManager's downloads, and OfflineBackup's export and
+        //    restore.
         Defaults.init(this)
         AppPaths.init(this)
         Connectivity.init(this)
         AppLifecycle.init()
+        MBTiles.driver = AndroidSqlDriver()
         // 2. The tile store, with its HTTP client and limiters.
         TileRepository.init(this)
         // 3. MapLibre. Its own "offline" stops every request, ours to satmap.local included, so offline maps would

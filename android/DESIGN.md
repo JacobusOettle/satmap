@@ -130,7 +130,7 @@ package owns the file (§7). Only the owner edits a file.
 ### 1.7 Tests and resources
 
 - `app/src/test/kotlin/…`: Robolectric and JVM tests, mirroring the main packages (§8.1).
-  - Plus `TestApplication.kt`: a bare `Application` that initialises nothing.
+  - Plus `TestApplication.kt`: a bare `Application` that initialises nothing (not even `MBTiles.driver`, §2.2).
   - Plus `src/test/resources/robolectric.properties` with `application=com.jacobusoettle.satmap.TestApplication` and `sdk=35`, so MapLibre's native code is never loaded under Robolectric.
 - `app/src/androidTest/kotlin/com/jacobusoettle/satmap/`: `ScreenshotTest.kt`, `ZoomTest.kt`, `TestLocations.kt`, `Gestures.kt` (§8.2).
 - `app/src/main/res/`: listed in §5.5.
@@ -158,8 +158,12 @@ activity.
 
 ### 2.2 Startup order (`SatMapApplication.onCreate`)
 
-1. `Defaults.init(this)`, `AppPaths.init(this)`, `Connectivity.init(this)`, `AppLifecycle.init()`.
+1. `Defaults.init(this)`, `AppPaths.init(this)`, `Connectivity.init(this)`, `AppLifecycle.init()`,
+   `MBTiles.driver = AndroidSqlDriver()`.
    - `ProcessLifecycleOwner` is already initialised by App Startup, so `AppLifecycle.init()` can observe it here.
+   - `MBTiles.driver` is the read-write mode of D17. It is set before anything opens a tile store: `TileRepository`'s
+     offline readers, `OfflineManager`'s downloads, and core `OfflineBackup`'s export and restore. `TestApplication`
+     sets nothing, so a Robolectric test that opens a store sets `MBTiles.driver` itself.
 2. `TileRepository.init(this)`. This creates `browseClient` and the limiters.
 3. MapLibre:
    - `MapLibre.getInstance(this)`
@@ -1129,6 +1133,11 @@ Core's `TileDownloadJob.run` returns `DownloadOutcome.Cancelled` on cancellation
 - Add `testImplementation("androidx.car.app:app-testing:1.7.0")` and `testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")`.
 - Remove `workmanager` (D21).
 - `androidTest`: add `androidx.test:rules` (for `GrantPermissionRule`).
+- A test task that reads files outside `android/` declares their folders as inputs, or Gradle reuses an up-to-date or
+  cached result when only those files change: `inputs.dir(rootProject.file("../Tests/SatMapCoreTests/Fixtures"))
+  .withPropertyName("satmapFixtures").withPathSensitivity(PathSensitivity.RELATIVE)`, and the same for
+  `../SatMap/Resources` (`satmapResources`). Core's `test` task needs both (the core stream's file). The app's
+  `testDebugUnitTest` needs the fixtures from M4, when its restore tests read the backup fixtures.
 
 **`res/`:**
 
