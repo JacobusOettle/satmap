@@ -181,6 +181,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     private var cancellables = Set<AnyCancellable>()
     private var elevationTask: Task<Void, Never>?
+    private var retryTimer: Timer?
+    private var reloadPending = false
+    private var lastReload = Date.distantPast
 
     private init() {
         track = trackLog.loadAll()
@@ -195,12 +198,83 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             if self.measureIsFromYou, let loc = self.recorder.location { self.refreshUserElevation(loc) }
         }
 
+        // For the whole app, whichever maps there are (the phone's, the car's, or both): memory trimmed in the background,
+        // and tiles that failed asked for again.
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.retryTimer?.invalidate()
+            self?.retryTimer = nil
+            TileRepository.shared.trimForBackground()
+            ImageryMemory.enteredBackground()
+        }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self = self else { return }
+            TileRepository.shared.restoreAfterBackground()
+            self.startRetryTimer()
+            if self.reloadPending { self.requestReload() }
+        }
+        // MapKit doesn't ask again for tiles that failed. When the network comes back, after a temporary failure, or
+        // when an offline area finishes, reload the tiles (debounced, in the foreground only).
+        Connectivity.shared.$state
+            .map(\.isOnline)
+            .removeDuplicates()
+            .dropFirst()
+            .filter { $0 }
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    TileRepository.shared.resetFailureState()
+                    self?.requestReload()
+                }
+            }
+            .store(in: &cancellables)
+        offline.$completedRevision
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.requestReload() } }
+            .store(in: &cancellables)
+        startRetryTimer()
+
         // Re-publish nested objects so SwiftUI views observing the model update.
         for publisher in [kml.objectWillChange.eraseToAnyPublisher(), offline.objectWillChange.eraseToAnyPublisher(),
                           recorder.objectWillChange.eraseToAnyPublisher()] {
             publisher.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         }
         recorder.start()
+    }
+
+    // MARK: - Reloading tiles
+
+    private var isForeground: Bool {
+        UIApplication.shared.applicationState != .background
+    }
+
+    /// Every 30 s in the foreground: reload tiles if some failed for temporary reasons.
+    private func startRetryTimer() {
+        retryTimer?.invalidate()
+        let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
+            Task.detached(priority: .utility) {
+                guard await TileRepository.shared.probeRecovery() else { return }
+                DispatchQueue.main.async { self?.requestReload() }
+            }
+        }
+        t.tolerance = 10
+        RunLoop.main.add(t, forMode: .common)
+        retryTimer = t
+    }
+
+    /// Tiles may be had again: the maps ask again for those that failed (at most every 20 s).
+    private func requestReload() {
+        reloadPending = true
+        guard isForeground else { return } // done on return to the foreground
+        let wait = max(0, 20 - Date().timeIntervalSince(lastReload))
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+            guard let self = self, self.reloadPending, self.isForeground else { return }
+            self.reloadPending = false
+            self.lastReload = Date()
+            SatelliteRenderer.reload()
+            self.map?.reloadImagery()
+            self.carPlayMap?.reload()
+            self.aim.retry()
+        }
     }
 
     // MARK: - Track

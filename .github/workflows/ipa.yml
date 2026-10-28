@@ -23,7 +23,7 @@ jobs:
   ipa:
     # Xcode 26 (iOS 26 SDK): needed for downloads that carry on in the background with a Lock Screen progress bar.
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
 
@@ -56,6 +56,41 @@ jobs:
         with:
           name: SatMap-ipa
           path: SatMap.ipa
+
+      # A build that doesn't open must not replace the one people install: start it in a simulator first.
+      - name: Check that the app opens
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          best = None
+          for runtime, devices in json.load(sys.stdin)["devices"].items():
+              if "SimRuntime.iOS" not in runtime:
+                  continue
+              version = tuple(int(v) for v in runtime.split("iOS-")[-1].split("-"))
+              for d in devices:
+                  if d["name"].startswith("iPhone") and (best is None or version > best[0]):
+                      best = (version, d["udid"])
+          print(best[1])
+          ')
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          set +e
+          xcodebuild build -project SatMap.xcodeproj -scheme SatMap -configuration Release \
+            -destination "id=$UDID" -derivedDataPath simbuild CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- > simbuild.log 2>&1
+          status=$?
+          set -e
+          if [ $status -ne 0 ]; then grep -E "error:" simbuild.log | sort -u | head -n 50; exit 1; fi
+          xcrun simctl install "$UDID" simbuild/Build/Products/Release-iphonesimulator/SatMap.app
+          xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
+          xcrun simctl location "$UDID" set -24.9969,31.5923
+          pid=$(xcrun simctl launch "$UDID" com.jacobusoettle.satmap | awk '{print $NF}')
+          sleep 30
+          if ! ps -p "$pid" > /dev/null; then
+            echo "SatMap quit after it was opened: not publishing this build."
+            find ~/Library/Logs/DiagnosticReports -name "SatMap*" -exec head -n 120 {} \; 2>/dev/null || true
+            exit 1
+          fi
+          echo "SatMap is running (pid $pid)."
 
       - name: Publish as the test-build pre-release
         env:

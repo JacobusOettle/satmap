@@ -36,7 +36,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var blockOverlays: [UUID: [MKOverlay]] = [:]
     private var blockLabels: [UUID: [MKAnnotation]] = [:]
 
-    private var isForeground = UIApplication.shared.applicationState != .background
+    /// Whether the phone's own screen shows the map (its window scene in the foreground). With CarPlay showing SatMap
+    /// the app stays in the foreground while the phone is locked.
+    private var isShown = UIApplication.shared.applicationState != .background
     private var cancellables = Set<AnyCancellable>()
     /// No saved camera yet: zoom in on the first GPS fix.
     private let firstLaunch = UserDefaults.standard.array(forKey: "camera") == nil
@@ -64,7 +66,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
 
         // Later overlays draw on top: imagery with contours, (blocks inserted below the track), track, measuring line.
-        imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isForeground ?? false },
+        imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isShown ?? false },
                                showContours: { [weak model] in model?.showContours ?? true })
         imagery.addToMap()
         track.reset(model.track)
@@ -121,8 +123,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         if let loc = model.recorder.location { locationUpdated(loc) }
 
         let nc = NotificationCenter.default
-        nc.addObserver(self, selector: #selector(didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
-        nc.addObserver(self, selector: #selector(willEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(sceneDidEnterBackground(_:)), name: UIScene.didEnterBackgroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(sceneWillEnterForeground(_:)), name: UIScene.willEnterForegroundNotification, object: nil)
     }
 
     private func bind() {
@@ -161,58 +163,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             .removeDuplicates()
             .sink { [weak self] power in DispatchQueue.main.async { self?.powerChanged(power) } }
             .store(in: &cancellables)
-        // MapKit doesn't ask again for tiles that failed. When the network comes back, after a temporary
-        // failure, or when an offline area finishes, reload the tiles (debounced, on screen only).
-        Connectivity.shared.$state
-            .map(\.isOnline)
-            .removeDuplicates()
-            .dropFirst()
-            .filter { $0 }
-            .sink { [weak self] _ in
-                DispatchQueue.main.async {
-                    TileRepository.shared.resetFailureState()
-                    self?.requestReload()
-                }
-            }
-            .store(in: &cancellables)
-        model.offline.$completedRevision
-            .dropFirst()
-            .sink { [weak self] _ in DispatchQueue.main.async { self?.requestReload() } }
-            .store(in: &cancellables)
-        startRetryTimer()
     }
 
-    private var retryTimer: Timer?
-
-    /// Every 30 s on screen: reload tiles if some failed for temporary reasons. Not run in the background.
-    private func startRetryTimer() {
-        retryTimer?.invalidate()
-        let t = Timer(timeInterval: 30, repeats: true) { [weak self] _ in
-            Task.detached(priority: .utility) {
-                guard await TileRepository.shared.probeRecovery() else { return }
-                DispatchQueue.main.async { self?.requestReload() }
-            }
-        }
-        t.tolerance = 10
-        RunLoop.main.add(t, forMode: .common)
-        retryTimer = t
-    }
-    private var reloadPending = false
-    private var lastReload = Date.distantPast
-
-    private func requestReload() {
-        reloadPending = true
-        guard isForeground else { return } // done on return to the foreground
-        let wait = max(0, 20 - Date().timeIntervalSince(lastReload))
-        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-            guard let self = self, self.reloadPending, self.isForeground else { return }
-            self.reloadPending = false
-            self.lastReload = Date()
-            SatelliteRenderer.reload()
-            self.imagery.reload()
-            self.model.carPlayMap?.reload()
-            self.model.aim.retry()
-        }
+    /// Tiles may be had again (`AppModel.requestReload`): a new layer asks again for those shown with a stand-in.
+    func reloadImagery() {
+        imagery.reload()
     }
 
     /// The coordinate under the crosshair (the middle of the view). `mapView.centerCoordinate` can be offset by
@@ -321,7 +276,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     // MARK: - Location
 
     func locationUpdated(_ loc: CLLocation) {
-        guard isForeground else { return }
+        guard isShown else { return }
         if let a = userAnnotation {
             a.coordinate = loc.coordinate
         } else {
@@ -357,7 +312,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     // MARK: - Track
 
     private func trackChanged() {
-        guard isForeground else { return }
+        guard isShown else { return }
         let points = model.track
         if points.count < drawnTrackCount {
             // Cleared.
@@ -597,20 +552,17 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     // MARK: - App state
 
-    @objc private func didEnterBackground() {
-        isForeground = false
-        retryTimer?.invalidate()
-        retryTimer = nil
+    /// The phone's screen (its window scene; the car's is a CarPlay scene) went to the background or came back. The
+    /// app-wide work for the background is in `AppModel`.
+    @objc private func sceneDidEnterBackground(_ n: Notification) {
+        guard n.object is UIWindowScene else { return }
+        isShown = false
         saveCamera()
-        TileRepository.shared.trimForBackground()
-        ImageryMemory.enteredBackground()
     }
 
-    @objc private func willEnterForeground() {
-        isForeground = true
-        TileRepository.shared.restoreAfterBackground()
-        startRetryTimer()
-        if reloadPending { requestReload() }
+    @objc private func sceneWillEnterForeground(_ n: Notification) {
+        guard n.object is UIWindowScene else { return }
+        isShown = true
         imagery.becameVisible()
         trackChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
