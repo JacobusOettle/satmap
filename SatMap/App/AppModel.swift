@@ -176,6 +176,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     /// Set by the map so the model can read the centre of the screen and move the camera.
     weak var map: MapController?
+    /// The map on the car's screen while CarPlay shows SatMap.
+    weak var carPlayMap: CarPlayMapController?
 
     private var cancellables = Set<AnyCancellable>()
     private var elevationTask: Task<Void, Never>?
@@ -220,6 +222,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
 
     private func locationUpdated(_ loc: CLLocation) {
         map?.locationUpdated(loc)
+        carPlayMap?.locationUpdated(loc)
         if measureIsFromYou, UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
     }
 

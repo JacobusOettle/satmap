@@ -37,7 +37,8 @@ jobs:
           plist=$(find ~/Library/Developer/Xcode/DerivedData -path "*-iphonesimulator/SatMap.app/Info.plist" | head -n 1)
           plutil -p "$plist"
           for key in UIBackgroundModes BGTaskSchedulerPermittedIdentifiers NSLocationWhenInUseUsageDescription NSMotionUsageDescription \
-                     CFBundleDocumentTypes UTImportedTypeDeclarations LSSupportsOpeningDocumentsInPlace; do
+                     CFBundleDocumentTypes UTImportedTypeDeclarations LSSupportsOpeningDocumentsInPlace \
+                     UIApplicationSceneManifest CPTemplateApplicationSceneSessionRoleApplication; do
             plutil -p "$plist" | grep -q "\"$key\"" || { echo "Missing $key"; exit 1; }
           done
           test -f "$(dirname "$plist")/PrivacyInfo.xcprivacy" || { echo "Missing privacy manifest"; exit 1; }

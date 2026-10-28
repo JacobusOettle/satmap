@@ -15,18 +15,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private let aimLine = CAShapeLayer()
     private let model: AppModel
 
-    /// The imagery SatMap draws (with the contour lines), and while a new layer of it replaces that one (`swapDrawn`),
-    /// the one going (on top until the new one has painted).
-    private var drawn: SatelliteDrawnOverlay?
-    private var drawnOutgoing: SatelliteDrawnOverlay?
-    private var swapScheduled = false
-    private var lastSwap: CFTimeInterval = 0
-    /// Swaps put off while the shown layer's own tiles are decoded for the new one.
-    private var swapDeferrals = 0
-    /// Between MapKit's region-will-change and did-change: swaps wait, leaving MapKit's drawing to what comes into view.
-    private var mapMoving = false
-    private var movingSince: CFTimeInterval = 0
-    private var swapWaiting = false
+    /// The imagery SatMap draws, with the contour lines.
+    private var imagery: DrawnImagery!
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
     private var trackRenderer: TrackRenderer?
@@ -74,8 +64,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
 
         // Later overlays draw on top: imagery with contours, (blocks inserted below the track), track, measuring line.
-        addImagery()
-        SatelliteRenderer.onArrival = { [weak self] t, content in self?.tileArrived(t, content) }
+        imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isForeground ?? false },
+                               showContours: { [weak model] in model?.showContours ?? true })
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
@@ -218,10 +208,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             self.reloadPending = false
             self.lastReload = Date()
             SatelliteRenderer.reload()
-            // A new layer asks again for the tiles shown with a stand-in.
-            if let d = self.drawn, (self.mapView.renderer(for: d) as? SatelliteRenderer)?.hasStandIns == true {
-                self.swapDrawn()
-            }
+            self.imagery.reload()
+            self.model.carPlayMap?.reload()
             self.model.aim.retry()
         }
     }
@@ -289,80 +277,20 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
         if userIsTouchingMap() { model.following = false }
-        if !mapMoving { movingSince = CACurrentMediaTime() }
-        mapMoving = true
+        imagery.regionWillChange()
     }
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
         saveCamera()
         updateAim()
         updateScale()
-        mapMoving = false
-        if swapWaiting {
-            swapWaiting = false
-            scheduleSwap()
-        } else if let d = drawn, drawnOutgoing == nil,
-                  (mapView.renderer(for: d) as? SatelliteRenderer)?.hasPainted(screenPoints) == false {
-            // MapKit can take a second or more to paint what a pan brought into view (it paints a new layer at once).
-            tileLog.debug("drawn layer hasn't painted the screen: new layer")
-            swapDrawn()
-        }
-        mapStopped()
-    }
-
-    private var stopCount = 0
-
-    /// The map has stopped: once it has been still a moment (so the tiles on screen go first), gets the imagery ready
-    /// for the next zoom or pan (`ImageryPrefetch`).
-    private func mapStopped() {
-        stopCount += 1
-        let n = stopCount
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
-            guard let self = self, n == self.stopCount, self.isForeground, let levels = self.imageryLevels else { return }
-            let visible = self.mapView.visibleMapRect
-            SatelliteRenderer.setFocus(visible.insetBy(dx: -visible.width / 4, dy: -visible.height / 4),
-                                       level: levels.imagery, contourLevel: levels.contours)
-            ImageryPrefetch.mapStopped(visible: visible, level: levels.imagery)
-            if let d = self.drawn { (self.mapView.renderer(for: d) as? SatelliteRenderer)?.loadStandIns() }
-        }
-    }
-
-    /// The imagery level for the zoom on screen: tiles about 256 pixels across on screen (a tile pixel 0.7 to 1.4
-    /// screen pixels, at the drawn layer's pixels per point, from its latest paint). Not at the zoom MapKit paints at,
-    /// the next whole zoom level at or above the one on screen (the zoom test showed paints at a zoom scale of 2⁻⁶ with
-    /// 2⁻⁶·⁰⁹ on screen): there, tiles would show at half to full size, up to four times as many for a screen.
-    /// And the contour level: tiles 256 points across at the zoom MapKit paints at, as it asked for them as a tile layer.
-    private var imageryLevels: (imagery: Int, contours: Int)? {
-        guard let perPoint = crosshairMapPointsPerPoint else { return nil }
-        let onScreen = 1 / perPoint // points per map point
-        let painted = pow(2, ceil(log2(onScreen) - 1e-6))
-        var pixelsPerPoint = Double(max(1, mapView.window?.screen.scale ?? mapView.traitCollection.displayScale))
-        let paint = SatelliteRenderer.lastPaintScale
-        if paint.pixelsPerPoint > 0 { pixelsPerPoint = Double(paint.pixelsPerPoint) }
-        return (SatelliteRenderer.level(pixelsPerMapPoint: onScreen * pixelsPerPoint),
-                SatelliteRenderer.level(pixelsPerMapPoint: painted))
-    }
-
-    /// Map points per screen point at the crosshair, measured like `metersPerPoint` (right however the map is turned).
-    private var crosshairMapPointsPerPoint: Double? {
-        let b = mapView.bounds
-        guard b.width > 100 else { return nil }
-        let l = MKMapPoint(mapView.convert(CGPoint(x: b.midX - 50, y: b.midY), toCoordinateFrom: mapView))
-        let r = MKMapPoint(mapView.convert(CGPoint(x: b.midX + 50, y: b.midY), toCoordinateFrom: mapView))
-        let world = MKMapSize.world.width
-        let dx = abs(r.x - l.x), dy = r.y - l.y
-        let d = hypot(min(dx, world - dx), dy) // the short way round, across the date line
-        return d > 0 ? d / 100 : nil
+        imagery.regionDidChange()
     }
 
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
         updateScale()
-        if let levels = imageryLevels {
-            let v = mapView.visibleMapRect
-            SatelliteRenderer.setFocus(v.insetBy(dx: -v.width / 4, dy: -v.height / 4),
-                                       level: levels.imagery, contourLevel: levels.contours)
-        }
+        imagery.visibleRegionChanged()
     }
 
     private func updateScale() {
@@ -417,106 +345,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         v.sleeping = power == .sleeping
     }
 
-    // MARK: - Satellite imagery
-
-    /// Puts the imagery at the bottom of the map (under blocks, track …). It replaces Apple's map.
-    private func addImagery() {
-        let imagery = SatelliteDrawnOverlay(urlTemplate: nil)
-        drawn = imagery
-        mapView.insertOverlay(imagery, at: 0, level: .aboveLabels)
-    }
-
-    /// A tile has arrived in memory. If the drawn layer shows a stand-in where it would show better, a new layer
-    /// replaces it.
-    private func tileArrived(_ t: TileID, _ content: SatelliteRenderer.Content) {
-        guard let d = drawn, let r = mapView.renderer(for: d) as? SatelliteRenderer, r.wouldImprove(with: t, content) else { return }
-        scheduleSwap()
-    }
-
-    /// At most about once a second, so tiles arriving one after another come in together; not while the map moves.
-    private func scheduleSwap() {
-        if mapMoving, CACurrentMediaTime() - movingSince < 3 { // (in case MapKit misses a region-did-change)
-            swapWaiting = true
-            return
-        }
-        guard !swapScheduled else { return }
-        swapScheduled = true
-        let wait = max(0.25, 1 - (CACurrentMediaTime() - lastSwap))
-        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
-            guard let self = self else { return }
-            self.swapScheduled = false
-            self.swapDrawn()
-        }
-    }
-
-    /// Shows what arrived with a freshly drawn layer (redrawing part of a layer would empty it first: grey): it goes
-    /// under the drawn one, which covers it while it paints, and that one goes once it has painted the screen.
-    private func swapDrawn() {
-        guard let old = drawn else { return }
-        guard isForeground else {
-            swapWaiting = true // on return
-            return
-        }
-        guard drawnOutgoing == nil else { return scheduleSwap() } // one at a time
-        // The new layer paints only decoded tiles: not before the ones shown are (a few tries at most).
-        if let r = mapView.renderer(for: old) as? SatelliteRenderer, swapDeferrals < 3,
-           !r.ownSpotsReady(contours: model.showContours) {
-            swapDeferrals += 1
-            return scheduleSwap()
-        }
-        swapDeferrals = 0
-        lastSwap = CACurrentMediaTime()
-        let new = SatelliteDrawnOverlay(urlTemplate: nil)
-        drawn = new
-        drawnOutgoing = old
-        mapView.insertOverlay(new, below: old)
-        retire(old, once: new, ticks: 0)
-    }
-
-    /// Removes the old drawn layer once the new one has painted the whole screen. If it hasn't in 2 s (on screen:
-    /// MapKit doesn't paint in the background), the new one goes instead and the old one stays.
-    private func retire(_ old: SatelliteDrawnOverlay, once new: SatelliteDrawnOverlay, ticks: Int) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self, self.drawnOutgoing === old else { return }
-            let painted = self.isForeground
-                && (self.mapView.renderer(for: new) as? SatelliteRenderer)?.hasPainted(self.screenPoints) == true
-            if painted {
-                // A moment more for MapKit to show the last patch painted; less when the old layer shows grey on part of
-                // the screen (what a pan or zoom brought into view), as it hides the new one there until it goes.
-                let points = self.screenPoints
-                let shown = (self.mapView.renderer(for: old) as? SatelliteRenderer)?.paintedShare(points) ?? 1
-                DispatchQueue.main.asyncAfter(deadline: .now() + (shown < 0.95 ? 0.1 : 0.4)) { [weak self] in
-                    guard let self = self, self.drawnOutgoing === old else { return }
-                    self.mapView.removeOverlay(old)
-                    self.drawnOutgoing = nil
-                }
-            } else if self.isForeground, ticks >= 20 {
-                self.mapView.removeOverlay(new)
-                self.drawn = old
-                self.drawnOutgoing = nil
-                self.scheduleSwap()
-            } else {
-                self.retire(old, once: new, ticks: self.isForeground ? ticks + 1 : ticks)
-            }
-        }
-    }
-
-    /// Points across the screen to its edges, closer together than MapKit's patches, as map points (right however
-    /// the map is turned).
-    private var screenPoints: [MKMapPoint] {
-        let b = mapView.bounds.insetBy(dx: 1, dy: 1)
-        return (0..<81).map { i in
-            let p = CGPoint(x: b.minX + b.width * CGFloat(i % 9) / 8, y: b.minY + b.height * CGFloat(i / 9) / 8)
-            return MKMapPoint(mapView.convert(p, toCoordinateFrom: mapView))
-        }
-    }
-
     // MARK: - Contours
 
     /// The imagery layer draws them, so a new one comes, with or without. Switched off, no elevation is downloaded
     /// or processed for them; drawn tiles stay cached, so switching back on is quick.
     private func contoursChanged(_ show: Bool) {
-        if let d = drawn, let r = mapView.renderer(for: d) as? SatelliteRenderer, r.drawsContours != show { swapDrawn() }
+        imagery.contoursChanged(show)
     }
 
     // MARK: - Track
@@ -677,52 +511,57 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             blockLabels[id] = nil
         }
         for f in files where blockOverlays[f.id] == nil {
-            // One overlay for each style's polygons and one for its lines (files often give every block a style of
-            // its own, with the same colours).
-            var polygons: [KMLStyle?: [MKPolygon]] = [:], polygonOrder: [KMLStyle?] = []
-            var lines: [KMLStyle?: [MKPolyline]] = [:], lineOrder: [KMLStyle?] = []
-            var labels: [MKAnnotation] = []
-            for feature in f.document.features {
-                switch feature.geometry {
-                case .polygon(let outer, let holes):
-                    let interiors = holes.map { h -> MKPolygon in
-                        let c = h.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                        return MKPolygon(coordinates: c, count: c.count)
-                    }
-                    let c = outer.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                    if polygons[feature.style] == nil { polygonOrder.append(feature.style) }
-                    polygons[feature.style, default: []].append(MKPolygon(coordinates: c, count: c.count, interiorPolygons: interiors))
-                    if let name = feature.name, let p = PolygonLabel.interiorPoint(outer: outer, holes: holes) {
-                        labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
-                                                           title: name, isPoint: false))
-                    }
-                case .line(let pts):
-                    let c = pts.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                    if lines[feature.style] == nil { lineOrder.append(feature.style) }
-                    lines[feature.style, default: []].append(MKPolyline(coordinates: c, count: c.count))
-                case .point(let p):
-                    labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
-                                                       title: feature.name ?? "", isPoint: true,
-                                                       color: feature.style?.iconColor.map(UIColor.init(kml:))))
-                }
-            }
-            var overlays: [MKOverlay] = []
-            for style in polygonOrder {
-                let o = BlockPolygons(polygons[style] ?? [])
-                o.style = style
-                overlays.append(o)
-            }
-            for style in lineOrder {
-                let o = BlockLines(lines[style] ?? [])
-                o.style = style
-                overlays.append(o)
-            }
+            let (overlays, labels) = Self.blockShapes(f)
             // Keep blocks above the contours and under the track and the measuring line.
             for o in overlays { mapView.insertOverlay(o, below: track) }
             mapView.addAnnotations(labels)
             blockOverlays[f.id] = overlays
             blockLabels[f.id] = labels
         }
+    }
+
+    /// A KML file's shapes for a map: one overlay for each style's polygons and one for its lines (files often give
+    /// every block a style of its own, with the same colours), and the labels of named blocks and points.
+    static func blockShapes(_ f: KMLLibrary.File) -> (overlays: [MKOverlay], labels: [MKAnnotation]) {
+        var polygons: [KMLStyle?: [MKPolygon]] = [:], polygonOrder: [KMLStyle?] = []
+        var lines: [KMLStyle?: [MKPolyline]] = [:], lineOrder: [KMLStyle?] = []
+        var labels: [MKAnnotation] = []
+        for feature in f.document.features {
+            switch feature.geometry {
+            case .polygon(let outer, let holes):
+                let interiors = holes.map { h -> MKPolygon in
+                    let c = h.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                    return MKPolygon(coordinates: c, count: c.count)
+                }
+                let c = outer.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                if polygons[feature.style] == nil { polygonOrder.append(feature.style) }
+                polygons[feature.style, default: []].append(MKPolygon(coordinates: c, count: c.count, interiorPolygons: interiors))
+                if let name = feature.name, let p = PolygonLabel.interiorPoint(outer: outer, holes: holes) {
+                    labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
+                                                       title: name, isPoint: false))
+                }
+            case .line(let pts):
+                let c = pts.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                if lines[feature.style] == nil { lineOrder.append(feature.style) }
+                lines[feature.style, default: []].append(MKPolyline(coordinates: c, count: c.count))
+            case .point(let p):
+                labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
+                                                   title: feature.name ?? "", isPoint: true,
+                                                   color: feature.style?.iconColor.map(UIColor.init(kml:))))
+            }
+        }
+        var overlays: [MKOverlay] = []
+        for style in polygonOrder {
+            let o = BlockPolygons(polygons[style] ?? [])
+            o.style = style
+            overlays.append(o)
+        }
+        for style in lineOrder {
+            let o = BlockLines(lines[style] ?? [])
+            o.style = style
+            overlays.append(o)
+        }
+        return (overlays, labels)
     }
 
     // MARK: - Lasso (choose an offline area)
@@ -771,11 +610,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         TileRepository.shared.restoreAfterBackground()
         startRetryTimer()
         if reloadPending { requestReload() }
-        // A new layer owed for tiles that arrived meanwhile.
-        if swapWaiting {
-            swapWaiting = false
-            scheduleSwap()
-        }
+        imagery.becameVisible()
         trackChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
     }
@@ -785,7 +620,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
         switch overlay {
         case let o as SatelliteDrawnOverlay:
-            return SatelliteRenderer(overlay: o, contours: model.showContours)
+            return imagery.renderer(for: o)
         case let o as TrackOverlay:
             let r = TrackRenderer(overlay: o)
             trackRenderer = r
@@ -795,13 +630,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             measureRenderer = r
             return r
         case let o as BlockPolygons:
-            let r = MKMultiPolygonRenderer(multiPolygon: o)
-            Self.style(r, o.style, polygons: true)
-            return r
+            return Self.blockRenderer(o)
         case let o as BlockLines:
-            let r = MKMultiPolylineRenderer(multiPolyline: o)
-            Self.style(r, o.style, polygons: false)
-            return r
+            return Self.blockRenderer(o)
         case let o as DraftAreaPolygon:
             let r = MKPolygonRenderer(polygon: o)
             r.strokeColor = .white
@@ -816,6 +647,18 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     /// Blocks in their file's colours and line widths (KML styles). What a file leaves unset is white (yellow/orange is
     /// used by contours, cyan by the track and pink by the measuring line), with a faint fill.
+    static func blockRenderer(_ o: BlockPolygons) -> MKOverlayRenderer {
+        let r = MKMultiPolygonRenderer(multiPolygon: o)
+        style(r, o.style, polygons: true)
+        return r
+    }
+
+    static func blockRenderer(_ o: BlockLines) -> MKOverlayRenderer {
+        let r = MKMultiPolylineRenderer(multiPolyline: o)
+        style(r, o.style, polygons: false)
+        return r
+    }
+
     private static func style(_ r: MKOverlayPathRenderer, _ style: KMLStyle?, polygons: Bool) {
         let s = style ?? KMLStyle()
         let width = s.lineWidth ?? 2.5
