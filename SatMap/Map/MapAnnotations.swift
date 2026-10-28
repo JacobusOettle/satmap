@@ -25,7 +25,8 @@ final class UserLocationAnnotation: NSObject, MKAnnotation {
 }
 
 final class MeasureMarkerAnnotation: NSObject, MKAnnotation {
-    let coordinate: CLLocationCoordinate2D
+    /// Changes as the point is moved (`PointAdjuster`).
+    @objc dynamic var coordinate: CLLocationCoordinate2D
     /// "A", "B", "C" … when two or more points are measured.
     let label: String?
 
@@ -36,9 +37,9 @@ final class MeasureMarkerAnnotation: NSObject, MKAnnotation {
     }
 }
 
-/// A spot tapped on the map (its coordinates are shown at the top).
+/// A spot tapped on the map, or a KML point (its coordinates are shown at the bottom); it can be moved.
 final class SelectedPointAnnotation: NSObject, MKAnnotation {
-    let coordinate: CLLocationCoordinate2D
+    @objc dynamic var coordinate: CLLocationCoordinate2D
 
     init(coordinate: CLLocationCoordinate2D) {
         self.coordinate = coordinate
@@ -228,7 +229,8 @@ final class SelectedPointView: MKAnnotationView {
     }
 }
 
-/// Block name label (or a point placemark); MapKit hides labels that collide.
+/// Block name label, or a point placemark (a launch point …: a larger name, kept before block names when they
+/// collide; a tap selects it); MapKit hides labels that collide.
 final class BlockLabelView: MKAnnotationView {
     static let reuseID = "blockLabel"
     private let label = UILabel()
@@ -236,13 +238,12 @@ final class BlockLabelView: MKAnnotationView {
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
-        label.font = .systemFont(ofSize: 12, weight: .semibold)
         label.textColor = .white
         label.shadowColor = UIColor(white: 0, alpha: 0.9)
         label.shadowOffset = CGSize(width: 0, height: 1)
         addSubview(label)
         dot.backgroundColor = .white
-        dot.layer.cornerRadius = 4
+        dot.layer.cornerRadius = 5
         dot.layer.borderColor = UIColor.black.cgColor
         dot.layer.borderWidth = 1
         addSubview(dot)
@@ -263,17 +264,20 @@ final class BlockLabelView: MKAnnotationView {
 
     private func configure() {
         guard let a = annotation as? BlockLabelAnnotation else { return }
+        label.font = .systemFont(ofSize: a.isPoint ? 15 : 13, weight: a.isPoint ? .bold : .semibold)
         label.text = a.title
         label.sizeToFit()
         dot.isHidden = !a.isPoint
         dot.backgroundColor = a.color ?? .white
-        let w = max(label.bounds.width, 8)
-        let h = label.bounds.height + (a.isPoint ? 10 : 0)
+        displayPriority = a.isPoint ? .defaultHigh : .defaultLow
+        let w = max(label.bounds.width, 10)
+        let h = label.bounds.height + (a.isPoint ? 12 : 0)
         frame = CGRect(x: 0, y: 0, width: w, height: h)
         if a.isPoint {
-            dot.frame = CGRect(x: w / 2 - 4, y: 0, width: 8, height: 8)
-            label.frame.origin = CGPoint(x: 0, y: 10)
-            centerOffset = CGPoint(x: 0, y: h / 2 - 4)
+            // The dot on the point itself, the name under it.
+            dot.frame = CGRect(x: w / 2 - 5, y: 0, width: 10, height: 10)
+            label.frame.origin = CGPoint(x: 0, y: 12)
+            centerOffset = CGPoint(x: 0, y: h / 2 - 5)
         } else {
             label.frame.origin = .zero
             centerOffset = .zero

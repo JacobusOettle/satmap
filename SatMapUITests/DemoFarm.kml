@@ -2,6 +2,12 @@
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
     <name>Demo farm</name>
+    <Style id="launch"><IconStyle><color>ff00a5ff</color></IconStyle></Style>
+    <Placemark>
+      <name>Launch 1</name>
+      <styleUrl>#launch</styleUrl>
+      <Point><coordinates>18.924000,-33.917500,0</coordinates></Point>
+    </Placemark>
     <Placemark>
       <name>A1 Shiraz</name>
       <Polygon><outerBoundaryIs><LinearRing><coordinates>18.921719,-33.918791,0 18.922491,-33.918844,0 18.923242,-33.919361,0 18.923929,-33.920393,0 18.924036,-33.921533,0 18.923242,-33.921462,0 18.921783,-33.921106,0 18.921719,-33.918791,0</coordinates></LinearRing></outerBoundaryIs></Polygon>

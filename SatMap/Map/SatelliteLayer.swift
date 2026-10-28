@@ -433,6 +433,36 @@ final class SatelliteRenderer: MKOverlayRenderer {
         return low <= high ? (Double(low), Double(high), complete) : nil
     }
 
+    /// For the square that moves a point precisely (`LoupeView`): draws the imagery in memory for a map rect into a rect
+    /// of a context, each spot's own tile at `level`, else the nearest coarser one in memory enlarged, and loads what is
+    /// missing (announced, as for the layers).
+    static func drawImagery(_ r: MKMapRect, level z: Int, into context: CGContext, rect target: CGRect) {
+        guard r.width > 0 else { return }
+        let scale = Double(target.width) / r.width
+        func place(_ t: TileID) -> CGRect {
+            let m = mapRect(t)
+            return CGRect(x: Double(target.minX) + (m.minX - r.minX) * scale, y: Double(target.minY) + (m.minY - r.minY) * scale,
+                          width: m.width * scale, height: m.height * scale)
+        }
+        UIGraphicsPushContext(context)
+        defer { UIGraphicsPopContext() }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.interpolationQuality = .high
+        for t in tiles(z, in: r) {
+            if let own = decoded.value(for: t) {
+                own.draw(in: place(t))
+                continue
+            }
+            if ImageryMemory.tiles.contains(t) { prepare([t]) } else { load(t, urgent: true) }
+            guard let a = TileFallback.ancestor(of: t, maxLevels: 12, has: has), let coarse = image(a) else { continue }
+            context.saveGState()
+            context.clip(to: place(t))
+            coarse.draw(in: place(a))
+            context.restoreGState()
+        }
+    }
+
     /// The imagery level drawn at a zoom: tiles about 256 pixels across on screen.
     static func level(pixelsPerMapPoint: Double) -> Int {
         let pixels = MKMapSize.world.width * pixelsPerMapPoint

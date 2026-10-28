@@ -78,10 +78,24 @@ struct MapScreen: View {
             .padding(.bottom, 8)
             .overlay(alignment: .bottom) {
                 if let p = model.selectedPoint, !model.isDrawingArea {
-                    CoordinateRow {
-                        CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
-                                      onClose: { model.selectedPoint = nil })
-                        HeightBar(elevation: model.selectedElevation, id: "tappedHeight")
+                    VStack(spacing: 6) {
+                        // A KML point's name over its coordinates.
+                        if let name = model.selectedName {
+                            Text(name)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
+                                .background(Color.black.opacity(0.65))
+                                .clipShape(Capsule())
+                                .accessibilityIdentifier("tappedName")
+                        }
+                        CoordinateRow {
+                            CoordinateBar(icon: model.selectedName == nil ? "mappin" : "mappin.circle.fill", text: Format.coordinate(p),
+                                          id: "tappedCoordinates", onClose: { model.selectedPoint = nil })
+                            HeightBar(elevation: model.selectedElevation, id: "tappedHeight")
+                        }
                     }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)

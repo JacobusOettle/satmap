@@ -27,6 +27,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     /// finger was is recorded straight away by `touchRecorder` (the map may move meanwhile, e.g. following you).
     private let tapRecognizer = UITapGestureRecognizer()
     private let touchRecorder = UITapGestureRecognizer()
+    /// Pressed and held, the tapped spot's pin or a measuring point is moved precisely (`PointAdjuster`); taps right
+    /// after are the finger being lifted, not taps.
+    private let adjustPress = UILongPressGestureRecognizer()
+    private lazy var adjuster = PointAdjuster(mapView: mapView)
+    private var lastAdjustUpdate: CFTimeInterval = 0
+    private var tapsIgnoredUntil: CFTimeInterval = 0
     private var lastTouch: (point: CGPoint, coordinate: CLLocationCoordinate2D)?
     private var userAnnotation: UserLocationAnnotation?
     private var markerAnnotations: [MeasureMarkerAnnotation] = []
@@ -120,6 +126,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         tapThenPress.delegate = self
         mapView.addGestureRecognizer(tapThenPress)
         tapRecognizer.require(toFail: tapThenPress)
+        adjustPress.addTarget(self, action: #selector(adjustPressed(_:)))
+        adjustPress.minimumPressDuration = 0.35
+        adjustPress.delegate = self
+        mapView.addGestureRecognizer(adjustPress)
+        adjuster.onMove = { [weak self] which, p, done in self?.adjusted(which, to: p, done: done) }
         touchRecorder.addTarget(self, action: #selector(touchEnded(_:)))
         touchRecorder.delegate = self
         touchRecorder.cancelsTouchesInView = false
@@ -358,11 +369,16 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     }
 
     @objc private func mapTapped(_ g: UITapGestureRecognizer) {
-        guard g.state == .ended, !model.isDrawingArea else { return }
+        guard g.state == .ended, !model.isDrawingArea, CACurrentMediaTime() >= tapsIgnoredUntil, !adjuster.isActive else { return }
         let point = g.location(in: mapView)
         var c = mapView.convert(point, toCoordinateFrom: mapView)
         if let t = lastTouch, hypot(t.point.x - point.x, t.point.y - point.y) < 1 { c = t.coordinate }
         lastTouch = nil
+        // A tap on a point in a KML file (a launch point …) selects it: its own position, with its name.
+        if model.measure == .off, let k = kmlPoint(near: point) {
+            model.pointTapped(GeoPoint(lat: k.coordinate.latitude, lon: k.coordinate.longitude), name: k.title)
+            return
+        }
         // A tap on point A, with three or more points, closes the shape.
         if case .path(let pts) = model.measure, pts.count >= 3 {
             let a = mapView.convert(CLLocationCoordinate2D(latitude: pts[0].lat, longitude: pts[0].lon), toPointTo: mapView)
@@ -374,6 +390,17 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         model.mapTapped(GeoPoint(lat: c.latitude, lon: c.longitude))
     }
 
+    /// The KML point whose dot is nearest a spot on the screen, within a fingertip.
+    private func kmlPoint(near spot: CGPoint) -> BlockLabelAnnotation? {
+        var best: (a: BlockLabelAnnotation, d: CGFloat)?
+        for case let a as BlockLabelAnnotation in mapView.annotations where a.isPoint {
+            let p = mapView.convert(a.coordinate, toPointTo: mapView)
+            let d = hypot(p.x - spot.x, p.y - spot.y)
+            if d < 26, d < (best?.d ?? .infinity) { best = (a, d) }
+        }
+        return best?.a
+    }
+
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
         g === tapRecognizer && (other as? UITapGestureRecognizer)?.numberOfTapsRequired == 2
     }
@@ -382,27 +409,147 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         true
     }
 
+    func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+        guard g === adjustPress else { return true }
+        return !model.isDrawingArea && movablePoint(near: g.location(in: mapView)) != nil
+    }
+
     private func selectedPointChanged(_ p: GeoPoint?) {
-        if let a = selectedAnnotation {
-            mapView.removeAnnotation(a)
-            selectedAnnotation = nil
+        guard let p = p else {
+            if let a = selectedAnnotation {
+                mapView.removeAnnotation(a)
+                selectedAnnotation = nil
+            }
+            return
         }
-        guard let p = p else { return }
-        let a = SelectedPointAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon))
+        let c = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon)
+        if let a = selectedAnnotation {
+            a.coordinate = c // moved (a new spot tapped, or dragged)
+            return
+        }
+        let a = SelectedPointAnnotation(coordinate: c)
         selectedAnnotation = a
         mapView.addAnnotation(a)
+    }
+
+    // MARK: - Moving a point precisely
+
+    /// The point a press would move: a measuring point, or the tapped spot's pin, within a fingertip of the spot.
+    private func movablePoint(near spot: CGPoint) -> (which: MovablePoint, point: GeoPoint)? {
+        func apart(_ p: GeoPoint) -> CGFloat {
+            let s = mapView.convert(CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), toPointTo: mapView)
+            return hypot(s.x - spot.x, s.y - spot.y)
+        }
+        let points = model.measure.points
+        if let i = points.indices.min(by: { apart(points[$0]) < apart(points[$1]) }), apart(points[i]) < 30 {
+            return (.measure(i), points[i])
+        }
+        if model.measure == .off, let p = model.selectedPoint, apart(p) < 30 { return (.selected, p) }
+        return nil
+    }
+
+    @objc private func adjustPressed(_ g: UILongPressGestureRecognizer) {
+        guard let window = mapView.window else { return }
+        switch g.state {
+        case .began:
+            guard let target = movablePoint(near: g.location(in: mapView)) else { return }
+            // The map holds still under the finger (it scrolls only with the point: `PointAdjuster`).
+            mapView.isScrollEnabled = false
+            mapView.isZoomEnabled = false
+            mapView.isRotateEnabled = false
+            model.following = false
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            adjuster.begin(target.which, at: target.point, touch: g.location(in: window), in: window,
+                           scene: loupeScene(around: target.point, moving: target.which))
+        case .changed:
+            adjuster.moved(touch: g.location(in: window))
+        case .ended, .cancelled, .failed:
+            adjuster.end(cancelled: g.state != .ended)
+            mapView.isScrollEnabled = true
+            mapView.isZoomEnabled = true
+            mapView.isRotateEnabled = true
+            tapsIgnoredUntil = CACurrentMediaTime() + 0.4
+        default:
+            break
+        }
+    }
+
+    /// The point moved: on the map at once; for the panels (distances, coordinates, heights) up to 15 times a second,
+    /// and when the finger is lifted.
+    private func adjusted(_ which: MovablePoint, to p: GeoPoint, done: Bool) {
+        let c = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon)
+        switch which {
+        case .measure(let i):
+            if markerAnnotations.indices.contains(i) { markerAnnotations[i].coordinate = c }
+        case .selected:
+            selectedAnnotation?.coordinate = c
+        }
+        let now = CACurrentMediaTime()
+        guard done || now - lastAdjustUpdate >= 1.0 / 15 else { return }
+        lastAdjustUpdate = now
+        model.movePoint(which, to: p, done: done)
+        if done { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+    }
+
+    /// What the square shows besides the imagery: the blocks near the point, the measuring line and points, and you.
+    private func loupeScene(around p: GeoPoint, moving: MovablePoint) -> LoupeView.Scene {
+        var scene = LoupeView.Scene()
+        let m = MKMapPoint(CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon))
+        let reach = 2_000 * MKMapPointsPerMeterAtLatitude(p.lat) // far enough for the map to scroll a while
+        let near = MKMapRect(x: m.x - reach, y: m.y - reach, width: 2 * reach, height: 2 * reach)
+        func mapPoints(_ pts: [GeoPoint]) -> [MKMapPoint] {
+            pts.map { MKMapPoint(CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)) }
+        }
+        func isNear(_ pts: [MKMapPoint]) -> Bool {
+            pts.contains { near.contains($0) }
+        }
+        let colours = model.kml.useFileColours
+        for f in model.kml.files where f.isShown {
+            for feature in f.document.features {
+                let style = colours ? feature.style : nil
+                let line = style?.lineColor.map(UIColor.init(kml:)) ?? UIColor(white: 1, alpha: 0.95)
+                switch feature.geometry {
+                case .polygon(let outer, let holes):
+                    for ring in [outer] + holes {
+                        let pts = mapPoints(ring)
+                        if isNear(pts) { scene.lines.append((pts, line, true)) }
+                    }
+                case .line(let pts):
+                    let mp = mapPoints(pts)
+                    if isNear(mp) { scene.lines.append((mp, line, false)) }
+                case .point(let q):
+                    let mp = mapPoints([q])[0]
+                    if near.contains(mp) {
+                        scene.dots.append((mp, style?.iconColor.map(UIColor.init(kml:)) ?? .white))
+                    }
+                }
+            }
+        }
+        scene.measure = mapPoints(model.measure.points)
+        if case .closed = model.measure { scene.measureClosed = true }
+        if case .measure(let i) = moving { scene.moving = i }
+        if let loc = model.recorder.location { scene.user = MKMapPoint(loc.coordinate) }
+        return scene
     }
 
     // MARK: - Measuring
 
     private func measureChanged(_ m: MeasureMode) {
-        mapView.removeAnnotations(markerAnnotations)
         let points = m.points
-        markerAnnotations = points.enumerated().map { i, p in
-            MeasureMarkerAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
-                                    label: points.count >= 2 ? MeasureMode.label(i) : nil)
+        let labels = points.indices.map { points.count >= 2 ? MeasureMode.label($0) : nil }
+        if markerAnnotations.map(\.label) == labels {
+            // The same points, one of them moved: moved on the map rather than put there again.
+            for (a, p) in zip(markerAnnotations, points) {
+                let c = CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon)
+                if a.coordinate.latitude != c.latitude || a.coordinate.longitude != c.longitude { a.coordinate = c }
+            }
+        } else {
+            mapView.removeAnnotations(markerAnnotations)
+            markerAnnotations = points.enumerated().map { i, p in
+                MeasureMarkerAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon), label: labels[i])
+            }
+            mapView.addAnnotations(markerAnnotations)
         }
-        mapView.addAnnotations(markerAnnotations)
         updateMeasureLine()
         updateAim()
     }

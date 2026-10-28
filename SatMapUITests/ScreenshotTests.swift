@@ -137,8 +137,27 @@ final class ScreenshotTests: XCTestCase {
             snap("15-coordinates")
             tapped.tap()
             XCTAssertEqual(tapped.label, "Copied")
+            // Pressed and held, the pin is moved precisely with the finger (a glass square shows 15 m around it).
+            sleep(3) // "Copied" goes
+            let before = tapped.label
+            let pin = app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.45))
+            pin.press(forDuration: 0.9, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.43, dy: 0.45)))
+            sleep(2)
+            XCTAssertNotEqual(tapped.label, before, "Holding and dragging the pin didn't move it")
         } else {
             XCTFail("No coordinates for the tapped spot")
+        }
+        // A tap on a point in the KML file selects it, with its name.
+        let launch = app.staticTexts["Launch 1"].firstMatch
+        if launch.waitForExistence(timeout: 5) {
+            let f = launch.frame // the name, under the point's dot
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.minY - 7)).tap()
+            let name = app.descendants(matching: .any)["tappedName"].firstMatch
+            XCTAssertTrue(name.waitForExistence(timeout: 5), "Tapping the KML point didn't select it")
+            sleep(3)
+            snap("24-kml-point")
+        } else {
+            XCTFail("The KML point isn't on the map")
         }
         XCTAssertTrue(app.buttons["myCoordinates"].exists, "No coordinates of your position")
         // The heights beside both.

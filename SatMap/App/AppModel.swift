@@ -24,6 +24,24 @@ enum MeasureMode: Equatable {
         }
     }
 
+    /// The same with point `i` moved (`PointAdjuster`).
+    func moving(_ i: Int, to p: GeoPoint) -> MeasureMode {
+        switch self {
+        case .placed:
+            return i == 0 ? .placed(p) : self
+        case .path(var pts):
+            guard pts.indices.contains(i) else { return self }
+            pts[i] = p
+            return .path(pts)
+        case .closed(var pts):
+            guard pts.indices.contains(i) else { return self }
+            pts[i] = p
+            return .closed(pts)
+        case .off, .aiming:
+            return self
+        }
+    }
+
     /// "A", "B", … "Z", "AA", "AB", … "ZZ", "AAA", …
     static func label(_ i: Int) -> String {
         let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -246,10 +264,13 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         didSet {
             guard selectedPoint != oldValue else { return }
             selectedElevation = nil
+            selectedName = nil
             selectedLookup.set(selectedPoint)
         }
     }
     @Published private(set) var selectedElevation: Double?
+    /// The name of the KML point selected (a tap on it), shown with its coordinates.
+    @Published private(set) var selectedName: String?
     private lazy var selectedLookup = HeightLookup { [weak self] p, e in
         guard let self = self, p == self.selectedPoint else { return }
         self.selectedElevation = e
@@ -435,6 +456,30 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             selectedPoint = p
         } else {
             addPointAtCrosshair()
+        }
+    }
+
+    /// A tap on a point in a KML file (a launch point …): selected at its own position, with its name.
+    func pointTapped(_ p: GeoPoint, name: String?) {
+        selectedPoint = p
+        selectedName = name?.isEmpty == false ? name : nil
+    }
+
+    /// A point being moved precisely (pressed and held): the tapped spot, or a measuring point (its distances and area
+    /// follow; its coordinates and height show at the bottom). Heights are looked up again once it is let go (`done`).
+    func movePoint(_ which: MovablePoint, to p: GeoPoint, done: Bool) {
+        switch which {
+        case .selected:
+            selectedPoint = p
+        case .measure(let i):
+            let count = measure.points.count
+            guard i < count else { return }
+            measure = measure.moving(i, to: p)
+            selectedPoint = p
+            guard done else { return }
+            if i == 0 { markerElevation = nil }
+            if count >= 2, i == count - 1 { lastElevation = nil }
+            refreshPointElevations()
         }
     }
 
