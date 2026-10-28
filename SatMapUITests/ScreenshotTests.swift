@@ -104,7 +104,7 @@ final class ScreenshotTests: XCTestCase {
         snap("09-offline-areas")
 
         // Choosing an area with the lasso (measuring switched off first for a clearer view).
-        tap("Done")
+        closeSheet("Offline maps")
         setMeasure(.off)
         openOfflineSheet()
         tap("Draw an area on the map")
@@ -161,16 +161,19 @@ final class ScreenshotTests: XCTestCase {
             XCTFail("The KML point isn't on the map")
         }
         // Drone mode: the airfields around, with how far they are from you and from the selected point, and where you
-        // are from the nearest one. Zoomed out a little for a few of them, then back.
+        // are from the nearest one. Zoomed out for a few of them (a two-finger tap is a level out; a pinch in the
+        // simulator doesn't zoom out), then back.
         setTerrain("Drone mode: airfields and navaids")
         let map = app.maps.firstMatch
-        for _ in 0..<2 {
-            map.pinch(withScale: 0.15, velocity: -4)
-            sleep(3)
+        for _ in 0..<5 {
+            map.twoFingerTap()
+            sleep(2)
         }
         sleep(8)
         XCTAssertTrue(app.descendants(matching: .any)["droneCard"].firstMatch.exists, "No reporting card in drone mode")
-        let airfield = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "FASH")).firstMatch
+        // On the map itself, not only in the card ("6.1 NM NE of FASH Stellenbosch").
+        let airfield = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label MATCHES %@", "(Airport |Airstrip )?FASH Stellenbosch")).firstMatch
         XCTAssertTrue(airfield.exists, "Stellenbosch airfield (FASH) isn't on the map in drone mode")
         snap("25-drone-mode")
         setTerrain("Contour lines")
@@ -392,6 +395,17 @@ final class ScreenshotTests: XCTestCase {
             sleep(2)
         }
         XCTAssertEqual(currentMeasureState(), wanted)
+    }
+
+    /// Taps a sheet's Done until the sheet has gone (a tap can be lost while the app is busy).
+    private func closeSheet(_ title: String) {
+        let bar = app.navigationBars[title]
+        for _ in 0..<4 {
+            guard bar.exists else { return }
+            tap("Done")
+            sleep(2)
+        }
+        XCTAssertFalse(bar.exists, "The \(title) sheet didn't close")
     }
 
     /// Moves the map by dragging it, a share of the screen each way (slowly, so it doesn't glide on).
