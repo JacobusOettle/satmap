@@ -9527,5 +9527,515 @@
   "expect": null,
   "nilAllowed": true,
   "source": "round4-rejected #16"
+ },
+ {
+  "input": "Lions heading S24.99693 E31.59231",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Lions heading S24 59.816 E31 35.539",
+  "expect": {
+   "lat": -24.996933333,
+   "lon": 31.592316667,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Wild dogs running, heading S24°59.816' E31°35.539'",
+  "expect": {
+   "lat": -24.996933333,
+   "lon": 31.592316667,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Heading: S24.99693 E31.59231 Speed: 0 km/h",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Course: S24.99693 E31.59231",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Heading S 24.99693, E 31.59231",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Lions heading S 24.99693 E 31.59231 at 06:45 on 27/10, 3 males 2 females 4 cubs, last seen moving towards the river near the H4-1 bridge, please drive slowly",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Heading: W\nSpecies: Lion\nLat/Long: -24.996931, 31.592312\n3 males",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #2"
+ },
+ {
+  "input": "Elephants\nCourse: S\nSpeed: 3 km/h\nLat/Long: -24.996931, 31.592312\n20 in herd",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #2"
+ },
+ {
+  "input": "Heading: N\nSpecies: Leopard\nLat/Long: -23.429108, 31.126121\nHeading: 135° SE",
+  "expect": {
+   "lat": -23.429108,
+   "lon": 31.126121,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #2"
+ },
+ {
+  "input": "Heading: N\nBft 4\nLat/Long: -23.429108, 31.126121\n2 males",
+  "expect": {
+   "lat": -23.429108,
+   "lon": 31.126121,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #2"
+ },
+ {
+  "input": "Bearing: 270°\nWind: S 10 kt\nLat/Long: -24.996931, 31.592312",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #3"
+ },
+ {
+  "input": "Heading: 270°\nSpeed: 0.0 km/h\nLat/Lon: -24.996931, 31.592312\nAccuracy: 4 m",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #3"
+ },
+ {
+  "input": "Heading: 270°\nSpecies: Lion\nLat/Long: -24.996931, 31.592312",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #3"
+ },
+ {
+  "input": "Zoom 15\nSpecies: Lion\nLat/Long: -24.996931, 31.592312",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #3"
+ },
+ {
+  "input": "06:45 S24 59 48.9 E31 35 32.3 Bft 4",
+  "expect": {
+   "lat": -24.996916667,
+   "lon": 31.592305556,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #4"
+ },
+ {
+  "input": "[06:45] S24 59 48.9 E31 35 32.3 kt 10",
+  "expect": {
+   "lat": -24.996916667,
+   "lon": 31.592305556,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #4"
+ },
+ {
+  "input": "At 06:45 S 24 59 48.9 E 31 35 32.3 knots 15",
+  "expect": {
+   "lat": -24.996916667,
+   "lon": 31.592305556,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #4"
+ },
+ {
+  "input": "06:45 S 24 59.8 E 31 35.5 Bft 4",
+  "expect": {
+   "lat": -24.996666667,
+   "lon": 31.591666667,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #4"
+ },
+ {
+  "input": "27/10 S24 59 49 E31 35 32 knots 15",
+  "expect": {
+   "lat": -24.996944444,
+   "lon": 31.592222222,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #4"
+ },
+ {
+  "input": "POINT_X,POINT_Y\n31.592312,-24.996931",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #5"
+ },
+ {
+  "input": "3 lions GPS (S/E): 24.99693, 31.59231 N of camp",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #6"
+ },
+ {
+  "input": "Pride of 8 GPS (S/E): 24.08390, 31.36383 N of camp",
+  "expect": {
+   "lat": -24.0839,
+   "lon": 31.36383,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #6"
+ },
+ {
+  "input": "3 lions GPS (S/E): 24.08390, 31.36383 S of camp",
+  "expect": {
+   "lat": -24.0839,
+   "lon": 31.36383,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #6"
+ },
+ {
+  "input": "3 lions GPS (S/E): 24.08390, 31.36383 W of camp",
+  "expect": {
+   "lat": -24.0839,
+   "lon": 31.36383,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #6"
+ },
+ {
+  "input": "Pride of 8 (S/E) 24.99693, 31.59231 W of the bridge",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #6"
+ },
+ {
+  "input": "3 lions 24.08390, 31.36383 N of camp",
+  "expect": {
+   "lat": 24.0839,
+   "lon": 31.36383,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #6"
+ },
+ {
+  "input": "06:45 S24 59 E31 35, 3 lions",
+  "expect": {
+   "lat": -24.983333333,
+   "lon": 31.583333333,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #7"
+ },
+ {
+  "input": "06:45 S25 05 E31 26 at 06:45",
+  "expect": {
+   "lat": -25.083333333,
+   "lon": 31.433333333,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #7"
+ },
+ {
+  "input": "06:45 S25 05 E31 26 10 min ago",
+  "expect": {
+   "lat": -25.083333333,
+   "lon": 31.433333333,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #7"
+ },
+ {
+  "input": "06:45 S 24 59 E 31 35, 3 lions",
+  "expect": {
+   "lat": -24.983333333,
+   "lon": 31.583333333,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #7"
+ },
+ {
+  "input": "[06:45] S24 59 E31 35, 3 lions",
+  "expect": {
+   "lat": -24.983333333,
+   "lon": 31.583333333,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #7"
+ },
+ {
+  "input": "24 deg S 59 min 48.95 sec, 31 deg E 35 min 32.32 sec",
+  "expect": {
+   "lat": -24.996930556,
+   "lon": 31.592311111,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #8"
+ },
+ {
+  "input": "24degS 59min 48.95sec, 31degE 35min 32.32sec",
+  "expect": {
+   "lat": -24.996930556,
+   "lon": 31.592311111,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #8"
+ },
+ {
+  "input": "24°59'48.95secS 31°35'32.32\"E",
+  "expect": {
+   "lat": -24.996930556,
+   "lon": 31.592311111,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #9"
+ },
+ {
+  "input": "24 59 48.95secS 31 35 32.32 E",
+  "expect": {
+   "lat": -24.996930556,
+   "lon": 31.592311111,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #9"
+ },
+ {
+  "input": "24°59.816minS 31°35.539'E",
+  "expect": {
+   "lat": -24.996933333,
+   "lon": 31.592316667,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #9"
+ },
+ {
+  "input": "[S] 24.99693 [E] 31.59231",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #10"
+ },
+ {
+  "input": "24.996931, 31.592312 [S/E]",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #10"
+ },
+ {
+  "input": "-24.99693, 31.59231S",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #11"
+ },
+ {
+  "input": "Lions -24.99693, 31.59231S",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #11"
+ },
+ {
+  "input": "-24.99693,31.59231S",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #11"
+ },
+ {
+  "input": "24 deg S 59.816 min, 31 deg E 35.539 min",
+  "expect": {
+   "lat": -24.996933333,
+   "lon": 31.592316667,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #8"
+ },
+ {
+  "input": "Lions at -24.99693, 31.59231 heading 90° E 10 min ago",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #8"
+ },
+ {
+  "input": "Lat Lon Zoom -24.996931 31.592312 15",
+  "expect": {
+   "lat": -24.996931,
+   "lon": 31.592312,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #3"
+ },
+ {
+  "input": "Lions heading S 24 59.816 E 31 35.539",
+  "expect": {
+   "lat": -24.996933333,
+   "lon": 31.592316667,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Lions heading S 24°59.816' E 31°35.539'",
+  "expect": {
+   "lat": -24.996933333,
+   "lon": 31.592316667,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Heading S 24 59 48.9 E 31 35 32.3",
+  "expect": {
+   "lat": -24.996916667,
+   "lon": 31.592305556,
+   "within": 1.0
+  },
+  "nilAllowed": true,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Lions heading 24.99693S 31.59231E at 06:45",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "Lions heading 24.99693S 31.59231E at 06:45 on 27/10, 3 males 2 females 4 cubs, temp 32, seen 10 mins ago, 2 cars 1 bus 5 people, ref 123 456 789 1011",
+  "expect": {
+   "lat": -24.99693,
+   "lon": 31.59231,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #1"
+ },
+ {
+  "input": "24°59'48.95secS/31°35'32.32secE",
+  "expect": {
+   "lat": -24.996930556,
+   "lon": 31.592311111,
+   "within": 1.0
+  },
+  "nilAllowed": false,
+  "source": "corpus-check #9"
  }
 ]
