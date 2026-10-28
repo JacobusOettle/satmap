@@ -82,7 +82,12 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue(app.switches.firstMatch.exists, "No switch to show or hide the file")
         XCTAssertTrue(app.buttons["useFileColours"].exists, "No colours checkbox")
         tapRow(startingWith: "Demo farm")
-        sleep(25)
+        for _ in 0..<3 {
+            sleep(2)
+            guard app.navigationBars["Blocks"].exists else { break }
+            tapRow(startingWith: "Demo farm") // a tap can be lost while the app is busy: the sheet then stays
+        }
+        sleep(23)
         snap("05-blocks-on-map")
 
         // Offline: download the area around the blocks.
@@ -161,22 +166,26 @@ final class ScreenshotTests: XCTestCase {
             XCTFail("The KML point isn't on the map")
         }
         // Drone mode: the airfields around, with how far they are from you and from a tapped spot, and where you are
-        // from the nearest one. Zoomed out until Stellenbosch's airfield shows, then a spot tapped.
-        // (A two-finger tap is a level out. On the whole map, as with a pinch, the simulator puts a finger in the status
-        // bar or on a bar over the map, and the map takes a one-finger tap or drag; on the launch point, in the middle of
-        // the map, both fingers are on the map.)
+        // from the nearest one. Zoomed out by going to a spot three times as far as Stellenbosch's airfield (FASH)
+        // (the map then fits you and the spot; two-finger gestures aren't reliable in the simulator), centred on you
+        // again with My location, then a spot is tapped.
         setTerrain("Drone mode: airfields and navaids")
-        let hide = app.buttons["Hide coordinates"].firstMatch
-        if hide.exists { hide.tap() }
-        sleep(1)
+        tap("Go to coordinates")
+        let goTo = app.descendants(matching: .any)["coordinateText"].firstMatch
+        if goTo.waitForExistence(timeout: 10) {
+            goTo.tap()
+            goTo.typeText("-34.093892, 18.620506") // you + 3 × (FASH − you)
+            sleep(1)
+            tap("Show and measure from here")
+            sleep(3)
+            setMeasure(.off)
+            tap("My location")
+            sleep(3)
+        } else {
+            XCTFail("No field for coordinates")
+        }
         let airfield = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label MATCHES %@", "(Airport |Airstrip )?FASH Stellenbosch")).firstMatch
-        let middle = app.frame.insetBy(dx: 30, dy: 150)
-        for _ in 0..<6 where !(airfield.exists && middle.contains(CGPoint(x: airfield.frame.midX, y: airfield.frame.midY))) {
-            guard launch.exists else { break }
-            launch.twoFingerTap()
-            sleep(3)
-        }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.62)).tap()
         sleep(6)
         XCTAssertTrue(app.descendants(matching: .any)["droneCard"].firstMatch.exists, "No reporting card in drone mode")
