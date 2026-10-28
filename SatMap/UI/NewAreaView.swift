@@ -184,7 +184,7 @@ struct NewAreaView: View {
                         Text("This may not fit. The download stops when less than 500 MB is free; choose a lower zoom or a smaller area.")
                             .foregroundColor(.orange)
                     } else if chosenZoom < rememberedZoom {
-                        Text("Zoom \(rememberedZoom) would take most of the free space, so this is the most detail that leaves room. Tap a level above to choose another.")
+                        Text("Zoom \(rememberedZoom) needs \(sizeText(rememberedZoom)), more than half the free space, so less detail is chosen. Tap a level above to choose another.")
                             .foregroundColor(.secondary)
                     }
                 }
@@ -225,9 +225,10 @@ struct NewAreaView: View {
     }
 
     /// The level to download: the one remembered from the last area (or tapped here), lowered until it takes at most
-    /// half the free space unless it was tapped, so a whole park doesn't start out as hundreds of gigabytes.
+    /// half the free space unless it was tapped, so a whole park doesn't start out as hundreds of gigabytes. Your track
+    /// area keeps its own level (it is saved as the area's, and holds tiles to that level already).
     private var chosenZoom: Int {
-        guard !picked, let fits = deepestFitting else { return rememberedZoom }
+        guard !picked, track?.maxZoom == nil, let fits = deepestFitting else { return rememberedZoom }
         return min(rememberedZoom, fits)
     }
 
@@ -236,9 +237,10 @@ struct NewAreaView: View {
     }
 
     /// Once the sizes are known, the most detailed level taking at most half the free space (above what downloads
-    /// stop at); the least detailed when none does.
+    /// stop at); the least detailed when none does. None below that space: nothing fits, as the warning says.
     private var deepestFitting: Int? {
-        guard let counts = counts, let imagery = imageryCounts, let free = freeSpace else { return nil }
+        guard let counts = counts, let imagery = imageryCounts, let free = freeSpace,
+              free > OfflineManager.minimumFreeSpace else { return nil }
         let room = (free - OfflineManager.minimumFreeSpace) / 2
         return zoomChoices.first { estimate(imagery: imagery, terrain: counts, depth: $0).bytes <= room } ?? zoomChoices.last
     }
