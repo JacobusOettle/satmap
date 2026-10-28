@@ -99,29 +99,78 @@ jobs:
           sleep 40
           xcrun simctl io "$UDID" screenshot --display=internal carplay/phone.png || true
           xcrun simctl io "$UDID" screenshot --display=external carplay/car-home.png || true
-          # Open SatMap on the car's screen: click its icon in Simulator's CarPlay window (where the CarPlay home
-          # screen puts it, second row, first app: about 205, 300 of the 800 x 480 screen).
+          # Open SatMap on the car's screen. First through the window's accessibility elements (Simulator passes on
+          # the screen's): press the one named SatMap, if there is one.
           osascript <<'EOF' 2>&1 | tee -a carplay/menu.txt || true
           tell application "Simulator" to activate
           delay 1
           tell application "System Events"
             tell process "Simulator"
-              repeat with w in windows
-                if name of w contains "CarPlay" then
-                  set {x, y} to position of w
-                  set {wd, ht} to size of w
-                  set k to wd / 800
-                  set top to y + ht - 480 * k
-                  click at {round (x + 205 * k), round (top + 300 * k)}
-                  return "clicked SatMap at " & (x + 205 * k) & ", " & (top + 300 * k)
+              set w to missing value
+              repeat with c in windows
+                if name of c contains "CarPlay" then set w to c
+              end repeat
+              if w is missing value then return "No CarPlay window"
+              set out to ""
+              set pressed to false
+              repeat with e in (entire contents of w)
+                set d to ""
+                try
+                  set d to d & (role of e as text)
+                end try
+                try
+                  set d to d & " | " & (description of e as text)
+                end try
+                try
+                  set d to d & " | " & (name of e as text)
+                end try
+                set out to out & d & linefeed
+                if (not pressed) and d contains "SatMap" then
+                  try
+                    perform action "AXPress" of e
+                    set pressed to true
+                    set out to out & "pressed the element above" & linefeed
+                  end try
                 end if
               end repeat
-              return "No CarPlay window"
+              return out
             end tell
           end tell
           EOF
+          sleep 15
+          xcrun simctl io "$UDID" screenshot --display=external carplay/car-ax.png || true
+          # Then a real mouse click on its icon (System Events' "click at" doesn't reach the screen): where the CarPlay
+          # home screen puts it, second row, first app, about 205, 300 of the 800 x 480 screen.
+          cat > "$RUNNER_TEMP/click.swift" <<'EOF'
+          import CoreGraphics
+          import Foundation
+          let p = CGPoint(x: Double(CommandLine.arguments[1])!, y: Double(CommandLine.arguments[2])!)
+          for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+              CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+              usleep(150_000)
+          }
+          EOF
+          swiftc -o "$RUNNER_TEMP/click" "$RUNNER_TEMP/click.swift" || true
+          GEOMETRY=$(osascript -e 'tell application "System Events" to tell process "Simulator"
+            repeat with w in windows
+              if name of w contains "CarPlay" then
+                set {x, y} to position of w
+                set {wd, ht} to size of w
+                return (x as text) & " " & (y as text) & " " & (wd as text) & " " & (ht as text)
+              end if
+            end repeat
+            return ""
+          end tell' || true)
+          echo "CarPlay window: $GEOMETRY" | tee -a carplay/menu.txt
+          if [ -n "$GEOMETRY" ]; then
+            read -r X Y W H CX CY <<< "$(echo "$GEOMETRY" | awk '{k = $3 / 800; top = $2 + $4 - 480 * k; print $1, $2, $3, $4, int($1 + 205 * k), int(top + 300 * k)}')"
+            osascript -e 'tell application "Simulator" to activate' || true
+            sleep 1
+            "$RUNNER_TEMP/click" "$CX" "$CY" && echo "clicked SatMap at $CX, $CY" | tee -a carplay/menu.txt
+          fi
           sleep 25
           xcrun simctl io "$UDID" screenshot --display=external carplay/car.png || true
+          screencapture -x carplay/mac-screen-car.png || true
           # Drive along the H4-1 towards Skukuza.
           xcrun simctl location "$UDID" start --speed=20 -24.9969,31.5923 -24.9900,31.6100 -24.9800,31.6300 || true
           sleep 30
