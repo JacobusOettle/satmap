@@ -259,6 +259,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     /// What a backup task is doing ("Preparing export…"), or nil. One runs at a time.
     @Published private(set) var backupStatus: String?
+    /// How far it has got (0…1), when it can tell: copying the files of a restore.
+    @Published private(set) var backupProgress: Double?
     /// The outcome of the last backup task, for an alert; cleared by `clearBackupMessage`.
     @Published private(set) var backupMessage: String?
     /// From an export starting until its share sheet closes no download starts: an exported area's files must not
@@ -350,6 +352,29 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             try? fm.createDirectory(at: staging, withIntermediateDirectories: true)
             defer { try? fm.removeItem(at: staging) }
 
+            // The files' sizes, for the progress bar (they can be gigabytes, from iCloud Drive or a USB drive).
+            let sizes = urls.map { url -> Int64 in
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                let values = try? url.resourceValues(forKeys: [.fileSizeKey, .totalFileSizeKey])
+                return Int64(values?.totalFileSize ?? values?.fileSize ?? 0)
+            }
+            let total = sizes.reduce(0, +)
+            var before: Int64 = 0
+            var shown = CACurrentMediaTime()
+            func report(_ done: Int64) {
+                let now = CACurrentMediaTime()
+                guard total > 0, now - shown > 0.1 || done >= total else { return }
+                shown = now
+                let text = "Copying \(Format.bytes(min(done, total))) of \(Format.bytes(total))…"
+                let share = min(1, Double(done) / Double(total))
+                DispatchQueue.main.async {
+                    self.backupStatus = text
+                    self.backupProgress = share
+                }
+            }
+            report(0)
+
             var problems: [String] = []
             // Copy each file in first: files from iCloud Drive or another app can't be opened in place.
             var found: [UUID: (area: Area, files: [String: URL])] = [:]
@@ -359,9 +384,11 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                 var copyError: NSError?
                 var copied = false
                 NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &copyError) { readable in
-                    copied = (try? fm.copyItem(at: readable, to: local)) != nil
+                    copied = (try? Self.copy(readable, to: local) { report(before + $0) }) != nil
                 }
                 if scoped { url.stopAccessingSecurityScopedResource() }
+                before += sizes[i]
+                report(before)
                 guard copied else {
                     problems.append("Couldn't copy \(url.lastPathComponent) (is there enough free space?).")
                     continue
@@ -413,8 +440,28 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                 }
                 lines += problems
                 self.backupStatus = nil
+                self.backupProgress = nil
                 self.backupMessage = lines.isEmpty ? "Nothing to restore." : lines.joined(separator: "\n")
             }
+        }
+    }
+
+    /// Copies a file in pieces, telling `progress` how many bytes are done.
+    private static func copy(_ source: URL, to target: URL, progress: (Int64) -> Void) throws {
+        let input = try FileHandle(forReadingFrom: source)
+        defer { try? input.close() }
+        guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let output = try FileHandle(forWritingTo: target)
+        defer { try? output.close() }
+        var done: Int64 = 0
+        while true {
+            let piece = try autoreleasepool { try input.read(upToCount: 4 << 20) }
+            guard let data = piece, !data.isEmpty else { break }
+            try output.write(contentsOf: data)
+            done += Int64(data.count)
+            progress(done)
         }
     }
 

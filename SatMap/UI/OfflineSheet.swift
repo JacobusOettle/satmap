@@ -89,9 +89,15 @@ struct OfflineSheet: View {
                         if case .success(let urls) = result { offline.restore(urls) }
                     }
                     if let busy = offline.backupStatus {
-                        HStack {
-                            ProgressView()
-                            Text(busy).foregroundColor(.secondary)
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                if offline.backupProgress == nil { ProgressView() }
+                                Text(busy).foregroundColor(.secondary)
+                            }
+                            if let done = offline.backupProgress {
+                                ProgressView(value: done)
+                                    .progressViewStyle(.linear)
+                            }
                         }
                     }
                 } header: {
