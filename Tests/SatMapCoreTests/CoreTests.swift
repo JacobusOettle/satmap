@@ -2825,6 +2825,44 @@ final class CoordinateParserTests: XCTestCase {
             check(t, "decimal degrees", at: signed)
         }
     }
+
+    /// Every input the checks so far have found (Fixtures/coordinate-corpus.json), each variant on its own, with what it
+    /// must read as: a point within a distance, nil, or either. A case that names no position of yours is read both without
+    /// one and near the Kruger. Lists every case that gives a wrong point or refuses a point it must give.
+    func testKnownInputsCorpus() throws {
+        struct Case: Decodable {
+            struct Point: Decodable { let lat, lon, within: Double }
+            let input: String
+            let near: [Double]?
+            let expect: Point?
+            let nilAllowed: Bool
+            let source: String
+        }
+        let cases = try JSONDecoder().decode([Case].self, from: fixture("coordinate-corpus.json"))
+        var misread: [String] = []
+        for c in cases {
+            let nears = c.near.map { [GeoPoint(lat: $0[0], lon: $0[1])] } ?? [nil, GeoPoint(lat: -24.99, lon: 31.59)]
+            for near in nears {
+                var wrong: String?
+                if let r = CoordinateParser.parse(c.input, near: near) {
+                    let read = "read as \(r.point.lat), \(r.point.lon) (\(r.format))"
+                    if let e = c.expect {
+                        let d = Geo.distance(r.point, GeoPoint(lat: e.lat, lon: e.lon))
+                        if d >= e.within { wrong = read + ", \(Int(d)) m from \(e.lat), \(e.lon)" }
+                    } else {
+                        wrong = read + ", not nil"
+                    }
+                } else if let e = c.expect, !c.nilAllowed {
+                    wrong = "not read, must be \(e.lat), \(e.lon)"
+                }
+                if let w = wrong {
+                    let shown = c.input.count > 120 ? String(c.input.prefix(120)) + "… (\(c.input.count) characters)" : c.input
+                    misread.append("[\(c.source)] \(shown.debugDescription) near \(near.map { "\($0.lat), \($0.lon)" } ?? "nil"): \(w)")
+                }
+            }
+        }
+        XCTAssert(misread.isEmpty, "\(misread.count) misread of \(cases.count) cases:\n" + misread.joined(separator: "\n"))
+    }
 }
 
 final class ScaleBarTests: XCTestCase {
