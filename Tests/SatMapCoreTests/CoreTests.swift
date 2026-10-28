@@ -1938,12 +1938,13 @@ final class CoordinateParserTests: XCTestCase {
         check("Lions S25 07.178 E31 55.057 S28 3 males", "degrees and decimal minutes", at: GeoPoint(lat: -25.119633, lon: 31.917617))
         check("Lions on S 3 at S24 59.815 E31 35.539", "degrees and decimal minutes", at: ddm)
         // A road's marker after its name and "km" isn't the first field of the degrees after it; a number after a word could
-        // be ("Camp 1 25 05.8 S, …"), and one after a distance is a distance ("5 km 24 59.816 S …").
+        // be ("Camp 1 25 05.8 S, …"), unless both halves are degrees and minutes to 3 decimals, as a GPS writes them (see
+        // testCountsAndTemperaturesBeforeAGarminPosition), and one after a distance is a distance ("5 km 24 59.816 S …").
         for t in ["Leopard H4-1 km 3 24 59.816 S 31 35.539 E", "Leopard H4-1 km 14 24 59.816 S 31 35.539 E",
-                  "Lions 5 km 24 59.816 S 31 35.539 E"] {
+                  "Lions 5 km 24 59.816 S 31 35.539 E", "Leopard km 3 24 59.816 S 31 35.539 E"] {
             check(t, "degrees and decimal minutes", at: GeoPoint(lat: -24.996933, lon: 31.592317))
         }
-        XCTAssertNil(CoordinateParser.parse("Leopard km 3 24 59.816 S 31 35.539 E"))
+        XCTAssertNil(CoordinateParser.parse("Leopard km 3 24 59.8 S 31 35.5 E"))
         // A road written next to degrees and minutes, with no letter on the other half, could as well be a direction.
         for t in ["Lions on S28 25.0969, 31.4371", "Accident on N4 25.4567, 30.9876"] {
             XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
@@ -2439,6 +2440,203 @@ final class CoordinateParserTests: XCTestCase {
             }
         }
         check("Lions at S24 59.815 E31 35.539. Wind S 10 kt, later E 15 kt", "degrees and decimal minutes", at: ddm)
+    }
+
+    // Inputs checked an eighth time, by family. Near Satara: 24° 22.872' S, 31° 50.736' E.
+    private let satara = GeoPoint(lat: -24.3812, lon: 31.8456), signed = GeoPoint(lat: -24.996931, lon: 31.592312)
+
+    func testADirectionAsAThirdLetter() {
+        // A direction from a place after a position with its letters in front, or of travel before one with its letters
+        // after its numbers: not one of its letters, whatever else is around it.
+        for t in ["Lions S24 59 48.9 E31 35 32.3 N of camp", "Lions S24 59 48.9 E31 35 32.3 N of camp, 3 males",
+                  "S24 59 48.9 E31 35 32.3 N of Skukuza 06:45", "Lions S24 59 48.9 E31 35 32.3 S of Satara",
+                  "Leeus S24 59 48.9 E31 35 32.3 noord van Skukuza", "Lions S24 59 48.9 E31 35 32.3 north of camp",
+                  "S24 59 48.9 E31 35 32.3\nN of camp\nwind E 15 kts", "Lions heading W 24 59 48.9 S 31 35 32.3 E",
+                  "Lions walking W 24°59'48.9\"S 31°35'32.3\"E", "Lions walking N 24°59'48.9\"S 31°35'32.3\"E"] {
+            for near in [nil, kruger] {
+                check(t, "degrees, minutes and seconds", near: near, at: dms)
+            }
+        }
+        check("S25 07 10.7 E31 55 03.4 S of the dam", "degrees, minutes and seconds", at: GeoPoint(lat: -25.1196389, lon: 31.9176111))
+        check("Lions walking W 24 22 52.3 S 31 50 44.2 E", "degrees, minutes and seconds", at: GeoPoint(lat: -24.3811944, lon: 31.8456111))
+        for t in ["Leopard on H4-1 km 3: S24 59.816 E31 35.539 N side", "Wind S 10 kt. Lions S24 59.816 E31 35.539 N of the dam",
+                  "Lions S24 59.816 E31 35.539 N of the dam", "Lions walking W 24 59.816 S 31 35.539 E",
+                  "Wild dogs moving E 24 59.816 S 31 35.539 E", "Leeus stap W 24 59.816 S 31 35.539 O",
+                  "Leeus loop O 24 59.816 S 31 35.539 O", "Lions walking W 24°59.816'S 31°35.539'E",
+                  "Wild dogs moving N 24 59.816 S 31 35.539 E", "Leopard going S 24 59.816 S 31 35.539 E"] {
+            for near in [nil, kruger] {
+                check(t, near: near, at: gps)
+            }
+        }
+        check("Lions on H1-3 km 14 S25 07.178 E31 55.057 N of camp", "degrees and decimal minutes",
+              at: GeoPoint(lat: -25.1196333, lon: 31.9176167))
+        check("Lions S24 59.8 E31 35.5 N of camp", "degrees and decimal minutes", at: GeoPoint(lat: -24.9966667, lon: 31.5916667))
+        for t in ["Ellies crossing, moving E 24 22.872 S 31 50.736 E", "Lions 2 km W 24 22.872 S 31 50.736 E",
+                  "Lions W 24 22.872 S 31 50.736 E", "Lions walking W\n24 22.872 S 31 50.736 E", "Leeus beweeg W 24 22.872 S 31 50.736 O"] {
+            check(t, at: satara)
+        }
+        for t in ["Lions walking W 24.99693 S 31.59231 E", "Wild dogs moving E 24.99693 S, 31.59231 E", "Heading E 24.99693 S, 31.59231 E"] {
+            check(t, "decimal degrees", at: typed)
+        }
+        // So too in a long chat log, where only the pairs in it are read.
+        let log = String(repeating: "[12:31, 27/10/2026] Jaco: Leaving at 5 p.m., 2 x 2 litres of water, 3 x 1 kg of ice\n", count: 20)
+        check(log + "Lions walking W 24 59.816 S 31 35.539 E", "degrees and decimal minutes", at: gps)
+        check(log + "Lions S24 59.816 E31 35.539 N of the dam", "degrees and decimal minutes", at: gps)
+        // A letter glued to the seconds is their mark, not a direction after the position.
+        check("S 25°05'48.815\" E 31°26'13.636s", "degrees, minutes and seconds")
+    }
+
+    func testAHeadingOrAWindBeforeAPosition() {
+        // A heading that is only a direction, with a stop or a colon after it, doesn't label the position's first number;
+        // with its angle after it, that is its value.
+        for t in ["Lions heading W: 24 59.816 S 31 35.539 E", "Heading W. 24 59.816 S 31 35.539 E", "Lions heading W. -24 59.816, 31 35.539",
+                  "Bearing W: 24 59.816 S 31 35.539 E", "Course W. 24 59.816 S 31 35.539 E"] {
+            check(t, "degrees and decimal minutes", at: gps)
+        }
+        check("Wild dogs heading W. 24 59 48.9 S 31 35 32.3 E", "degrees, minutes and seconds", at: dms)
+        check("Heading W. 24 22.872 S 31 50.736 E", "degrees and decimal minutes", at: satara)
+        check("Heading W. -25.096893, 31.437121. 45° bearing", "decimal degrees")
+        check("Lions -24 22.872, 31 50.736 heading W: 45° bearing", "degrees and decimal minutes", at: satara)
+        check("Lions -24.3812, 31.8456, course S: 3 males", "decimal degrees", at: satara)
+        // A minus sign right after a bearing's degrees is the position's.
+        for t in ["Bearing 270° -25.096893, 31.437121", "Bearing 270° -25.096893, 31.437121, wind E 15 kts"] {
+            check(t, "decimal degrees")
+        }
+        // A letter glued to a number with minutes, or followed by a number only a coordinate has, is a position's, not
+        // the wind's.
+        for t in ["Lions out of the wind S24 59.816 E31 35.539", "Strong wind S24 59.816 E31 35.539", "Lots of wind S24 59.816 E31 35.539",
+                  "Lions out of the wind S24°59.816' E31°35.539'", "Leeus uit die wind S24 59.816 O31 35.539",
+                  "Breeze S24 59.816 E31 35.539"] {
+            for near in [nil, kruger] {
+                check(t, near: near, at: gps)
+            }
+        }
+        for t in ["Lions out of the wind S 24.99693 E 31.59231", "Wind: S 24.99693 E 31.59231"] {
+            check(t, "decimal degrees", at: typed)
+        }
+    }
+
+    func testDirectionsNextToAPairWithSigns() {
+        // A direction from a place or of travel, in one letter or two, before or after a pair written with a minus sign,
+        // doesn't change a sign; a distance with two letters and "of" isn't their letters either.
+        for t in ["Lions 3 S/W of Satara -24.99693, 31.59231", "Lions 3 N/E of Satara -24.99693, 31.59231",
+                  "Lions 3 S/E of Satara -24.99693, 31.59231", "Lions 2 S/W of the bridge at -24.99693 31.59231",
+                  "Leopard 5 S, W of camp -24.99693, 31.59231", "Lions -24.99693, 31.59231, 3 S/W of Satara",
+                  "Lions 1 S/W of Skukuza: -24.99693, 31.59231, 06:45", "Leeus 3 S/W van Satara -24.99693, 31.59231",
+                  "-24.99693, 31.59231 S/W", "-24.99693, 31.59231 (S/W of camp)", "Lions -24.99693, 31.59231 S/W of Satara"] {
+            for near in [nil, kruger] {
+                check(t, "decimal degrees", near: near, at: typed)
+            }
+        }
+        for t in ["2 lions -24.996931, 31.592312 (S/E)", "06:45 -24.996931, 31.592312 (S/E)",
+                  "[07:15, 27/10/2026] Jaco: -24.996931, 31.592312 (S/E)", "Wild dogs moving W -24.996931, 31.592312",
+                  "Lions heading W -24.996931, 31.592312", "Heading W -24.996931, 31.592312", "Leeus stap W -24.996931, 31.592312",
+                  "Lions walking W\n-24.996931, 31.592312", "Lions (moving W) -24.996931, 31.592312", "Rhino 2 km W -24.996931, 31.592312",
+                  "Lions 500 m W -24.996931, 31.592312", "Lions moving W -24,996931; 31,592312", "Leeus beweeg O -24.996931, 31.592312",
+                  "Leeus loop O -24.996931 31.592312"] {
+            for near in [nil, kruger] {
+                check(t, near: near, at: signed)
+            }
+        }
+        check("Lions moving W -24°59.816', 31°35.539'", "degrees and decimal minutes", at: gps)
+        check("N4 W to Nelspruit, -25.4753, 30.9694", "decimal degrees", at: GeoPoint(lat: -25.4753, lon: 30.9694))
+        check("R536 W to Hazyview -25.0476 31.1295", "decimal degrees", at: GeoPoint(lat: -25.0476, lon: 31.1295))
+        for t in ["S1 W -25.0012, 31.5409", "Gate 3 W -25.0012, 31.5409"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -25.0012, lon: 31.5409))
+        }
+        // So too in a long chat log, where only the pairs in it are read.
+        let log = String(repeating: "[12:31, 27/10/2026] Jaco: Leaving at 5 p.m., 2 x 2 litres of water, 3 x 1 kg of ice\n", count: 20)
+        for t in ["Wild dogs moving W -24.996931, 31.592312", "-24.996931, 31.592312 W of the dam", "-24.996931, 31.592312 (S/W)"] {
+            check(log + t, "decimal degrees", at: signed)
+        }
+        // A W right after the last number of a half without a minus sign may as well be its hemisphere; with a minus sign
+        // it says the same.
+        for t in ["-33.4489 70.6693W", "-33.4489, 70.6693 W", "-34.6037, 58.3816 W", "-0.180653, 78.467834 W", "Lat -33.4489 Lon 70.6693 W",
+                  "-25°05'48.8\", 31°26'13.6\"W", "-24 59.816, 31 35.539 W"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+        check("40 41.352, -74 2.670 W", "degrees and decimal minutes", at: newYork)
+        // Both letters after a pair without a minus sign, read only with the whole text: not when other numbers are before it.
+        for t in ["3 lions at 24.99693, 31.59232 S/E", "06:45 sighting at 24.99693, 31.59232 S/E", "06:45 GPS (S/E): 24.99693, 31.59232"] {
+            XCTAssertNil(CoordinateParser.parse(t, near: kruger), t)
+        }
+    }
+
+    func testAPhotosDetailsWithMoreLines() {
+        // exiftool's default output: the same place as latitude and longitude lines and as a position line, with its
+        // altitude and time before them.
+        let pad = { (label: String) in label + String(repeating: " ", count: 32 - label.count) + ": " }
+        let lines = pad("GPS Latitude") + "24 deg 59' 48.95\" S\n" + pad("GPS Longitude") + "31 deg 35' 32.32\" E\n" + pad("GPS Position")
+            + "24 deg 59' 48.95\" S, 31 deg 35' 32.32\" E"
+        let photo = GeoPoint(lat: -24.996931, lon: 31.592311)
+        for t in [lines, pad("GPS Altitude") + "285.4 m Above Sea Level\n" + pad("GPS Date/Time") + "2026:10:28 04:45:12Z\n" + lines,
+                  "Latitude: 24°59'48.95\" S\nLongitude: 31°35'32.32\" E\nPosition: 24°59'48.95\" S, 31°35'32.32\" E",
+                  "GPS Altitude : 285.4 m Above Sea Level\nGPS Latitude : 24 deg 59' 48.95\" S\nGPS Longitude : 31 deg 35' 32.32\" E",
+                  "Altitude: 285 m\nLatitude: 24°59'48.95\" S\nLongitude: 31°35'32.32\" E",
+                  "Elevation 285 m\nLat 24°59'48.95\"S\nLon 31°35'32.32\"E", "Accuracy: 5 m\nLat: 24°59'48.95\" S\nLong: 31°35'32.32\" E",
+                  "Altitude 285 m, Latitude 24°59'48.95\" S, Longitude 31°35'32.32\" E"] {
+            check(t, "degrees, minutes and seconds", at: photo)
+        }
+        check("GPS Latitude : 24.996931 S\nGPS Longitude : 31.592311 E\nGPS Position : 24.996931 S, 31.592311 E", "decimal degrees",
+              at: photo)
+        check("Altitude: 285.4 m\nLatitude: 24° 59.816' S\nLongitude: 31° 35.539' E", "degrees and decimal minutes", at: gps)
+        // Two different places so written aren't read.
+        XCTAssertNil(CoordinateParser.parse("Latitude: 24°59'48.95\" S\nLongitude: 31°35'32.32\" E\n"
+                                            + "Position: 25°05'48.8\" S, 31°26'13.6\" E"))
+        // A waypoint's or camp's number before labels with the letters after the values.
+        check("Camp 14 lat 24.99693 S lon 31.59231 E", "decimal degrees", at: typed)
+        for t in ["WP 12 Lat 24°59.816'S Lon 31°35.539'E", "Waypoint 12 Lat 24 59.816 S Lon 31 35.539 E"] {
+            check(t, "degrees and decimal minutes", at: gps)
+        }
+        // A long run of spaces or tabs after a "Ref" label, and a chat log with two letters together in it, are read
+        // quickly.
+        let start = Date()
+        for t in ["Latitude Ref" + String(repeating: " ", count: 20_000) + "x 1", "Lat ref" + String(repeating: "\t", count: 2_000) + "x 1",
+                  "GPS Latitude Ref: S\nGPS Latitude" + String(repeating: " ", count: 2_000) + "x"] {
+            XCTAssertNil(CoordinateParser.parse(t))
+        }
+        let log = String(repeating: "[12:31, 27/10/2026] Jaco: Only 4x4 on the S100 after the rain\n[12:33, 27/10/2026] Jaco: "
+                         + "Leopard S/E of Satara\n", count: 150)
+        check(log + "[13:01, 27/10/2026] Jaco: lions at -25.0969, 31.4371", "decimal degrees", at: GeoPoint(lat: -25.0969, lon: 31.4371))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 3)
+    }
+
+    func testCountsAndTemperaturesBeforeAGarminPosition() {
+        // A temperature, or a count or waypoint's number, before degrees and minutes written as the other half is: not
+        // their first field.
+        for t in ["Hot today 32° 24 22.872 S 31 50.736 E", "Lions 32° 24 22.872 S 31 50.736 E", "Lions (32°) 24 22.872 S 31 50.736 E",
+                  "Lions 18° 24 22.872 S 31 50.736 E", "Lions 32 deg 24 22.872 S 31 50.736 E", "Leeus 32 grade 24 22.872 S 31 50.736 O",
+                  "Lions 3 24 22.872 S 31 50.736 E", "Pride of 6 24 22.872 S 31 50.736 E", "017 24 22.872 S 31 50.736 E",
+                  "WP 017 24 22.872 S 31 50.736 E 285 m", "#3 24 22.872 S 31 50.736 E", "No. 3 24 22.872 S 31 50.736 E",
+                  "Temp 32 24 22.872 S 31 50.736 E"] {
+            for near in [nil, kruger] {
+                check(t, near: near, at: satara)
+            }
+        }
+        check("Lions 32° 24.3812 S 31.8456 E", "decimal degrees", at: satara)
+        // Written otherwise, they are.
+        check("24° 22 52.3 S 31 50.736 E", "degrees, minutes and seconds", at: GeoPoint(lat: -24.3811944, lon: 31.8456))
+        XCTAssertNil(CoordinateParser.parse("Lions 3 24 22.8 S 31 50.7 E"))
+    }
+
+    func testUnitsWithALetterRightAfterThem() {
+        // Seconds or minutes in words with the direction right after them; "secS" is south when another unit has its own.
+        let photo = GeoPoint(lat: -24.9969306, lon: 31.5923111)
+        for t in ["24°59min48.95secS, 31°35min32.32secE", "24d59min48.95 secS, 31d35min32.32 secE",
+                  "24°59min48.95secondsS 31°35min32.32secondsE", "24°59min48.95 sS 31°35min32.32 sE", "24°59'48.95secS, 31°35'32.32secE"] {
+            check(t, "degrees, minutes and seconds", at: photo)
+        }
+        check("24d59.816 minS, 31d35.539 minE", "degrees and decimal minutes", at: gps)
+        check("40°41min21.1secN 74°02min40.2secW", "degrees, minutes and seconds", at: GeoPoint(lat: 40.6891944, lon: -74.0445))
+        check("25°05min48.8secS 31°26min13.6secE", "degrees, minutes and seconds", at: GeoPoint(lat: -25.0968889, lon: 31.4371111))
+        // "de" isn't a unit with its letter.
+        for t in ["Lat: -33.4489 Lon: -70.6693 de Santiago", "Latitud: -33.4489 Longitud: -70.6693 de Santiago 06:45"] {
+            check(t, "decimal degrees", at: GeoPoint(lat: -33.4489, lon: -70.6693))
+        }
+        // The degree sign written after the minutes: one coordinate, not a position.
+        for t in ["25 05.8136degS", "25° 05.8136 degS", "25 05.8136 deg S"] {
+            XCTAssertNil(CoordinateParser.parse(t), t)
+        }
     }
 }
 
