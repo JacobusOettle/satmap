@@ -1,0 +1,48 @@
+name: Aviation data
+
+# Refreshes SatMap/Resources/Aviation.tsv (drone mode's airfields, helipads and navaids) from OurAirports, which
+# volunteers keep up to date, and commits it when it changed. By hand, or on the first of each month.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 1 * *"
+  push:
+    paths:
+      - "tools/build_aviation.py"
+      - ".github/workflows/aviation.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aviation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the list
+        run: |
+          mkdir -p ourairports
+          python3 -I tools/build_aviation.py ourairports
+          grep -c . SatMap/Resources/Aviation.tsv
+
+      - name: Commit the list to the branch
+        run: |
+          cp SatMap/Resources/Aviation.tsv "$RUNNER_TEMP/Aviation.tsv"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard FETCH_HEAD
+            cp "$RUNNER_TEMP/Aviation.tsv" SatMap/Resources/Aviation.tsv
+            git add SatMap/Resources/Aviation.tsv
+            git commit -m "Update aviation data from OurAirports" || { echo "No changes"; exit 0; }
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep 10
+          done
+          exit 1

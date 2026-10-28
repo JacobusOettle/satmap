@@ -122,17 +122,34 @@ final class CrosshairAim: ObservableObject, @unchecked Sendable {
 /// The scale bar's round distance and its length on screen, set by the map as it zooms. Kept out of `AppModel` so a
 /// zoom redraws only the bar.
 final class MapScale: ObservableObject {
-    @Published private(set) var meters: Double = 0
+    @Published private(set) var label = ""
     @Published private(set) var width: Double = 0
     /// The bar's longest, in points.
     static let maxWidth = 110.0
+    /// Metres or kilometres, feet or miles, or nautical miles (as distances are shown).
+    var unit = DistanceUnit.metric {
+        didSet { if unit != oldValue { choose() } }
+    }
+    private var metersPerPoint: Double?
 
     func update(metersPerPoint: Double) {
-        guard let s = ScaleBar.choose(metersPerPoint: metersPerPoint, maxWidth: Self.maxWidth) else { return }
+        self.metersPerPoint = metersPerPoint
+        choose()
+    }
+
+    private func choose() {
+        guard let m = metersPerPoint, let s = unit.scale(metersPerPoint: m, maxWidth: Self.maxWidth) else { return }
         let w = (s.width * 2).rounded() / 2
-        if s.meters != meters { meters = s.meters }
+        if s.label != label { label = s.label }
         if w != width { width = w }
     }
+}
+
+/// Drone mode's reporting lines: where you are, and where the tapped spot is, from the nearest airfield, as a pilot
+/// says it ("3.2 NM NE of FASZ Skukuza").
+struct DroneReport: Equatable {
+    var you: String?
+    var pin: String?
 }
 
 /// What the legends beside the scale bar show (the contour interval and the elevation colours' range), set by the map
@@ -245,8 +262,23 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         mode: UserDefaults.standard.string(forKey: "terrainMode"),
         showContours: UserDefaults.standard.object(forKey: "showContours") == nil
             ? nil : UserDefaults.standard.bool(forKey: "showContours")) { // also reads "NO" given at launch
-        didSet { UserDefaults.standard.set(terrainMode.rawValue, forKey: "terrainMode") }
+        didSet {
+            UserDefaults.standard.set(terrainMode.rawValue, forKey: "terrainMode")
+            updateDroneReport()
+        }
     }
+    /// Distances in kilometres, miles or nautical miles, heights in metres or feet (a tap on one changes them).
+    @Published var distanceUnit = DistanceUnit(rawValue: UserDefaults.standard.string(forKey: "distanceUnit") ?? "") ?? .metric {
+        didSet {
+            UserDefaults.standard.set(distanceUnit.rawValue, forKey: "distanceUnit")
+            scale.unit = distanceUnit
+        }
+    }
+    @Published var heightUnit = HeightUnit(rawValue: UserDefaults.standard.string(forKey: "heightUnit") ?? "") ?? .metres {
+        didSet { UserDefaults.standard.set(heightUnit.rawValue, forKey: "heightUnit") }
+    }
+    /// In drone mode: you, and the tapped spot, from the nearest airfield.
+    @Published private(set) var droneReport = DroneReport()
     @Published private(set) var measure: MeasureMode = .off
     /// Elevation of the first measuring point, of the last one (with two or more), and of where you are (beside your
     /// coordinates, and for measuring from you).
@@ -266,6 +298,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             selectedName = nil
             // While a point is being moved, its height is looked up once it is let go (`movePoint`).
             if !pointMoving { lookUpSelectedHeight() }
+            updateDroneReport()
         }
     }
     private var pointMoving = false
@@ -311,6 +344,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private var lastReload = Date.distantPast
 
     private init() {
+        scale.unit = distanceUnit
         track = trackLog.loadAll()
         recorder.seed(lastRecorded: track.last)
         recorder.onTrackPoint = { [weak self] p in self?.appendTrack(p) }
@@ -406,6 +440,41 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         }
     }
 
+    // MARK: - Units
+
+    func nextDistanceUnit() {
+        distanceUnit = distanceUnit.next
+    }
+
+    func nextHeightUnit() {
+        heightUnit = heightUnit.next
+    }
+
+    // MARK: - Drone mode
+
+    /// The reporting lines for you and the tapped spot, from the nearest airfield with a code (not a helipad) within
+    /// 150 NM, else the nearest airfield at all.
+    private func updateDroneReport() {
+        guard terrainMode.showsAviation else {
+            if droneReport != DroneReport() { droneReport = DroneReport() }
+            return
+        }
+        guard let index = AviationStore.shared.index else {
+            AviationStore.shared.load { [weak self] _ in self?.updateDroneReport() }
+            return
+        }
+        func report(_ p: GeoPoint?) -> String? {
+            guard let p = p else { return nil }
+            let limit = 150 * Aviation.metresPerNauticalMile
+            let found = index.nearest(to: p, within: limit) { $0.kind.isAerodrome && $0.kind != .heliport && !$0.code.isEmpty }
+                ?? index.nearest(to: p, within: limit)
+            return found.map { Aviation.report(p, from: index.points[$0.index]) }
+        }
+        let me = recorder.location.map { GeoPoint(lat: $0.coordinate.latitude, lon: $0.coordinate.longitude) }
+        let new = DroneReport(you: report(me), pin: report(selectedPoint))
+        if new != droneReport { droneReport = new }
+    }
+
     // MARK: - Track
 
     private func appendTrack(_ p: TrackPoint) {
@@ -426,6 +495,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private func locationUpdated(_ loc: CLLocation) {
         map?.locationUpdated(loc)
         carPlayMap?.locationUpdated(loc)
+        updateDroneReport()
         // Only for the phone's screen (with CarPlay the app stays active while the phone is locked).
         if UIApplication.shared.applicationState == .active, map?.isOnScreen == true { refreshUserElevation(loc) }
     }

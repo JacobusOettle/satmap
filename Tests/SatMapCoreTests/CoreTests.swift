@@ -2921,17 +2921,18 @@ final class ScaleBarTests: XCTestCase {
 
     // MARK: - Terrain button and elevation colours
 
-    func testTerrainButtonCyclesThroughFourModes() {
+    func testTerrainButtonCyclesThroughFiveModes() {
         var m = TerrainMode.contours
         var seen: [TerrainMode] = []
-        for _ in 0..<4 {
+        for _ in 0..<5 {
             seen.append(m)
             m = m.next
         }
-        XCTAssertEqual(seen, [.contours, .contoursAndColours, .colours, .off])
+        XCTAssertEqual(seen, [.contours, .contoursAndColours, .colours, .drone, .off])
         XCTAssertEqual(m, .contours)
         XCTAssertEqual(TerrainMode.allCases.filter(\.showsContours), [.contours, .contoursAndColours])
         XCTAssertEqual(TerrainMode.allCases.filter(\.showsColours), [.contoursAndColours, .colours])
+        XCTAssertEqual(TerrainMode.allCases.filter(\.showsAviation), [.drone])
     }
 
     func testTerrainModeFromSettingsOfEarlierVersions() {
@@ -3044,5 +3045,181 @@ final class ScaleBarTests: XCTestCase {
         // The lowest blue, the highest red.
         XCTAssertGreaterThan(px[4 + 2], px[4])
         XCTAssertGreaterThan(px[12], px[12 + 2])
+    }
+
+    // MARK: - Units
+
+    func testDistancesInEachUnit() {
+        XCTAssertEqual(DistanceUnit.metric.format(850), "850 m")
+        XCTAssertEqual(DistanceUnit.metric.format(1_250), "1.25 km")
+        XCTAssertEqual(DistanceUnit.metric.format(12_540), "12.5 km")
+        XCTAssertEqual(DistanceUnit.metric.format(125_400), "125 km")
+        XCTAssertEqual(DistanceUnit.imperial.format(100), "328 ft")
+        XCTAssertEqual(DistanceUnit.imperial.format(2_000), "1.24 mi")
+        XCTAssertEqual(DistanceUnit.nautical.format(1_852), "1.00 NM")
+        XCTAssertEqual(DistanceUnit.nautical.format(23_000), "12.4 NM")
+        XCTAssertEqual(DistanceUnit.nautical.format(.nan), "0.00 NM")
+        XCTAssertEqual(DistanceUnit.metric.next, .imperial)
+        XCTAssertEqual(DistanceUnit.imperial.next, .nautical)
+        XCTAssertEqual(DistanceUnit.nautical.next, .metric)
+    }
+
+    func testScaleBarInEachUnit() {
+        // 1 m per point, at most 110 points: 100 m, 200 ft, 0.05 NM.
+        let metric = DistanceUnit.metric.scale(metersPerPoint: 1, maxWidth: 110)
+        XCTAssertEqual(metric?.label, "100 m")
+        let imperial = DistanceUnit.imperial.scale(metersPerPoint: 1, maxWidth: 110)
+        XCTAssertEqual(imperial?.label, "200 ft")
+        XCTAssertEqual(imperial?.meters ?? 0, 60.96, accuracy: 0.001)
+        let nautical = DistanceUnit.nautical.scale(metersPerPoint: 1, maxWidth: 110)
+        XCTAssertEqual(nautical?.label, "0.05 NM")
+        XCTAssertEqual(nautical?.width ?? 0, 92.6, accuracy: 0.01)
+        // Zoomed out: whole miles and nautical miles.
+        XCTAssertEqual(DistanceUnit.imperial.scale(metersPerPoint: 100, maxWidth: 110)?.label, "5 mi")
+        XCTAssertEqual(DistanceUnit.nautical.scale(metersPerPoint: 100, maxWidth: 110)?.label, "5 NM")
+        XCTAssertNil(DistanceUnit.nautical.scale(metersPerPoint: 0, maxWidth: 110))
+    }
+
+    func testHeightsInMetresAndFeet() {
+        XCTAssertEqual(HeightUnit.metres.whole(431.4), 431)
+        XCTAssertEqual(HeightUnit.feet.whole(431.4), 1415)
+        XCTAssertEqual(HeightUnit.metres.next, .feet)
+        XCTAssertEqual(HeightUnit.feet.next, .metres)
+    }
+
+    // MARK: - Drone mode
+
+    private let aviationSample = """
+    # comment
+    A\tM\tFASZ\tSkukuza Airport\t-24.96085\t31.58859\t1020\t156
+    A\tS\tFASE\tSabi Sabi Airport\t-24.94738\t31.44885\t1276\t
+    A\tH\t\tSomewhere Helipad\t-24.99000\t31.59000\t\t
+    A\tL\tFAOR\tO. R. Tambo International Airport\t-26.13920\t28.24600\t5558\t30
+    N\tB\tSZ\tSkukuza\t-24.98030\t31.59890\t233 kHz
+    N\tV\tHGV\tHoedspruit\t-24.35000\t31.04000\t114.50 MHz
+    A\tX\tBAD\tUnknown kind\t0\t0\t\t
+    A\tM\tBAD\tNo coordinates\tx\ty\t\t
+    """
+
+    func testAviationLinesParse() {
+        let index = AviationIndex(tsv: aviationSample)
+        XCTAssertEqual(index.points.count, 6)
+        let fasz = index.points[0]
+        XCTAssertEqual(fasz.kind, .mediumAirport)
+        XCTAssertEqual(fasz.code, "FASZ")
+        XCTAssertEqual(fasz.label, "FASZ Skukuza")
+        XCTAssertEqual(fasz.elevationFeet, 1020)
+        XCTAssertEqual(fasz.runwayHeading, 156)
+        XCTAssertNil(index.points[1].runwayHeading)
+        XCTAssertEqual(index.points[2].label, "Somewhere") // no code, "Helipad" left off
+        XCTAssertEqual(index.points[3].label, "FAOR O. R. Tambo")
+        XCTAssertEqual(index.points[4].frequency, "233 kHz")
+        XCTAssertFalse(index.points[4].kind.isAerodrome)
+    }
+
+    func testAviationPlacesInViewAndNearest() {
+        let index = AviationIndex(tsv: aviationSample)
+        let view = GeoBounds(minLat: -25.1, minLon: 31.3, maxLat: -24.8, maxLon: 31.7)
+        let inView = Set(index.points(in: view).map { index.points[$0].code })
+        XCTAssertEqual(inView, ["FASZ", "FASE", "", "SZ"])
+        // The nearest aerodrome to Skukuza camp is the helipad; the nearest airport with a runway is FASZ.
+        let camp = GeoPoint(lat: -24.9955, lon: 31.5920)
+        let nearest = index.nearest(to: camp)
+        XCTAssertEqual(nearest.map { index.points[$0.index].name }, "Somewhere Helipad")
+        let airport = index.nearest(to: camp, where: { $0.kind.isAerodrome && $0.kind != .heliport })
+        XCTAssertEqual(airport.map { index.points[$0.index].code }, "FASZ")
+        XCTAssertEqual(airport?.meters ?? 0, 3_850, accuracy: 100)
+        // Far from everything: nothing within the limit.
+        XCTAssertNil(index.nearest(to: GeoPoint(lat: 10, lon: -30), within: 50_000))
+        // Johannesburg, from Skukuza: the large airport 4° away is still found.
+        XCTAssertEqual(index.nearest(to: GeoPoint(lat: -26.2, lon: 28.0), within: 400_000).map { index.points[$0.index].code }, "FAOR")
+    }
+
+    func testPositionReportedAsPilotsDo() {
+        let fasz = AviationPoint(kind: .mediumAirport, code: "FASZ", name: "Skukuza Airport",
+                                 point: GeoPoint(lat: -24.96085, lon: 31.58859))
+        // 0.05° north-east of the field: about 3.9 NM north-east.
+        let spot = GeoPoint(lat: -24.96085 + 0.04, lon: 31.58859 + 0.044)
+        let report = Aviation.report(spot, from: fasz)
+        XCTAssertTrue(report.hasSuffix("NE of FASZ Skukuza"), report)
+        XCTAssertTrue(report.hasPrefix("3."), report)
+        XCTAssertEqual(Aviation.report(fasz.point, from: fasz), "Over FASZ Skukuza")
+        XCTAssertEqual(Aviation.compass(from: GeoPoint(lat: 0, lon: 0), to: GeoPoint(lat: -1, lon: 0)), "S")
+        XCTAssertEqual(Aviation.compass(from: GeoPoint(lat: 0, lon: 0), to: GeoPoint(lat: 0, lon: -1)), "W")
+        XCTAssertEqual(Aviation.nauticalMiles(23_000), "12.4 NM")
+        XCTAssertEqual(Aviation.nauticalMiles(260_000), "140 NM")
+    }
+
+    func testPointInRing() {
+        let square = [GeoPoint(lat: 0, lon: 0), GeoPoint(lat: 0, lon: 1), GeoPoint(lat: 1, lon: 1), GeoPoint(lat: 1, lon: 0)]
+        XCTAssertTrue(Geo.contains(square, GeoPoint(lat: 0.5, lon: 0.5)))
+        XCTAssertFalse(Geo.contains(square, GeoPoint(lat: 1.5, lon: 0.5)))
+        XCTAssertEqual(Geo.bearing(from: GeoPoint(lat: 0, lon: 0), to: GeoPoint(lat: 0, lon: 1)), 90, accuracy: 1e-9)
+    }
+
+    func testShippedAviationDataReads() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("SatMap/Resources/Aviation.tsv")
+        let index = AviationIndex(tsv: try String(contentsOf: url, encoding: .utf8))
+        XCTAssertGreaterThan(index.points.count, 50_000)
+        let skukuza = index.points.first { $0.code == "FASZ" }
+        XCTAssertEqual(skukuza?.kind, .mediumAirport)
+    }
+
+    // MARK: - Places for offline areas
+
+    func testPhotonResultsKeepAreasAndSettlements() {
+        let json = """
+        {"type":"FeatureCollection","features":[
+         {"type":"Feature","geometry":{"type":"Point","coordinates":[31.47,-24.82]},
+          "properties":{"osm_type":"R","osm_id":1751334,"osm_key":"leisure","osm_value":"nature_reserve","name":"Sabi Sand Nature Reserve",
+                        "extent":[31.32745,-24.6654308,31.6223272,-24.97716],"state":"Mpumalanga","country":"South Africa"}},
+         {"type":"Feature","geometry":{"type":"Point","coordinates":[28.46,-26.10]},
+          "properties":{"osm_type":"W","osm_id":338821179,"osm_key":"highway","osm_value":"residential","name":"Sabi Sand Street"}},
+         {"type":"Feature","geometry":{"type":"Point","coordinates":[31.12,-25.05]},
+          "properties":{"osm_type":"N","osm_id":244310590,"osm_key":"place","osm_value":"town","name":"Hazyview","state":"Mpumalanga","country":"South Africa"}},
+         {"type":"Feature","geometry":{"type":"Point","coordinates":[31,-25]},
+          "properties":{"osm_type":"N","osm_id":1,"osm_key":"place","osm_value":"village","name":"Whole Degrees"}}
+        ]}
+        """
+        let places = Places.photonResults(Data(json.utf8))
+        XCTAssertEqual(places.map(\.name), ["Sabi Sand Nature Reserve", "Hazyview", "Whole Degrees"])
+        let sabi = places[0]
+        XCTAssertEqual(sabi.id, "R1751334")
+        XCTAssertTrue(sabi.hasBoundary)
+        XCTAssertEqual(sabi.kind, "Nature reserve")
+        XCTAssertEqual(sabi.region, "Mpumalanga, South Africa")
+        XCTAssertEqual(sabi.extent?.minLat ?? 0, -24.97716, accuracy: 1e-9)
+        XCTAssertEqual(sabi.extent?.maxLat ?? 0, -24.6654308, accuracy: 1e-9)
+        XCTAssertGreaterThan(sabi.extentKm2 ?? 0, 500)
+        let town = places[1]
+        XCTAssertFalse(town.hasBoundary)
+        XCTAssertEqual(town.radiusMeters, 4_000)
+        // A spot: the circle around it.
+        let area = Places.area(for: town, rings: [])
+        XCTAssertEqual(area.points.count, 1)
+        XCTAssertEqual(area.bufferMeters, 4_000)
+    }
+
+    func testNominatimBoundaryRings() {
+        let multi = """
+        {"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"MultiPolygon","coordinates":[
+          [[[31,-25],[31.5,-25],[31.5,-24.5],[31,-25]],[[31.1,-24.9],[31.2,-24.9],[31.2,-24.8],[31.1,-24.9]]],
+          [[[32,-25],[32.1,-25],[32.1,-24.9],[32,-25]]]
+        ]}}]}
+        """
+        let rings = Places.outerRings(geoJSON: Data(multi.utf8))
+        XCTAssertEqual(rings.count, 2) // the hole is left out
+        XCTAssertEqual(rings[0].count, 4)
+        XCTAssertEqual(rings[0][1].lon, 31.5)
+        let polygon = #"{"type":"Polygon","coordinates":[[[1,1],[2,1],[2,2],[1,1]]]}"#
+        XCTAssertEqual(Places.outerRings(geoJSON: Data(polygon.utf8)).count, 1)
+        XCTAssertEqual(Places.outerRings(geoJSON: Data(#"{"type":"Point","coordinates":[1,1]}"#.utf8)).count, 0)
+        let place = FoundPlace(id: "R1", name: "X", kind: "Park", tag: "park", region: "", centre: GeoPoint(lat: 0, lon: 0),
+                               extent: GeoBounds(minLat: -1, minLon: -1, maxLat: 1, maxLon: 1))
+        XCTAssertEqual(Places.area(for: place, rings: rings).polygons.count, 2)
+        // No boundary to be had: its extent.
+        XCTAssertEqual(Places.area(for: place, rings: []).polygons.first?.count, 4)
+        XCTAssertEqual(Places.simplification(for: place), 2.0 / 1500, accuracy: 1e-12)
     }
 }

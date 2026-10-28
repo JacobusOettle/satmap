@@ -40,7 +40,7 @@ struct CoordinateEntryView: View {
                         row("Position", Format.coordinate(r.point))
                         row("Read as", r.format)
                         if let me = me {
-                            row("From you", Format.distance(Geo.distance(me, r.point)))
+                            row("From you", Format.distance(Geo.distance(me, r.point), model.distanceUnit))
                         }
                     } else if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text("The position shows here as you type or paste.").foregroundColor(.secondary)

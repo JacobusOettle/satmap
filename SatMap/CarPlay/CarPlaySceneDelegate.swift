@@ -90,6 +90,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         case .contours: return "Contours"
         case .contoursAndColours: return "Contours + colours"
         case .colours: return "Colours"
+        case .drone: return "Drone"
         case .off: return "No contours"
         }
     }

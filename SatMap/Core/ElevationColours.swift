@@ -1,30 +1,35 @@
 import Foundation
 
-/// What the terrain button shows over the imagery: contour lines, the heights in colour, both, or neither. Each tap
-/// moves on to the next.
+/// What the terrain button shows over the imagery: contour lines, the heights in colour, both, the places pilots and
+/// drone operators go by (drone mode: aerodromes, strips, helipads and navaids), or none of these. Each tap moves on
+/// to the next.
 enum TerrainMode: String, CaseIterable {
     case contours
     case contoursAndColours
     case colours
+    case drone
     case off
 
     var next: TerrainMode {
         switch self {
         case .contours: return .contoursAndColours
         case .contoursAndColours: return .colours
-        case .colours: return .off
+        case .colours: return .drone
+        case .drone: return .off
         case .off: return .contours
         }
     }
 
     var showsContours: Bool { self == .contours || self == .contoursAndColours }
     var showsColours: Bool { self == .colours || self == .contoursAndColours }
+    var showsAviation: Bool { self == .drone }
 
     var title: String {
         switch self {
         case .contours: return "Contour lines"
         case .contoursAndColours: return "Contour lines and elevation colours"
         case .colours: return "Elevation colours"
+        case .drone: return "Drone mode: airfields and navaids"
         case .off: return "Contours and colours off"
         }
     }

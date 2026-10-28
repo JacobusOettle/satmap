@@ -52,9 +52,9 @@ enum AppPaths {
 }
 
 enum Format {
-    static func distance(_ m: Double) -> String {
-        if m < 1000 { return "\(Int(m.rounded())) m" }
-        return String(format: "%.2f km", m / 1000)
+    /// "850 m", "1.25 km"; "850 ft", "1.25 mi"; "0.46 NM" (`DistanceUnit`).
+    static func distance(_ m: Double, _ unit: DistanceUnit = .metric) -> String {
+        unit.format(m)
     }
 
     static func bytes(_ b: Int64) -> String {
@@ -80,9 +80,14 @@ enum Format {
         String(format: "%.6f, %.6f", p.lat, p.lon)
     }
 
-    /// A height in whole metres ("1 250 m").
-    static func height(_ m: Double) -> String {
-        "\(count(Int(m.rounded()))) m"
+    /// A height in whole metres or feet ("1 250 m", "4 101 ft").
+    static func height(_ m: Double, _ unit: HeightUnit = .metres) -> String {
+        "\(count(unit.whole(m))) \(unit.symbol)"
+    }
+
+    /// A height difference without its sign ("12 m", "39 ft").
+    static func heightDifference(_ m: Double, _ unit: HeightUnit) -> String {
+        "\(count(unit.whole(abs(m)))) \(unit.symbol)"
     }
 
     static func count(_ n: Int) -> String {

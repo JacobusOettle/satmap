@@ -22,6 +22,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     /// The imagery SatMap draws, with the contour lines and elevation colours.
     private var imagery: DrawnImagery!
     private var blocks: BlockLayers!
+    /// Drone mode: aerodromes, strips, helipads and navaids, with distances from you and the tapped spot.
+    private var aviation: AviationLayer!
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
     private var trackRenderer: TrackRenderer?
@@ -77,6 +79,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         mapView.register(MeasureMarkerView.self, forAnnotationViewWithReuseIdentifier: MeasureMarkerView.reuseID)
         mapView.register(SelectedPointView.self, forAnnotationViewWithReuseIdentifier: SelectedPointView.reuseID)
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
+        mapView.register(AviationView.self, forAnnotationViewWithReuseIdentifier: AviationView.reuseID)
 
         // Later overlays draw on top: imagery with contours, (blocks inserted below the track), track, measuring line.
         imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isShown ?? false },
@@ -88,6 +91,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         mapView.addOverlay(track, level: .aboveLabels)
         mapView.addOverlay(measureLine, level: .aboveLabels)
         blocks = BlockLayers(mapView: mapView, below: track)
+        aviation = AviationLayer(mapView: mapView)
+        aviation.isOn = model.terrainMode.showsAviation
 
         container.addSubview(mapView)
         mapView.translatesAutoresizingMaskIntoConstraints = false
@@ -175,7 +180,16 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         model.$terrainMode
             .removeDuplicates()
             .dropFirst()
-            .sink { [weak self] mode in DispatchQueue.main.async { self?.imagery.terrainChanged(mode) } }
+            .sink { [weak self] mode in
+                DispatchQueue.main.async {
+                    self?.imagery.terrainChanged(mode)
+                    self?.aviation.isOn = mode.showsAviation
+                }
+            }
+            .store(in: &cancellables)
+        // Drone mode's distances: from you and from the tapped spot.
+        model.$selectedPoint
+            .sink { [weak self] p in DispatchQueue.main.async { self?.aviationDistances(pin: p) } }
             .store(in: &cancellables)
         model.kml.$files.combineLatest(model.kml.$useFileColours)
             .sink { [weak self] files, colours in DispatchQueue.main.async { self?.blocks.update(files, useFileColours: colours) } }
@@ -274,6 +288,13 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         updateAim()
         updateScale()
         imagery?.regionDidChange()
+        aviation?.regionChanged()
+    }
+
+    /// Drone mode's labels: how far each place is from you and from the tapped spot.
+    private func aviationDistances(pin: GeoPoint?) {
+        let me = model.recorder.location.map { GeoPoint(lat: $0.coordinate.latitude, lon: $0.coordinate.longitude) }
+        aviation?.distancesChanged(me: me, pin: pin)
     }
 
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
@@ -329,6 +350,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         }
         updateMeasureLine()
         updateAim()
+        aviationDistances(pin: model.selectedPoint)
     }
 
     private func powerChanged(_ power: LocationRecorder.Power) {
@@ -389,8 +411,14 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         lastTouch = nil
         // A tap on a point in a KML file (a launch point …) selects it: its own position, with its name. Where the finger
         // was on the map, which may have moved since (following you).
-        if model.measure == .off, let k = kmlPoint(near: mapView.convert(c, toPointTo: mapView)) {
+        let spot = mapView.convert(c, toPointTo: mapView)
+        if model.measure == .off, let k = kmlPoint(near: spot) {
             model.pointTapped(GeoPoint(lat: k.coordinate.latitude, lon: k.coordinate.longitude), name: k.title)
+            return
+        }
+        // In drone mode, an aerodrome or navaid likewise: the distances to the others are then from it.
+        if model.measure == .off, let a = aviation.place(near: spot) {
+            model.pointTapped(a.place.point, name: "\(a.place.label) · \(a.place.kind.title)")
             return
         }
         // A tap on point A, with three or more points, closes the shape.
@@ -768,6 +796,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             return mapView.dequeueReusableAnnotationView(withIdentifier: SelectedPointView.reuseID, for: annotation)
         case is BlockLabelAnnotation:
             return mapView.dequeueReusableAnnotationView(withIdentifier: BlockLabelView.reuseID, for: annotation)
+        case let a as AviationAnnotation:
+            return aviation.view(for: a)
         default:
             return nil
         }

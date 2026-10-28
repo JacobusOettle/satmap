@@ -14,6 +14,11 @@ struct OfflineSheet: View {
         NavigationStack {
             List {
                 Section {
+                    NavigationLink {
+                        PlaceSearchView(model: model)
+                    } label: {
+                        Label("Find a park, reserve or town", systemImage: "magnifyingglass")
+                    }
                     Button {
                         model.startDrawingArea()
                     } label: {
@@ -112,7 +117,7 @@ struct OfflineSheet: View {
                             .foregroundColor(.secondary)
                     }
                 } footer: {
-                    Text("Map data: \(TileSources.attribution) · Roads: © OpenStreetMap contributors")
+                    Text("Map data: \(TileSources.attribution) · Roads and places: © OpenStreetMap contributors, found with Photon (komoot) and Nominatim · Airfields and navaids: OurAirports")
                 }
             }
             .navigationTitle("Offline maps")
@@ -195,6 +200,125 @@ private struct AreaRow: View {
 }
 
 /// A road set shipped with the app, opened in the download screen (loaded when shown).
+/// Finds a place by name (a park, a reserve, a town, a camp …) to download: its whole area or only along its roads.
+private struct PlaceSearchView: View {
+    @ObservedObject var model: AppModel
+    @State private var text = ""
+    @State private var results: [FoundPlace] = []
+    @State private var searching = false
+    @State private var message: String?
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    TextField("Kruger, Sabi Sand, Skukuza, Hazyview …", text: $text)
+                        .submitLabel(.search)
+                        .autocorrectionDisabled()
+                        .focused($focused)
+                        .onSubmit(search)
+                        .accessibilityIdentifier("placeSearchText")
+                    if searching {
+                        ProgressView()
+                    } else {
+                        Button("Search", action: search)
+                            .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                }
+            } footer: {
+                Text("Parks and reserves are saved within their boundary; towns, villages and camps with the area around them. Next you choose the detail, and whether to save the whole area or only along its roads.")
+            }
+            if let message = message {
+                Text(message).foregroundColor(.secondary)
+            }
+            if !results.isEmpty {
+                Section("Places") {
+                    ForEach(results) { place in
+                        NavigationLink {
+                            PlaceAreaView(model: model, place: place)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(place.name).foregroundColor(.primary)
+                                Text(detail(place)).font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Find a place")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { if results.isEmpty { focused = true } }
+    }
+
+    /// "Nature reserve · Mpumalanga, South Africa · about 650 km²", or for a spot "Town · … · 4 km around it".
+    private func detail(_ p: FoundPlace) -> String {
+        var parts = [p.kind]
+        if !p.region.isEmpty { parts.append(p.region) }
+        if p.hasBoundary, let km2 = p.extentKm2 {
+            parts.append(km2 >= 10 ? "up to \(Format.count(Int(km2.rounded()))) km²" : String(format: "up to %.1f km²", km2))
+        } else {
+            parts.append("\(Format.distance(p.radiusMeters, model.distanceUnit)) around it")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func search() {
+        let q = text.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty, !searching else { return }
+        searching = true
+        message = nil
+        let near = model.map.map { GeoPoint(lat: $0.centerCoordinate.latitude, lon: $0.centerCoordinate.longitude) }
+        Task {
+            do {
+                let found = try await PlaceSearch.search(q, near: near)
+                results = found
+                message = found.isEmpty ? "No park, reserve, town or camp called “\(q)” was found. Try another spelling." : nil
+            } catch {
+                message = (error as? LocalizedError)?.errorDescription ?? "The search didn't work. Try again."
+            }
+            searching = false
+        }
+    }
+}
+
+/// The chosen place's boundary, once loaded, on the usual download screen (detail, whole area or along its roads).
+private struct PlaceAreaView: View {
+    @ObservedObject var model: AppModel
+    let place: FoundPlace
+    @State private var shape: CoverageShape?
+    @State private var failed: String?
+
+    var body: some View {
+        Group {
+            if let shape = shape {
+                NewAreaView(model: model, area: PendingArea(name: place.name, shape: shape))
+            } else if let failed = failed {
+                VStack(spacing: 12) {
+                    Text(failed).foregroundColor(.secondary).multilineTextAlignment(.center)
+                    Button("Try again") { Task { await load() } }
+                }
+                .padding()
+            } else {
+                ProgressView("Getting the boundary of \(place.name) …")
+            }
+        }
+        .task { if shape == nil { await load() } }
+    }
+
+    private func load() async {
+        failed = nil
+        do {
+            shape = try await PlaceSearch.area(for: place)
+        } catch is CancellationError {
+            return
+        } catch {
+            failed = (error as? LocalizedError)?.errorDescription ?? "Couldn't get the boundary. Try again."
+        }
+    }
+}
+
 private struct PresetAreaView: View {
     @ObservedObject var model: AppModel
     let presetID: String

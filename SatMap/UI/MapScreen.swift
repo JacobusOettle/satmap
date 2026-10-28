@@ -47,9 +47,15 @@ struct MapScreen: View {
                         CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
                                       text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
                                       id: "myCoordinates")
-                        HeightBar(elevation: model.userElevation, gpsAltitude: Self.gpsAltitude(loc), id: "myHeight")
+                        HeightBar(elevation: model.userElevation, gpsAltitude: Self.gpsAltitude(loc), unit: model.heightUnit,
+                                  id: "myHeight", onTap: model.nextHeightUnit)
                     }
                     .frame(maxWidth: .infinity)
+                }
+                // Drone mode: where you (and the tapped spot) are from the nearest airfield, as a pilot says it.
+                if model.terrainMode.showsAviation, !model.isDrawingArea,
+                   model.droneReport.you != nil || model.droneReport.pin != nil {
+                    DroneCard(report: model.droneReport)
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
                     Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
@@ -63,7 +69,7 @@ struct MapScreen: View {
                         // The contour interval above the scale bar, the elevation colours' heights under it.
                         VStack(alignment: .leading, spacing: 8) {
                             ContourKeyView(legend: model.legend)
-                            ScaleBarView(scale: model.scale)
+                            ScaleBarView(scale: model.scale, onTap: model.nextDistanceUnit)
                             ColourKeyView(legend: model.legend)
                         }
                         Spacer()
@@ -94,7 +100,8 @@ struct MapScreen: View {
                         CoordinateRow {
                             CoordinateBar(icon: model.selectedName == nil ? "mappin" : "mappin.circle.fill", text: Format.coordinate(p),
                                           id: "tappedCoordinates", onClose: { model.selectedPoint = nil })
-                            HeightBar(elevation: model.selectedElevation, id: "tappedHeight")
+                            HeightBar(elevation: model.selectedElevation, unit: model.heightUnit, id: "tappedHeight",
+                                      onTap: model.nextHeightUnit)
                         }
                     }
                     .padding(.horizontal, 12)
@@ -173,11 +180,13 @@ struct MapScreen: View {
         switch model.terrainMode {
         case .contours, .contoursAndColours: return "mountain.2.fill"
         case .colours: return "paintpalette.fill"
+        case .drone: return "airplane"
         case .off: return "mountain.2"
         }
     }
 
-    /// The terrain button: the next of contours → contours and colours → colours → neither, said beside it for a moment.
+    /// The terrain button: the next of contours → contours and colours → colours → drone mode → none, said beside it
+    /// for a moment.
     private func nextTerrainMode() {
         model.terrainMode = model.terrainMode.next
         terrainToast = model.terrainMode.title
@@ -324,8 +333,9 @@ struct MeasurePanel: View {
                     .font(.caption.weight(.semibold)).opacity(0.85)
                 Text(model.measuredArea.map(Format.hectares) ?? "–")
                     .font(.system(size: 30, weight: .bold).monospacedDigit())
-                Text("Perimeter \(model.markerDistance.map(Format.distance) ?? "–")")
+                Text("Perimeter \(model.markerDistance.map { Format.distance($0, model.distanceUnit) } ?? "–")")
                     .font(.headline)
+                    .modifier(UnitSwitch(name: "distances", action: model.nextDistanceUnit))
                 if let a = model.measuredArea, a < 1_000_000 {
                     Text("\(Format.count(Int(a.rounded()))) m²").font(.caption).opacity(0.85)
                 }
@@ -334,16 +344,18 @@ struct MeasurePanel: View {
                 let last = MeasureMode.label(points.count - 1)
                 Text(points.count == 2 ? "From A to B" : "From A to \(last) · \(points.count) points")
                     .font(.caption.weight(.semibold)).opacity(0.85)
-                Text(model.markerDistance.map(Format.distance) ?? "–")
+                Text(model.markerDistance.map { Format.distance($0, model.distanceUnit) } ?? "–")
                     .font(.system(size: 30, weight: .bold).monospacedDigit())
+                    .modifier(UnitSwitch(name: "distances", action: model.nextDistanceUnit))
+                    .accessibilityIdentifier("measuredDistance")
                 Text(heightText)
                     .font(.headline)
                 if points.count >= 3 {
-                    Text("Last leg \(MeasureMode.label(points.count - 2)) → \(last): \(Format.distance(Geo.distance(points[points.count - 2], points[points.count - 1])))")
+                    Text("Last leg \(MeasureMode.label(points.count - 2)) → \(last): \(Format.distance(Geo.distance(points[points.count - 2], points[points.count - 1]), model.distanceUnit))")
                         .font(.caption).opacity(0.85)
                 }
                 if let a = model.markerElevation, let b = model.lastElevation {
-                    Text("A \(Int(a.rounded())) m · \(last) \(Int(b.rounded())) m above sea level")
+                    Text("A \(Format.height(a, model.heightUnit)) · \(last) \(Format.height(b, model.heightUnit)) above sea level")
                         .font(.caption).opacity(0.85)
                 }
                 actions(close: points.count >= 3)
@@ -351,12 +363,13 @@ struct MeasurePanel: View {
                                        : "Move the crosshair and tap the map for more points.")
                     .font(.caption2).opacity(0.7)
             default:
-                Text(model.markerDistance.map(Format.distance) ?? "Waiting for GPS…")
+                Text(model.markerDistance.map { Format.distance($0, model.distanceUnit) } ?? "Waiting for GPS…")
                     .font(.system(size: 30, weight: .bold).monospacedDigit())
+                    .modifier(UnitSwitch(name: "distances", action: model.nextDistanceUnit))
                 Text(heightText)
                     .font(.headline)
                 if let m = model.markerElevation, let u = model.userElevation {
-                    Text("Marker \(Int(m.rounded())) m · You \(Int(u.rounded())) m above sea level")
+                    Text("Marker \(Format.height(m, model.heightUnit)) · You \(Format.height(u, model.heightUnit)) above sea level")
                         .font(.caption)
                         .opacity(0.85)
                 }
@@ -403,26 +416,31 @@ struct MeasurePanel: View {
                 ? "Height: loading elevation…"
                 : "Height: no elevation data here offline (download this area)"
         }
+        let unit = model.heightUnit
         if isPath {
             let last = MeasureMode.label(model.measure.points.count - 1)
-            let diff = (u - m).rounded()
-            if diff == 0 { return "\(last) is level with A" }
-            return diff > 0 ? "▲ \(last) is \(Int(diff)) m higher than A" : "▼ \(last) is \(Int(-diff)) m lower than A"
+            let diff = u - m
+            if unit.whole(abs(diff)) == 0 { return "\(last) is level with A" }
+            let d = Format.heightDifference(diff, unit)
+            return diff > 0 ? "▲ \(last) is \(d) higher than A" : "▼ \(last) is \(d) lower than A"
         }
-        let diff = (m - u).rounded()
-        if diff == 0 { return "Marker is level with you" }
-        return diff > 0 ? "▲ Marker is \(Int(diff)) m higher than you" : "▼ Marker is \(Int(-diff)) m lower than you"
+        let diff = m - u
+        if unit.whole(abs(diff)) == 0 { return "Marker is level with you" }
+        let d = Format.heightDifference(diff, unit)
+        return diff > 0 ? "▲ Marker is \(d) higher than you" : "▼ Marker is \(d) lower than you"
     }
 }
 
 /// The map's scale, bottom left: a round distance and its length on the map, changing as the map zooms.
 struct ScaleBarView: View {
     @ObservedObject var scale: MapScale
+    /// A tap: distances (and the bar) in the next unit.
+    let onTap: () -> Void
 
     var body: some View {
         if scale.width > 0 {
             VStack(alignment: .leading, spacing: 2) {
-                Text(ScaleBar.label(scale.meters))
+                Text(scale.label)
                     .font(.caption.weight(.semibold).monospacedDigit())
                 ScaleBarShape()
                     .stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineCap: .square))
@@ -430,11 +448,12 @@ struct ScaleBarView: View {
             }
             .foregroundColor(.white)
             .shadow(color: .black, radius: 1.5)
-            .padding(.bottom, 4)
-            .allowsHitTesting(false)
+            .padding(.vertical, 4)
+            .padding(.trailing, 8)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Scale")
-            .accessibilityValue(Text(ScaleBar.label(scale.meters)))
+            .accessibilityValue(Text(scale.label))
+            .modifier(UnitSwitch(name: "distances", action: onTap))
         }
     }
 }
@@ -548,13 +567,14 @@ struct AimPanel: View {
                 .font(.caption.weight(.semibold)).opacity(0.85)
             Text(distanceText)
                 .font(.system(size: 30, weight: .bold).monospacedDigit())
+                .modifier(UnitSwitch(name: "distances", action: model.nextDistanceUnit))
             // While the map moves, the height is an earlier spot's until the lookup catches up: dimmed.
             let current = aim.elevationPoint == aim.point
             Text(heightText)
                 .font(.headline)
                 .opacity(current ? 1 : 0.6)
             if let c = aim.elevation, let u = model.userElevation {
-                Text("Crosshair \(Int(c.rounded())) m · You \(Int(u.rounded())) m above sea level")
+                Text("Crosshair \(Format.height(c, model.heightUnit)) · You \(Format.height(u, model.heightUnit)) above sea level")
                     .font(.caption).opacity(current ? 0.85 : 0.5)
             }
             Text("Move the crosshair onto the spot and tap the map (or the measure button) for point A.")
@@ -572,7 +592,7 @@ struct AimPanel: View {
     private var distanceText: String {
         guard let loc = recorder.location else { return "Waiting for GPS…" }
         guard let p = aim.point else { return "–" }
-        return Format.distance(loc.distance(from: CLLocation(latitude: p.lat, longitude: p.lon)))
+        return Format.distance(loc.distance(from: CLLocation(latitude: p.lat, longitude: p.lon)), model.distanceUnit)
     }
 
     private var heightText: String {
@@ -581,9 +601,11 @@ struct AimPanel: View {
                 ? "Height: loading elevation…"
                 : "Height: no elevation data here offline (download this area)"
         }
-        let diff = (c - u).rounded()
-        if diff == 0 { return "Crosshair is level with you" }
-        return diff > 0 ? "▲ Crosshair is \(Int(diff)) m higher than you" : "▼ Crosshair is \(Int(-diff)) m lower than you"
+        let unit = model.heightUnit
+        let diff = c - u
+        if unit.whole(abs(diff)) == 0 { return "Crosshair is level with you" }
+        let d = Format.heightDifference(diff, unit)
+        return diff > 0 ? "▲ Crosshair is \(d) higher than you" : "▼ Crosshair is \(d) lower than you"
     }
 }
 
@@ -619,44 +641,105 @@ struct CoordinateRow<Content: View>: View {
 struct HeightBar: View {
     let elevation: Double?
     var gpsAltitude: Double?
+    let unit: HeightUnit
     /// Accessibility identifier, for the UI test.
     let id: String
+    /// A tap: heights in the other unit (metres or feet).
+    let onTap: () -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "mountain.2.fill")
-                .font(.caption)
-            Text(text)
-                .font(.subheadline.monospacedDigit().weight(.semibold))
-                .lineLimit(1)
-            if elevation == nil, gpsAltitude != nil {
-                Text("GPS")
-                    .font(.caption2.weight(.bold))
-                    .opacity(0.75)
+        Button(action: onTap) {
+            HStack(spacing: 5) {
+                Image(systemName: "mountain.2.fill")
+                    .font(.caption)
+                Text(text)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .lineLimit(1)
+                if elevation == nil, gpsAltitude != nil {
+                    Text("GPS")
+                        .font(.caption2.weight(.bold))
+                        .opacity(0.75)
+                }
             }
+            .foregroundColor(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color.black.opacity(0.65))
+            .clipShape(Capsule())
         }
-        .foregroundColor(.white)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(Color.black.opacity(0.65))
-        .clipShape(Capsule())
         .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Height"))
         .accessibilityValue(Text(spoken))
+        .accessibilityHint(Text("Shows heights in \(unit.next.name)"))
         .accessibilityIdentifier(id)
     }
 
     private var text: String {
-        if let h = elevation ?? gpsAltitude { return Format.height(h) }
-        return Connectivity.shared.isOnline ? "… m" : "– m"
+        if let h = elevation ?? gpsAltitude { return Format.height(h, unit) }
+        return Connectivity.shared.isOnline ? "… \(unit.symbol)" : "– \(unit.symbol)"
     }
 
     private var spoken: String {
         guard let h = elevation ?? gpsAltitude else {
             return Connectivity.shared.isOnline ? "Loading" : "No elevation data here offline"
         }
-        return "\(Format.height(h)) above sea level" + (elevation == nil ? ", from GPS" : "")
+        return "\(Format.height(h, unit)) above sea level" + (elevation == nil ? ", from GPS" : "")
+    }
+}
+
+/// A distance (or the scale bar) that a tap shows in the next unit: kilometres, miles, nautical miles.
+struct UnitSwitch: ViewModifier {
+    let name: String
+    let action: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityHint(Text("Tap to show \(name) in other units"))
+    }
+}
+
+/// Drone mode's reporting lines, as a pilot says where they are: you (cyan, as the distances from you on the map) and
+/// the tapped spot (amber, as the distances from it), each from the nearest airfield.
+struct DroneCard: View {
+    let report: DroneReport
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let you = report.you {
+                line("location.fill", "You", you, Color(AviationView.youColour))
+            }
+            if let pin = report.pin {
+                line("mappin", "Pin", pin, Color(AviationView.pinColour))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.72))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(0.18), lineWidth: 0.5))
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("droneCard")
+    }
+
+    private func line(_ icon: String, _ who: String, _ text: String, _ colour: Color) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption.weight(.bold))
+                .frame(width: 14)
+            Text(who)
+                .font(.caption.weight(.heavy))
+                .opacity(0.8)
+            Text(text)
+                .font(.subheadline.weight(.bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .foregroundColor(colour)
     }
 }
 

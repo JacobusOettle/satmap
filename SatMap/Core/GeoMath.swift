@@ -85,6 +85,32 @@ enum Geo {
         return 2 * earthRadius * asin(min(1, sqrt(h)))
     }
 
+    /// The initial great-circle bearing from `a` to `b`, degrees clockwise from true north (0–360).
+    static func bearing(from a: GeoPoint, to b: GeoPoint) -> Double {
+        let φ1 = a.lat * .pi / 180, φ2 = b.lat * .pi / 180
+        let dλ = (b.lon - a.lon) * .pi / 180
+        let y = sin(dλ) * cos(φ2)
+        let x = cos(φ1) * sin(φ2) - sin(φ1) * cos(φ2) * cos(dλ)
+        let deg = atan2(y, x) * 180 / .pi
+        return deg < 0 ? deg + 360 : deg
+    }
+
+    /// Whether a spot is inside a ring (in latitude and longitude, as small areas are drawn).
+    static func contains(_ ring: [GeoPoint], _ p: GeoPoint) -> Bool {
+        guard ring.count >= 3 else { return false }
+        var inside = false
+        var j = ring.count - 1
+        for i in 0..<ring.count {
+            let a = ring[i], b = ring[j]
+            if (a.lat > p.lat) != (b.lat > p.lat),
+               p.lon < (b.lon - a.lon) * (p.lat - a.lat) / (b.lat - a.lat) + a.lon {
+                inside.toggle()
+            }
+            j = i
+        }
+        return inside
+    }
+
     /// Length of the line through the points, in metres.
     static func pathLength(_ points: [GeoPoint]) -> Double {
         zip(points, points.dropFirst()).reduce(0) { $0 + distance($1.0, $1.1) }

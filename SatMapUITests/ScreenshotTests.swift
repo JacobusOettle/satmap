@@ -160,14 +160,37 @@ final class ScreenshotTests: XCTestCase {
         } else {
             XCTFail("The KML point isn't on the map")
         }
+        // Drone mode: the airfields around, with how far they are from you and from the selected point, and where you
+        // are from the nearest one. Zoomed out a little for a few of them, then back.
+        setTerrain("Drone mode: airfields and navaids")
+        let map = app.maps.firstMatch
+        for _ in 0..<3 {
+            map.twoFingerTap()
+            sleep(2)
+        }
+        sleep(6)
+        XCTAssertTrue(app.descendants(matching: .any)["droneCard"].firstMatch.exists, "No reporting card in drone mode")
+        snap("25-drone-mode")
+        for _ in 0..<3 {
+            map.doubleTap()
+            sleep(2)
+        }
+        setTerrain("Contour lines")
         XCTAssertTrue(app.buttons["myCoordinates"].exists, "No coordinates of your position")
-        // The heights beside both.
+        // The heights beside both; a tap shows them in feet, another in metres again.
         for id in ["myHeight", "tappedHeight"] {
             let height = app.descendants(matching: .any)[id].firstMatch
             XCTAssertTrue(height.exists, "No height beside \(id)")
             XCTAssertTrue((height.value as? String)?.contains("above sea level") == true,
                           "\(id) has no height: \(String(describing: height.value))")
         }
+        let tappedHeight = app.descendants(matching: .any)["tappedHeight"].firstMatch
+        tappedHeight.tap()
+        sleep(1)
+        XCTAssertTrue((tappedHeight.value as? String)?.contains(" ft ") == true, "Height not in feet: \(String(describing: tappedHeight.value))")
+        tappedHeight.tap()
+        sleep(1)
+        XCTAssertTrue((tappedHeight.value as? String)?.contains(" m ") == true, "Height not back in metres")
 
         // Measuring between two points: a tap anywhere puts a point at the crosshair; the map is moved between them.
         setMeasure(.aiming)
@@ -178,6 +201,21 @@ final class ScreenshotTests: XCTestCase {
         sleep(8) // elevations of both points
         XCTAssertEqual(currentMeasureState(), .pair)
         snap("16-measure-two-points")
+        // A tap on the distance: miles, then nautical miles, then kilometres again.
+        let distance = app.descendants(matching: .any)["measuredDistance"].firstMatch
+        if distance.exists {
+            distance.tap()
+            sleep(1)
+            XCTAssertTrue(distance.label.hasSuffix(" mi") || distance.label.hasSuffix(" ft"), "Not in miles: \(distance.label)")
+            distance.tap()
+            sleep(1)
+            XCTAssertTrue(distance.label.hasSuffix(" NM"), "Not in nautical miles: \(distance.label)")
+            distance.tap()
+            sleep(1)
+            XCTAssertTrue(distance.label.hasSuffix(" km") || distance.label.hasSuffix(" m"), "Not back in km: \(distance.label)")
+        } else {
+            XCTFail("No measured distance to tap")
+        }
 
         // Two more points, then tap A again: the shape's area.
         dragMap(dx: 0, dy: 0.2)
@@ -218,6 +256,34 @@ final class ScreenshotTests: XCTestCase {
             snap("17-kruger-roads")
         } else {
             XCTFail("Kruger roads didn't load")
+        }
+        app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
+        sleep(1)
+
+        // A place found by name: the Sabi Sand reserve, within its boundary.
+        tap("Find a park, reserve or town")
+        let search = app.textFields["placeSearchText"].firstMatch
+        if search.waitForExistence(timeout: 10) {
+            search.tap()
+            search.typeText("Sabi Sand\n")
+            let reserve = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Sabi Sand")).firstMatch
+            if reserve.waitForExistence(timeout: 40) {
+                sleep(1)
+                snap("26-find-place")
+                reserve.tap()
+                if app.buttons["Download"].waitForExistence(timeout: 60) {
+                    sleep(6) // size estimate
+                    snap("27-place-area")
+                } else {
+                    XCTFail("The reserve's download screen didn't open")
+                }
+                app.navigationBars.buttons.element(boundBy: 0).tap() // back to the results
+                sleep(1)
+            } else {
+                XCTFail("Sabi Sand wasn't found")
+            }
+        } else {
+            XCTFail("No place search field")
         }
         app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
         sleep(1)

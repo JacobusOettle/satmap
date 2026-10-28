@@ -10,6 +10,7 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
     private let mapView = MKMapView()
     private var imagery: DrawnImagery!
     private var blocks: BlockLayers!
+    private var aviation: AviationLayer!
     private let track = TrackOverlay()
     private var trackRenderer: TrackRenderer?
     private var drawnTrackCount = 0
@@ -52,6 +53,7 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         mapView.showsUserLocation = false // the app's own dot, as on the phone
         mapView.register(UserDotView.self, forAnnotationViewWithReuseIdentifier: UserDotView.reuseID)
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
+        mapView.register(AviationView.self, forAnnotationViewWithReuseIdentifier: AviationView.reuseID)
 
         // Imagery with contours and colours, blocks (inserted below the track), track.
         imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isShown ?? false },
@@ -61,6 +63,8 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
         blocks = BlockLayers(mapView: mapView, below: track)
+        aviation = AviationLayer(mapView: mapView)
+        aviation.isOn = model.terrainMode.showsAviation
 
         // Around you, or where the phone's map is, about 1.5 km across.
         let start = model.recorder.location?.coordinate ?? model.map?.centerCoordinate
@@ -77,7 +81,15 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         model.$terrainMode
             .removeDuplicates()
             .dropFirst()
-            .sink { [weak self] mode in DispatchQueue.main.async { self?.imagery.terrainChanged(mode) } }
+            .sink { [weak self] mode in
+                DispatchQueue.main.async {
+                    self?.imagery.terrainChanged(mode)
+                    self?.aviation.isOn = mode.showsAviation
+                }
+            }
+            .store(in: &cancellables)
+        model.$selectedPoint
+            .sink { [weak self] p in DispatchQueue.main.async { self?.aviationDistances(pin: p) } }
             .store(in: &cancellables)
         model.kml.$files.combineLatest(model.kml.$useFileColours)
             .sink { [weak self] files, colours in DispatchQueue.main.async { self?.blocks.update(files, useFileColours: colours) } }
@@ -95,6 +107,13 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
             mapView.addAnnotation(a)
         }
         if following && isShown { mapView.setCenter(loc.coordinate, animated: true) }
+        aviationDistances(pin: model.selectedPoint)
+    }
+
+    /// Drone mode's labels: how far each place is from you and from the spot tapped on the phone.
+    private func aviationDistances(pin: GeoPoint?) {
+        let me = model.recorder.location.map { GeoPoint(lat: $0.coordinate.latitude, lon: $0.coordinate.longitude) }
+        aviation?.distancesChanged(me: me, pin: pin)
     }
 
     /// Zooms in (factor below 1) or out around the middle of the map.
@@ -169,6 +188,7 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
         imagery?.regionDidChange()
+        aviation?.regionChanged()
     }
 
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
@@ -200,6 +220,8 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
             return v
         case is BlockLabelAnnotation:
             return mapView.dequeueReusableAnnotationView(withIdentifier: BlockLabelView.reuseID, for: annotation)
+        case let a as AviationAnnotation:
+            return aviation.view(for: a)
         default:
             return nil
         }

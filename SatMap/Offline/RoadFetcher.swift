@@ -21,6 +21,29 @@ enum RoadPresets {
         loaded[id] = p
         return p
     }
+
+    /// The shipped road set whose place holds an area (nearly all of it: boundaries are simplified differently), so its
+    /// roads can be used there instead of asking the road server (for Kruger, a very large question).
+    static func covering(_ area: CoverageShape) -> RoadPreset? {
+        var samples = area.polygons.flatMap { $0 }
+        for p in area.points {
+            samples.append(p)
+            let r = area.bufferMeters
+            for k in 0..<8 {
+                let a = Double(k) * .pi / 4
+                samples.append(GeoPoint(lat: p.lat + r * cos(a) / 110_574,
+                                        lon: p.lon + r * sin(a) / (111_320 * max(0.01, cos(p.lat * .pi / 180)))))
+            }
+        }
+        // A few hundred are enough to tell.
+        if samples.count > 400 {
+            let step = Double(samples.count) / 400
+            samples = (0..<400).map { samples[Int(Double($0) * step)] }
+        }
+        guard !samples.isEmpty, let preset = load(kruger) else { return nil }
+        let inside = samples.filter { s in preset.boundary.contains { Geo.contains($0, s) } }.count
+        return Double(inside) >= 0.9 * Double(samples.count) ? preset : nil
+    }
 }
 
 /// Roads and tracks in an area from OpenStreetMap, through the public Overpass API (no account needed).

@@ -286,6 +286,11 @@ struct NewAreaView: View {
                 lines = track.lines
             } else if let preset = preset {
                 lines = preset.roads
+            } else if let shipped = await Task.detached(priority: .userInitiated, operation: {
+                // Inside Kruger (all of it, or a camp's surroundings): the road list shipped with the app.
+                RoadPresets.covering(shape).map { Roads.clip($0.roads, to: shape) }
+            }).value {
+                lines = shipped
             } else {
                 lines = try await RoadFetcher.roads(in: shape)
             }
