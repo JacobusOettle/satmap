@@ -1,0 +1,3 @@
+# SQLite opens a WAL database with these beside it; a backup fixture must not have them.
+*.mbtiles-wal
+*.mbtiles-shm
