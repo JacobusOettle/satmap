@@ -84,17 +84,28 @@ dependencies {
     implementation(libs.compose.material.icons)
     implementation(libs.maplibre)
     implementation(libs.okhttp)
-    implementation(libs.workmanager)
+    // Android Auto (CarPlay's counterpart): the car app library, and its projected (phone-driven) host support.
+    implementation(libs.car.app)
+    implementation(libs.car.app.projected)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    // The car screens under Robolectric (TestCarContext, ScreenController), roads and places against a local server,
+    // and the Compose screens under Robolectric (MapScreen with no map).
+    testImplementation(libs.car.app.testing)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
 
     androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.uiautomator)
     androidTestImplementation(libs.compose.ui.test.junit4)
