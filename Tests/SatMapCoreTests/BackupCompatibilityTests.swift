@@ -3,8 +3,9 @@ import XCTest
 @testable import SatMapCore
 
 /// Offline map backups move between the iPhone and Android apps: both write and read the same files. These tests
-/// pin the format on the iPhone side and read a backup made by the iPhone app (Fixtures/backup/iphone; the Android
-/// tests read it too). The expected area is `BackupFixture.area`, in
+/// pin the format on the iPhone side and read backups made by both apps (Fixtures/backup/iphone, written by
+/// `testWriteIPhoneBackupFixture`, and Fixtures/backup/android, written by the Android export; the Android tests read
+/// the same files). The expected area is `BackupFixture.area`, in
 /// the Android tests too.
 final class BackupCompatibilityTests: XCTestCase {
     func testAreaJSONIsTheSharedFormat() throws {
@@ -25,6 +26,10 @@ final class BackupCompatibilityTests: XCTestCase {
 
     func testReadsBackupsMadeOnTheIPhone() throws {
         try checkBackup(in: "iphone")
+    }
+
+    func testReadsBackupsMadeOnAndroid() throws {
+        try checkBackup(in: "android")
     }
 
     /// Writes the iPhone fixture with the app's own export (run with SATMAP_WRITE_BACKUP_FIXTURES=<folder>).

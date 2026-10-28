@@ -17,8 +17,8 @@ import java.io.File
 import java.util.UUID
 
 /** Offline map backups move between the iPhone and Android apps: both write and read the same files. These tests
- *  pin the format on the Android side and read a backup made by the iPhone app (Fixtures/backup/iphone; the Swift
- *  tests read it too). The expected area is `BackupFixture.area`, in the Swift tests too
+ *  pin the format on the Android side and read backups made by both apps (Fixtures/backup/iphone and
+ *  Fixtures/backup/android; the Swift tests read the same files). The expected area is `BackupFixture.area`, in the Swift tests too
  *  (Tests/SatMapCoreTests/BackupCompatibilityTests.swift). */
 class BackupCompatibilityTests {
     init {
@@ -46,6 +46,11 @@ class BackupCompatibilityTests {
     @Test
     fun testReadsBackupsMadeOnTheIPhone() {
         checkBackup(folder = "iphone")
+    }
+
+    @Test
+    fun testReadsBackupsMadeOnAndroid() {
+        checkBackup(folder = "android")
     }
 
     /** Writes the Android fixture with the app's own export (run with SATMAP_WRITE_BACKUP_FIXTURES=<folder>): the

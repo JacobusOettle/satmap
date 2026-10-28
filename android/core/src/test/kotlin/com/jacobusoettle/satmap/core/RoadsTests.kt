@@ -1,5 +1,6 @@
 package com.jacobusoettle.satmap.core
 
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -7,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 
 class RoadsTests {
     /** About 1.1 km × 1.1 km. */
@@ -169,5 +171,32 @@ class RoadsTests {
             val krugerAlone = TileCoverage(shape = Roads.corridor(listOf(kruger)), zoom = z).tileCount
             assertEquals("zoom $z", alone + krugerAlone, both)
         }
+    }
+
+    @Test
+    fun testDownloadsImageryOnlyAlongTheRoads() = runTest {
+        MBTiles.driver = JdbcSqlDriver
+        val road = listOf(GeoPoint(lat = -33.915, lon = 18.910), GeoPoint(lat = -33.915, lon = 18.922))
+        val corridor = Roads.corridor(listOf(road))
+        val imagery = MBTiles(File(tempDir(), "i.mbtiles"), create = true)
+        val terrain = MBTiles(File(tempDir(), "t.mbtiles"), create = true)
+        val sat = FakeServer(deepest = 19, patch = TileID(z = 0, x = 0, y = 0))
+        val dem = FakeServer(deepest = 15, patch = TileID(z = 0, x = 0, y = 0))
+        val job = TileDownloadJob(shape = square, layers = listOf(
+            DownloadLayer(name = "dem", store = terrain, fetcher = dem, zooms = 0..15, pruneByParent = false),
+            DownloadLayer(name = "sat", store = imagery, fetcher = sat, zooms = 0..19, pruneByParent = true, shape = corridor),
+        ), concurrency = 4, retryDelay = { _ -> 0.0 })
+        val outcome = job.run { }
+        assertEquals(DownloadOutcome.Completed(failed = 0), outcome)
+
+        // Elevation for the whole area, imagery only along the road.
+        assertEquals(TileCoverage(shape = square, zoom = 15).tileCount, dem.requests.count { it.z == 15 }.toLong())
+        val along = TileCoverage(shape = corridor, zoom = 19)
+        val z19 = sat.requests.filter { it.z == 19 }
+        assertEquals(along.tileCount, z19.size.toLong())
+        assertTrue(z19.all { along.contains(it) })
+        assertLessThan(along.tileCount * 5, TileCoverage(shape = square, zoom = 19).tileCount)
+        // At least 15 m each side: a z19 tile is about 63 m here, so the corridor is 1 or 2 rows tall.
+        assertLessThanOrEqual(along.rows.size, 2)
     }
 }

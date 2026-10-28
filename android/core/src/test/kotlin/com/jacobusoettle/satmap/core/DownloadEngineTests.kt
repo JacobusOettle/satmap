@@ -12,8 +12,9 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
 
-/** A fake imagery server: tiles exist everywhere up to `deepest` (and z+1 only inside a small patch). */
-private class FakeServer(val deepest: Int, val patch: TileID) : TileFetching { // tiles under `patch` exist one level deeper
+/** A fake imagery server: tiles exist everywhere up to `deepest` (and z+1 only inside a small patch). Also used by
+ *  RoadsTests. */
+internal class FakeServer(val deepest: Int, val patch: TileID) : TileFetching { // tiles under `patch` exist one level deeper
     var failFirstAttemptFor: MutableSet<TileID> = mutableSetOf()
     var offlineAfter: Int? = null
     private val lock = Any()
