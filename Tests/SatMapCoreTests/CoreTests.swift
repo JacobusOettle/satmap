@@ -3058,7 +3058,8 @@ final class ScaleBarTests: XCTestCase {
         XCTAssertEqual(DistanceUnit.imperial.format(2_000), "1.24 mi")
         XCTAssertEqual(DistanceUnit.nautical.format(1_852), "1.00 NM")
         XCTAssertEqual(DistanceUnit.nautical.format(23_000), "12.4 NM")
-        XCTAssertEqual(DistanceUnit.nautical.format(.nan), "0.00 NM")
+        XCTAssertEqual(DistanceUnit.nautical.format(.nan), "0.000 NM")
+        XCTAssertEqual(DistanceUnit.nautical.format(9), "0.005 NM")
         XCTAssertEqual(DistanceUnit.metric.next, .imperial)
         XCTAssertEqual(DistanceUnit.imperial.next, .nautical)
         XCTAssertEqual(DistanceUnit.nautical.next, .metric)
@@ -3184,6 +3185,9 @@ final class ScaleBarTests: XCTestCase {
         """
         let places = Places.photonResults(Data(json.utf8))
         XCTAssertEqual(places.map(\.name), ["Sabi Sand Nature Reserve", "Hazyview", "Whole Degrees"])
+        // A spot that isn't a settlement or a camp (a peak, a hotel) is left out.
+        let peak = #"{"features":[{"geometry":{"coordinates":[-94,31]},"properties":{"osm_type":"N","osm_id":5,"osm_key":"natural","osm_value":"peak","name":"Sand Hills"}},{"geometry":{"coordinates":[31,-25]},"properties":{"osm_type":"N","osm_id":6,"osm_key":"tourism","osm_value":"camp_site","name":"Camp"}}]}"#
+        XCTAssertEqual(Places.photonResults(Data(peak.utf8)).map(\.name), ["Camp"])
         let sabi = places[0]
         XCTAssertEqual(sabi.id, "R1751334")
         XCTAssertTrue(sabi.hasBoundary)
@@ -3218,8 +3222,28 @@ final class ScaleBarTests: XCTestCase {
         let place = FoundPlace(id: "R1", name: "X", kind: "Park", tag: "park", region: "", centre: GeoPoint(lat: 0, lon: 0),
                                extent: GeoBounds(minLat: -1, minLon: -1, maxLat: 1, maxLon: 1))
         XCTAssertEqual(Places.area(for: place, rings: rings).polygons.count, 2)
+        // Grown by as much as the boundary was simplified, so nothing along its edge is lost.
+        XCTAssertEqual(Places.area(for: place, rings: rings).bufferMeters, 2.0 / 1500 * 111_320, accuracy: 0.01)
+        // A camp with an outline: with the area around it too.
+        let camp = FoundPlace(id: "W2", name: "Skukuza", kind: "Camp", tag: "camp_site", region: "", centre: GeoPoint(lat: -25, lon: 31.6),
+                              extent: GeoBounds(minLat: -25.001, minLon: 31.599, maxLat: -24.999, maxLon: 31.601))
+        XCTAssertEqual(Places.area(for: camp, rings: rings).bufferMeters, 1_000)
         // No boundary to be had: its extent.
         XCTAssertEqual(Places.area(for: place, rings: []).polygons.first?.count, 4)
         XCTAssertEqual(Places.simplification(for: place), 2.0 / 1500, accuracy: 1e-12)
+    }
+
+    func testPlaceSearchMergesPluralsAndPutsWholeReservesFirst() {
+        XCTAssertEqual(Places.singular("Sabi Sands"), "Sabi Sand")
+        XCTAssertEqual(Places.singular("Kruger National Park"), nil)
+        XCTAssertEqual(Places.singular("Bass"), nil)
+        func reserve(_ id: String, _ km: Double) -> FoundPlace {
+            let d = sqrt(km) / 111 / 2
+            return FoundPlace(id: id, name: id, kind: "Nature reserve", tag: "nature_reserve", region: "", centre: GeoPoint(lat: 0, lon: 0),
+                              extent: GeoBounds(minLat: -d, minLon: -d, maxLat: d, maxLon: d))
+        }
+        let town = FoundPlace(id: "N9", name: "Town", kind: "Town", tag: "town", region: "", centre: GeoPoint(lat: 0, lon: 0), extent: nil)
+        let merged = Places.merged([[reserve("W1", 170), town, reserve("W2", 431)], [reserve("R3", 1_032), reserve("W1", 170)]])
+        XCTAssertEqual(merged.map(\.id), ["R3", "W2", "W1", "N9"])
     }
 }

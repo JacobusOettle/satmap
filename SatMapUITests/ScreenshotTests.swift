@@ -164,18 +164,19 @@ final class ScreenshotTests: XCTestCase {
         // are from the nearest one. Zoomed out a little for a few of them, then back.
         setTerrain("Drone mode: airfields and navaids")
         let map = app.maps.firstMatch
-        for _ in 0..<3 {
-            map.twoFingerTap()
+        for _ in 0..<2 {
+            map.pinch(withScale: 0.25, velocity: -1.5)
             sleep(2)
         }
-        sleep(6)
+        sleep(8)
         XCTAssertTrue(app.descendants(matching: .any)["droneCard"].firstMatch.exists, "No reporting card in drone mode")
         snap("25-drone-mode")
-        for _ in 0..<3 {
-            map.doubleTap()
-            sleep(2)
-        }
         setTerrain("Contour lines")
+        // Back in close: My location, then again for 300 m across.
+        tap("My location")
+        sleep(2)
+        tap("My location")
+        sleep(4)
         XCTAssertTrue(app.buttons["myCoordinates"].exists, "No coordinates of your position")
         // The heights beside both; a tap shows them in feet, another in metres again.
         for id in ["myHeight", "tappedHeight"] {
@@ -271,9 +272,12 @@ final class ScreenshotTests: XCTestCase {
                 sleep(1)
                 snap("26-find-place")
                 reserve.tap()
-                if app.buttons["Download"].waitForExistence(timeout: 60) {
-                    sleep(6) // size estimate
+                // (The Download button is created only once the form is scrolled to it.)
+                if app.navigationBars["Download area"].waitForExistence(timeout: 60) {
+                    sleep(6) // boundary and size estimate
                     snap("27-place-area")
+                    scrollTo(app.buttons["Download"].firstMatch)
+                    XCTAssertTrue(app.buttons["Download"].exists, "No Download button for the reserve")
                 } else {
                     XCTFail("The reserve's download screen didn't open")
                 }

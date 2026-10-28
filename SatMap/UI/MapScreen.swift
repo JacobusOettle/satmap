@@ -440,20 +440,22 @@ struct ScaleBarView: View {
     var body: some View {
         if scale.width > 0 {
             VStack(alignment: .leading, spacing: 2) {
+                // Only the distance takes a tap (for the next unit); the bar leaves the map under it to the map.
                 Text(scale.label)
                     .font(.caption.weight(.semibold).monospacedDigit())
+                    .padding(.vertical, 3)
+                    .padding(.trailing, 6)
+                    .modifier(UnitSwitch(name: "distances", action: onTap))
+                    .accessibilityLabel("Scale")
+                    .accessibilityValue(Text(scale.label))
                 ScaleBarShape()
                     .stroke(Color.white, style: StrokeStyle(lineWidth: 2, lineCap: .square))
                     .frame(width: CGFloat(scale.width), height: 6)
+                    .allowsHitTesting(false)
             }
             .foregroundColor(.white)
             .shadow(color: .black, radius: 1.5)
-            .padding(.vertical, 4)
-            .padding(.trailing, 8)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Scale")
-            .accessibilityValue(Text(scale.label))
-            .modifier(UnitSwitch(name: "distances", action: onTap))
+            .padding(.bottom, 4)
         }
     }
 }

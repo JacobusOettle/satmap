@@ -29,8 +29,16 @@ enum PlaceSearch {
         return URLSession(configuration: c)
     }()
 
-    /// Places matching a name, nearest `near` first (the map's middle).
+    /// Places matching a name, nearest `near` (the map's middle) first; reserves and parks before the rest, the whole of
+    /// one before pieces of it. A name with a plural ("Sabi Sands") is also searched without it.
     static func search(_ text: String, near: GeoPoint?) async throws -> [FoundPlace] {
+        let first = try await photon(text, near: near)
+        guard let other = Places.singular(text) else { return Places.merged([first]) }
+        let second = (try? await photon(other, near: near)) ?? []
+        return Places.merged([first, second])
+    }
+
+    private static func photon(_ text: String, near: GeoPoint?) async throws -> [FoundPlace] {
         var c = URLComponents(string: "https://photon.komoot.io/api/")!
         var items = [URLQueryItem(name: "q", value: text), URLQueryItem(name: "limit", value: "20")]
         if let p = near {
@@ -43,7 +51,7 @@ enum PlaceSearch {
     }
 
     /// The area to download for a place: its boundary (simplified to suit its size), or for a spot, the circle around
-    /// it. A boundary that can't be had falls back to the place's extent.
+    /// it. A place that has no boundary to be had falls back to its extent; a failed request is an error (try again).
     static func area(for place: FoundPlace) async throws -> CoverageShape {
         guard place.hasBoundary else { return Places.area(for: place, rings: []) }
         var c = URLComponents(string: "https://nominatim.openstreetmap.org/lookup")!
@@ -51,14 +59,10 @@ enum PlaceSearch {
                         URLQueryItem(name: "format", value: "geojson"),
                         URLQueryItem(name: "polygon_geojson", value: "1"),
                         URLQueryItem(name: "polygon_threshold", value: String(format: "%.5f", Places.simplification(for: place)))]
-        do {
-            let data = try await get(c.url!)
-            let rings = Places.outerRings(geoJSON: data)
-            placeLog.debug("boundary of \(place.id, privacy: .public): \(rings.count) rings, \(rings.reduce(0) { $0 + $1.count }) points")
-            return Places.area(for: place, rings: rings)
-        } catch Failure.unavailable {
-            return Places.area(for: place, rings: [])
-        }
+        let data = try await get(c.url!)
+        let rings = Places.outerRings(geoJSON: data)
+        placeLog.debug("boundary of \(place.id, privacy: .public): \(rings.count) rings, \(rings.reduce(0) { $0 + $1.count }) points")
+        return Places.area(for: place, rings: rings)
     }
 
     private static func get(_ url: URL) async throws -> Data {

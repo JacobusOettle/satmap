@@ -22,27 +22,16 @@ enum RoadPresets {
         return p
     }
 
-    /// The shipped road set whose place holds an area (nearly all of it: boundaries are simplified differently), so its
-    /// roads can be used there instead of asking the road server (for Kruger, a very large question).
+    /// The shipped road set whose place holds an area (nearly all of it: compared tile by tile at a coarse zoom, as the
+    /// boundaries are simplified differently), so its roads can be used there instead of asking the road server (for
+    /// all of Kruger, a very large question).
     static func covering(_ area: CoverageShape) -> RoadPreset? {
-        var samples = area.polygons.flatMap { $0 }
-        for p in area.points {
-            samples.append(p)
-            let r = area.bufferMeters
-            for k in 0..<8 {
-                let a = Double(k) * .pi / 4
-                samples.append(GeoPoint(lat: p.lat + r * cos(a) / 110_574,
-                                        lon: p.lon + r * sin(a) / (111_320 * max(0.01, cos(p.lat * .pi / 180)))))
-            }
-        }
-        // A few hundred are enough to tell.
-        if samples.count > 400 {
-            let step = Double(samples.count) / 400
-            samples = (0..<400).map { samples[Int(Double($0) * step)] }
-        }
-        guard !samples.isEmpty, let preset = load(kruger) else { return nil }
-        let inside = samples.filter { s in preset.boundary.contains { Geo.contains($0, s) } }.count
-        return Double(inside) >= 0.9 * Double(samples.count) ? preset : nil
+        guard let preset = load(kruger) else { return nil }
+        let z = 14
+        let wanted = TileCoverage(shape: area, zoom: z)
+        guard wanted.tileCount > 0 else { return nil }
+        let outside = wanted.count(notIn: TileCoverage(shape: CoverageShape(polygons: preset.boundary), zoom: z))
+        return outside * 10 <= wanted.tileCount ? preset : nil
     }
 }
 

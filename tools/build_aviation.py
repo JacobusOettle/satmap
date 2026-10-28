@@ -8,13 +8,14 @@ One line per place, tab-separated:
   N  kind  ident  name  lat  lon  frequency                          (kind: V VOR/VOR-DME/VORTAC, T TACAN, D DME,
                                                                     B NDB/NDB-DME; frequency as pilots say it)
 Closed aerodromes and balloon ports are left out. The code is the ICAO code, else the GPS code, else the local code
-(what pilots use), else empty.
+(what pilots use), else OurAirports' own ident when it is an ICAO-style code (FAKP), else empty.
 
 Usage: tools/build_aviation.py [download-dir]   (downloads the three CSV files if they aren't there)
 """
 import csv
 import math
 import os
+import re
 import sys
 import urllib.request
 
@@ -83,6 +84,8 @@ def main():
             if kind is None or lat is None or lon is None:
                 continue
             code = next((c for c in (r.get("icao_code"), r.get("gps_code"), r.get("local_code")) if c), "")
+            if not code and re.fullmatch(r"[A-Z]{4}", r["ident"]):
+                code = r["ident"]
             elevation = number(r.get("elevation_ft"))
             heading = headings.get(r["id"], "") if kind != "H" else ""
             lines.append("\t".join(["A", kind, clean(code), clean(r["name"]), f"{lat:.5f}", f"{lon:.5f}",

@@ -302,6 +302,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         if dragLineShown { updateDragLine() } // the map scrolls while a point is moved
         updateScale()
         if heading != nil { updateArrow() } // the map may have turned
+        aviation?.headingChanged()
         imagery?.visibleRegionChanged()
     }
 
@@ -447,8 +448,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         return best?.a
     }
 
+    /// A tap on a spot waits until it can't be a double-tap zoom, nor a two-finger tap (MapKit's zoom out).
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRequireFailureOf other: UIGestureRecognizer) -> Bool {
-        g === tapRecognizer && (other as? UITapGestureRecognizer)?.numberOfTapsRequired == 2
+        guard g === tapRecognizer, let tap = other as? UITapGestureRecognizer, tap !== tapRecognizer, tap !== touchRecorder else {
+            return false
+        }
+        return tap.numberOfTapsRequired == 2 || tap.numberOfTouchesRequired == 2
     }
 
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {

@@ -34,13 +34,13 @@ struct AviationPoint: Equatable {
             }
         }
 
-        /// Kept first when labels collide (MapKit's display priority, 0–1000).
+        /// Kept first when labels collide (MapKit's display priority, 0–1000): below your own KML points (750).
         var priority: Float {
             switch self {
-            case .largeAirport: return 900
-            case .mediumAirport: return 850
-            case .vor, .tacan: return 700
-            case .smallAirport: return 650
+            case .largeAirport: return 740
+            case .mediumAirport: return 720
+            case .vor, .tacan: return 650
+            case .smallAirport: return 600
             case .ndb, .dme: return 500
             case .heliport, .seaplaneBase: return 450
             }
@@ -146,8 +146,9 @@ final class AviationIndex {
     func points(in b: GeoBounds, where keep: (AviationPoint) -> Bool = { _ in true }) -> [Int] {
         var out: [Int] = []
         let y0 = max(0, Int(floor(b.minLat + 90))), y1 = min(179, Int(floor(b.maxLat + 90)))
-        let x0 = Int(floor(b.minLon + 180)), x1 = Int(floor(b.maxLon + 180))
-        guard y0 <= y1, x0 <= x1, x1 - x0 <= 360 else { return [] }
+        let x0 = Int(floor(b.minLon + 180))
+        let x1 = min(Int(floor(b.maxLon + 180)), x0 + 359) // each column once, however wide the view
+        guard y0 <= y1, x0 <= x1 else { return [] }
         for y in y0...y1 {
             for x in x0...x1 {
                 guard let list = cells[y * 360 + ((x % 360) + 360) % 360] else { continue }

@@ -259,7 +259,8 @@ private struct PlaceSearchView: View {
         if p.hasBoundary, let km2 = p.extentKm2 {
             parts.append(km2 >= 10 ? "up to \(Format.count(Int(km2.rounded()))) km²" : String(format: "up to %.1f km²", km2))
         } else {
-            parts.append("\(Format.distance(p.radiusMeters, model.distanceUnit)) around it")
+            let r = model.distanceUnit == .metric ? "\(Int(p.radiusMeters / 1000)) km" : Format.distance(p.radiusMeters, model.distanceUnit)
+            parts.append("\(r) around it")
         }
         return parts.joined(separator: " · ")
     }

@@ -40,7 +40,9 @@ enum DistanceUnit: String, CaseIterable {
             if feet < 999.5 { return "\(Int(feet.rounded())) ft" }
             return Self.decimal(m / Self.metresPerMile, "mi")
         case .nautical:
-            return Self.decimal(m / Self.metresPerNauticalMile, "NM")
+            let nm = m / Self.metresPerNauticalMile
+            if nm < 0.9995 { return String(format: "%.3f", nm) + " NM" } // a thousandth is under 2 m
+            return Self.decimal(nm, "NM")
         }
     }
 

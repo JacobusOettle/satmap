@@ -43,6 +43,16 @@ enum Places {
         "highway", "building", "amenity", "shop", "railway", "office", "craft", "man_made", "power", "emergency",
         "healthcare", "club", "public_transport", "barrier", "entrance", "aerialway", "historic", "waterway", "route",
     ]
+    /// Single buildings and features, even with an outline: not places to save.
+    private static let skippedValues: Set<String> = [
+        "hotel", "hostel", "guest_house", "motel", "apartment", "museum", "viewpoint", "attraction", "information",
+        "artwork", "picnic_site", "swimming_pool", "pitch", "playground", "sports_centre", "fitness_centre", "stadium",
+        "peak", "saddle", "spring", "tree", "cave_entrance", "rock", "parking", "yes",
+    ]
+    /// Spots kept although they have no outline: settlements and camps (saved with the area around them).
+    private static let spotKinds: Set<String> = ["camp_site", "caravan_site", "resort", "chalet"]
+    /// Reserves and parks: saved within their boundary; the rest that have one also get the area around it.
+    static let reserveKinds: Set<String> = ["nature_reserve", "national_park", "protected_area", "park", "game_reserve"]
 
     /// The places in a Photon search answer (a GeoJSON FeatureCollection), areas and settlements only, each once.
     static func photonResults(_ data: Data) -> [FoundPlace] {
@@ -53,7 +63,7 @@ enum Places {
         for f in features {
             guard let p = f["properties"] as? [String: Any], let name = p["name"] as? String, !name.isEmpty,
                   let key = p["osm_key"] as? String, let value = p["osm_value"] as? String,
-                  !skippedKeys.contains(key), value != "yes",
+                  !skippedKeys.contains(key), !skippedValues.contains(value),
                   let type = p["osm_type"] as? String, let osmID = number(p["osm_id"]).map(Int64.init),
                   let geometry = f["geometry"] as? [String: Any], let c = numbers(geometry["coordinates"]), c.count >= 2
             else { continue }
@@ -61,7 +71,8 @@ enum Places {
             if let e = numbers(p["extent"]), e.count == 4 {
                 extent = GeoBounds(minLat: min(e[1], e[3]), minLon: min(e[0], e[2]), maxLat: max(e[1], e[3]), maxLon: max(e[0], e[2]))
             }
-            // A way or relation without an extent is a spot as far as the area goes.
+            // A way or relation without an extent is a spot as far as the area goes; spots only for settlements and camps.
+            guard extent != nil || key == "place" || spotKinds.contains(value) else { continue }
             let id = "\(extent == nil ? "N" : type)\(osmID)"
             let key2 = "\(name)|\(value)|\(Int((c[1] * 100).rounded()))|\(Int((c[0] * 100).rounded()))"
             guard !seen.contains(id), !seen.contains(key2) else { continue }
@@ -130,14 +141,38 @@ enum Places {
         }
     }
 
-    /// The download area for a place: its boundary, else (a spot) the circle around it, else its extent.
+    /// The download area for a place: its boundary (grown by as much as it was simplified, so nothing along its edge is
+    /// cut off; a camp's or a town's also by the area around it), else its extent, else (a spot) the circle around it.
     static func area(for place: FoundPlace, rings: [[GeoPoint]]) -> CoverageShape {
-        if !rings.isEmpty { return CoverageShape(polygons: rings) }
+        let around = reserveKinds.contains(place.tag) || place.tag == "administrative" ? 0 : min(place.radiusMeters, 1_000)
+        let grow = max(simplification(for: place) * 111_320, around)
+        if !rings.isEmpty { return CoverageShape(polygons: rings, bufferMeters: grow) }
         if let e = place.extent, place.hasBoundary {
             return CoverageShape(polygons: [[GeoPoint(lat: e.minLat, lon: e.minLon), GeoPoint(lat: e.minLat, lon: e.maxLon),
-                                             GeoPoint(lat: e.maxLat, lon: e.maxLon), GeoPoint(lat: e.maxLat, lon: e.minLon)]])
+                                             GeoPoint(lat: e.maxLat, lon: e.maxLon), GeoPoint(lat: e.maxLat, lon: e.minLon)]],
+                                 bufferMeters: around)
         }
         return CoverageShape(points: [place.centre], bufferMeters: place.radiusMeters)
+    }
+
+    /// Two answers in one, each place once: reserves and parks first, the largest first (the whole of a reserve before
+    /// pieces of it), then the rest in the search's order.
+    static func merged(_ lists: [[FoundPlace]]) -> [FoundPlace] {
+        var seen = Set<String>()
+        let all = lists.joined().filter { seen.insert($0.id).inserted }
+        let reserves = all.filter { $0.hasBoundary && reserveKinds.contains($0.tag) }
+            .sorted { ($0.extentKm2 ?? 0) > ($1.extentKm2 ?? 0) }
+        return reserves + all.filter { !($0.hasBoundary && reserveKinds.contains($0.tag)) }
+    }
+
+    /// The search again without a plural's "s" ("Sabi Sands" → "Sabi Sand"), as names are often written both ways; nil
+    /// when there is none.
+    static func singular(_ text: String) -> String? {
+        let words = text.split(separator: " ").map(String.init)
+        let changed = words.map { w -> String in
+            w.count > 3 && w.lowercased().hasSuffix("s") && !w.lowercased().hasSuffix("ss") ? String(w.dropLast()) : w
+        }
+        return changed == words ? nil : changed.joined(separator: " ")
     }
 
     /// How much Nominatim may simplify a boundary (degrees): about a 1 500th of its size, at least 10 m.
