@@ -20,6 +20,8 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
+    // MBTiles runs on SqlDriver: sqlite-jdbc in the tests, android.database.sqlite in the app.
+    testImplementation(libs.sqlite.jdbc)
 }
 
 tasks.test {
