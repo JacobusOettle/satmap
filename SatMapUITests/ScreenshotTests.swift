@@ -165,11 +165,13 @@ final class ScreenshotTests: XCTestCase {
         setTerrain("Drone mode: airfields and navaids")
         let map = app.maps.firstMatch
         for _ in 0..<2 {
-            map.pinch(withScale: 0.25, velocity: -1.5)
-            sleep(2)
+            map.pinch(withScale: 0.15, velocity: -4)
+            sleep(3)
         }
         sleep(8)
         XCTAssertTrue(app.descendants(matching: .any)["droneCard"].firstMatch.exists, "No reporting card in drone mode")
+        let airfield = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "FASH")).firstMatch
+        XCTAssertTrue(airfield.exists, "Stellenbosch airfield (FASH) isn't on the map in drone mode")
         snap("25-drone-mode")
         setTerrain("Contour lines")
         // Back in close: My location, then again for 300 m across.
