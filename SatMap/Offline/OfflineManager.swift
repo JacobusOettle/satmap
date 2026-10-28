@@ -446,8 +446,11 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Copies a file in pieces, telling `progress` how many bytes are done.
+    /// Copies a file, telling `progress` how many bytes are done. On the iPhone's own storage (On My iPhone, an iCloud
+    /// Drive file already downloaded) it is cloned: instant, sharing storage with the backup until either changes.
+    /// Elsewhere (a USB drive, another app's storage) it is copied in pieces.
     private static func copy(_ source: URL, to target: URL, progress: (Int64) -> Void) throws {
+        if copyfile(source.path, target.path, nil, copyfile_flags_t(COPYFILE_CLONE_FORCE)) == 0 { return }
         let input = try FileHandle(forReadingFrom: source)
         defer { try? input.close() }
         guard FileManager.default.createFile(atPath: target.path, contents: nil) else {
@@ -455,13 +458,18 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
         let output = try FileHandle(forWritingTo: target)
         defer { try? output.close() }
-        var done: Int64 = 0
-        while true {
-            let piece = try autoreleasepool { try input.read(upToCount: 4 << 20) }
-            guard let data = piece, !data.isEmpty else { break }
-            try output.write(contentsOf: data)
-            done += Int64(data.count)
-            progress(done)
+        do {
+            var done: Int64 = 0
+            while true {
+                let piece = try autoreleasepool { try input.read(upToCount: 4 << 20) }
+                guard let data = piece, !data.isEmpty else { break }
+                try output.write(contentsOf: data)
+                done += Int64(data.count)
+                progress(done)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: target) // not left taking space while the others are copied
+            throw error
         }
     }
 
