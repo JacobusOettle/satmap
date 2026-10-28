@@ -1,5 +1,6 @@
 package com.jacobusoettle.satmap.app
 
+import androidx.annotation.VisibleForTesting
 import androidx.car.app.Session
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -36,13 +37,20 @@ object AppLifecycle {
     private var phone = Lifecycle.State.INITIALIZED
     private val cars = LinkedHashMap<Session, Lifecycle.State>()
 
-    /** Starts following the phone. `ProcessLifecycleOwner` is already set up by App Startup when
-     *  `Application.onCreate` runs. Its ON_STOP comes 700 ms after the last activity stops, which is fine. */
+    /** Follows `ProcessLifecycleOwner`, once `init` has run. */
+    private val phoneObserver = LifecycleEventObserver { _, event ->
+        phone = event.targetState
+        update()
+    }
+    private var initialised = false
+
+    /** Starts following the phone (only the first call does anything). `ProcessLifecycleOwner` is already set up by
+     *  App Startup when `Application.onCreate` runs. Its ON_STOP comes 700 ms after the last activity stops, which is
+     *  fine. */
     fun init() {
-        ProcessLifecycleOwner.get().lifecycle.addObserver(LifecycleEventObserver { _, event ->
-            phone = event.targetState
-            update()
-        })
+        if (initialised) return
+        initialised = true
+        ProcessLifecycleOwner.get().lifecycle.addObserver(phoneObserver)
     }
 
     /** Follows an Android Auto session until it is destroyed (called by the car subsystem). */
@@ -55,6 +63,26 @@ object AppLifecycle {
 
     fun addObserver(o: Observer) {
         observers += o
+    }
+
+    fun removeObserver(o: Observer) {
+        observers -= o
+    }
+
+    /** The observers in the order they are told. */
+    @VisibleForTesting
+    val registered: List<Observer> get() = observers.toList()
+
+    /** Back to the state at process start, for tests (Robolectric keeps this object from one test to the next): no
+     *  observers, no cars, the phone not yet followed, in the background. */
+    @VisibleForTesting
+    fun resetForTests() {
+        if (initialised) ProcessLifecycleOwner.get().lifecycle.removeObserver(phoneObserver)
+        initialised = false
+        observers.clear()
+        cars.clear()
+        phone = Lifecycle.State.INITIALIZED
+        _state.value = AppState.background
     }
 
     /** The state is the highest of the phone's and the cars': RESUMED → active, STARTED → inactive, lower →

@@ -25,11 +25,12 @@ android {
     signingConfigs {
         create("release") {
             // A private key from the repository secrets when there is one, else the public test key
-            // (signing/README.md), so every build installs over the one before.
-            storeFile = file(System.getenv("ANDROID_KEYSTORE_FILE") ?: "../signing/satmap-test.jks")
-            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: "satmap-test"
-            keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "satmap"
-            keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: "satmap-test"
+            // (signing/README.md), so every build installs over the one before. An empty variable counts as unset.
+            fun env(name: String): String? = System.getenv(name)?.takeIf { it.isNotEmpty() }
+            storeFile = file(env("ANDROID_KEYSTORE_FILE") ?: "../signing/satmap-test.jks")
+            storePassword = env("ANDROID_KEYSTORE_PASSWORD") ?: "satmap-test"
+            keyAlias = env("ANDROID_KEY_ALIAS") ?: "satmap"
+            keyPassword = env("ANDROID_KEY_PASSWORD") ?: "satmap-test"
         }
     }
 

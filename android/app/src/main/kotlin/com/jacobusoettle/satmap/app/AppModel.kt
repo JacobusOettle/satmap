@@ -204,8 +204,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     AppLifecycle.Observer {
 
     companion object {
+        /** Set by `init` at startup. Tests may install their own (one with a fake `ElevationSource`, say). */
         lateinit var shared: AppModel
-            private set
 
         fun init(app: Application) {
             shared = AppModel(app)
@@ -352,6 +352,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         scale.unit = _distanceUnit.value
         // M1: load the track, seed the recorder, wire onTrackPoint/onFix/onHeading, subscribe to Connectivity and
         // offline.completedRevision, start the retry timer when in the foreground.
+        // After the recorder and the offline manager, which registered in their own inits: the Swift order.
         AppLifecycle.addObserver(this)
         recorder.start()
     }

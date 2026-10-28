@@ -12,6 +12,16 @@ import java.util.UUID
  *  `KMLDocument` and shown or hidden on the map. Main thread only. (`File` here is the library's entry; files on
  *  disk are written `java.io.File` in full.) */
 class KMLLibrary(private val context: Context) {
+    /** One record of `index.json`, as Swift encodes it: `{"id":"<UPPER-UUID>","name":…,"fileName":…}`, plus
+     *  `"hidden":true` when switched off (offline spec §2.9). */
+    data class Entry(
+        val id: UUID,
+        val name: String,
+        val fileName: String,
+        /** Switched off: not on the map. (Optional so the index of an earlier version still reads.) */
+        val hidden: Boolean? = null,
+    )
+
     data class File(val id: UUID, val name: String, val fileName: String, val document: KMLDocument, val isShown: Boolean)
 
     private val _files = MutableStateFlow<List<File>>(emptyList())

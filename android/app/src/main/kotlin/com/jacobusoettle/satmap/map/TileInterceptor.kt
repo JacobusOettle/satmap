@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.map
 
 import android.content.Context
+import android.util.Log
 import com.jacobusoettle.satmap.app.TileSources
 import com.jacobusoettle.satmap.core.ContourPolicy
 import com.jacobusoettle.satmap.core.ElevationRange
@@ -156,17 +157,32 @@ object TileLevels {
 }
 
 /** Answers MapLibre's requests for satmap.local on OkHttp's dispatcher threads. `answer` is a parameter so the
- *  interceptor can be tested with a fake renderer. */
+ *  interceptor can be tested with a fake renderer.
+ *
+ *  Every answer is a 200 or a 204 (DESIGN.md D19): the only exception MapLibre sees is `IOException("Canceled")`,
+ *  for a request it cancelled itself. Anything else that goes wrong becomes a 204 asked again in 30 s, as a tile
+ *  that is unavailable for now. (OkHttp would also rethrow an exception that isn't an `IOException` on its dispatcher
+ *  thread, which ends the process.) */
 class TileInterceptor(
     private val answer: suspend (TileRoute, TileLayer) -> TileAnswer = SatelliteRenderer::answer,
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
         if (request.url.host != TileUrls.HOST) return chain.proceed(request)
-        val route = TileUrls.parse(request.url) ?: return TileAnswer.empty(maxAge = null).response(request)
-        val layer = TileLayers[route.gen] ?: return TileAnswer.empty(maxAge = null).response(request) // source removed
-        val a = runBlocking { awaitUnlessCanceled(chain.call()) { answer(route, layer) } } ?: throw IOException("Canceled")
-        layer.noteAnswered(route.tile, a.lacking)
+        val call = chain.call()
+        var asked: Pair<TileLayer, TileID>? = null
+        val a = try {
+            val route = TileUrls.parse(request.url) ?: return TileAnswer.empty(maxAge = null).response(request)
+            val layer = TileLayers[route.gen] ?: return TileAnswer.empty(maxAge = null).response(request) // source removed
+            asked = Pair(layer, route.tile)
+            runBlocking { awaitUnlessCanceled(call) { answer(route, layer) } } ?: throw IOException("Canceled")
+        } catch (e: Exception) {
+            // Cancelled by MapLibre (a coroutine CancellationException included): the one failure it is told of.
+            if (call.isCanceled()) throw e as? IOException ?: IOException("Canceled", e)
+            Log.w("tiles", "Tile request failed, answered with nothing for 30 s: ${request.url.encodedPath}", e)
+            TileAnswer.empty(maxAge = 30, lacking = false)
+        }
+        asked?.let { (layer, tile) -> layer.noteAnswered(tile, a.lacking) }
         return a.response(request)
     }
 

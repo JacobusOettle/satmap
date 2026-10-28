@@ -13,6 +13,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -38,6 +39,8 @@ class AppModelSmokeTest {
     @After
     fun tearDown() {
         Defaults.setLaunchArguments(null)
+        // Robolectric keeps AppLifecycle from one test to the next: forget this test's models.
+        AppLifecycle.resetForTests()
     }
 
     @Test
@@ -58,6 +61,14 @@ class AppModelSmokeTest {
         assertNull(model.map)
         assertEquals(emptyList<Any>(), model.offline.areas.value)
         assertEquals(emptyList<Any>(), model.kml.files.value)
+    }
+
+    @Test
+    fun aTestCanInstallItsOwnModel() {
+        val model = AppModel(app, noHeights)
+        AppModel.shared = model
+        assertSame(model, AppModel.shared)
+        assertEquals(listOf(model.recorder, model.offline, model), AppLifecycle.registered)
     }
 
     @Test

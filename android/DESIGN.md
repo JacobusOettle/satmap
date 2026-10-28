@@ -37,7 +37,7 @@ other, and how the work is ordered and tested.
 | D14 | `HTTPTileFetcher` | Lives in `map/TileRepository.kt` (as in Swift) with signature `HTTPTileFetcher(client, url, wifiOnly = false)`. The download clients are in `offline/DownloadHttp.kt`. |
 | D15 | Memory trims | `onTrimMemory` trims when `level == RUNNING_LOW`, `level == RUNNING_CRITICAL` or `level >= TRIM_MEMORY_BACKGROUND`, and `onLowMemory` always trims. "Entering the background" is `AppLifecycle.didEnterBackground`. Details in §3.14. |
 | D16 | Free space | `StorageManager.getAllocatableBytes(getUuidForPath(root))` (iOS "important usage" counts purgeable space too). Fall back to `StatFs.availableBytes` when it throws. |
-| D17 | SQLite on Android | `AndroidSqlDriver` opens writers and map readers with `OPEN_READWRITE or NO_LOCALIZED_COLLATORS or ENABLE_WRITE_AHEAD_LOGGING`, plus `CREATE_IF_NECESSARY` when creating. Without the WAL flag, Android may reset the file's journal mode to its own default on open: always on API 26–27, and on later versions depending on its compatibility-WAL setting. The map could then no longer read while a download writes. One-off readers (`savedImageryDepth`) use `OPEN_READONLY or NO_LOCALIZED_COLLATORS`. PRAGMAs that return rows (`wal_checkpoint`, `journal_mode`) go through `rawQuery`. |
+| D17 | SQLite on Android | `AndroidSqlDriver` opens writers and map readers with `OPEN_READWRITE or NO_LOCALIZED_COLLATORS or ENABLE_WRITE_AHEAD_LOGGING`, plus `CREATE_IF_NECESSARY` when creating. Without the WAL flag, Android may reset the file's journal mode to its own default on open: always on API 26–27, and on later versions depending on its compatibility-WAL setting. The map could then no longer read while a download writes. One-off readers (`savedImageryDepth`) use `OPEN_READONLY or NO_LOCALIZED_COLLATORS`, through `AndroidSqlDriver(readOnly = true)`: core's `SqlDriver.open` has no read-only option, and `MBTiles.driver` is the read-write one. PRAGMAs that return rows (`wal_checkpoint`, `journal_mode`) go through `rawQuery`. |
 | D18 | Map hooks | `MapController` (and `CarMapController`) registers the only camera listeners and calls `DrawnImagery`'s hooks itself. `DrawnImagery` registers no listeners. |
 | D19 | Network errors in map tiles | The interceptor never fails a request with an exception, except when MapLibre cancels it. Every outcome is a 200 or a 204 with `Cache-Control`. `MapLibre.setConnected(true)` is set once at startup and never toggled. |
 | D20 | Car map surface | A `Presentation` on a `VirtualDisplay` with a `MapView` in `textureMode(true)` (offline spec §2.12). |
@@ -186,6 +186,11 @@ Observers, and what they do:
 | `AppModel` | `TileRepository.restoreAfterBackground()`, retry timer on, pending reload | Swift (elevation refreshes) | Retry timer off, `TileRepository.trimForBackground()`, `ImageryMemory.enteredBackground()`, `ContourRenderer.shared.clearCaches()` |
 | `OfflineManager` | Swift (`networkChanged`, end the signal wait) | Swift | Swift (`background.enteredBackground()`) |
 
+Each registers in its own `init`, as in Swift. `AppModel` builds `LocationRecorder`, then `KMLLibrary` and
+`OfflineManager`, before its own `init` block, so they are told in the order recorder, offline manager, model.
+Nothing registers them elsewhere. Tests call `AppLifecycle.resetForTests()` in `@After`: Robolectric keeps the object
+from one test to the next.
+
 The **phone's map** (`MapController.isShown`) follows `MainActivity` `onStart`/`onStop` only, as iOS's window
 scene does. The **car's map** (`CarMapController.isShown`) follows the car screen's lifecycle.
 
@@ -246,7 +251,9 @@ sealed interface MeasureMode { data object Off; data object Aiming; data class P
 enum class ActiveSheet { blocks, offline, coordinates }
 data class PendingArea(val id: UUID = UUID.randomUUID(), val name: String, val shape: CoverageShape)
 data class DroneReport(val you: String? = null, val pin: String? = null)
-class CrosshairAim { val point: StateFlow<GeoPoint?>; val elevation: StateFlow<Double?>; val elevationPoint: StateFlow<GeoPoint?>; fun set(p: GeoPoint?); fun retry() }
+class CrosshairAim(source: ElevationSource) { val point: StateFlow<GeoPoint?>; val elevation: StateFlow<Double?>; val elevationPoint: StateFlow<GeoPoint?>; fun set(p: GeoPoint?); fun retry() }
+class HeightLookup(source: ElevationSource, found: (GeoPoint, Double?) -> Unit) { val point: GeoPoint?; fun set(p: GeoPoint?); fun retry() }   // main thread only
+// AppModel passes its own ElevationSource to both, so a test's fake reaches the aim and every height lookup.
 class MapScale { val label: StateFlow<String>; val width: StateFlow<Double>; var unit: DistanceUnit; fun update(metersPerPoint: Double); companion object { const val maxWidth = 110.0 } }
 class MapLegend { val key: StateFlow<TerrainKey>; fun update(k: TerrainKey) }
 
@@ -329,6 +336,7 @@ class OfflineManager(context: Context) : AppLifecycle.Observer {
 
 // kml/KMLLibrary.kt
 class KMLLibrary(context: Context) {
+    data class Entry(val id: UUID, val name: String, val fileName: String, val hidden: Boolean? = null)   // an index.json record (offline spec §2.9)
     data class File(val id: UUID, val name: String, val fileName: String, val document: KMLDocument, val isShown: Boolean)
     val files: StateFlow<List<File>>; val useFileColours: StateFlow<Boolean>; fun setUseFileColours(v: Boolean)
     val importError: StateFlow<String?>; fun clearImportError()

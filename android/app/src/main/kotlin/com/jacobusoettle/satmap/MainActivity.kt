@@ -28,8 +28,11 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         val model = AppModel.shared
-        Defaults.setLaunchArguments(intent.extras)
-        model.applyLaunchArguments()
+        // Read once, as iOS reads its argument domain: a recreated activity keeps what was chosen since.
+        if (savedInstanceState == null) {
+            Defaults.setLaunchArguments(intent.extras)
+            model.applyLaunchArguments()
+        }
         mapController = MapController(this, model, savedInstanceState)
         permissions = PermissionFlow(this, model.recorder)
         setContent {

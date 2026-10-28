@@ -76,6 +76,12 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
             // M5: starts a peek at once when measuring while asleep in the foreground.
         }
 
+    init {
+        // Registered here, as the Swift does in its init: AppModel creates this first, so the recorder is told before
+        // the offline manager and the model (DESIGN.md §2.3).
+        AppLifecycle.addObserver(this)
+    }
+
     fun seed(lastRecorded: TrackPoint?) {
         // M1: the last track point, for spacing and segment breaks.
     }

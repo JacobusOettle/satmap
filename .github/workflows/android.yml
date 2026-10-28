@@ -16,14 +16,17 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: android-${{ github.ref }}
-  cancel-in-progress: true
-
+# Two groups. A newer push to the same branch cancels the build of an older one. Publishing is one queue for every
+# branch (main, claude/satmap-ios-app, a workflow_dispatch elsewhere), because they all write the one
+# android-test-build release; a publish that has started is never cancelled halfway, so the APK, the notes and the tag
+# always come from the same commit.
 jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    concurrency:
+      group: android-apk-${{ github.ref }}
+      cancel-in-progress: true
     defaults:
       run:
         working-directory: android
@@ -39,27 +42,39 @@ jobs:
 
       - name: Signing key from the repository secrets, if there is one
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
-            {
-              echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks"
-              echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-              echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
-              echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
-            } >> "$GITHUB_ENV"
-            echo "Signing with the private key from the secrets."
-          else
+          # All four, or none (the public test key). An empty one would otherwise reach Gradle as an empty alias or
+          # password and fail there with a less clear message.
+          given=0
+          missing=""
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -n "${!name}" ]; then given=$((given + 1)); else missing="$missing $name"; fi
+          done
+          if [ "$given" -eq 0 ]; then
             echo "No signing secrets: signing with the public test key (android/signing/README.md)."
+            exit 0
           fi
+          if [ -n "$missing" ]; then
+            echo "::error::Signing with a private key needs all four repository secrets. Missing or empty:$missing"
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+          echo "Signing with the private key from the secrets."
 
       - name: Unit tests
-        # Also compiles the instrumented tests (run on an emulator by android-screenshots.yml), so they keep building.
-        run: ./gradlew --console=plain :core:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+        # Also packages the debug APK (what the emulator workflows install) and compiles the instrumented tests (run
+        # on an emulator by android-screenshots.yml), so both keep building.
+        run: ./gradlew --console=plain :core:test :app:testDebugUnitTest :app:assembleDebug :app:compileDebugAndroidTestKotlin
 
       - name: Build SatMap.apk
         run: |
@@ -101,15 +116,26 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: .
+          # The runner starts each line in its own `sh -c`: every check is one line. Every permission the app asks for
+          # is granted first, so no system dialog covers the map in the screenshot or leaves MainActivity paused.
           script: |
             adb install -r SatMap.apk
             adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_FINE_LOCATION || true
+            adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_COARSE_LOCATION || true
+            adb shell pm grant com.jacobusoettle.satmap android.permission.ACTIVITY_RECOGNITION || true
+            adb shell pm grant com.jacobusoettle.satmap android.permission.POST_NOTIFICATIONS || true
+            adb shell svc power stayon true || true
+            adb shell input keyevent KEYCODE_WAKEUP || true
+            adb shell wm dismiss-keyguard || true
             adb logcat -c
             adb shell am start -W -n com.jacobusoettle.satmap/.MainActivity
             sleep 30
             adb exec-out screencap -p > android-launch.png || true
             adb shell pidof com.jacobusoettle.satmap || { echo "SatMap quit after it was opened: not publishing this build."; adb logcat -d -b crash; adb logcat -d | grep -iE "satmap|AndroidRuntime|maplibre|mbgl" | tail -n 150; exit 1; }
-            echo "SatMap is running."
+            if adb logcat -d -b crash | grep -q com.jacobusoettle.satmap; then echo "SatMap crashed after it was opened (and was started again): not publishing this build."; adb logcat -d -b crash; exit 1; fi
+            if adb logcat -d -b events | grep am_anr | grep -q com.jacobusoettle.satmap; then echo "SatMap stopped responding after it was opened: not publishing this build."; adb logcat -d -b events | grep am_anr; adb logcat -d | grep -iE "satmap|ANR" | tail -n 150; exit 1; fi
+            adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | grep -q 'com.jacobusoettle.satmap/.MainActivity' || { echo "SatMap's map is not the resumed activity: not publishing this build."; adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp|mCurrentFocus'; adb logcat -d | grep -iE "satmap|AndroidRuntime" | tail -n 150; exit 1; }
+            echo "SatMap is running, with its map in front."
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -118,8 +144,19 @@ jobs:
           path: android-launch.png
           if-no-files-found: ignore
 
+  publish:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: android-test-build
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: SatMap-apk
+
       - name: Publish as the android-test-build pre-release
-        working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

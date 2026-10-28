@@ -20,8 +20,8 @@ import java.util.UUID
  *  line; locks are `synchronized`, requests in flight are shared `Deferred`s. */
 class TileRepository private constructor(context: Context) : ElevationSource {
     companion object {
+        /** Set by `init` at startup. Settable, so a test can install its own. */
         lateinit var shared: TileRepository
-            private set
 
         fun init(context: Context) {
             shared = TileRepository(context.applicationContext)

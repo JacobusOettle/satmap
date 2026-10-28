@@ -73,8 +73,10 @@ object SatelliteRenderer {
 
     /** The imagery level for tiles about 256 pixels across on screen (the Swift `level(pixelsPerMapPoint:)`, with the
      *  world, 0…1, as the unit). */
-    fun level(pixelsPerWorld: Double): Int =
-        log2(pixelsPerWorld / 256).rounded().toInt().coerceIn(0, TileSources.imageryMaxZoom)
+    fun level(pixelsPerWorld: Double): Int {
+        if (!(pixelsPerWorld > 0) || !pixelsPerWorld.isFinite()) return 0
+        return log2(pixelsPerWorld / 256).rounded().toInt().coerceIn(0, TileSources.imageryMaxZoom)
+    }
 
     fun heightExtremes(r: WorldRect, level: Int, onScreen: List<XY>): Extremes? = null // M2: as Swift.
 

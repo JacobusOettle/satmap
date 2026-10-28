@@ -3,14 +3,21 @@ package com.jacobusoettle.satmap.offline
 import android.content.Context
 import android.net.Uri
 import com.jacobusoettle.satmap.app.AppLifecycle
+import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Connectivity
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DownloadProgress
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.OfflineArea
+import com.jacobusoettle.satmap.core.SqlException
+import com.jacobusoettle.satmap.core.SqlResult
+import com.jacobusoettle.satmap.map.TileRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.UUID
 
 /** The offline areas: the list (`Offline/areas.json`), the download queue and its runs, backup export and restore.
@@ -45,6 +52,12 @@ class OfflineManager(private val context: Context) : AppLifecycle.Observer {
     val backupProgress: StateFlow<Double?> = _backupProgress.asStateFlow()
     private val _backupMessage = MutableStateFlow<String?>(null)
     val backupMessage: StateFlow<String?> = _backupMessage.asStateFlow()
+
+    init {
+        // Registered here, as the Swift does in its init: AppModel creates the recorder, then this, before itself, so
+        // the three are told in that order (DESIGN.md §2.3).
+        AppLifecycle.addObserver(this)
+    }
 
     /** A new area, appended to the list as queued. */
     fun add(
@@ -92,8 +105,32 @@ class OfflineManager(private val context: Context) : AppLifecycle.Observer {
         // M4: AppPaths.size per area.
     }
 
-    /** The deepest imagery zoom stored for the area (a read-only store, off the main thread). */
-    suspend fun savedImageryDepth(id: UUID): Int? = null // M4: MBTiles.maxStoredZoom.
+    /** The deepest imagery zoom stored for the area, off the main thread. A one-off reader: the file is opened
+     *  read-only (`AndroidSqlDriver(readOnly = true)`, DESIGN.md D17), not through `MBTiles`, whose one driver opens
+     *  for writing. The query is `MBTiles.maxStoredZoom`'s. */
+    suspend fun savedImageryDepth(id: UUID): Int? {
+        val area = _areas.value.firstOrNull { it.id == id } ?: return null
+        val file = File(AppPaths.offlineArea(area.id), TileRepository.Layer.imagery.fileName)
+        return withContext(Dispatchers.IO) {
+            if (!file.exists()) return@withContext null
+            val db = try {
+                AndroidSqlDriver(readOnly = true).open(file.path, create = false)
+            } catch (e: SqlException) {
+                return@withContext null
+            }
+            try {
+                db.busyTimeout(10_000)
+                val s = db.prepare("SELECT MAX(zoom_level) FROM tiles") ?: return@withContext null
+                try {
+                    if (s.step() == SqlResult.ROW && !s.columnIsNull(0)) s.columnInt(0) else null
+                } finally {
+                    s.close()
+                }
+            } finally {
+                db.close()
+            }
+        }
+    }
 
     /** The network allows this area's download now. */
     fun canDownloadNow(a: OfflineArea): Boolean {
