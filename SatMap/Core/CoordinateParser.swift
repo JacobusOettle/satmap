@@ -7,17 +7,18 @@ import Foundation
 ///   "S24°59.48.9"), with any of the usual symbols or spaces;
 /// - decimal commas ("-25,096893; 31,437121"), digits in other scripts, labels ("lat"/"lon" in either order, "X"/"Y", a
 ///   "Lat/Long:" heading or a table's header row, "id,lat,lon"), a photo's details ("GPS Latitude Ref : South" on a
-///   line of its own, the same place again on a "GPS Position" line, Windows' "24; 59; 48.95"), both letters together
-///   ("GPS (S/E): 24.99693, 31.59232"), and directions and labels in English, Afrikaans, Dutch, German, French, Spanish,
-///   Italian and Portuguese ("sud", "Oeste", "ZB", "Breite"), with a lone O for east or west (see `latLon`); altitude,
-///   accuracy, a heading and the like next to the position are left out ("…, 31.59231 heading W"), and so are a
-///   height, distance, time or speed with its unit and the direction after it ("…, 31.59231 (3 km N of Skukuza)"), a
-///   direction of travel or from a place ("moving W -24.99693, 31.59231", "S24 59 48.9 E31 35 32.3 N of camp"), a
-///   wind's direction ("Wind S 10 kt"), a road's name or marker ("S3", "H4-1", "H1-3 km 14", "… km 12"), a time or
-///   count written with letters ("06h45", "4x4"), a count, name, time, date or temperature before it ("3 rhino S 24°
-///   59' 48.9\" E …", "WGS 84: S24 59 48.9 E31 35 32.3", "[07:15, 27/10/2026] Jaco: 24 22.872 S 31 50.736 E", "38°C S24
-///   59 48.9 E31 35 32.3"), and a time, date, phone number, count or temperature after it ("…, 06:45", "…, 3 males",
-///   "…, 32°C");
+///   line of its own, the same place again on a "GPS Position" line, Windows' "24; 59; 48.95", libexif's "North or South
+///   Latitude" and "24, 59, 48.95", "GPSLatitude - 24.99693"), both letters together ("GPS (S/E): 24.99693, 31.59232",
+///   or in a heading or a header row: "Lat (S)\tLong (E)", "LATITUDE,N/S,LONGITUDE,E/W"), an OziExplorer waypoint file,
+///   and directions and labels in English, Afrikaans, Dutch, German, French, Spanish, Italian and Portuguese ("sud",
+///   "Oeste", "ZB", "Breite"), with a lone O for east or west (see `latLon`); altitude, accuracy, a heading and the like
+///   next to the position are left out ("…, 31.59231 heading W"), and so are a height, distance, time or speed with its
+///   unit and the direction after it ("…, 31.59231 (3 km N of Skukuza)"), a direction of travel or from a place ("moving
+///   W -24.99693, 31.59231", "S24 59 48.9 E31 35 32.3 N of camp"), a wind's direction ("Wind S 10 kt"), a road's name
+///   or marker ("S3", "H4-1", "H1-3 km 14", "… km 12"), a time or count written with letters ("06h45", "4x4"), a count,
+///   name, time, date or temperature before it ("3 rhino S 24° 59' 48.9\" E …", "WGS 84: S24 59 48.9 E31 35 32.3",
+///   "[07:15, 27/10/2026] Jaco: 24 22.872 S 31 50.736 E", "38°C S24 59 48.9 E31 35 32.3"), and a time, date, phone
+///   number, count or temperature after it ("…, 06:45", "…, 3 males", "…, 32°C");
 /// - GPS (NMEA) fields or whole sentences ("2505.8136,S,03126.2273,E", "$GPGGA,…"), aviation style ("0536.22N 00011.22W")
 ///   and ISO 6709 ("-2505.8136+03126.2273/", "+40.6892-074.0445+545.400/");
 /// - map links (Google Maps, Apple Maps, OpenStreetMap, OsmAnd, Bing, Waze, Yandex, ArcGIS, GeoHack and others with the
@@ -175,17 +176,21 @@ enum CoordinateParser {
                 }
             }
         }
-        // A photo's hemispheres on lines of their own ("GPS Latitude Ref : South", "GPSLatitudeRef: S", as exiftool shows
-        // them, before or after the values): in front of the values they are for, unless those have their own letter.
+        // A photo's hemispheres on lines or in fields of their own ("GPS Latitude Ref : South", "GPSLatitudeRef - S", as
+        // exiftool shows them, before or after the values; libexif's "North or South Latitude"; "N/S: S", "Hemisphere:
+        // South", these at the start of a line): in front of the values they are for, unless those have their own letter.
         // (The runs of spaces possessive, so that a long one with no value after it isn't split every way.)
         var r = String(out)
-        if r.range(of: "ref", options: .caseInsensitive) != nil {
+        let separator = #"[ \t]*+(?:[:=]|-(?=[ \t]))?[ \t]*+"#
+        if has(#"(?i)ref|hemisphere|[NE][ \t]*/[ \t]*[SW]|[ \t]or[ \t]"#, in: r) {
             for (k, letter) in ["N", "S", "E", "W"].enumerated() {
-                let axis = "(?:" + (k < 2 ? latWords : lonWords) + ")"
-                let ref = "(?i)" + axis + #"[ \t]*+REF(?:ERENCE)?[ \t]*+[:=]?[ \t]*+(?:"# + directionWords[k] + "|" + letter
-                    + ")(?![A-Z])"
+                let axis = "(?:" + (k < 2 ? latWords : lonWords) + ")",
+                    both = k < 2 ? "N(?:ORTH)?+(?:[ \\t]*+/[ \\t]*+|[ \\t]++OR[ \\t]++)S(?:OUTH)?+"
+                        : "E(?:AST)?+(?:[ \\t]*+/[ \\t]*+|[ \\t]++OR[ \\t]++)W(?:EST)?+"
+                let ref = "(?i)(?:" + axis + "[ \\t]*+REF(?:ERENCE)?|(?<![^\\n])[ \\t]*+(?:" + both + "(?:[ \\t]++" + axis
+                    + ")?|HEMISPHERE))" + separator + "(?:" + directionWords[k] + "|" + letter + ")(?![A-Z])"
                 guard has(ref, in: r) else { continue }
-                r = replacing("(?i)(" + axis + #"[ \t]*+[:=]?[ \t]*+)(?=\d)(?![^\n]*(?<![A-Z])[NSEW](?![A-Z]))"#,
+                r = replacing("(?i)(" + axis + separator + #")(?=\d)(?![^\n]*(?<![A-Z])[NSEW](?![A-Z]))"#,
                               in: replacing(ref, in: r, with: " "), with: "$1" + letter + " ")
             }
         }
@@ -804,11 +809,13 @@ enum CoordinateParser {
 
     /// Values each named by a label right before them, whatever else is in the text: GPX (<trkpt lat="…" lon="…"> with its
     /// <ele> and <time>), JSON ({"name": "Camp 14", "lat": …, "lng": …, "zoom": 12}), XML (<geo:lat>…</geo:lat>) and
-    /// "Breite: 52,52 Länge: 13,405". Only plain values: one with minutes, seconds or a letter after it, or (unless in
-    /// quotes) a direction or unit in words or brackets ("25 deg 5' 48.81\" S", "25.0969 South", "25.0969 (S)", "120 cm"),
-    /// is read by `latLon`, as are whole degrees with more fields after them ("24; 59; 48.95", as Windows shows a photo's
-    /// position). A number after a value with decimals isn't its minutes, nor is a road's marker after it its unit ("Lat
-    /// -24.99693 Lon 31.59231 06:45", "… km 12"). Several (a track) must all be one place.
+    /// "Breite: 52,52 Länge: 13,405", also with a degree sign ("Lat: -24.99693°") or with the hemisphere a photo's "Ref"
+    /// line gives in front ("GPS Latitude : S 24.99693", see `normalise`). Only plain values: one with minutes, seconds or
+    /// a letter after it, or (unless in quotes) a direction or unit in words or brackets ("25 deg 5' 48.81\" S", "25.0969
+    /// South", "25.0969 (S)", "120 cm"), is read by `latLon`, as are whole degrees with more fields after them ("24; 59;
+    /// 48.95", as Windows shows a photo's position). A number after a value with decimals isn't its minutes, nor is a
+    /// road's marker after it its unit ("Lat -24.99693 Lon 31.59231 06:45", "… km 12"). Several (a track) must all be one
+    /// place.
     private static func labelled(_ t: String) -> Found? {
         let u = capitals(t), ns = u as NSString
         let value = hasDecimalPoint(u) ? #"([-+]?\d+(?:\.\d+)?)"# : #"([-+]?\d+(?:,\d+)?)"#
@@ -816,17 +823,18 @@ enum CoordinateParser {
         let unit = (directionWords + [degreeWords, minuteWords, secondWords, lengthWords, "D"]).joined(separator: "|")
             + "|(?:" + [degreeWords, minuteWords, secondWords].joined(separator: "|") + ")[NSEW]"
         // (The runs of spaces possessive, so that a long one after a label with no value isn't split every way.)
-        func values(_ names: String) -> [(value: Double, range: NSRange, unit: Double)] {
-            matchRanges(#"(?<![A-Z])(?:"# + names + #")(?![A-Z])[ \t]*+(["']?)[ \t]*+[:=>]?[ \t]*+(["']?)[ \t]*+"# + value
-                            + #"(?!\d)\2(?![ \t]*(?:[°'"]|[NSEWOZ](?![A-Z])|[.,]\d))(?:(?<=[.,]\d{1,30}["']?)|(?![ \t]*;?[ \t]*\d))"#
+        func values(_ names: String, _ letters: String) -> [(value: Double, range: NSRange, unit: Double)] {
+            matchRanges(#"(?<![A-Z])(?:"# + names + #")(?![A-Z])[ \t]*+(["']?)[ \t]*+[:=>]?[ \t]*+(["']?)[ \t]*+(?:(["# + letters
+                            + #"])[ \t]++(?=\d))?"# + value + #"(?!\d)\2(?:(?<=[.,]\d{1,30})[ \t]?°|[ \t]?°(?![ \t]*+(?:[-+]?\d|['"])))?"#
+                            + #"(?![ \t]*(?:[°'"]|[NSEWOZ](?![A-Z])|[.,]\d))(?:(?<=[.,]\d{1,30}["'°]?)|(?![ \t]*[;,]?[ \t]*\d))"#
                             + #"(?:(?<=["'])|(?=[ \t]*KM[ \t]*-?[ \t]*\d)|(?![ \t]*(?:(?:"# + unit
                             + #")(?!\p{L})|\(\s*[NSEWOZ]\s*\))))"#, in: u)
                 .compactMap { m in
-                    let v = ns.substring(with: m[3])
-                    return Double(v.replacingOccurrences(of: ",", with: ".")).map { ($0, m[0], lastDigit(v)) }
+                    let v = ns.substring(with: m[4]), south = m[3].location != NSNotFound && "SW".contains(ns.substring(with: m[3]))
+                    return Double(v.replacingOccurrences(of: ",", with: ".")).map { (south ? -$0 : $0, m[0], lastDigit(v)) }
                 }
         }
-        let lats = values(latWords), lons = values(lonWords)
+        let lats = values(latWords, "NS"), lons = values(lonWords, "EW")
         guard !lats.isEmpty, lats.count == lons.count else { return nil }
         let points = zip(lats, lons).compactMap { valid($0.value, $1.value) }
         guard points.count == lats.count else { return nil }
@@ -837,7 +845,9 @@ enum CoordinateParser {
 
     /// A table whose header row names the latitude and longitude columns ("id,lat,lon", "Name,Count,Lat,Lon", rows copied
     /// from a sheet with their header), whatever is in the other columns (an id, a count, a name): the values in those two
-    /// columns of the rows under it, each with as many columns. Several rows must all be one place.
+    /// columns of the rows under it, each with as many columns. The hemisphere may be in a column's name ("Lat (S)",
+    /// "Latitude (South)") or in a column of its own ("LATITUDE,N/S,LONGITUDE,E/W", as a GPS logger writes them). Several
+    /// rows must all be one place.
     private static func table(_ t: String) -> Found? {
         let u = capitals(t), ns = u as NSString
         guard u.contains("\n") else { return nil }
@@ -846,23 +856,47 @@ enum CoordinateParser {
             ns.substring(with: line).components(separatedBy: delimiter)
                 .map { $0.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: "\"'"))) }
         }
+        // The sign a hemisphere's letter or word gives the latitude (axis 0) or the longitude (1), if it is one of theirs.
+        func sign(_ s: String, _ axis: Int) -> Double? {
+            has("^(?:" + directionWords[2 * axis] + "|" + ["N", "E"][axis] + ")$", in: s) ? 1
+                : has("^(?:" + directionWords[2 * axis + 1] + "|" + ["S", "W"][axis] + ")$", in: s) ? -1 : nil
+        }
         let label = "(?<![A-Z])(?:" + latWords + ")(?![A-Z])"
         guard has(label, in: u) else { return nil }
         for (k, header) in lines.enumerated().dropLast() where has(label, in: ns.substring(with: header)) {
             for delimiter in ["\t", ",", ";", "|"] {
                 let names = columns(header, delimiter)
-                let lat = names.indices.filter { has("^(?:" + latWords + ")$", in: names[$0]) }
-                let lon = names.indices.filter { has("^(?:" + lonWords + ")$", in: names[$0]) }
-                guard lat.count == 1, lon.count == 1 else { continue }
+                // The column of the latitude (axis 0) or the longitude (1), its hemisphere's sign if its name gives it, and
+                // the column of its letters ("N/S").
+                func column(_ axis: Int) -> (values: Int, sign: Double?, letters: Int?)? {
+                    let found = names.indices.compactMap { i -> (Int, Double?)? in
+                        guard let m = matches("^(?:" + [latWords, lonWords][axis] + #")(?:(?:[ \t]*\(|[ \t]+)[ \t]*(\p{L}+)[ \t]*\)?)?$"#,
+                                              in: names[i]).first else { return nil }
+                        guard let word = m[1] else { return (i, nil) }
+                        return sign(word, axis).map { (i, $0) }
+                    }
+                    let (n, s) = (["N", "E"][axis], ["S", "W"][axis])
+                    let letters = names.indices.filter {
+                        has("^(?:" + n + #"[ \t]*[/-]?[ \t]*"# + s + "|" + s + #"[ \t]*[/-]?[ \t]*"# + n + ")$", in: names[$0])
+                    }
+                    guard found.count == 1, letters.count <= 1 else { return nil }
+                    return (found[0].0, found[0].1, letters.first)
+                }
+                guard let lat = column(0), let lon = column(1) else { continue }
                 var points: [GeoPoint] = [], used = [header], resolution = 0.0
                 for row in lines[(k + 1)...] {
                     let values = columns(row, delimiter)
                     guard values.count == names.count else { break }
                     // (A Markdown table's line under its header: "|---|---|".)
                     if values.allSatisfy({ $0.allSatisfy { "-:".contains($0) } }) { continue }
-                    let a = values[lat[0]], b = values[lon[0]]
-                    guard let la = Double(a.replacingOccurrences(of: ",", with: ".")),
-                          let lo = Double(b.replacingOccurrences(of: ",", with: ".")), let p = valid(la, lo) else { return nil }
+                    // A value with the sign its hemisphere gives (with a minus sign, N or E says otherwise).
+                    func value(_ c: (values: Int, sign: Double?, letters: Int?), _ axis: Int) -> Double? {
+                        guard let v = Double(values[c.values].replacingOccurrences(of: ",", with: ".")) else { return nil }
+                        guard let s = c.letters.map({ sign(values[$0], axis) }) ?? c.sign else { return c.letters == nil ? v : nil }
+                        return v < 0 ? (s < 0 ? v : nil) : s * v
+                    }
+                    let a = values[lat.values], b = values[lon.values]
+                    guard let la = value(lat, 0), let lo = value(lon, 1), let p = valid(la, lo) else { return nil }
                     points.append(p)
                     used.append(row)
                     resolution = max(resolution, lastDigit(a), lastDigit(b))
@@ -883,8 +917,9 @@ enum CoordinateParser {
         /// A number: its value, its digits before and after the point, and whether a minus sign was before it.
         case number(value: Double, intDigits: Int, places: Int, negative: Bool)
         case degree, minute, second
-        /// N, S, E or W, and whether a number is written right after it ("S28").
-        case hemisphere(Character, glued: Bool)
+        /// N, S, E or W, whether a number is written right after it ("S28"), and whether it is written right after a number or
+        /// its mark ("70.6693W", "13.6\"W").
+        case hemisphere(Character, glued: Bool, attached: Bool)
         /// A latitude's and a longitude's letter written together before or after the numbers ("GPS (S/E): 24.99693,
         /// 31.59232", "…, 31.59232 (S, E)"): the halves' letters, in their order.
         case tag(Character, Character)
@@ -913,8 +948,9 @@ enum CoordinateParser {
         /// Whether it can be a time: fields joined by colons, the last one whole, without a letter or label ("05:30",
         /// "12:30:45", "+02:00"; not "25:05:48 S").
         var time: Bool
-        /// Whether something says where it starts: a letter or label before it, or a degree or minus sign on its first
-        /// number.
+        /// Whether something says where it starts: a letter or label before it, a minus sign on its first number, or a
+        /// degree sign there with its letter or its other numbers' marks (not "Leopard 32° 40.6892, -74.0445": a
+        /// temperature or an angle before a position).
         var startMarked: Bool
         /// Whether it can only be a coordinate: it has a label, a minute or second mark, 3 decimal places or more, or a
         /// letter in front or after more than a whole number ("S 25", "25.0969 S", "25° S"). (A degree sign alone, or a
@@ -1045,13 +1081,22 @@ enum CoordinateParser {
     /// position.
     private static func prepared(_ text: String) -> String {
         var s = " " + text.uppercased() + " "
+        // The full stop of a unit's short form is part of it ("24°59 min. 48.95 sec. S", "24 deg. 59.816 min.").
+        s = replacing(#"(?<![A-Z])(DEGS?|MINS?|SECS?)\."#, in: s, with: "$1 ")
         // "Secs" and "mins" are plurals, or the unit with south right after it: south when a unit in the text has its
-        // direction right after it ("24°59min48.95secS, 31°35min32.32secE").
-        if has(#"\d[ \t]?(?:SECONDS|SEC|MINUTES|MIN)[NEW](?![A-Z])"#, in: s) {
-            s = replacing(#"(\d[ \t]?(?:SEC|MIN))S(?![A-Z])"#, in: s, with: "$1 S")
+        // direction right after it and the text has no N or S of its own ("24°59min48.95secS, 31°35min32.32secE"), at the
+        // end of the half (not "mins" before the seconds: "-24°59 mins 48.95 secs, 31°35 mins 32.32 secE").
+        if has(#"\d[ \t]?(?:SECONDS|SEC|MINUTES|MIN)[NEW](?![A-Z])"#, in: s), !has(#"(?<![A-Z])[NS](?![A-Z])"#, in: s) {
+            s = replacing(#"(\d[ \t]?SEC)S(?![A-Z])|(\d[ \t]?MIN)S(?![A-Z])(?![ \t]*\d+(?:[.,]\d+)?[ \t]*(?:SEC|S(?![A-Z])|"))"#,
+                          in: s, with: "$1$2 S")
         }
         // An altitude's, a speed's or the like's label before its value, when that is left out with it.
         let otherLabel = "(?:\(otherSymbol)[ \\t:=]*+)?"
+        func fields(_ separator: String) -> String {
+            #"(\d{1,3})"# + separator + #"[ \t]*([0-5]?\d)"# + separator + #"[ \t]*([0-5]?\d(?:"# + (separator == ";" ? "[.,]" : #"\."#)
+                + #"\d+)?)(?!\d|[;,][ \t]*\d)"#
+        }
+        let commas = [latWords, lonWords].allSatisfy { has(#"\b(?:"# + $0 + #")\b[ \t:=]*(?:[NSEW][ \t]+)?"# + fields(","), in: s) }
         let spacedFront = #"(?<![A-Z\d.])(?<!\d[ \t])([NSEW])[ \t](\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)(?!\d|\.\d)"#,
             spacedAfter = #"(?<![\d.])(\d{1,3})\.([0-5]\d)\.([0-5]\d(?:\.\d+)?)[ \t]([NSEW])(?![A-Z\d]|[ \t]+\d{1,3}\.\d)"#
         let words: [(String, String)] = [
@@ -1066,8 +1111,10 @@ enum CoordinateParser {
             (#"(?<![\d.])(\d{1,3})[ \t]?°[ \t]?([0-5]\d)\.([0-5]\d\.\d+)(?!\d|\.\d|')"#, "$1°$2'$3\""),
             // Quotes around a value, as in JSON, CSV and GPX ("lat":"-25.0969", lat="-25.0969"): not minutes or seconds.
             (#"(?<=[\s=:,;\[({])(["'])\s*([-+]?\d+(?:[.,]\d+)?)\s*\1(?=[\s,;:)}\]/>])"#, " $2 "),
-            // Names with digits in them ("CLLocationCoordinate2D"): not numbers.
-            (#"(?<![A-Z0-9])[A-Z]{2,}\d[A-Z0-9_]*"#, " "),
+            // Names with digits in them ("CLLocationCoordinate2D"): not numbers. Not a unit glued to the next field ("24
+            // deg59.816' S").
+            (#"(?<![A-Z0-9])(?!(?:"# + [degreeWords, minuteWords, secondWords].joined(separator: "|") + #")\d{1,2}(?!\d))[A-Z]{2,}\d[A-Z0-9_]*"#,
+             " "),
             // Words that only say a position follows ("GPS:", "Location:").
             (#"\b(GPS|POSITION|POS|LOCATION|LOC|COORDINATES|COORDINATE|COORDS|KOÖRDINATES|KOÖRDINATE|KOORDINATEN|COORDENADAS|COORDONNÉES)\b"#,
              " "),
@@ -1079,9 +1126,9 @@ enum CoordinateParser {
             // words, not labels ("Länge: 120 cm, Breite: 60 cm").
             ("[\(latSymbol)\(lonSymbol)](?=[ \\t\"'=:]*[-+]?\\d+(?:[.,]\\d+)?[ \\t]*(?:\(lengthWords))(?![A-Z]))", " SIZE "),
             // Degrees, minutes and seconds with semicolons between them after a label, as Windows shows a photo's position
-            // ("Latitude 24; 59; 48.95").
-            ("([\(latSymbol)\(lonSymbol)][ \\t:=]*(?:[NSEW][ \\t]+)?)(\\d{1,3});[ \\t]*([0-5]?\\d);[ \\t]*([0-5]?\\d(?:[.,]\\d+)?)(?![\\d;])",
-             "$1$2°$3'$4\""),
+            // ("Latitude 24; 59; 48.95"), or with commas, as libexif does, when both labels have them ("Latitude: 24, 59,
+            // 48.95\nLongitude: 31, 35, 32.32").
+            ("([\(latSymbol)\(lonSymbol)][ \\t:=]*(?:[NSEW][ \\t]+)?)" + fields(commas ? "[;,]" : ";"), "$1$2°$3'$4\""),
             (#"(?<![A-Z])(ALTITUDE|ALT|ELEVATION|ELEV|ELE|HEIGHT|HOOGTE|ACCURACY|ACC|HDOP|SPEED|HEADING|BEARING|COURSE|ZOOM)(?![A-Z])"#,
              " \(otherSymbol) "),
             // A height above sea level, with its label ("GPS Altitude : 285.4 m Above Sea Level", as exiftool shows it). (Not
@@ -1104,8 +1151,8 @@ enum CoordinateParser {
             (#"(\d\s*M\s*\d+(?:[.,]\d+)?)S(?=\s*[NSEW](?![A-Z]))"#, "$1\""),
             // M for minutes only after degrees ("25d 5.8136m S", "25 05m S", "25 5m 48.8s S"); elsewhere it is metres.
             // (The letter of the next half may be written right before its number: "S24 59.816m E31 35.539m".)
-            (#"(°\s*\d+(?:[.,]\d+)?)\s*M(?=\s*(?:\d|[NSEW](?![A-Z])|[,;]|$))"#, "$1'"),
-            (#"(?<![\d.,])(\d{1,3}[ \t]+[0-5]?\d(?:[.,]\d+)?)[ \t]*M(?=\s*(?:\d|[NSEW](?![A-Z])|[,;]|$))"#, "$1'"),
+            (#"(°\s*\d+(?:[.,]\d+)?)\s*M(?=\s*(?:[-+]?\d|[NSEW](?![A-Z])|[,;/]|$))"#, "$1'"),
+            (#"(?<![\d.,])(\d{1,3}[ \t]+[0-5]?\d(?:[.,]\d+)?)[ \t]*M(?=\s*(?:[-+]?\d|[NSEW](?![A-Z])|[,;/]|$))"#, "$1'"),
             // Minutes and seconds in words only after degrees and minutes ("25 deg 5 min 48.81 sec S", "25 05 48 sec S",
             // "25°05min48.8s"), also with the direction right after them ("…48.95secE"); else a time, left out below
             // ("10 min S of Satara").
@@ -1116,8 +1163,10 @@ enum CoordinateParser {
             (#"('\s*\d+(?:[.,]\d+)?)[ \t]?S(?=[NSEW](?![A-Z]))"#, "$1\""),
             // A distance with its direction and no unit ("Lions 5 N of Satara", "3 S/W of Satara", "W 1 van die brug", "2.5 S
             // of Satara"): with two decimals only when not right after another half ("2.25 N of Satara", not "24.99 S 31.59
-            // E from Pieter"), and not the minutes of a half ("31 35.5 E from Pieter").
-            (#"(?<![\p{L}\d.,])(?<!\d[ \t]{1,3})(?:\d+(?:[.,]\d)?|(?<![\d°'"][ \t]{0,3}[NSEWO][ \t,;]{0,3})\d+[.,]\d\d)[ \t]*[NSEWO]"#
+            // E from Pieter"), and not the minutes or seconds of a half ("31 35.5 E from Pieter", "31°35'32.32s from Pieter",
+            // "E031-35-32.3 N of camp").
+            (#"(?<![\p{L}\d.,°'"]|\d-[0-5]\d-)(?<![\d°'"][ \t]{1,3})(?:\d+(?:[.,]\d)?|(?<![\d°'"][ \t]{0,3}[NSEWO][ \t,;]{0,3})\d+[.,]\d\d)"#
+                + #"[ \t]*[NSEWO]"#
                 + #"(?:[ \t]*[/,][ \t]*[NSEWO])?[ \t]+(?:OF|VAN|FROM|VANAF)\b"#, " | "),
             (#"(?<![\p{L}\d.,])[NSEWO][ \t]*\d+(?:[.,]\d)?[ \t]+(?:OF|VAN|FROM|VANAF)\b"#, " | "),
             // A distance, a height, a time or a speed ("Drive S 25 km", "…, 270 m", "S 30° W, distance 120 m", "10 min S
@@ -1129,10 +1178,11 @@ enum CoordinateParser {
             (otherLabel + #"(?<![\p{L}\d.,]|[\p{L}\d]-)[-+]?\d+(?:[.,]\d+)?(?:-\d+(?:[.,]\d+)?)?\s*(?!KM[ \t]*-?[ \t]*\d)(?:"#
                 + lengthWords + #"|MI|MILES?|NM|YDS?|YARDS?|MYL|HOURS?|HRS?|UUR|MINUTES?|MINS?|SECONDS?|SECS?|SEKONDES?"#
                 + #"|KTS?|KN|KNOTS?|KNOPE|BFT|MPH|KPH|KMH)(?![A-Z\d'"°])"#, " | "),
-            // The direction a wind blows from ("Wind S 24, tomorrow E 31"): not a position's, which a number follows that
-            // only a coordinate has ("…out of the wind S24 59.816 E31 35.539", "Wind: S 24.99693 E 31.59231").
+            // The direction a wind blows from ("Wind S 24, tomorrow E 31", "Wind S 24.9, E 31.5 (km/h)"): not a position's,
+            // which a number follows that a wind's speed doesn't have, with two decimals or more, a mark or another number
+            // ("…out of the wind S24 59.816 E31 35.539", "Wind: S 24.99 E 31.59").
             (#"(?<![A-Z])(WIND(?:RIGTING|RICHTUNG)?|BREEZE)[ \t]*:?[ \t]*(?:FROM[ \t]+)?[NSEW]{1,3}(?![A-Z])"#
-                + #"(?![ \t]*\d+(?:[.,]\d{3}|[ \t]*[°'"]|[ \t]+\d))"#, " $1 "),
+                + #"(?![ \t]*\d+(?:[.,]\d{2}|[ \t]*[°'"]|[ \t]+\d))"#, " $1 "),
             // "And" between two numbers ("Lions at -25.0969 and 31.4371") separates them, as a comma does; it is still
             // a word ("25° and 31°" aren't a position).
             (#"(?<=[\d°'"])[ \t]+(?:AND|EN|UND|ET|&)[ \t]+(?=[-+]?\d)"#, " \(andSymbol) "),
@@ -1141,13 +1191,13 @@ enum CoordinateParser {
             s = replacing(p, in: s, with: r)
         }
         // A heading's or a bearing's direction, as or after its value ("heading W", "Heading 180° S"): not a position's
-        // letter, unless a number follows it. A heading that is only a direction goes with it when a position follows
-        // after a stop or a colon (a number with another or with a letter after it), so that it doesn't label the
-        // position's first number ("Heading W: 24 59.816 S …", "Heading W. -25.0969, 31.4371"; but "heading W: 270°",
-        // "course S: 3 males").
-        let position = #"[ \t]*+[.:,;][ \t.:,;-]*+\d++(?:[.,]\d++)?+[ \t]*+°?+(?:[ \t,;/]*+[-+]?\d|[ \t]*+[NSEW](?![A-Z]))"#
+        // letter, unless a number without a sign follows it. A heading that is only a direction goes with it when a
+        // position follows, after a stop or a colon (a number with another or with a letter after it) or with a minus
+        // sign, so that it doesn't label the position's first number ("Heading W: 24 59.816 S …", "Heading W. -25.0969,
+        // 31.4371", "Lions heading N -24.9969 31.5923"; but "heading W: 270°", "course S: 3 males").
+        let position = #"[ \t]*+(?:[.:,;][ \t.:,;-]*+\d++(?:[.,]\d++)?+[ \t]*+°?+(?:[ \t,;/]*+[-+]?\d|[ \t]*+[NSEW](?![A-Z]))|-\d)"#
         s = replacing("\(otherSymbol)[ \\t:]*[NSEW]{1,3}(?![A-Z])(?=" + position + ")", in: s, with: " ")
-        s = replacing("(\(otherSymbol)[ \\t:]*(?:\\d+(?:[.,]\\d+)?[ \\t]*°?[ \\t]*)?)[NSEW]{1,3}(?![A-Z])(?![ \\t]*[-+.]?\\d)", in: s,
+        s = replacing("(\(otherSymbol)[ \\t:]*(?:\\d+(?:[.,]\\d+)?[ \\t]*°?[ \\t]*)?)[NSEW]{1,3}(?![A-Z])(?![ \\t]*[+.]?\\d)", in: s,
                       with: "$1")
         // A label only before a value or another label, or at the end of a line (a header row): "Long day!" isn't one.
         let symbols = "\(latSymbol)\(lonSymbol)\(otherSymbol)"
@@ -1158,6 +1208,13 @@ enum CoordinateParser {
             for (p, symbol) in xy {
                 s = replacing(p, in: s, with: " \(symbol) ")
             }
+        }
+        // A dash with a space on each side between labels and their values is a separator when a value after one has a
+        // sign or a letter of its own ("Lat - -24.99693\nLon - 31.59231", "Latitude - 24.99693 S"); else it isn't clear
+        // whether it is a minus sign (see `tokens`).
+        let dash = "([\(symbols)])[ \\t]+-[ \\t]+"
+        if has(dash + #"(?:[-+]|[NSEW](?![A-Z])|\d[\d.,°'" \t]*[NSEW](?![A-Z]))"#, in: s) {
+            s = replacing(dash, in: s, with: "$1: ")
         }
         return s
     }
@@ -1183,7 +1240,7 @@ enum CoordinateParser {
     /// place after one with its letters in front ("S24 59 48.9 E31 35 32.3 N of camp"). Each is tried as such. A reading
     /// with the latitude's letter first, as positions are written, is taken rather than one with the longitude's first
     /// (only one of them can have it); a direction is only taken so ("S 25°05'48.8\" E 31°26'13.6s" isn't 25° E, 31° S
-    /// after a direction). Else the readings of names must be one place.
+    /// after a direction). Else the readings of names must be one place, or else a half's letter is written twice.
     /// With four on more than one line, the same place may be written twice, as exiftool shows a photo's position ("GPS
     /// Latitude : 24 deg 59' 48.95\" S", "GPS Longitude : …", "GPS Position : … S, … E"): it is read on each side of the
     /// line break between the second and the third letter, and the two must be one place.
@@ -1226,6 +1283,14 @@ enum CoordinateParser {
             }
             if "NS".contains(chars[rest.0]) && "EW".contains(chars[rest.1]) { return r }
             if nameShaped(chars, i) { found.append(r) }
+        }
+        // Else one half's letter may be written both before and right after its numbers ("S 24°59' 48.95\", E 31°35'
+        // 32.32\"E"): it is read once.
+        for (a, b) in [(first, middle), (middle, last)] where found.isEmpty && chars[a] == chars[b] && !chars[b - 1].isWhitespace
+            && chars[(a + 1)..<b].allSatisfy({ $0.isNumber || " .,°'\"".contains($0) }) {
+            var once = chars
+            once[b] = " "
+            if let t = tokens(once, commaDecimal: commaDecimal), let r = reading(t.tokens, words: t.words, beside: beside) { return r }
         }
         guard let f = found.first, found.allSatisfy({ samePlace($0, f) }) else { return nil }
         return f
@@ -1338,6 +1403,9 @@ enum CoordinateParser {
                     break
                 }
                 let spaced = i > 0 && " \t".contains(chars[i - 1]) && i + 1 < chars.count && " \t".contains(chars[i + 1])
+                // Right between a label and its value ("Lat - 24.9969"; not "Lat: - 24.9969") it is a separator or a minus
+                // sign: it isn't clear which (see `prepared` for when it is).
+                if spaced, chars[back] == latSymbol || chars[back] == lonSymbol { return nil }
                 if spaced, let last = tokens.last, isMark(last) || decimalPlaces(last) > 0, signedRun(tokens) {
                     tokens.append(.separator)
                 } else if !minus, tokens.count > 1, case .hemisphere = tokens[tokens.count - 1],
@@ -1386,7 +1454,8 @@ enum CoordinateParser {
                     continue
                 }
                 if isHemisphere(chars, i) {
-                    tokens.append(.hemisphere(c, glued: i + 1 < chars.count && chars[i + 1].isNumber))
+                    tokens.append(.hemisphere(c, glued: i + 1 < chars.count && chars[i + 1].isNumber,
+                                              attached: i > 0 && (chars[i - 1].isNumber || "°'\"".contains(chars[i - 1]))))
                     letters.append(i)
                 } else {
                     text()
@@ -1417,22 +1486,29 @@ enum CoordinateParser {
         return k >= 0 && chars[k].isNumber
     }
 
-    /// Where a latitude's and a longitude's letter written together ("S/E", "S, E") that start at `i` end, when they are
-    /// before the numbers or after them, not between them ("24.99693 S/E 31.59232": each half's own letter). With a colon
-    /// after them, before the numbers, they are before them whatever is before them ("06:45 GPS (S/E): …").
+    /// Where a latitude's and a longitude's letter written together ("S/E", "S, E", "S E") that start at `i` end, when
+    /// they are before the numbers or after them, not between them ("24.99693 S/E 31.59232": each half's own letter). With
+    /// a colon after them, they are before the numbers whatever is before them ("06:45 GPS (S/E): …"). So they are, in
+    /// the order of the halves, written otherwise in a heading with a colon or a line break after it ("Lat (S) Long (E):
+    /// …", "Lat (S)\tLong (E)\n…", "Lon (E), Lat (S)\n…").
     private static func tagEnd(_ chars: [Character], _ i: Int) -> Int? {
-        guard "NS".contains(chars[i]), !isWordLetter(i > 0 ? chars[i - 1] : nil) else { return nil }
+        guard !isWordLetter(i > 0 ? chars[i - 1] : nil) else { return nil }
         var k = i + 1
-        while k < chars.count, chars[k] == " " || chars[k] == "\t" { k += 1 }
-        guard k < chars.count, chars[k] == "/" || chars[k] == "," else { return nil }
-        k += 1
-        while k < chars.count, chars[k] == " " || chars[k] == "\t" { k += 1 }
-        guard k < chars.count, "EW".contains(chars[k]), !isWordLetter(k + 1 < chars.count ? chars[k + 1] : nil) else { return nil }
+        while k < chars.count, " \t()/,;|".contains(chars[k]) { k += 1 }
+        guard k > i + 1, k < chars.count, ("NS".contains(chars[i]) ? "EW" : "NS").contains(chars[k]),
+              !isWordLetter(k + 1 < chars.count ? chars[k + 1] : nil) else { return nil }
         var next = k + 1
         while next < chars.count, " \t)".contains(chars[next]) { next += 1 }
         let before = isHemisphere(chars, k), colon = next < chars.count && chars[next] == ":"
-        guard isHemisphere(chars, i) != before || (before && colon) else { return nil }
-        return k + 1
+        // (With only a space between them, not the first right after a number: "Site S E 24.99693 31.59231", "…, 31.59231 S
+        // E", not "…, 31.59231N E…".)
+        let gap = chars[(i + 1)..<k], separators = gap.filter { $0 == "/" || $0 == "," }.count, first = isHemisphere(chars, i)
+        let together = "NS".contains(chars[i]) && separators <= 1 && !gap.contains(where: { "();|".contains($0) })
+        if together, first != before || (before && colon), separators == 1 || i == 0 || " \t\n(".contains(chars[i - 1]) {
+            return k + 1
+        }
+        let heading = colon || (next < chars.count && chars[next] == "\n" && !first)
+        return heading && !(together && separators == 1) ? k + 1 : nil
     }
 
     /// The latitude's and the longitude's letter written together in the text (see `Token.tag`), if it has them.
@@ -1463,10 +1539,20 @@ enum CoordinateParser {
         // Two or more labels before the first number are a heading ("Lat/Long:", a spreadsheet's header row): they give
         // the order of the values after them, they don't label the first one.
         var headingFirst: Axis?
-        let firstNumber = tokens.firstIndex(where: isNumber) ?? tokens.count
-        let heading = tokens[..<firstNumber].compactMap { tok -> Axis?? in
+        var firstNumber = tokens.firstIndex(where: isNumber) ?? tokens.count
+        var heading = tokens[..<firstNumber].compactMap { tok -> Axis?? in
             if case let .label(a) = tok { return a }
             return nil
+        }
+        // A heading's or the like's label with no value of its own before the position's labels ("Heading:\nLatitude:
+        // 24.99693 S") isn't a heading of both.
+        if heading.count >= 2, heading.contains(where: { $0 == nil }), !heading.contains(.lat) || !heading.contains(.lon) {
+            tokens = tokens.enumerated().filter { k, tok in
+                if case .label(nil) = tok { return k >= firstNumber }
+                return true
+            }.map(\.element)
+            firstNumber = tokens.firstIndex(where: isNumber) ?? tokens.count
+            heading = heading.filter { $0 != nil }
         }
         if heading.count >= 2 {
             tokens = tokens.enumerated().filter { $0.offset >= firstNumber || !isLabel($0.element) }.map(\.element)
@@ -1512,16 +1598,19 @@ enum CoordinateParser {
         tokens.removeAll { if case .tag = $0 { return true } else { return false } }
         // A letter after a pair written with a minus sign is a direction, where something is going or where it is from
         // ("-24.9969, 31.5923 W of Skukuza", "… (W of the bridge)", "… W 270°", "… moving W"), not a hemisphere: it doesn't
-        // change a sign. So is one before it ("Wild dogs moving W -24.9969, 31.5923", "N4 W to Nelspruit, -25.4753, …").
-        // (N or E next to a number with a minus sign still says two things: "-25.0969, -31.4371 E", "N -25.0969, 31.4371".)
+        // change a sign. So is an S or W before it, or any letter after other words ("Wild dogs moving W -24.9969, 31.5923",
+        // "N4 W to Nelspruit, -25.4753, …", "Lions going N -24.9969 31.5923"). (N or E next to a number with a minus sign
+        // still says two things: "-25.0969, -31.4371 E", "N -25.0969, 31.4371".)
         // A W right after the last number, with nothing after it, may as well be the hemisphere of a half without a minus
-        // sign ("-33.4489, 70.6693 W"): it isn't clear which (see below).
+        // sign ("-33.4489, 70.6693 W"): it isn't clear which (see below). Written right after the number or its mark,
+        // which a direction isn't, it is that half's hemisphere ("-33.4489 70.6693W", "…, 31°26'13.6\"W").
         var hemis = tokens.indices.filter { if case .hemisphere = tokens[$0] { return true } else { return false } }
         var lastW = false
-        if hemis.count == 1, tokens.contains(where: isNegative), case let .hemisphere(h, _) = tokens[hemis[0]],
+        if hemis.count == 1, tokens.contains(where: isNegative), case let .hemisphere(h, _, attached) = tokens[hemis[0]],
            let first = tokens.firstIndex(where: isNumber), let last = tokens.lastIndex(where: isNumber) {
-            let k = hemis[0], after = k > last, before = k < first && isNegative(tokens[first])
-            if (after && !(isNegative(tokens[last]) && "NE".contains(h))) || (before && "SW".contains(h)) {
+            let k = hemis[0], after = k > last && !(attached && h == "W"), before = k < first && isNegative(tokens[first])
+            let afterWords = tokens[..<k].contains { if case .text(true) = $0 { return true } else { return false } }
+            if (after && !(isNegative(tokens[last]) && "NE".contains(h))) || (before && ("SW".contains(h) || afterWords)) {
                 lastW = after && h == "W" && (k == last + 1 || (k == last + 2 && isMark(tokens[last + 1])))
                     && tokens[(k + 1)...].allSatisfy(isSeparator)
                 tokens.remove(at: k)
@@ -1565,11 +1654,11 @@ enum CoordinateParser {
         guard var halves = halves(parts) else { return nil }
         // (The W left out above, after a half without a minus sign: "-33.4489, 70.6693 W".)
         if lastW && !halves[1].signed { return nil }
-        // Those letters are the halves' in their order, the latitude's first. (A minus sign and N or E say two things.) After
-        // a pair written with a minus sign they are a direction, as one letter is, and don't change a sign ("Lions -24.3812,
-        // 31.8456 (S/W)").
+        // Those letters are the halves' in their order. (A minus sign and N or E say two things.) After a pair written with a
+        // minus sign they are a direction, as one letter is, and don't change a sign ("Lions -24.3812, 31.8456 (S/W)").
         if let tag = tags.first {
-            guard tags.count == 1, hemis.isEmpty, halves[0].axis != .lon, halves[1].axis != .lat else { return nil }
+            let axes = tag.letters.map { "NS".contains($0) ? Axis.lat : .lon }
+            guard tags.count == 1, hemis.isEmpty, (0..<2).allSatisfy({ (halves[$0].axis ?? axes[$0]) == axes[$0] }) else { return nil }
             let direction = tag.after && halves.contains { $0.signed }
             for k in 0..<2 {
                 if tag.letters[k] == "S" || tag.letters[k] == "W" {
@@ -1577,7 +1666,7 @@ enum CoordinateParser {
                 } else if halves[k].signed {
                     return nil
                 }
-                halves[k].axis = k == 0 ? .lat : .lon
+                halves[k].axis = axes[k]
             }
         }
         // Beside a place, two numbers without letters or labels, each named by words before it ("USD/ZAR 18.2345, EUR/ZAR
@@ -1590,6 +1679,8 @@ enum CoordinateParser {
             }
             if named(parts[0][..<a]) && (named(parts[0][(b + 1)...]) || named(parts[1][..<c])) { return nil }
         }
+        // Nor are two whole numbers without a sign, a letter or a label (an id, a count: "1,001, -24.996931, 31.592312").
+        if beside, halves.allSatisfy({ $0.axis == nil && !$0.signed && $0.numbers == 1 && $0.resolution == 1 }) { return nil }
         // Among other words, numbers that could as well be times, dates, counts or measurements ("Gates open 05:30 close
         // 18:00", "12 lions 3 cubs", "temp 25.5, wind 31.4", "Lions 5 N of Satara") aren't a position. Degrees, minutes and
         // seconds in both halves with a minus sign before the first ("We're at -25 05 48, 31 26 13") can't be a time or a
@@ -1604,6 +1695,17 @@ enum CoordinateParser {
         // A letter right before degrees and minutes, with no letter or label on the other half ("Lions on S28 25.0969,
         // 31.4371", "N4 25.4567, 30.9876"), may as well be a road's name: it isn't clear which.
         if halves.contains(where: { $0.gluedLetter && $0.numbers > 1 }) && halves.contains(where: { $0.axis == nil }) {
+            return nil
+        }
+        // Nor, among other words, is one right before two whole numbers without marks, unless the other half is written so
+        // too ("S25 05 E31 26"): a road's name and a count ("Lions on S28 3 females, heading E 31 deg", "op die N4 27 hyenas").
+        func roadShaped(_ k: Int) -> Bool {
+            halves[k].gluedLetter && !parts[k].contains(where: isMark) && parts[k].allSatisfy { decimalPlaces($0) == 0 }
+        }
+        if words, let k = (0..<2).first(where: { roadShaped($0) && halves[$0].numbers == 2 }), !roadShaped(1 - k) { return nil }
+        // Whole or one-decimal numbers without a sign, a letter or a label, in degrees, are as likely temperatures or angles
+        // ("34°/24°", "34 grade, 24 grade", "34.5°/24.5°"): not a position.
+        if halves.allSatisfy({ $0.axis == nil && !$0.signed && $0.numbers == 1 && $0.resolution >= 0.1 }), tokens.contains(where: isDegree) {
             return nil
         }
         var lat = halves[0].value, lon = halves[1].value
@@ -1676,9 +1778,13 @@ enum CoordinateParser {
             }
             let frontReads = after.contains(where: isNumber) && (!before.contains(where: isNumber) || after.first.map(isNumber) == true)
                 && reads(front)
-            let glued = hemis.allSatisfy { if case .hemisphere(_, true) = tokens[$0] { return true } else { return false } }
+            let glued = hemis.allSatisfy { if case .hemisphere(_, true, _) = tokens[$0] { return true } else { return false } }
             let backTime = back[0].contains { if case .joiner(true) = $0 { return true } else { return false } }
                 && back[0].last(where: isNumber).map { decimalPlaces($0) == 0 } == true
+            // A whole number with a degree sign alone right before the first letter, which has a number with decimals right
+            // after it ("Hot 32° S 24.996931 E 31.592312"), is a temperature or an angle, not that letter's degrees.
+            let n = hemis[0], backTemperature = n > 1 && isNumber(tokens[n - 2]) && decimalPlaces(tokens[n - 2]) == 0
+                && isDegree(tokens[n - 1]) && decimalPlaces(tokens[n + 1]) > 0
             switch (frontReads, before.contains(where: isNumber) && reads(back)) {
             // Each letter written right before a number ("27/10/2026 S24.99 E31.59", "38°C S24 59 48.9 E31 35 32.3",
             // "06:45 S25-05-48.8 E031-26-13.6"): the letters are in front of those numbers, whatever is before them (a date,
@@ -1690,8 +1796,8 @@ enum CoordinateParser {
             case (true, true) where alike(front, complete) != alike(back, ended(back[1]).complete):
                 chosen = alike(front, complete) ? (front, [before, rest]) : (back, [Array(tokens[..<start]), after])
             // A time before a letter ("27/10/2026 06:45 S 25 E 31") isn't degrees and minutes when the letters can as well
-            // be in front.
-            case (true, true) where backTime:
+            // be in front, nor is a temperature its degrees.
+            case (true, true) where backTime || backTemperature:
                 chosen = (front, [before, rest])
             case (true, true):
                 // Both can be read: the one that leaves out less of what can be a position. A count or a name (one whole
@@ -1869,7 +1975,7 @@ enum CoordinateParser {
         // After an apostrophe only when that is a minute mark ("05'S").
         if i > 0, chars[i - 1] == "'", !(i > 1 && chars[i - 2].isNumber) { return false }
         var k = i - 1
-        while k >= 0, chars[k].isWhitespace || chars[k] == "," || chars[k] == "(" { k -= 1 } // also "25.0969 (S)"
+        while k >= 0, chars[k].isWhitespace || ",;(".contains(chars[k]) { k -= 1 } // also "25.0969 (S)", "24.996931;S;…"
         if k >= 0, chars[k].isNumber || "°'\"".contains(chars[k]) { return true }
         k = i + 1
         while k < chars.count, chars[k].isWhitespace || chars[k] == ":" || chars[k] == ")" { k += 1 }
@@ -1889,6 +1995,16 @@ enum CoordinateParser {
 
     private static func isLabel(_ t: Token) -> Bool {
         if case .label = t { return true }
+        return false
+    }
+
+    private static func isHemisphere(_ t: Token) -> Bool {
+        if case .hemisphere = t { return true }
+        return false
+    }
+
+    private static func isDegree(_ t: Token) -> Bool {
+        if case .degree = t { return true }
         return false
     }
 
@@ -1945,16 +2061,18 @@ enum CoordinateParser {
         return [Array(tokens[..<k]), Array(tokens[(k + 1)...])]
     }
 
-    /// Before the second number marked with a degree sign, unless that is right after whole degrees and can be their
-    /// minutes ("25° 05.8136 degS": the sign written after the minutes; see `reading`).
+    /// Before the second number marked with a degree sign, unless that is right after whole degrees without a minus sign,
+    /// or with its letter after it, and can be their minutes ("25° 05.8136 degS": the sign written after the minutes; see
+    /// `reading`; but "-25° 31°").
     private static func splitAtDegrees(_ tokens: [Token]) -> [[Token]]? {
         var marked: [Int] = []
         for k in tokens.indices.dropLast() {
             if isNumber(tokens[k]), case .degree = tokens[k + 1] { marked.append(k) }
         }
         guard marked.count == 2 else { return nil }
-        if marked[1] == marked[0] + 2, case .number(_, _, 0, _) = tokens[marked[0]], case let .number(v, _, _, _) = tokens[marked[1]],
-           v < 60 {
+        if marked[1] == marked[0] + 2, case let .number(_, _, 0, negative) = tokens[marked[0]],
+           case let .number(v, _, _, _) = tokens[marked[1]], v < 60,
+           !negative || tokens.dropFirst(marked[1] + 2).first.map(isHemisphere) == true {
             return nil
         }
         var cut = marked[1]
@@ -1991,7 +2109,7 @@ enum CoordinateParser {
                     }
                 }
                 nums.append((v, digits, places, neg, unit))
-            case let .hemisphere(h, next):
+            case let .hemisphere(h, next, _):
                 if labelAfter { return nil }
                 hemi = h
                 if nums.isEmpty {
@@ -2075,7 +2193,8 @@ enum CoordinateParser {
         if let h = hemi { axis = (h == "N" || h == "S") ? .lat : .lon }
         return Half(value: value, axis: axis, kind: kind, numbers: nums.count,
                     time: colon && hemi == nil && label == nil && nums[nums.count - 1].places == 0,
-                    startMarked: lettered || nums[0].unit == 0 || nums[0].negative,
+                    startMarked: lettered || nums[0].negative
+                        || (nums[0].unit == 0 && (hemi != nil || nums.dropFirst().contains { $0.unit != nil })),
                     strong: label != nil || (hemi != nil && (lettered || !(nums.count == 1 && nums[0].places == 0 && nums[0].unit == nil)))
                         || nums.contains { $0.unit == 1 || $0.unit == 2 || $0.places >= 3 },
                     gluedLetter: glued, signed: nums[0].negative, resolution: resolution)
@@ -2098,9 +2217,10 @@ enum CoordinateParser {
         // A pair without letters in a text with both halves' letters written together ("Lions (S/E): 24.99693, 31.59232,
         // 3 males"): those are its letters, which only the whole text says. It is read on its own only with a minus sign,
         // as they are then a direction (see `reading`), and not with an N or E that says otherwise ("2 lions -24.996931,
-        // 31.592312 (S/E)"). (Looked for only when two such letters are next to a number, which is quicker in a long text.)
-        let together = #"[NS]\s*[/,]\s*[EW](?![A-Z])"#
-        let tagged = has(#"(?i)[\d°'"][\s,(]*"# + together + #"|(?<![A-Z])"# + together + #"[\s:)]*[-+.]?\d"#, in: t)
+        // 31.592312 (S/E)"). (Looked for only when two such letters are next to a number or end a line, which is quicker in a
+        // long text.)
+        let together = #"[NSEW][ \t()/,;|]++[NSEW](?![A-Z])"#
+        let tagged = has(#"(?i)[\d°'"][\s,(]*"# + together + #"|(?<![A-Z])"# + together + #"(?:[\s:)]*[-+.]?\d|[ \t)]*\n)"#, in: t)
             ? tag(in: t) : nil
         for (decimal, separator) in [(#"\."#, #"(?:\s*[,;/]\s*|\s+)"#), (",", #"(?:\s*[;/]\s*|\s+)"#)] where decimal == "," ? decimalCommas : true {
             let fraction: String = "(?:" + decimal + #"\d+)?"#
@@ -2114,9 +2234,10 @@ enum CoordinateParser {
             let letter: String = #"\s?[NSEWO](?![A-Z]|\s*/\s*[EW](?![A-Z]))"#
             let half: String = #"(?:[NSEWO]\s?"# + fields + "(?:" + letter + ")?|" + fields + letter + #"|(?:[NSEWO]\s?)?(?:"#
                 + decimals + "|" + degrees + ")(?:" + letter + ")?)"
-            // (Not from the minutes of degrees with a minus sign: "-24 59.816, 31 35.539".)
+            // (Not from the minutes of degrees with a minus sign: "-24 59.816, 31 35.539". A comma right before a number after
+            // it, with decimal points, is a list's: "…, 31.592312,45958.28125".)
             let pair: String = #"(?<![\w.,°'"+-])(?!(?<=(?:^|[^\w.])[-+]\d{1,3}[ \t])\d)"# + half + "(" + separator + ")" + half
-                + #"(?![\w°'"]|[.,]\d)"#
+                + #"(?![\w°'"]|\.\d"# + (decimal == "," ? #"|,\d)"# : ")")
             var read: [NSRange] = []
             for m in matchRanges(pair, in: t, options: [.caseInsensitive]) {
                 let r = m[0]
@@ -2132,22 +2253,27 @@ enum CoordinateParser {
                 // 12.345 13.456 14.567"): a number after it, or a decimal before it, joined to it by a comma or semicolon
                 // or the way its own two numbers are joined. Not a number in a name ("Cheetah on H4-1, -24.9969, …") or
                 // after a word ("H1-2 km 23.4, -24.9969, …"), nor a time, a date, a phone number, a temperature or a count
-                // with a word, which aren't an altitude or a coordinate ("…, 06:45", "27/10/2026, …", "…, 082 555 1234",
-                // "…, 32°C", "Wild dogs 12, …", "…, 3 males"). With its letters a pair says which half is which, and a
-                // number after it is something else ("24.9969 S 31.5923 E 545.4") or another pair.
+                // with a word, a number with a leading zero (a waypoint's) or with more than 4 digits before its point (a
+                // date, an id), which aren't an altitude or a coordinate ("…, 06:45", "27/10/2026, …", "…, 082 555 1234",
+                // "…, 32°C", "Wild dogs 12, …", "…, 3 males", "1,001, -24.996931, 31.592312,45958.28125, …" in an
+                // OziExplorer file). With its letters a pair says which half is which, and a number after it is something
+                // else ("24.9969 S 31.5923 E 545.4") or another pair.
                 let sep = ns.substring(with: m[1])
                 let own = sep.contains("/") ? [#"\s*/\s*"#] : sep.contains(",") || sep.contains(";") ? [] : [#"\s+"#]
                 let joiners = [#"\s*[,;]\s*"#] + own
-                let number = #"(?!0\d)[-+]?\.?\d+(?:[.,]\d+)?(?![\d:/]|[.,]\d|\s*\p{L}|\s?°\s?[CF](?![A-Za-z]))"#
-                let word = #"(?<![\p{L}\d.,+:/-])(?<!\p{L}[ \t]{1,3})[-+]?\d+"#
+                let number = #"(?!0\d)[-+]?\.?\d{1,4}(?:[.,]\d+)?(?![\d:/]|[.,]\d|\s*\p{L}|\s?°\s?[CF](?![A-Za-z]))"#
+                let word = #"(?<![\p{L}\d.,+:/-])(?<!\p{L}[ \t]{1,3})[-+]?(?!0\d)\d+"#
                 // An "o" at its end with a number after it may as well be "or" ("…, 31.4371 o 31 grados").
                 if has(#"(?i)(?<![A-Z])O$"#, in: ns.substring(with: r)) && has(#"^\s*[-+]?\d"#, in: after) { continue }
                 let lettered = has(#"(?i)[NSEWO]"#, in: ns.substring(with: r))
+                // A dash with a space on each side right before a pair without a sign or letters may as well be its minus
+                // sign ("Lat/Long - 24.9969 / 31.5923"): it isn't clear which.
+                if !lettered, !ns.substring(with: r).contains("-"), has(#"(?:^|\s)-[ \t]+$"#, in: before) { continue }
                 if !lettered, let tag = tagged {
                     let signed = halves.map { ns.substring(with: $0).contains("-") }
-                    if !signed.contains(true) || (signed[0] && tag.0 == "N") || (signed[1] && tag.1 == "E") { continue }
+                    if !signed.contains(true) || (signed[0] && "NE".contains(tag.0)) || (signed[1] && "NE".contains(tag.1)) { continue }
                 }
-                if has(word + #"(?:[.,]\d+)?\s*[,;]\s*$"#, in: before) || joiners.contains(where: { j in
+                if has(word + "(?:" + decimal + #"\d+)?\s*[,;]\s*$"#, in: before) || joiners.contains(where: { j in
                     has(word + decimal + #"\d+"# + j + "$", in: before) || (!lettered && has("^" + j + number, in: after))
                 }) { continue }
                 tried += 1
