@@ -161,7 +161,7 @@ final class PointAdjuster: NSObject {
         loupe.centre = centre
         loupe.point = point
         loupe.metresAcross = Self.metresAcross
-        loupe.moved = MKMetersBetweenMapPoints(start, point)
+        loupe.moved = start.distance(to: point)
         loupe.setNeedsDisplay()
     }
 
