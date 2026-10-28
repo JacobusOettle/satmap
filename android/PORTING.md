@@ -69,6 +69,30 @@ the system properties `satmap.resources` and `satmap.fixtures`.
 Numbers, thresholds, timings, strings and colours are copied exactly. Floating-point maths is ported operation for
 operation so results match the Swift tests to the same tolerances.
 
+## Files shared with the iPhone app
+
+Offline map backups move between the two apps (export on one phone, restore on the other), so the Android app
+writes and reads exactly what the iPhone app does:
+
+- An area's folder holds `imagery.mbtiles` and `terrain.mbtiles` (MBTiles: tables `metadata`, `tiles`,
+  `missing_tiles`, as `MBTiles.swift` creates them, WAL journaling). On Android, open them with
+  `SQLiteDatabase.NO_LOCALIZED_COLLATORS`, so no `android_metadata` table is added.
+- Export: the area's settings go into each file's metadata (`satmap_area`: the area JSON, `satmap_layer`:
+  `imagery`/`terrain`), the write-ahead log is folded in (`PRAGMA wal_checkpoint(TRUNCATE)`, no `-wal` file left),
+  and the files are shared as "<name> - satellite.mbtiles" and "<name> - elevation.mbtiles"
+  (`OfflineBackup.fileSafe`, " (2)" for repeated names).
+- The area JSON is Swift's `JSONEncoder` output for `OfflineArea` (`SatMap/Core/OfflineBackup.swift`): keys as the
+  property names; `id` an upper-case UUID; `created` in seconds since 1 January 2001 (Unix time − 978307200);
+  whole-number fields (`maxZoom`, `failedTiles`, `bytesOnDisk`) written without a decimal point (Swift refuses
+  `18.0` for an `Int`); `status` one of queued/downloading/paused/waitingForNetwork/complete/incomplete; properties
+  that aren't set (`roads`, `preset`, `isTrack`, `problem`) left out; `shape` = {polygons, lines, points,
+  bufferMeters} with points as {lat, lon}. Reading accepts any key order, lower-case UUIDs, numbers with or without
+  decimals, and `null` for a value not set.
+- Restore accepts the files from any app or folder (they may have been through Google Drive, a computer, e-mail …):
+  any file name, chosen together in one pick; the files say which area and layer they are.
+- Tests on both sides read a backup made by the other app: `Tests/SatMapCoreTests/Fixtures/backup/iphone` (made by
+  the iPhone code) and `…/backup/android` (made by the Android code).
+
 ## The map on Android
 
 MapKit + the app's own drawn overlays become **MapLibre Native** with a style built in code:
