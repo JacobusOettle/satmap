@@ -161,19 +161,21 @@ final class ScreenshotTests: XCTestCase {
             XCTFail("The KML point isn't on the map")
         }
         // Drone mode: the airfields around, with how far they are from you and from a tapped spot, and where you are
-        // from the nearest one. The tapped spot's bar is put away first (a finger of the pinch on it would be lost),
-        // the map zoomed out until Stellenbosch's airfield shows, then a spot tapped.
+        // from the nearest one. Zoomed out until Stellenbosch's airfield shows, then a spot tapped.
+        // (A two-finger tap is a level out. On the whole map, as with a pinch, the simulator puts a finger in the status
+        // bar or on a bar over the map, and the map takes a one-finger tap or drag; on the launch point, in the middle of
+        // the map, both fingers are on the map.)
         setTerrain("Drone mode: airfields and navaids")
         let hide = app.buttons["Hide coordinates"].firstMatch
         if hide.exists { hide.tap() }
         sleep(1)
-        let map = app.maps.firstMatch
         let airfield = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label MATCHES %@", "(Airport |Airstrip )?FASH Stellenbosch")).firstMatch
         let middle = app.frame.insetBy(dx: 30, dy: 150)
-        for _ in 0..<5 where !(airfield.exists && middle.contains(CGPoint(x: airfield.frame.midX, y: airfield.frame.midY))) {
-            map.pinch(withScale: 0.4, velocity: -2)
-            sleep(4)
+        for _ in 0..<6 where !(airfield.exists && middle.contains(CGPoint(x: airfield.frame.midX, y: airfield.frame.midY))) {
+            guard launch.exists else { break }
+            launch.twoFingerTap()
+            sleep(3)
         }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.62)).tap()
         sleep(6)
