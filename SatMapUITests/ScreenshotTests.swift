@@ -160,20 +160,26 @@ final class ScreenshotTests: XCTestCase {
         } else {
             XCTFail("The KML point isn't on the map")
         }
-        // Drone mode: the airfields around, with how far they are from you and from the selected point, and where you
-        // are from the nearest one. Zoomed out for a few of them (a two-finger tap is a level out; a pinch in the
-        // simulator doesn't zoom out), then back.
+        // Drone mode: the airfields around, with how far they are from you and from a tapped spot, and where you are
+        // from the nearest one. The tapped spot's bar is put away first (a finger of the pinch on it would be lost),
+        // the map zoomed out until Stellenbosch's airfield shows, then a spot tapped.
         setTerrain("Drone mode: airfields and navaids")
+        let hide = app.buttons["Hide coordinates"].firstMatch
+        if hide.exists { hide.tap() }
+        sleep(1)
         let map = app.maps.firstMatch
-        for _ in 0..<5 {
-            map.twoFingerTap()
-            sleep(2)
-        }
-        sleep(8)
-        XCTAssertTrue(app.descendants(matching: .any)["droneCard"].firstMatch.exists, "No reporting card in drone mode")
-        // On the map itself, not only in the card ("6.1 NM NE of FASH Stellenbosch").
         let airfield = app.descendants(matching: .any)
             .matching(NSPredicate(format: "label MATCHES %@", "(Airport |Airstrip )?FASH Stellenbosch")).firstMatch
+        let middle = app.frame.insetBy(dx: 30, dy: 150)
+        for _ in 0..<5 where !(airfield.exists && middle.contains(CGPoint(x: airfield.frame.midX, y: airfield.frame.midY))) {
+            map.pinch(withScale: 0.4, velocity: -2)
+            sleep(4)
+        }
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.62)).tap()
+        sleep(6)
+        XCTAssertTrue(app.descendants(matching: .any)["droneCard"].firstMatch.exists, "No reporting card in drone mode")
+        XCTAssertTrue(app.buttons["tappedCoordinates"].exists, "Tapping the map in drone mode didn't place a pin")
+        // On the map itself, not only in the card ("6.1 NM NE of FASH Stellenbosch").
         XCTAssertTrue(airfield.exists, "Stellenbosch airfield (FASH) isn't on the map in drone mode")
         snap("25-drone-mode")
         setTerrain("Contour lines")

@@ -19,6 +19,8 @@ struct NewAreaView: View {
     private let zoomChoices = Array((15...TileSources.imageryMaxZoom).reversed())
     /// For your track: the track area's own zoom, kept apart from the one remembered for other areas.
     @State private var trackZoom: Int?
+    /// A level was tapped here: it is downloaded as chosen, however big (the remembered one may be lowered).
+    @State private var picked = false
     @State private var allowCellular = false
     @State private var alongRoads = false
     @State private var roads: RoadsState = .notLoaded
@@ -111,7 +113,9 @@ struct NewAreaView: View {
                     Label("Download", systemImage: "arrow.down.circle.fill")
                         .font(.headline)
                 }
-                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || (alongRoads && (roadLines ?? []).isEmpty))
+                // Not before the sizes are known: the level may yet be lowered to fit.
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || (alongRoads && (roadLines ?? []).isEmpty)
+                          || chosenEstimate == nil)
             }
         }
         .navigationTitle("Download area")
@@ -154,6 +158,7 @@ struct NewAreaView: View {
         Section {
             ForEach(zoomChoices, id: \.self) { z in
                 Button {
+                    picked = true
                     if track != nil { trackZoom = z } else { maxZoom = z }
                 } label: { zoomRow(z) }
                     .accessibilityAddTraits(z == chosenZoom ? .isSelected : [])
@@ -178,6 +183,9 @@ struct NewAreaView: View {
                     if e.bytes > free - OfflineManager.minimumFreeSpace {
                         Text("This may not fit. The download stops when less than 500 MB is free; choose a lower zoom or a smaller area.")
                             .foregroundColor(.orange)
+                    } else if chosenZoom < rememberedZoom {
+                        Text("Zoom \(rememberedZoom) would take most of the free space, so this is the most detail that leaves room. Tap a level above to choose another.")
+                            .foregroundColor(.secondary)
                     }
                 }
             } else if alongRoads, case .failed = roads {
@@ -216,8 +224,23 @@ struct NewAreaView: View {
         }
     }
 
+    /// The level to download: the one remembered from the last area (or tapped here), lowered until it takes at most
+    /// half the free space unless it was tapped, so a whole park doesn't start out as hundreds of gigabytes.
     private var chosenZoom: Int {
+        guard !picked, let fits = deepestFitting else { return rememberedZoom }
+        return min(rememberedZoom, fits)
+    }
+
+    private var rememberedZoom: Int {
         min(max(trackZoom ?? maxZoom, zoomChoices.last!), zoomChoices.first!)
+    }
+
+    /// Once the sizes are known, the most detailed level taking at most half the free space (above what downloads
+    /// stop at); the least detailed when none does.
+    private var deepestFitting: Int? {
+        guard let counts = counts, let imagery = imageryCounts, let free = freeSpace else { return nil }
+        let room = (free - OfflineManager.minimumFreeSpace) / 2
+        return zoomChoices.first { estimate(imagery: imagery, terrain: counts, depth: $0).bytes <= room } ?? zoomChoices.last
     }
 
     private func kilometres(_ km: Double) -> String {
