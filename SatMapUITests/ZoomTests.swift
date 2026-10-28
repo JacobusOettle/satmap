@@ -1,40 +1,35 @@
 import CoreLocation
 import XCTest
 
-/// Zooms and pans the map the same way for each way of drawing the imagery (`SatelliteMode`), while
-/// .github/workflows/zoomtest.yml records the screen, to see which one shows empty blocks while tiles load.
+/// Zooms and pans the map the same way each time, without and with contour lines, while
+/// .github/workflows/zoomtest.yml records the screen, to see where it shows empty blocks while tiles load.
 final class ZoomTests: XCTestCase {
     private let app = XCUIApplication()
 
-    func testZoomSingle() { zoomAround(mode: "single") }
-    func testZoomBackdrop() { zoomAround(mode: "backdrop") }
-    func testZoomRenderer() { zoomAround(mode: "renderer") }
-    func testZoomBackdropContours() { zoomAround(mode: "backdrop", contours: true) }
+    func testZoomRenderer() { zoomAround() }
+    func testZoomRendererContours() { zoomAround(contours: true) }
 
     // The app moves the map itself through the same steps each time (ZoomScript): no gestures.
-    func testScriptSingle() { scripted(mode: "single") }
-    func testScriptBackdrop() { scripted(mode: "backdrop") }
-    func testScriptRenderer() { scripted(mode: "renderer") }
-    func testScriptBackdropContours() { scripted(mode: "backdrop", contours: true) }
-    func testScriptRendererContours() { scripted(mode: "renderer", contours: true) }
+    func testScriptRenderer() { scripted() }
+    func testScriptRendererContours() { scripted(contours: true) }
 
-    private func scripted(mode: String, contours: Bool = false) {
+    private func scripted(contours: Bool = false) {
         XCUIDevice.shared.location = XCUILocation(location: CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: -33.918292, longitude: 18.921204),
             altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date()))
-        app.launchArguments = ["-satelliteMode", mode, "-showContours", contours ? "YES" : "NO", "-zoomScript", "YES"]
+        app.launchArguments = ["-showContours", contours ? "YES" : "NO", "-zoomScript", "YES"]
         app.launch()
         allowPermissionPrompts()
         XCTAssertTrue(app.maps.firstMatch.waitForExistence(timeout: 30), "No map")
         sleep(20 + 12 * 5 + 6 + 54) // the script's steps, with room for a slow start on the simulator
     }
 
-    private func zoomAround(mode: String, contours: Bool = false) {
+    private func zoomAround(contours: Bool = false) {
         continueAfterFailure = true
         XCUIDevice.shared.location = XCUILocation(location: CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: -33.918292, longitude: 18.921204),
             altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date()))
-        app.launchArguments = ["-satelliteMode", mode, "-showContours", contours ? "YES" : "NO"]
+        app.launchArguments = ["-showContours", contours ? "YES" : "NO"]
         app.launch()
         allowPermissionPrompts()
         let map = app.maps.firstMatch

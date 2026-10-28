@@ -3,7 +3,7 @@ import MapKit
 import SwiftUI
 import UIKit
 
-/// Owns the MKMapView: satellite + contour tiles, the recorded track, the measuring line,
+/// Owns the MKMapView: the satellite imagery with contour lines, the recorded track, the measuring line,
 /// imported blocks and the lasso used to choose offline areas.
 final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
     let container = UIView()
@@ -15,12 +15,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private let aimLine = CAShapeLayer()
     private let model: AppModel
 
-    private var satelliteMode = SatelliteMode.current
-    /// The imagery (`SatelliteMode`). Tiles: MapKit's tile layer over a backdrop (Single: without).
-    private var satellite: SatelliteTileOverlay?
-    private var backdrop: SatelliteBackdropOverlay?
-    /// Drawn: the imagery SatMap draws, and while a new layer of it replaces that one (`swapDrawn`), the one going (on
-    /// top until the new one has painted).
+    /// The imagery SatMap draws (with the contour lines), and while a new layer of it replaces that one (`swapDrawn`),
+    /// the one going (on top until the new one has painted).
     private var drawn: SatelliteDrawnOverlay?
     private var drawnOutgoing: SatelliteDrawnOverlay?
     private var swapScheduled = false
@@ -31,7 +27,6 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var mapMoving = false
     private var movingSince: CFTimeInterval = 0
     private var swapWaiting = false
-    private let contours = ContourTileOverlay(urlTemplate: nil)
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
     private var trackRenderer: TrackRenderer?
@@ -78,14 +73,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         mapView.register(SelectedPointView.self, forAnnotationViewWithReuseIdentifier: SelectedPointView.reuseID)
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
 
-        // Later overlays draw on top: imagery, contours (when switched on), (blocks inserted below the track),
-        // track, measuring line.
+        // Later overlays draw on top: imagery with contours, (blocks inserted below the track), track, measuring line.
         addImagery()
-        NotificationCenter.default.addObserver(forName: SatelliteMode.changed, object: nil, queue: .main) { [weak self] _ in
-            self?.satelliteModeChanged()
-        }
         SatelliteRenderer.onArrival = { [weak self] t, content in self?.tileArrived(t, content) }
-        contoursChanged(model.showContours)
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
@@ -227,14 +217,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             guard let self = self, self.reloadPending, self.isForeground else { return }
             self.reloadPending = false
             self.lastReload = Date()
-            // Only when the imagery layer showed something it should replace: a reload empties it for a moment.
-            if self.satellite?.takeNeedsReload() == true { self.reloadSatelliteTiles() }
             SatelliteRenderer.reload()
-            // Drawn: a new layer asks again for the tiles shown with a stand-in.
+            // A new layer asks again for the tiles shown with a stand-in.
             if let d = self.drawn, (self.mapView.renderer(for: d) as? SatelliteRenderer)?.hasStandIns == true {
                 self.swapDrawn()
             }
-            (self.mapView.renderer(for: self.contours) as? MKTileOverlayRenderer)?.reloadData()
             self.model.aim.retry()
         }
     }
@@ -333,11 +320,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
             guard let self = self, n == self.stopCount, self.isForeground, let levels = self.imageryLevels else { return }
             let visible = self.mapView.visibleMapRect
-            if self.satelliteMode == .renderer {
-                SatelliteRenderer.setFocus(visible.insetBy(dx: -visible.width / 4, dy: -visible.height / 4),
-                                           level: levels.imagery, contourLevel: levels.contours)
-            }
-            ImageryPrefetch.mapStopped(visible: visible, level: levels.imagery, decode: self.satelliteMode == .renderer)
+            SatelliteRenderer.setFocus(visible.insetBy(dx: -visible.width / 4, dy: -visible.height / 4),
+                                       level: levels.imagery, contourLevel: levels.contours)
+            ImageryPrefetch.mapStopped(visible: visible, level: levels.imagery)
             if let d = self.drawn { (self.mapView.renderer(for: d) as? SatelliteRenderer)?.loadStandIns() }
         }
     }
@@ -353,7 +338,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         let painted = pow(2, ceil(log2(onScreen) - 1e-6))
         var pixelsPerPoint = Double(max(1, mapView.window?.screen.scale ?? mapView.traitCollection.displayScale))
         let paint = SatelliteRenderer.lastPaintScale
-        if satelliteMode == .renderer, paint.pixelsPerPoint > 0 { pixelsPerPoint = Double(paint.pixelsPerPoint) }
+        if paint.pixelsPerPoint > 0 { pixelsPerPoint = Double(paint.pixelsPerPoint) }
         return (SatelliteRenderer.level(pixelsPerMapPoint: onScreen * pixelsPerPoint),
                 SatelliteRenderer.level(pixelsPerMapPoint: painted))
     }
@@ -373,7 +358,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
         updateScale()
-        if satelliteMode == .renderer, let levels = imageryLevels {
+        if let levels = imageryLevels {
             let v = mapView.visibleMapRect
             SatelliteRenderer.setFocus(v.insetBy(dx: -v.width / 4, dy: -v.height / 4),
                                        level: levels.imagery, contourLevel: levels.contours)
@@ -434,68 +419,15 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     // MARK: - Satellite imagery
 
-    /// Puts the imagery layers for the mode at the bottom of the map (under contours, blocks, track …). Only the bottom
-    /// one replaces Apple's map: where a layer that does has no tile yet, MapKit paints its grey loading grid, which
-    /// would hide what is under it.
+    /// Puts the imagery at the bottom of the map (under blocks, track …). It replaces Apple's map.
     private func addImagery() {
-        var layers: [MKOverlay] = []
-        switch satelliteMode {
-        case .renderer:
-            let imagery = SatelliteDrawnOverlay(urlTemplate: nil)
-            drawn = imagery
-            layers = [imagery]
-        case .backdrop, .single:
-            let tiles = SatelliteTileOverlay(urlTemplate: nil)
-            if satelliteMode == .backdrop {
-                let b = SatelliteBackdropOverlay(urlTemplate: nil)
-                backdrop = b
-                layers.append(b)
-                tiles.canReplaceMapContent = false
-            }
-            satellite = tiles
-            layers.append(tiles)
-        }
-        for (i, layer) in layers.enumerated() { mapView.insertOverlay(layer, at: i, level: .aboveLabels) }
+        let imagery = SatelliteDrawnOverlay(urlTemplate: nil)
+        drawn = imagery
+        mapView.insertOverlay(imagery, at: 0, level: .aboveLabels)
     }
 
-    /// The top imagery layer, for putting contours over it.
-    private var topImagery: MKOverlay? {
-        drawnOutgoing ?? drawn ?? satellite
-    }
-
-    /// The way of drawing the imagery was switched (Offline maps, while it is being tried out).
-    private func satelliteModeChanged() {
-        let mode = SatelliteMode.current
-        guard mode != satelliteMode else { return }
-        satelliteMode = mode
-        let old: [MKOverlay?] = [satellite, backdrop, drawn, drawnOutgoing]
-        mapView.removeOverlays(old.compactMap { $0 })
-        satellite = nil
-        backdrop = nil
-        drawn = nil
-        drawnOutgoing = nil
-        addImagery()
-        contoursChanged(model.showContours) // Drawn draws them itself
-    }
-
-    /// Loads the tile layer's tiles again. Over a backdrop, without emptying it first (which would show the backdrop's
-    /// stand-ins for a moment, often the whole screen): a new tile layer goes on top, its tiles in memory come at once
-    /// and the others are asked for again, and the old one goes once the new one has had time to fill in.
-    private func reloadSatelliteTiles() {
-        guard let old = satellite else { return }
-        guard backdrop != nil else {
-            (mapView.renderer(for: old) as? MKTileOverlayRenderer)?.reloadData()
-            return
-        }
-        let new = SatelliteTileOverlay(urlTemplate: nil)
-        new.canReplaceMapContent = false
-        satellite = new
-        mapView.insertOverlay(new, above: old)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.mapView.removeOverlay(old) }
-    }
-
-    /// Drawn: a tile has arrived in memory. If the drawn layer shows a stand-in where it would show better, a new
-    /// layer replaces it.
+    /// A tile has arrived in memory. If the drawn layer shows a stand-in where it would show better, a new layer
+    /// replaces it.
     private func tileArrived(_ t: TileID, _ content: SatelliteRenderer.Content) {
         guard let d = drawn, let r = mapView.renderer(for: d) as? SatelliteRenderer, r.wouldImprove(with: t, content) else { return }
         scheduleSwap()
@@ -581,23 +513,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     // MARK: - Contours
 
-    /// Removing the overlay (rather than hiding it) stops MapKit asking for contour tiles, so no elevation is
-    /// downloaded or processed for them. Rendered tiles stay cached, so switching back on is quick.
-    /// Drawn: the drawn layer draws them, so a new one comes, with or without.
+    /// The imagery layer draws them, so a new one comes, with or without. Switched off, no elevation is downloaded
+    /// or processed for them; drawn tiles stay cached, so switching back on is quick.
     private func contoursChanged(_ show: Bool) {
         if let d = drawn, let r = mapView.renderer(for: d) as? SatelliteRenderer, r.drawsContours != show { swapDrawn() }
-        let shown = mapView.overlays.contains { $0 === contours }
-        let overlay = show && satelliteMode != .renderer
-        if overlay && !shown {
-            // Under the blocks, track and measuring line.
-            if let top = topImagery {
-                mapView.insertOverlay(contours, above: top)
-            } else {
-                mapView.insertOverlay(contours, at: 0, level: .aboveLabels)
-            }
-        } else if !overlay && shown {
-            mapView.removeOverlay(contours)
-        }
     }
 
     // MARK: - Track
@@ -867,8 +786,6 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         switch overlay {
         case let o as SatelliteDrawnOverlay:
             return SatelliteRenderer(overlay: o, contours: model.showContours)
-        case let o as MKTileOverlay:
-            return MKTileOverlayRenderer(tileOverlay: o)
         case let o as TrackOverlay:
             let r = TrackRenderer(overlay: o)
             trackRenderer = r

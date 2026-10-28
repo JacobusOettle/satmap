@@ -3,8 +3,8 @@ import UIKit
 import os
 
 /// For the zoom test (.github/workflows/zoomtest.yml): with the launch setting `zoomScript`, the map runs through the
-/// same zooms and pans every time (no gestures, no following you), logging each step, so recordings of the ways of
-/// drawing imagery (`SatelliteMode`) can be compared step by step.
+/// same zooms and pans every time (no gestures, no following you), logging each step, so recordings of different
+/// builds can be compared step by step.
 enum ZoomScript {
     private static let log = Logger(subsystem: "com.jacobusoettle.satmap", category: "zoomscript")
 

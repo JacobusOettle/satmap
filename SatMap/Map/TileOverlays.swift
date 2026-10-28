@@ -4,40 +4,9 @@ import UIKit
 
 struct TileUnavailable: Error {}
 
-/// MapKit stops requesting tiles past `maximumZ` (and doesn't reliably enlarge the last level),
-/// so the tile overlays accept very deep zooms and enlarge ancestor data themselves.
-let deepestTileZoom = 25
-
-/// Contour lines drawn on the device from elevation tiles (offline areas or online).
-final class ContourTileOverlay: MKTileOverlay {
-    /// Create with `ContourTileOverlay(urlTemplate: nil)`.
-    override init(urlTemplate: String?) {
-        super.init(urlTemplate: nil)
-        canReplaceMapContent = false
-        minimumZ = ContourPolicy.minTileZoom
-        maximumZ = deepestTileZoom
-        tileSize = CGSize(width: 256, height: 256)
-    }
-
-    override func loadTile(at path: MKTileOverlayPath, result: @escaping (Data?, Error?) -> Void) {
-        let n = 1 << path.z
-        guard path.y >= 0, path.y < n else { return result(nil, TileUnavailable()) }
-        let t = TileID(z: path.z, x: ((path.x % n) + n) % n, y: path.y)
-        let scale = Double(path.contentScaleFactor)
-        tileLog.debug("contour tile requested \(t.description, privacy: .public) contentScale \(scale)")
-        Task.detached(priority: .userInitiated) {
-            if let data = await ContourRenderer.shared.render(t, contentScale: scale) {
-                result(data, nil)
-            } else {
-                result(nil, TileUnavailable())
-            }
-        }
-    }
-}
-
-/// Draws 256×256-pixel transparent contour tiles. MapKit shows a tile pixel at 1/scale points (scale = the
-/// tile's `contentScaleFactor`, falling back to the screen scale), so stroke widths and fonts are multiplied by it
-/// and the contour interval is chosen from the equivalent web-map zoom.
+/// Draws 256×256-pixel transparent contour tiles, which the imagery layer draws over the imagery
+/// (`SatelliteRenderer`). Stroke widths and fonts are multiplied by the scale it gives (the screen's), and the
+/// contour interval is chosen from the equivalent web-map zoom.
 final class ContourRenderer {
     static let shared = ContourRenderer()
 
@@ -46,14 +15,14 @@ final class ContourRenderer {
     private let emptyCache = NSCache<NSString, NSNumber>()
     private let lock = NSLock()
     private var scale: Double = 3
-    /// MapKit sometimes asks for the same tile again before the first answer: share the work.
+    /// A tile asked for again before the first answer shares its work.
     private var inFlight: [String: Task<Tile, Never>] = [:]
 
     private let minorColor = UIColor(red: 1.0, green: 0.84, blue: 0.32, alpha: 0.85)
     private let indexColor = UIColor(red: 1.0, green: 0.74, blue: 0.16, alpha: 1.0)
     private let haloColor = UIColor(white: 0, alpha: 0.38)
 
-    /// Screen scale (2 or 3); set once from the UI, used when MapKit doesn't report a tile scale.
+    /// Screen scale (2 or 3); set once from the UI, used when no scale is given.
     var screenScale: Double {
         get { lock.withLock { scale } }
         set { lock.withLock { scale = max(1, newValue) } }
@@ -80,11 +49,6 @@ final class ContourRenderer {
         case blank
         /// No elevation for it (offline and not downloaded, or the fetch failed).
         case unavailable
-    }
-
-    func render(_ t: TileID, contentScale: Double) async -> Data? {
-        if case .lines(let data, _) = await tile(t, contentScale: contentScale) { return data }
-        return nil
     }
 
     func tile(_ t: TileID, contentScale: Double) async -> Tile {

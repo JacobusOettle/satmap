@@ -7,7 +7,7 @@ import UIKit
 let tileLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "tiles")
 
 /// Where map tiles come from: downloaded offline areas first, then the network (if online), and for zooms
-/// deeper than the imagery goes, an enlarged crop of the nearest ancestor tile.
+/// deeper than the imagery goes, the nearest ancestor tile (which the imagery layer enlarges).
 final class TileRepository {
     static let shared = TileRepository()
 
@@ -172,26 +172,6 @@ final class TileRepository {
     }
 
     // MARK: - Imagery for display
-
-    enum ImageryQuality {
-        case exact
-        /// Part of an ancestor enlarged, as the imagery doesn't go this deep here.
-        case enlargedForGood
-        /// Part of an ancestor enlarged for now: the tile isn't saved offline and couldn't be loaded.
-        case enlargedForNow
-    }
-
-    /// The imagery for an on-screen tile. `urgent` requests go before the others.
-    func imageryForDisplay(_ t: TileID, urgent: Bool = false) async -> (data: Data, quality: ImageryQuality)? {
-        guard let r = await nearestImagery(t, urgent: urgent) else { return nil }
-        if r.tile == t { return (r.data, .exact) }
-        // Enlarge part of the nearest ancestor that exists.
-        let a = r.tile, k = t.z - a.z
-        let enlarged = await Work.run(on: Work.images) {
-            ImageTools.enlarge(r.data, levels: k, x: t.x - (a.x << k), y: t.y - (a.y << k))
-        }
-        return enlarged.map { ($0, r.beyondDepth ? .enlargedForGood : .enlargedForNow) }
-    }
 
     /// The tile's own imagery, or if it can't be had (deeper than the imagery goes, or not saved offline and not
     /// loaded) the nearest coarser tile that exists, as it is: the drawn layer enlarges what it has itself.
@@ -537,64 +517,13 @@ enum ImageTools {
         let b = [UInt8](d.prefix(4))
         return (b[0] == 0xFF && b[1] == 0xD8) || (b[0] == 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47)
     }
-
-    /// Crops the (x, y) sub-tile `levels` zooms below an ancestor tile and scales it up to 256 px.
-    static func enlarge(_ data: Data, levels: Int, x: Int, y: Int) -> Data? {
-        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
-        let size = CGFloat(image.width) / CGFloat(1 << levels)
-        let rect = CGRect(x: CGFloat(x) * size, y: CGFloat(y) * size, width: size, height: size).integral
-        guard rect.width >= 1, let sub = image.cropping(to: rect) else { return nil }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        format.preferredRange = .standard
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format)
-        return renderer.jpegData(withCompressionQuality: 0.9) { ctx in
-            ctx.cgContext.interpolationQuality = .high
-            UIImage(cgImage: sub).draw(in: CGRect(x: 0, y: 0, width: 256, height: 256))
-        }
-    }
-}
-
-extension ImageTools {
-    /// JPEG data of an image as it is.
-    static func jpeg(_ image: CGImage) -> Data? {
-        let out = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(out, "public.jpeg" as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: 0.85] as CFDictionary)
-        return CGImageDestinationFinalize(dest) ? out as Data : nil
-    }
-
-    /// Four tiles (top left, top right, bottom left, bottom right) shrunk into one 256 px tile.
-    static func combine(_ quarters: [Data]) -> Data? {
-        let images = quarters.compactMap { d -> CGImage? in
-            guard let src = CGImageSourceCreateWithData(d as CFData, nil) else { return nil }
-            return CGImageSourceCreateImageAtIndex(src, 0, nil)
-        }
-        guard images.count == 4 else { return nil }
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        format.preferredRange = .standard
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 256, height: 256), format: format)
-        return renderer.jpegData(withCompressionQuality: 0.9) { ctx in
-            ctx.cgContext.interpolationQuality = .high
-            for (i, image) in images.enumerated() {
-                UIImage(cgImage: image).draw(in: CGRect(x: CGFloat(i % 2) * 128, y: CGFloat(i / 2) * 128, width: 128, height: 128))
-            }
-        }
-    }
 }
 
 /// Dedicated queues for CPU-heavy tile work, so it doesn't occupy Swift's small cooperative thread pool
 /// (which the downloads and elevation lookups also need).
 enum Work {
-    static let images: OperationQueue = makeQueue("satmap.images", 3, .userInitiated)
     // Contours are on-screen content the user is waiting for, like imagery.
     static let contours: OperationQueue = makeQueue("satmap.contours", 3, .userInitiated)
-    // The backdrop under the imagery answers from memory; it must keep up with a whole screen of tiles at once.
-    static let backdrop: OperationQueue = makeQueue("satmap.backdrop", 4, .userInitiated)
     // Decoding imagery for the drawn layer, off the threads MapKit draws on.
     static let prepare: OperationQueue = makeQueue("satmap.prepare", 2, .userInitiated)
 

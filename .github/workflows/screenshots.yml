@@ -91,8 +91,8 @@ jobs:
           ls -l shots
           kill $LOGPID || true
           echo "===== app log summary ====="
-          echo "contour tiles requested: $(grep -c 'contour tile requested' applog.txt)"
-          echo "contour tiles drawn:     $(grep -c ' drawn ' applog.txt)"
+          echo "contour tiles worked out: $(grep -cE 'contours [0-9]+/' applog.txt)"
+          echo "contour tiles drawn:      $(grep -cE 'contours [0-9]+/.* drawn ' applog.txt)"
           echo "elevation fetches:       $(grep -c 'elevation fetch' applog.txt)"
           echo "errors:                  $(grep -cE 'failed|no elevation|no grid|paused' applog.txt)"
           echo "--- first 60 lines ---"; head -n 60 applog.txt
