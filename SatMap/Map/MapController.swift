@@ -553,23 +553,24 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         func mapPoints(_ pts: [GeoPoint]) -> [MKMapPoint] {
             pts.map { MKMapPoint(CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon)) }
         }
-        func isNear(_ pts: [MKMapPoint]) -> Bool {
-            pts.contains { near.contains($0) }
-        }
+
         let colours = model.kml.useFileColours
         for f in model.kml.files where f.isShown {
             for feature in f.document.features {
                 let style = colours ? feature.style : nil
                 let line = style?.lineColor.map(UIColor.init(kml:)) ?? UIColor(white: 1, alpha: 0.95)
                 switch feature.geometry {
+                // By their boxes: a long edge passing the point counts, though its corners are far away.
                 case .polygon(let outer, let holes):
                     for ring in [outer] + holes {
                         let pts = mapPoints(ring)
-                        if isNear(pts) { scene.lines.append((pts, line, true)) }
+                        let b = LoupeView.box(pts)
+                        if LoupeView.overlap(b, near) { scene.lines.append((pts, line, true, b)) }
                     }
                 case .line(let pts):
                     let mp = mapPoints(pts)
-                    if isNear(mp) { scene.lines.append((mp, line, false)) }
+                    let b = LoupeView.box(mp)
+                    if LoupeView.overlap(b, near) { scene.lines.append((mp, line, false, b)) }
                 case .point(let q):
                     let mp = mapPoints([q])[0]
                     if near.contains(mp) {

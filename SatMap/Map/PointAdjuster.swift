@@ -241,7 +241,7 @@ private struct LoupeGlass: View {
 final class LoupeView: UIView {
     /// What is drawn over the imagery, in map points: lines (with their colour), other points, and you.
     struct Scene {
-        var lines: [(points: [MKMapPoint], colour: UIColor, closed: Bool)] = []
+        var lines: [(points: [MKMapPoint], colour: UIColor, closed: Bool, bounds: MKMapRect)] = []
         var dots: [(point: MKMapPoint, colour: UIColor)] = []
         /// The measuring line through the points (the one being moved at `moving`), and from you for a single point.
         var measure: [MKMapPoint] = []
@@ -299,7 +299,8 @@ final class LoupeView: UIView {
 
         ctx.setLineJoin(.round)
         ctx.setLineCap(.round)
-        for line in scene.lines where line.points.count >= 2 {
+        let margin = 4 / k
+        for line in scene.lines where line.points.count >= 2 && Self.overlap(line.bounds, ground.insetBy(dx: -margin, dy: -margin)) {
             let path = CGMutablePath()
             path.addLines(between: line.points.map(local))
             if line.closed { path.closeSubpath() }
@@ -383,6 +384,24 @@ final class LoupeView: UIView {
 
         caption("\(Int(metresAcross)) m", at: CGPoint(x: 8, y: 6), alignRight: false)
         caption(String(format: "moved %.1f m", moved), at: CGPoint(x: bounds.width - 8, y: bounds.height - 24), alignRight: true)
+    }
+
+    /// Whether two map rects meet (also for a line's flat box, which MKMapRect.intersects may not count).
+    static func overlap(_ a: MKMapRect, _ b: MKMapRect) -> Bool {
+        !a.isNull && !b.isNull && a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY
+    }
+
+    /// The box around points, from their own extremes.
+    static func box(_ pts: [MKMapPoint]) -> MKMapRect {
+        guard let f = pts.first else { return .null }
+        var x0 = f.x, x1 = f.x, y0 = f.y, y1 = f.y
+        for p in pts {
+            x0 = min(x0, p.x)
+            x1 = max(x1, p.x)
+            y0 = min(y0, p.y)
+            y1 = max(y1, p.y)
+        }
+        return MKMapRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
     }
 
     private func caption(_ text: String, at p: CGPoint, alignRight: Bool) {
