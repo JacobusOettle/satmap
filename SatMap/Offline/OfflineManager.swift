@@ -7,44 +7,8 @@ import UIKit
 /// where they stopped, wait for the network (or Wi-Fi) and continue after the app restarts.
 /// Used on the main thread only.
 final class OfflineManager: ObservableObject, @unchecked Sendable {
-    struct Area: Codable, Identifiable, Equatable {
-        enum Status: String, Codable {
-            case queued
-            case downloading
-            case paused
-            case waitingForNetwork
-            case complete
-            case incomplete
-        }
-
-        let id: UUID
-        var name: String
-        var created: Date
-        var shape: CoverageShape
-        /// Satellite imagery only along these roads (with `Roads.corridorMeters` on each side); nil = the whole
-        /// area. Elevation is always downloaded for the whole area.
-        var roads: [[GeoPoint]]?
-        /// Or the roads of a set shipped with the app (`RoadPresets`), so they aren't stored again here.
-        var preset: String?
-        /// The area along your recorded track ("Where I've been"), updated from the latest track each time.
-        var isTrack: Bool?
-        var maxZoom: Int
-        var allowCellular: Bool
-        var status: Status
-        var failedTiles: Int
-        var bytesOnDisk: Int64
-        /// Why the last run stopped early (e.g. storage full), shown to the user.
-        var problem: String?
-
-        var directory: URL { AppPaths.offlineArea(id) }
-
-        var alongRoads: Bool { roads != nil || preset != nil }
-
-        /// The roads imagery is downloaded along, or nil for the whole area.
-        var roadLines: [[GeoPoint]]? {
-            roads ?? preset.flatMap(RoadPresets.load)?.roads
-        }
-    }
+    /// An area's settings (in `OfflineBackup.swift`: the same record is the backup format, on Android too).
+    typealias Area = OfflineArea
 
     @Published private(set) var areas: [Area] = []
     @Published private(set) var progress: DownloadProgress?
@@ -753,5 +717,14 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     /// Keep the screen on while a download runs in the foreground so it isn't interrupted.
     private func updateIdleTimer() {
         UIApplication.shared.isIdleTimerDisabled = activeID != nil
+    }
+}
+
+extension OfflineArea {
+    var directory: URL { AppPaths.offlineArea(id) }
+
+    /// The roads imagery is downloaded along, or nil for the whole area.
+    var roadLines: [[GeoPoint]]? {
+        roads ?? preset.flatMap(RoadPresets.load)?.roads
     }
 }

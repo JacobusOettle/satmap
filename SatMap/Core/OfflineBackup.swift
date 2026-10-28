@@ -1,5 +1,41 @@
 import Foundation
 
+/// An offline area's settings: the app's list of areas, and the JSON inside each exported file. That JSON is the
+/// backup format on the iPhone and on Android alike (backups move between them), so its shape — Swift's own
+/// encoding of this struct: the id in capitals, dates as seconds since 1 January 2001, values not set left out —
+/// must stay as it is.
+struct OfflineArea: Codable, Identifiable, Equatable {
+    enum Status: String, Codable {
+        case queued
+        case downloading
+        case paused
+        case waitingForNetwork
+        case complete
+        case incomplete
+    }
+
+    let id: UUID
+    var name: String
+    var created: Date
+    var shape: CoverageShape
+    /// Satellite imagery only along these roads (with `Roads.corridorMeters` on each side); nil = the whole
+    /// area. Elevation is always downloaded for the whole area.
+    var roads: [[GeoPoint]]?
+    /// Or the roads of a set shipped with the app (`RoadPresets`), so they aren't stored again here.
+    var preset: String?
+    /// The area along your recorded track ("Where I've been"), updated from the latest track each time.
+    var isTrack: Bool?
+    var maxZoom: Int
+    var allowCellular: Bool
+    var status: Status
+    var failedTiles: Int
+    var bytesOnDisk: Int64
+    /// Why the last run stopped early (e.g. storage full), shown to the user.
+    var problem: String?
+
+    var alongRoads: Bool { roads != nil || preset != nil }
+}
+
 /// Backups of offline areas as plain MBTiles files, one per layer ("<area> - satellite.mbtiles" and
 /// "<area> - elevation.mbtiles"). Each file carries the area's settings in its metadata, so the files can be
 /// restored into the app later, and other map apps can open them meanwhile.
