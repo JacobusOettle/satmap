@@ -2826,6 +2826,34 @@ final class CoordinateParserTests: XCTestCase {
         }
     }
 
+    func testUnitsBeforeTheirValueAndLettersAfterAPair() {
+        // A unit right after a coordinate with its own value after it is that value's ("…, 31.592312 min 5"); after a
+        // whole number it is that number's ("Wind 15 kt 24 59.816 S …", "Lions 500 m -24.996931, …").
+        for t in ["-24.996931, 31.592312 min 5", "-24.996931, 31.592312 hrs 2", "-24.996931, 31.592312 miles 3",
+                  "Lions 500 m -24.996931, 31.592312"] {
+            check(t, "decimal degrees", at: signed)
+        }
+        check("Wind 15 kt 24 59.816 S 31 35.539 E", "degrees and decimal minutes", at: gps)
+        // A bearing's or zoom's value before a heading of both labels, and a heading's direction before a pair read on its own.
+        for t in ["Bearing 270° Lat/Long: -24.996931, 31.592312", "Zoom 15 Lat/Long: -24.996931, 31.592312"] {
+            check(t, "decimal degrees", at: signed)
+        }
+        check("Heading W 40.6892, -74.0445 2 males", "decimal degrees", at: newYork)
+        // One N or S after a pair with a minus sign may as well be the second half's ("31.4371, -25.0969 S"): not read,
+        // unless a label or a heading names the halves.
+        for t in ["-24.996931, 31.592312 N", "40.6892, -74.0445 S", "-33.4489, -70.6693 S"] {
+            for near in [nil, kruger] {
+                XCTAssertNil(CoordinateParser.parse(t, near: near), t)
+            }
+        }
+        for t in ["Lat/Long: -24.996931, 31.592312 N", "Lat: -24.996931 Lon: 31.592312 S"] {
+            check(t, "decimal degrees", at: signed)
+        }
+        // The only letter, with a place after it, is a direction; one after a half when the other has its own isn't.
+        check("24.996931, 31.592312 (W of the bridge)", "decimal degrees", at: GeoPoint(lat: 24.996931, lon: 31.592312))
+        check("24.99 N 31.59 W from Pieter", "decimal degrees", at: GeoPoint(lat: 24.99, lon: -31.59))
+    }
+
     /// Every input the checks so far have found (Fixtures/coordinate-corpus.json), each variant on its own, with what it
     /// must read as: a point within a distance, nil, or either. A case that names no position of yours is read both without
     /// one and near the Kruger. Lists every case that gives a wrong point or refuses a point it must give.
