@@ -1,0 +1,136 @@
+name: Android app
+
+# Tests the Android app (core and app unit tests), builds SatMap.apk, checks that it opens on an emulator and
+# publishes it as the "android-test-build" pre-release, always at
+# https://github.com/JacobusOettle/satmap/releases/download/android-test-build/SatMap.apk
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, claude/satmap-ios-app]
+    paths:
+      - "android/**"
+      - "SatMap/Resources/**"
+      - "Tests/SatMapCoreTests/Fixtures/**"
+      - ".github/workflows/android.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Signing key from the repository secrets, if there is one
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.jks"
+              echo "ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "ANDROID_KEY_ALIAS=$KEY_ALIAS"
+              echo "ANDROID_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            echo "Signing with the private key from the secrets."
+          else
+            echo "No signing secrets: signing with the public test key (android/signing/README.md)."
+          fi
+
+      - name: Unit tests
+        # Also compiles the instrumented tests (run on an emulator by android-screenshots.yml), so they keep building.
+        run: ./gradlew --console=plain :core:test :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+
+      - name: Build SatMap.apk
+        run: |
+          ./gradlew --console=plain :app:assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../SatMap.apk
+          ls -l ../SatMap.apk
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test-reports
+          path: |
+            android/core/build/reports/tests
+            android/app/build/reports/tests
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SatMap-apk
+          path: SatMap.apk
+
+      # A build that doesn't open must not replace the one people install: start it on an emulator first. MapLibre is
+      # its OpenGL build (android/DESIGN.md D1), which the emulator's SwiftShader GPU draws; the default build needs
+      # Vulkan.
+      - name: Enable KVM for the emulator
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Check that the app opens
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          working-directory: .
+          script: |
+            adb install -r SatMap.apk
+            adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_FINE_LOCATION || true
+            adb logcat -c
+            adb shell am start -W -n com.jacobusoettle.satmap/.MainActivity
+            sleep 30
+            adb exec-out screencap -p > android-launch.png || true
+            adb shell pidof com.jacobusoettle.satmap || { echo "SatMap quit after it was opened: not publishing this build."; adb logcat -d -b crash; adb logcat -d | grep -iE "satmap|AndroidRuntime|maplibre|mbgl" | tail -n 150; exit 1; }
+            echo "SatMap is running."
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-launch-screenshot
+          path: android-launch.png
+          if-no-files-found: ignore
+
+      - name: Publish as the android-test-build pre-release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes="Android build of ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Open SatMap.apk on the phone to install it (allow installing from your browser or Files app when asked)."
+          # Replaced in place, so the download link never goes missing; a new release only when there is none.
+          if gh release view android-test-build > /dev/null 2>&1; then
+            gh release upload android-test-build SatMap.apk --clobber
+            gh release edit android-test-build --prerelease --notes "$notes"
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/android-test-build" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
+              || echo "The tag stays at the earlier commit."
+          else
+            gh release create android-test-build SatMap.apk --prerelease --target "$GITHUB_SHA" --title "SatMap Android test build" --notes "$notes"
+          fi
