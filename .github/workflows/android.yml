@@ -1,23 +1,32 @@
 name: Android app
 
-# Tests the Android app (core and app unit tests), builds SatMap.apk, checks that it opens on an emulator and
-# publishes it as the "android-test-build" pre-release, always at
-# https://github.com/JacobusOettle/satmap/releases/download/android-test-build/SatMap.apk
+# Tests the Android app (core and app unit tests), builds SatMap.apk and checks that it opens on an emulator, on every
+# branch and pull request (each work package's branch is merged only when this is green, android/DESIGN.md §7.3).
+# Builds of main and claude/satmap-ios-app, and a workflow_dispatch, are then published as the "android-test-build"
+# pre-release, always at https://github.com/JacobusOettle/satmap/releases/download/android-test-build/SatMap.apk
 on:
   workflow_dispatch:
   push:
-    branches: [main, claude/satmap-ios-app]
+    branches: ["**"]
+    paths:
+      - "android/**"
+      - "SatMap/Resources/**"
+      - "Tests/SatMapCoreTests/Fixtures/**"
+      - ".github/workflows/android.yml"
+  pull_request:
     paths:
       - "android/**"
       - "SatMap/Resources/**"
       - "Tests/SatMapCoreTests/Fixtures/**"
       - ".github/workflows/android.yml"
 
+# Read-only: the build runs Gradle plugins, dependencies and third-party actions from the internet. Only publish can
+# write to the repository.
 permissions:
-  contents: write
+  contents: read
 
-# Two groups. A newer push to the same branch cancels the build of an older one. Publishing is one queue for every
-# branch (main, claude/satmap-ios-app, a workflow_dispatch elsewhere), because they all write the one
+# Two groups. A newer push to the same branch or pull request cancels the build of an older one. Publishing is one
+# queue for every branch (main, claude/satmap-ios-app, a workflow_dispatch elsewhere), because they all write the one
 # android-test-build release; a publish that has started is never cancelled halfway, so the APK, the notes and the tag
 # always come from the same commit.
 jobs:
@@ -38,7 +47,15 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      # Gradle's caches (dependencies, and the build cache with its test results) are saved by builds of main and
+      # claude/satmap-ios-app; setup-gradle on its own saves only on the default branch. Other branches and pull
+      # requests only read them (GitHub gives a run the caches of its branch, the default branch and a pull
+      # request's base), so the repository's cache space isn't filled with an entry per branch. A cached test result
+      # is reused whenever the task's declared inputs are unchanged, so every test task must declare the folders it
+      # reads outside android/ as inputs (android/DESIGN.md §5.5).
       - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/claude/satmap-ios-app' }}
 
       - name: Signing key from the repository secrets, if there is one
         env:
@@ -82,7 +99,7 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk ../SatMap.apk
           ls -l ../SatMap.apk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-test-reports
@@ -90,7 +107,7 @@ jobs:
             android/core/build/reports/tests
             android/app/build/reports/tests
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SatMap-apk
           path: SatMap.apk
@@ -118,6 +135,11 @@ jobs:
           working-directory: .
           # The runner starts each line in its own `sh -c`: every check is one line. Every permission the app asks for
           # is granted first, so no system dialog covers the map in the screenshot or leaves MainActivity paused.
+          # The last check reads the screen's centre pixel from a raw capture (android-launch.raw: a 12- or 16-byte
+          # header, then 4 bytes a pixel), taken right after the screenshot: until M1 the map is only its background,
+          # #202020, which only a running GL renderer draws (MapLibre's foregroundLoadColor is #202020 too, so it
+          # proves the map draws, not that the style loaded). From M1, check instead for imagery that isn't one flat
+          # colour.
           script: |
             adb install -r SatMap.apk
             adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_FINE_LOCATION || true
@@ -131,28 +153,35 @@ jobs:
             adb shell am start -W -n com.jacobusoettle.satmap/.MainActivity
             sleep 30
             adb exec-out screencap -p > android-launch.png || true
+            adb exec-out screencap > android-launch.raw || true
             adb shell pidof com.jacobusoettle.satmap || { echo "SatMap quit after it was opened: not publishing this build."; adb logcat -d -b crash; adb logcat -d | grep -iE "satmap|AndroidRuntime|maplibre|mbgl" | tail -n 150; exit 1; }
             if adb logcat -d -b crash | grep -q com.jacobusoettle.satmap; then echo "SatMap crashed after it was opened (and was started again): not publishing this build."; adb logcat -d -b crash; exit 1; fi
             if adb logcat -d -b events | grep am_anr | grep -q com.jacobusoettle.satmap; then echo "SatMap stopped responding after it was opened: not publishing this build."; adb logcat -d -b events | grep am_anr; adb logcat -d | grep -iE "satmap|ANR" | tail -n 150; exit 1; fi
             adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | grep -q 'com.jacobusoettle.satmap/.MainActivity' || { echo "SatMap's map is not the resumed activity: not publishing this build."; adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp|mCurrentFocus'; adb logcat -d | grep -iE "satmap|AndroidRuntime" | tail -n 150; exit 1; }
-            echo "SatMap is running, with its map in front."
+            python3 -I -c "import struct, sys; d = open('android-launch.raw', 'rb').read(); w, h = struct.unpack('<2I', d[:8]); assert len(d) - w * h * 4 in (12, 16), 'not a 4-byte-a-pixel capture'; o = len(d) - w * h * 4 + (h // 2 * w + w // 2) * 4; p = tuple(d[o:o + 3]); print('Centre pixel of the', w, 'x', h, 'screen:', p); sys.exit(p != (32, 32, 32))" || { echo "SatMap's map was not drawn: the centre of the screen is not the map's background colour #202020. Not publishing this build."; adb logcat -d | grep -iE "satmap|maplibre|mbgl|EGL|OpenGLRenderer" | tail -n 150; exit 1; }
+            echo "SatMap is running, with its map in front and drawn."
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-launch-screenshot
           path: android-launch.png
           if-no-files-found: ignore
 
+  # Only builds of main and claude/satmap-ios-app (and a workflow_dispatch) replace the APK people install; work
+  # package branches and pull requests are only tested.
   publish:
     needs: apk
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/claude/satmap-ios-app'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     timeout-minutes: 15
     concurrency:
       group: android-test-build
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: SatMap-apk
 
