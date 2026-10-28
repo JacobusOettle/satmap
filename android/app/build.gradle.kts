@@ -14,14 +14,29 @@ android {
         applicationId = "com.jacobusoettle.satmap"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        // Each CI build a higher number, so it installs over the one before.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionName = "1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Phones (64- and 32-bit ARM) and the x86_64 emulator; MapLibre's native code is the bulk of the APK.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+    }
+
+    signingConfigs {
+        create("release") {
+            // A private key from the repository secrets when there is one, else the public test key
+            // (signing/README.md), so every build installs over the one before.
+            storeFile = file(System.getenv("ANDROID_KEYSTORE_FILE") ?: "../signing/satmap-test.jks")
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD") ?: "satmap-test"
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS") ?: "satmap"
+            keyPassword = System.getenv("ANDROID_KEY_PASSWORD") ?: "satmap-test"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
