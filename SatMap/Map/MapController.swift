@@ -3,8 +3,8 @@ import MapKit
 import SwiftUI
 import UIKit
 
-/// Owns the MKMapView: the satellite imagery with contour lines, the recorded track, the measuring line,
-/// imported blocks and the lasso used to choose offline areas.
+/// Owns the MKMapView: the satellite imagery with contour lines and elevation colours, the recorded track, the
+/// measuring line, imported blocks, your position with the compass and the lasso used to choose offline areas.
 final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
     let container = UIView()
     let mapView = MKMapView()
@@ -15,8 +15,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private let aimLine = CAShapeLayer()
     private let model: AppModel
 
-    /// The imagery SatMap draws, with the contour lines.
+    /// The imagery SatMap draws, with the contour lines and elevation colours.
     private var imagery: DrawnImagery!
+    private var blocks: BlockLayers!
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
     private var trackRenderer: TrackRenderer?
@@ -32,9 +33,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var selectedAnnotation: SelectedPointAnnotation?
     private var draftOverlay: DraftAreaPolygon?
     private var drawnTrackCount = 0
-
-    private var blockOverlays: [UUID: [MKOverlay]] = [:]
-    private var blockLabels: [UUID: [MKAnnotation]] = [:]
+    /// Where the phone points (the compass), in degrees from north.
+    private var heading: CLLocationDirection?
 
     /// Whether the phone's own screen shows the map (its window scene in the foreground). With CarPlay showing SatMap
     /// the app stays in the foreground while the phone is locked.
@@ -67,12 +67,14 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
         // Later overlays draw on top: imagery with contours, (blocks inserted below the track), track, measuring line.
         imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isShown ?? false },
-                               showContours: { [weak model] in model?.showContours ?? true })
+                               terrain: { [weak model] in model?.terrainMode ?? .contours })
+        imagery.onKey = { [weak model] key in model?.legend.update(key) }
         imagery.addToMap()
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
         mapView.addOverlay(measureLine, level: .aboveLabels)
+        blocks = BlockLayers(mapView: mapView, below: track)
 
         container.addSubview(mapView)
         mapView.translatesAutoresizingMaskIntoConstraints = false
@@ -125,6 +127,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         let nc = NotificationCenter.default
         nc.addObserver(self, selector: #selector(sceneDidEnterBackground(_:)), name: UIScene.didEnterBackgroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(sceneWillEnterForeground(_:)), name: UIScene.willEnterForegroundNotification, object: nil)
+        model.recorder.headingWanted = isShown
     }
 
     private func bind() {
@@ -140,12 +143,13 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
                 DispatchQueue.main.async { self?.selectedPointChanged(notMeasuring ? point : nil) }
             }
             .store(in: &cancellables)
-        model.$showContours
+        model.$terrainMode
             .removeDuplicates()
-            .sink { [weak self] show in DispatchQueue.main.async { self?.contoursChanged(show) } }
+            .dropFirst()
+            .sink { [weak self] mode in DispatchQueue.main.async { self?.imagery.terrainChanged(mode) } }
             .store(in: &cancellables)
-        model.kml.$files
-            .sink { [weak self] files in DispatchQueue.main.async { self?.blocksChanged(files) } }
+        model.kml.$files.combineLatest(model.kml.$useFileColours)
+            .sink { [weak self] files, colours in DispatchQueue.main.async { self?.blocks.update(files, useFileColours: colours) } }
             .store(in: &cancellables)
         model.$isDrawingArea.combineLatest(model.$lassoActive, model.$draftArea.map { $0 != nil })
             .sink { [weak self] drawing, lassoActive, hasDraft in
@@ -246,6 +250,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
         updateScale()
+        if heading != nil { updateArrow() } // the map may have turned
         imagery?.visibleRegionChanged()
     }
 
@@ -301,12 +306,20 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         v.sleeping = power == .sleeping
     }
 
-    // MARK: - Contours
+    /// The compass: the arrow by your dot points where the phone points (nil: no arrow).
+    func headingUpdated(_ h: CLLocationDirection?) {
+        heading = h
+        updateArrow()
+    }
 
-    /// The imagery layer draws them, so a new one comes, with or without. Switched off, no elevation is downloaded
-    /// or processed for them; drawn tiles stay cached, so switching back on is quick.
-    private func contoursChanged(_ show: Bool) {
-        imagery.contoursChanged(show)
+    /// The arrow's angle on the screen: the heading less the map's own turn.
+    private func updateArrow() {
+        guard let a = userAnnotation, let v = mapView.view(for: a) as? UserDotView else { return }
+        v.arrowAngle = arrowAngle
+    }
+
+    private var arrowAngle: Double? {
+        heading.map { ($0 - mapView.camera.heading + 360).truncatingRemainder(dividingBy: 360) }
     }
 
     // MARK: - Track
@@ -454,72 +467,6 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    // MARK: - Blocks (KML)
-
-    private func blocksChanged(_ files: [KMLLibrary.File]) {
-        let ids = Set(files.map(\.id))
-        for (id, overlays) in blockOverlays where !ids.contains(id) {
-            mapView.removeOverlays(overlays)
-            blockOverlays[id] = nil
-        }
-        for (id, labels) in blockLabels where !ids.contains(id) {
-            mapView.removeAnnotations(labels)
-            blockLabels[id] = nil
-        }
-        for f in files where blockOverlays[f.id] == nil {
-            let (overlays, labels) = Self.blockShapes(f)
-            // Keep blocks above the contours and under the track and the measuring line.
-            for o in overlays { mapView.insertOverlay(o, below: track) }
-            mapView.addAnnotations(labels)
-            blockOverlays[f.id] = overlays
-            blockLabels[f.id] = labels
-        }
-    }
-
-    /// A KML file's shapes for a map: one overlay for each style's polygons and one for its lines (files often give
-    /// every block a style of its own, with the same colours), and the labels of named blocks and points.
-    static func blockShapes(_ f: KMLLibrary.File) -> (overlays: [MKOverlay], labels: [MKAnnotation]) {
-        var polygons: [KMLStyle?: [MKPolygon]] = [:], polygonOrder: [KMLStyle?] = []
-        var lines: [KMLStyle?: [MKPolyline]] = [:], lineOrder: [KMLStyle?] = []
-        var labels: [MKAnnotation] = []
-        for feature in f.document.features {
-            switch feature.geometry {
-            case .polygon(let outer, let holes):
-                let interiors = holes.map { h -> MKPolygon in
-                    let c = h.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                    return MKPolygon(coordinates: c, count: c.count)
-                }
-                let c = outer.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                if polygons[feature.style] == nil { polygonOrder.append(feature.style) }
-                polygons[feature.style, default: []].append(MKPolygon(coordinates: c, count: c.count, interiorPolygons: interiors))
-                if let name = feature.name, let p = PolygonLabel.interiorPoint(outer: outer, holes: holes) {
-                    labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
-                                                       title: name, isPoint: false))
-                }
-            case .line(let pts):
-                let c = pts.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
-                if lines[feature.style] == nil { lineOrder.append(feature.style) }
-                lines[feature.style, default: []].append(MKPolyline(coordinates: c, count: c.count))
-            case .point(let p):
-                labels.append(BlockLabelAnnotation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
-                                                   title: feature.name ?? "", isPoint: true,
-                                                   color: feature.style?.iconColor.map(UIColor.init(kml:))))
-            }
-        }
-        var overlays: [MKOverlay] = []
-        for style in polygonOrder {
-            let o = BlockPolygons(polygons[style] ?? [])
-            o.style = style
-            overlays.append(o)
-        }
-        for style in lineOrder {
-            let o = BlockLines(lines[style] ?? [])
-            o.style = style
-            overlays.append(o)
-        }
-        return (overlays, labels)
-    }
-
     // MARK: - Lasso (choose an offline area)
 
     private func lassoFinished(_ pts: [CGPoint]) {
@@ -557,12 +504,14 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     @objc private func sceneDidEnterBackground(_ n: Notification) {
         guard n.object is UIWindowScene else { return }
         isShown = false
+        model.recorder.headingWanted = false
         saveCamera()
     }
 
     @objc private func sceneWillEnterForeground(_ n: Notification) {
         guard n.object is UIWindowScene else { return }
         isShown = true
+        model.recorder.headingWanted = true
         imagery.becameVisible()
         trackChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
@@ -583,9 +532,9 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             measureRenderer = r
             return r
         case let o as BlockPolygons:
-            return Self.blockRenderer(o)
+            return BlockLayers.renderer(o)
         case let o as BlockLines:
-            return Self.blockRenderer(o)
+            return BlockLayers.renderer(o)
         case let o as DraftAreaPolygon:
             let r = MKPolygonRenderer(polygon: o)
             r.strokeColor = .white
@@ -598,36 +547,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         }
     }
 
-    /// Blocks in their file's colours and line widths (KML styles). What a file leaves unset is white (yellow/orange is
-    /// used by contours, cyan by the track and pink by the measuring line), with a faint fill.
-    static func blockRenderer(_ o: BlockPolygons) -> MKOverlayRenderer {
-        let r = MKMultiPolygonRenderer(multiPolygon: o)
-        style(r, o.style, polygons: true)
-        return r
-    }
-
-    static func blockRenderer(_ o: BlockLines) -> MKOverlayRenderer {
-        let r = MKMultiPolylineRenderer(multiPolyline: o)
-        style(r, o.style, polygons: false)
-        return r
-    }
-
-    private static func style(_ r: MKOverlayPathRenderer, _ style: KMLStyle?, polygons: Bool) {
-        let s = style ?? KMLStyle()
-        let width = s.lineWidth ?? 2.5
-        let outline = width > 0 && (!polygons || s.outline != false)
-        r.strokeColor = outline ? s.lineColor.map(UIColor.init(kml:)) ?? UIColor(white: 1, alpha: 0.95) : .clear
-        r.lineWidth = min(12, max(1.5, width))
-        if polygons {
-            r.fillColor = s.fill == false ? .clear : s.fillColor.map(UIColor.init(kml:)) ?? UIColor(white: 1, alpha: 0.07)
-        }
-    }
-
     func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
         switch annotation {
         case is UserLocationAnnotation:
             let v = mapView.dequeueReusableAnnotationView(withIdentifier: UserDotView.reuseID, for: annotation) as? UserDotView
             v?.sleeping = model.recorder.power == .sleeping
+            v?.arrowAngle = arrowAngle
             return v
         case is MeasureMarkerAnnotation:
             return mapView.dequeueReusableAnnotationView(withIdentifier: MeasureMarkerView.reuseID, for: annotation)

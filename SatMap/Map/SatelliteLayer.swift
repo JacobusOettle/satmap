@@ -106,9 +106,9 @@ final class DrawnMap {
 /// it lacks (for a spot with nothing at all, first the tile three levels up, which covers 64 spots). It never has a
 /// patch redrawn, which MapKit empties first (grey): when tiles have arrived that would improve what it shows, a new
 /// layer replaces it. MapKit calls `draw` on several threads at once.
-/// It draws the contour lines over the imagery too (when switched on): a tile layer of them over this one would hold
-/// up its paints after each change of zoom level (MapKit's, 0.2–0.4 s of grey). Contour tiles are at the level MapKit
-/// asked for them as a tile layer (`DrawnImagery.levels`).
+/// It draws the elevation colours and the contour lines over the imagery too (as switched on): a tile layer of them
+/// over this one would hold up its paints after each change of zoom level (MapKit's, 0.2–0.4 s of grey). Their tiles
+/// are at the level MapKit asked for contour tiles as a tile layer (`DrawnImagery.levels`).
 final class SatelliteRenderer: MKOverlayRenderer {
     /// Decoded tiles (256 KB each) drawn from, so each is decoded once: those in focus, and some (`setFocus` makes
     /// room for them all).
@@ -116,8 +116,10 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// Decoded contour tiles (256 KB each; `ContourRenderer`), and those with nothing to draw.
     private static let contourImages = RecentCache<TileID, (image: UIImage, complete: Bool)>(capacity: 240)
     private static let noContours = RecentCache<TileID, Bool>(capacity: 4000)
+    /// The heights of tiles for the elevation colours (17 KB each; `HeightGrids`), at the contour tiles' level.
+    private static let heightGrids = RecentCache<TileID, (grid: ElevationGrid, complete: Bool)>(capacity: 400)
 
-    enum Content { case imagery, contours }
+    enum Content { case imagery, contours, colours }
 
     /// Tiles being loaded, and those to leave for a while (failed, or deeper than the imagery goes): shared by the
     /// layers, so a new one doesn't ask again for what its predecessor is loading.
@@ -126,6 +128,8 @@ final class SatelliteRenderer: MKOverlayRenderer {
     private static var retryAfter: [TileID: (until: CFTimeInterval, beyondDepth: Bool)] = [:]
     private static var contoursLoading = Set<TileID>()
     private static var contoursRetryAfter: [TileID: CFTimeInterval] = [:]
+    private static var gridsLoading = Set<TileID>()
+    private static var gridsRetryAfter: [TileID: CFTimeInterval] = [:]
 
     /// Room decoded for every spot in focus on every map, or a new layer would find some not decoded any more and
     /// bring another, and so on for ever (`DrawnMap.setFocus`).
@@ -151,13 +155,24 @@ final class SatelliteRenderer: MKOverlayRenderer {
     let drawsContours: Bool
     private var contoursLacking: [TileID: Bool] = [:]
     private var contourSpots = Set<TileID>()
+    /// Whether this layer draws the elevation colours, and in what range (fixed: a new range brings a new layer, so
+    /// the colours always match across the screen; none yet: the heights are only loaded, to choose one); the spots
+    /// drawn without their own heights (true: with them, their edges approximated), those with them, and their
+    /// colours drawn.
+    let drawsColours: Bool
+    let colourRange: ElevationRange?
+    private var coloursLacking: [TileID: Bool] = [:]
+    private var colourSpots = Set<TileID>()
+    private var colourImages: [TileID: (grid: ElevationGrid, image: UIImage)] = [:]
 
     /// The map this layer is on: where it looks, and who to tell about tiles that arrive.
     private let map: DrawnMap
 
-    init(overlay: SatelliteDrawnOverlay, map: DrawnMap, contours: Bool) {
+    init(overlay: SatelliteDrawnOverlay, map: DrawnMap, contours: Bool, colours: Bool, range: ElevationRange?) {
         self.map = map
         drawsContours = contours
+        drawsColours = colours
+        colourRange = colours ? range : nil
         super.init(overlay: overlay)
     }
 
@@ -216,11 +231,16 @@ final class SatelliteRenderer: MKOverlayRenderer {
         for c in sharper {
             Self.decoded.value(for: c)?.draw(in: self.rect(for: Self.mapRect(c)))
         }
-        // Contour tiles 256 points across at the zoom MapKit paints at, as it asked for them as a tile layer.
+        // Colour and contour tiles 256 points across at the zoom MapKit paints at, as it asked for contour tiles as a
+        // tile layer: the colours under the lines.
         let cz = Self.level(pixelsPerMapPoint: Double(zoomScale))
         let contours = drawsContours && cz >= ContourPolicy.minTileZoom && ContourPolicy.intervals(
             forPointZoom: ContourPolicy.pointZoom(tileZoom: cz, screenScale: Double(contentScaleFactor))) != nil
-        let contourTiles = contours ? Self.tiles(cz, in: mapRect) : []
+        let colours = drawsColours && cz >= ElevationColours.minTileZoom
+        let terrainTiles = contours || colours ? Self.tiles(cz, in: mapRect) : []
+        let contourTiles = contours ? terrainTiles : []
+        let colourTiles = colours ? terrainTiles : []
+        let lackingColours = colours ? drawColours(over: colourTiles, focus: contourFocus, in: context) : [:]
         let lacking = contours ? drawContours(over: contourTiles, focus: contourFocus, in: context) : [:]
         lock.withLock {
             if zoomScale != paintedScale {
@@ -239,6 +259,11 @@ final class SatelliteRenderer: MKOverlayRenderer {
                 contourSpots.formUnion(contourTiles.filter { lacking[$0] == nil })
                 contourSpots.subtract(lacking.keys)
             }
+            if colours {
+                for t in colourTiles { coloursLacking[t] = lackingColours[t] }
+                colourSpots.formUnion(colourTiles.filter { lackingColours[$0] == nil })
+                colourSpots.subtract(lackingColours.keys)
+            }
         }
         // A tile that arrived while this patch was painting found no stand-in here to improve yet: announce it again.
         let late = shownStandIns.first { spot, shown in
@@ -248,9 +273,12 @@ final class SatelliteRenderer: MKOverlayRenderer {
         if let spot = lacking.first(where: { Self.contoursBetter($0.key, than: $0.value) })?.key {
             DispatchQueue.main.async { [map] in map.onArrival?(spot, .contours) }
         }
+        if let spot = lackingColours.first(where: { Self.heightsBetter($0.key, than: $0.value) })?.key {
+            DispatchQueue.main.async { [map] in map.onArrival?(spot, .colours) }
+        }
         let ms = Int((CACurrentMediaTime() - began) * 1000)
         let empty = shownStandIns.values.filter { $0 < 0 }.count
-        tileLog.debug("drawn z\(z): \(own.count) own, \(shownStandIns.count - empty) stand-in, \(empty) empty, \(lacking.count) without contours in \(ms) ms")
+        tileLog.debug("drawn z\(z): \(own.count) own, \(shownStandIns.count - empty) stand-in, \(empty) empty, \(lacking.count) without contours, \(lackingColours.count) without colours in \(ms) ms")
     }
 
     /// Draws these contour tiles: each one's own lines, else for now its parent's enlarged or its children's; and
@@ -297,6 +325,108 @@ final class SatelliteRenderer: MKOverlayRenderer {
         return c.complete || !approximate
     }
 
+    /// Draws the elevation colours of these spots in this layer's range: each one's own heights, else for now its
+    /// parent's enlarged or its children's; and loads those missing in focus (also while there is no range yet: it is
+    /// chosen from them). Returns the spots drawn without their own heights (true: with them, their edges
+    /// approximated).
+    private func drawColours(over spots: [TileID], focus: (rect: MKMapRect, level: Int), in context: CGContext) -> [TileID: Bool] {
+        var lacking: [TileID: Bool] = [:]
+        var parents: [TileID: [TileID]] = [:]
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.interpolationQuality = .high // smooth between the nodes
+        for t in spots {
+            let isNear = Self.inFocus(t, focus)
+            if let g = Self.heightGrids.value(for: t) {
+                drawHeights(g.grid, of: t, in: context)
+                if !g.complete {
+                    lacking[t] = true
+                    if isNear { Self.loadGrid(t) }
+                }
+                continue
+            }
+            lacking[t] = false
+            if isNear { Self.loadGrid(t) }
+            let p = t.ancestor(levels: 1)
+            if p.z >= ElevationColours.minTileZoom, Self.heightGrids.contains(p) {
+                parents[p, default: []].append(t)
+            } else {
+                for c in Self.quarters(t) {
+                    if let g = Self.heightGrids.value(for: c) { drawHeights(g.grid, of: c, in: context) }
+                }
+            }
+        }
+        for (p, under) in parents {
+            guard let g = Self.heightGrids.value(for: p) else { continue }
+            context.saveGState()
+            context.clip(to: under.map { rect(for: Self.mapRect($0)) })
+            drawHeights(g.grid, of: p, in: context)
+            context.restoreGState()
+        }
+        return lacking
+    }
+
+    /// A tile's heights in this layer's colours, smooth between its nodes: a pixel for each node, centred on it (half
+    /// a cell beyond the tile all round, cut back to it), so neighbouring tiles meet without a seam.
+    private func drawHeights(_ grid: ElevationGrid, of t: TileID, in context: CGContext) {
+        guard let range = colourRange, grid.nodes >= 2, let image = colourImage(grid, of: t, range: range) else { return }
+        let r = rect(for: Self.mapRect(t))
+        let half = r.width / CGFloat(grid.nodes - 1) / 2
+        context.saveGState()
+        context.clip(to: r)
+        image.draw(in: r.insetBy(dx: -half, dy: -half))
+        context.restoreGState()
+    }
+
+    /// A tile's colours in this layer's range, made once for its grid.
+    private func colourImage(_ grid: ElevationGrid, of t: TileID, range: ElevationRange) -> UIImage? {
+        if let c = lock.withLock({ colourImages[t] }), c.grid === grid { return c.image }
+        let n = grid.nodes
+        let pixels = ElevationColours.pixels(grid, range: range)
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let cg = CGImage(width: n, height: n, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: n * 4,
+                               space: CGColorSpaceCreateDeviceRGB(),
+                               bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                               provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else { return nil }
+        let image = UIImage(cgImage: cg)
+        lock.withLock {
+            if colourImages.count >= 200 { colourImages.removeAll() }
+            colourImages[t] = (grid, image)
+        }
+        return image
+    }
+
+    /// Whether the heights in memory for a spot are better than what was drawn there (`approximate`: its own, its
+    /// edges approximated; else none of its own).
+    private static func heightsBetter(_ t: TileID, than approximate: Bool) -> Bool {
+        guard let g = heightGrids.peek(t) else { return false }
+        return g.complete || !approximate
+    }
+
+    /// The lowest and highest heights in memory under a map rect, from the grids of a level's tiles (`complete`:
+    /// every tile there has its heights, or has none to be had for now: offline outside the areas downloaded). Nil
+    /// without any (or only sea).
+    static func heightExtremes(in r: MKMapRect, level z: Int) -> (low: Double, high: Double, complete: Bool)? {
+        let spots = tiles(z, in: r)
+        guard !spots.isEmpty, spots.count <= 400 else { return nil }
+        let w = MKMapSize.world.width
+        let within = (minX: r.minX / w, minY: r.minY / w, maxX: r.maxX / w, maxY: r.maxY / w)
+        var low = Float.infinity, high = -Float.infinity, complete = true
+        for t in spots {
+            guard let g = heightGrids.peek(t) else {
+                if complete {
+                    complete = loads.withLock { gridsRetryAfter[t] != nil && !gridsLoading.contains(t) }
+                }
+                continue
+            }
+            if let e = g.grid.extremes(tile: t.worldBounds, within: within) {
+                low = min(low, e.low)
+                high = max(high, e.high)
+            }
+        }
+        return low <= high ? (Double(low), Double(high), complete) : nil
+    }
+
     /// The imagery level drawn at a zoom: tiles about 256 pixels across on screen.
     static func level(pixelsPerMapPoint: Double) -> Int {
         let pixels = MKMapSize.world.width * pixelsPerMapPoint
@@ -314,6 +444,11 @@ final class SatelliteRenderer: MKOverlayRenderer {
             }
             return Self.contoursBetter(t, than: approximate)
         }
+        if content == .colours {
+            guard colourRange != nil, Self.inFocus(t, contourFocus),
+                  let approximate = lock.withLock({ coloursLacking[t] }) else { return false }
+            return Self.heightsBetter(t, than: approximate)
+        }
         return lock.withLock {
             standIns.contains { spot, shown in
                 guard Self.inFocus(spot, focus) else { return false }
@@ -324,12 +459,13 @@ final class SatelliteRenderer: MKOverlayRenderer {
         }
     }
 
-    /// Whether this layer shows anything other than spots' own tiles in focus, contour lines included (then a reload
-    /// may improve it).
+    /// Whether this layer shows anything other than spots' own tiles in focus, contour lines and colours included (then
+    /// a reload may improve it).
     var hasStandIns: Bool {
         let (focus, contours) = map.focuses
         return lock.withLock {
             standIns.keys.contains { Self.inFocus($0, focus) } || contoursLacking.keys.contains { Self.inFocus($0, contours) }
+                || coloursLacking.keys.contains { Self.inFocus($0, contours) }
         }
     }
 
@@ -337,9 +473,10 @@ final class SatelliteRenderer: MKOverlayRenderer {
     /// stopped, and MapKit doesn't repaint patches it has painted (maybe before they came into focus).
     func loadStandIns() {
         let (focus, cf) = map.focuses
-        let (spots, contours) = lock.withLock {
+        let (spots, contours, heights) = lock.withLock {
             (standIns.filter { $0.key.z == focus.level && Self.inFocus($0.key, focus) },
-             contoursLacking.keys.filter { $0.z == cf.level && Self.inFocus($0, cf) })
+             contoursLacking.keys.filter { $0.z == cf.level && Self.inFocus($0, cf) },
+             coloursLacking.keys.filter { $0.z == cf.level && Self.inFocus($0, cf) })
         }
         for (t, shown) in spots {
             if ImageryMemory.tiles.contains(t) {
@@ -350,6 +487,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
             }
         }
         for t in contours { Self.loadContours(t, scale: contentScaleFactor) }
+        for t in heights { Self.loadGrid(t) }
     }
 
     /// Whether this layer has painted all these points at the latest zoom.
@@ -431,30 +569,60 @@ final class SatelliteRenderer: MKOverlayRenderer {
         }
     }
 
+    /// Loads a spot's heights into memory (`HeightGrids`), once at a time, and announces them. Those that can't be
+    /// had, or only with their edges approximated, are asked for again in a while.
+    private static func loadGrid(_ t: TileID) {
+        let now = CACurrentMediaTime()
+        let start: Bool = loads.withLock {
+            if let until = gridsRetryAfter[t], now < until { return false }
+            return gridsLoading.insert(t).inserted
+        }
+        guard start else { return }
+        Task.detached(priority: .userInitiated) {
+            let tile = await HeightGrids.shared.tile(t)
+            var arrived = false, again = true
+            if case .grid(let g, let complete) = tile {
+                let had = heightGrids.contains(t)
+                if complete || !had { heightGrids.set((g, complete), for: t) }
+                arrived = complete || !had
+                again = !complete
+            }
+            loads.withLock {
+                gridsLoading.remove(t)
+                gridsRetryAfter[t] = again ? CACurrentMediaTime() + 30 : nil
+            }
+            if arrived { DrawnMap.announce(t, .colours) }
+        }
+    }
+
     /// Tiles that failed may be asked for again at once (the network is back); not those deeper than the imagery.
     static func reload() {
         loads.withLock {
             retryAfter = retryAfter.filter { $0.value.beyondDepth }
             contoursRetryAfter = [:]
+            gridsRetryAfter = [:]
         }
     }
 
     /// Whether every spot this layer shows with its own tile in focus is decoded, so a new layer would show it too
-    /// (after the app was in the background or memory ran low, they may not be), and its contour lines when the new
-    /// layer draws them (`contours`). Those that aren't are decoded, or loaded again, for the next try.
-    func ownSpotsReady(contours: Bool) -> Bool {
+    /// (after the app was in the background or memory ran low, they may not be), and its contour lines and colours when
+    /// the new layer draws them (`contours`, `colours`). Those that aren't are decoded, or loaded again, for the next
+    /// try.
+    func ownSpotsReady(contours: Bool, colours: Bool) -> Bool {
         let (focus, cf) = map.focuses
-        let (missing, missingContours) = lock.withLock {
+        let (missing, missingContours, missingHeights) = lock.withLock {
             (ownSpots.filter { Self.inFocus($0, focus) && !Self.decoded.contains($0) },
              contourSpots.filter {
                  contours && Self.inFocus($0, cf) && !Self.contourImages.contains($0) && !Self.noContours.contains($0)
-             })
+             },
+             colourSpots.filter { colours && Self.inFocus($0, cf) && !Self.heightGrids.contains($0) })
         }
-        guard !missing.isEmpty || !missingContours.isEmpty else { return true }
+        guard !missing.isEmpty || !missingContours.isEmpty || !missingHeights.isEmpty else { return true }
         for t in missing {
             if ImageryMemory.tiles.contains(t) { Self.prepare([t]) } else { Self.load(t, urgent: true) }
         }
         for t in missingContours { Self.loadContours(t, scale: contentScaleFactor) }
+        for t in missingHeights { Self.loadGrid(t) }
         return false
     }
 
@@ -520,6 +688,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
     static func trim(to count: Int) {
         decoded.trim(to: count)
         contourImages.trim(to: count)
+        heightGrids.trim(to: count)
     }
 
     /// The tiles of a level under a map rect.

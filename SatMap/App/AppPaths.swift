@@ -80,6 +80,11 @@ enum Format {
         String(format: "%.6f, %.6f", p.lat, p.lon)
     }
 
+    /// A height in whole metres ("1 250 m").
+    static func height(_ m: Double) -> String {
+        "\(count(Int(m.rounded()))) m"
+    }
+
     static func count(_ n: Int) -> String {
         NumberFormatter.localizedString(from: NSNumber(value: n), number: .decimal)
     }

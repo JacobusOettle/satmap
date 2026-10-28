@@ -11,6 +11,7 @@ on:
       - "SatMapUITests/ZoomTests.swift"
       - ".github/workflows/zoomtest.yml"
       - "SatMap/Map/SatelliteLayer.swift"
+      - "SatMap/Map/DrawnImagery.swift"
       - "SatMap/Map/ZoomScript.swift"
 
 concurrency:
@@ -55,8 +56,8 @@ jobs:
       - name: Zoom and pan, recording the screen
         run: |
           mkdir -p videos
-          # Without and with contour lines (on by default).
-          for mode in Renderer RendererContours; do
+          # Without and with contour lines (on by default), and with contour lines and elevation colours.
+          for mode in Renderer RendererContours RendererColours; do
             xcrun simctl spawn "$UDID" log stream --level info --style compact \
               --predicate 'subsystem == "com.jacobusoettle.satmap" AND category == "zoomscript"' > "videos/script-$mode.log" 2>&1 &
             LOGPID=$!

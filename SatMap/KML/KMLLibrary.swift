@@ -1,11 +1,13 @@
 import Foundation
 
-/// Imported KML/KMZ files (farm blocks etc.), stored in the app and shown on the map.
+/// Imported KML/KMZ files (farm blocks etc.), stored in the app and shown on the map (each can be switched off).
 final class KMLLibrary: ObservableObject {
     struct Entry: Codable, Identifiable, Equatable {
         let id: UUID
         var name: String
         var fileName: String
+        /// Switched off: not on the map. (Optional so the index of an earlier version still reads.)
+        var hidden: Bool?
     }
 
     struct File: Identifiable {
@@ -14,10 +16,16 @@ final class KMLLibrary: ObservableObject {
 
         var id: UUID { entry.id }
         var name: String { entry.name }
+        var isShown: Bool { entry.hidden != true }
     }
 
     @Published private(set) var files: [File] = []
     @Published var importError: String?
+    /// Blocks in their files' own colours (on unless switched off); else all in the app's white.
+    @Published var useFileColours = UserDefaults.standard.object(forKey: "kmlFileColours") == nil
+        || UserDefaults.standard.bool(forKey: "kmlFileColours") {
+        didSet { UserDefaults.standard.set(useFileColours, forKey: "kmlFileColours") }
+    }
 
     private let indexURL = AppPaths.kml.appendingPathComponent("index.json")
     /// Every imported file, in order. Loaded at once at startup so an import arriving early ("Open in SatMap"
@@ -37,9 +45,10 @@ final class KMLLibrary: ObservableObject {
                 loaded.append(File(entry: e, document: doc))
             }
             DispatchQueue.main.async {
-                // Keep anything imported meanwhile, and skip files deleted meanwhile.
-                let current = Set(self.entries.map(\.id))
-                self.files = loaded.filter { current.contains($0.id) } + self.files.filter { f in !loaded.contains { $0.id == f.id } }
+                // Keep anything imported meanwhile, skip files deleted meanwhile, and take any change made meanwhile.
+                let current = Dictionary(uniqueKeysWithValues: self.entries.map { ($0.id, $0) })
+                self.files = loaded.compactMap { f in current[f.id].map { File(entry: $0, document: f.document) } }
+                    + self.files.filter { f in !loaded.contains { $0.id == f.id } }
             }
         }
     }
@@ -89,6 +98,16 @@ final class KMLLibrary: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Shows a file's blocks on the map, or takes them off.
+    func setShown(_ id: UUID, _ shown: Bool) {
+        guard let i = entries.firstIndex(where: { $0.id == id }), (entries[i].hidden != true) != shown else { return }
+        entries[i].hidden = shown ? nil : true
+        if let j = files.firstIndex(where: { $0.id == id }) {
+            files[j] = File(entry: entries[i], document: files[j].document)
+        }
+        saveIndex()
     }
 
     func delete(_ id: UUID) {

@@ -164,11 +164,31 @@ jobs:
           echo "CarPlay window: $GEOMETRY" | tee -a carplay/menu.txt
           if [ -n "$GEOMETRY" ]; then
             read -r X Y W H CX CY <<< "$(echo "$GEOMETRY" | awk '{k = $3 / 800; top = $2 + $4 - 480 * k; print $1, $2, $3, $4, int($1 + 205 * k), int(top + 300 * k)}')"
-            osascript -e 'tell application "Simulator" to activate' || true
-            sleep 1
-            "$RUNNER_TEMP/click" "$CX" "$CY" && echo "clicked SatMap at $CX, $CY" | tee -a carplay/menu.txt
+            # A click on a window that isn't the key one may only bring it forward: each way twice, a screenshot after
+            # each (once SatMap is open, a click there lands on its map, which ignores it).
+            for way in swift jxa; do
+              osascript -e 'tell application "Simulator" to activate' || true
+              sleep 1
+              for n in 1 2; do
+                if [ "$way" = swift ]; then
+                  "$RUNNER_TEMP/click" "$CX" "$CY" || true
+                else
+                  osascript -l JavaScript -e "
+                    ObjC.import('CoreGraphics');
+                    const p = \$.CGPointMake($CX, $CY);
+                    for (const t of [\$.kCGEventMouseMoved, \$.kCGEventLeftMouseDown, \$.kCGEventLeftMouseUp]) {
+                      \$.CGEventPost(\$.kCGHIDEventTap, \$.CGEventCreateMouseEvent(null, t, p, \$.kCGMouseButtonLeft));
+                      delay(0.15);
+                    }" 2>&1 | tee -a carplay/menu.txt || true
+                fi
+                sleep 1.5
+              done
+              echo "clicked SatMap at $CX, $CY ($way)" | tee -a carplay/menu.txt
+              sleep 12
+              xcrun simctl io "$UDID" screenshot --display=external "carplay/car-$way.png" || true
+            done
           fi
-          sleep 25
+          sleep 10
           xcrun simctl io "$UDID" screenshot --display=external carplay/car.png || true
           screencapture -x carplay/mac-screen-car.png || true
           # Drive along the H4-1 towards Skukuza.

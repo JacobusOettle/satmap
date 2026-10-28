@@ -70,28 +70,57 @@ extension UIColor {
 
 // MARK: - Annotation views
 
-/// Blue dot (grey while the GPS sleeps).
+/// Blue dot (grey while the GPS sleeps), with a small arrow beside it pointing where the phone points (the compass).
 final class UserDotView: MKAnnotationView {
     static let reuseID = "user"
     private let dot = UIView()
+    private let arrow = CAShapeLayer()
 
     var sleeping = false {
-        didSet { dot.backgroundColor = sleeping ? .systemGray : .systemBlue }
+        didSet { updateColour() }
+    }
+
+    /// Where the arrow points on the screen, in degrees clockwise from up; nil hides it.
+    var arrowAngle: Double? {
+        didSet {
+            guard arrowAngle != oldValue else { return }
+            turnArrow(from: oldValue)
+        }
     }
 
     override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
         frame = CGRect(x: 0, y: 0, width: 22, height: 22)
+        // A triangle just outside the dot, its base 16 points wide and its tip 12 points out, turning about the dot's
+        // middle.
+        arrow.frame = bounds
+        let c = CGPoint(x: bounds.midX, y: bounds.midY)
+        let base = c.y - 11 - 2.5
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: c.x, y: base - 12))
+        path.addLine(to: CGPoint(x: c.x + 8, y: base))
+        path.addLine(to: CGPoint(x: c.x - 8, y: base))
+        path.closeSubpath()
+        arrow.path = path
+        arrow.lineWidth = 2
+        arrow.lineJoin = .round
+        arrow.strokeColor = UIColor.white.cgColor
+        arrow.shadowColor = UIColor.black.cgColor
+        arrow.shadowOpacity = 0.4
+        arrow.shadowRadius = 2
+        arrow.shadowOffset = .zero
+        arrow.isHidden = true
+        layer.addSublayer(arrow)
         dot.frame = bounds
         dot.layer.cornerRadius = 11
         dot.layer.borderWidth = 3
         dot.layer.borderColor = UIColor.white.cgColor
-        dot.backgroundColor = .systemBlue
         dot.layer.shadowColor = UIColor.black.cgColor
         dot.layer.shadowOpacity = 0.4
         dot.layer.shadowRadius = 2
         dot.layer.shadowOffset = .zero
         addSubview(dot)
+        updateColour()
         canShowCallout = false
         zPriority = .max
         displayPriority = .required
@@ -100,6 +129,32 @@ final class UserDotView: MKAnnotationView {
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not used")
+    }
+
+    private func updateColour() {
+        let colour: UIColor = sleeping ? .systemGray : .systemBlue
+        dot.backgroundColor = colour
+        arrow.fillColor = colour.cgColor
+    }
+
+    /// Small turns glide (the compass reports every 2°); larger ones, and the arrow appearing, jump.
+    private func turnArrow(from old: Double?) {
+        CATransaction.begin()
+        defer { CATransaction.commit() }
+        guard let angle = arrowAngle else {
+            CATransaction.setDisableActions(true)
+            arrow.isHidden = true
+            return
+        }
+        var turn = abs((old ?? angle + 180) - angle).truncatingRemainder(dividingBy: 360)
+        if turn > 180 { turn = 360 - turn }
+        if turn > 45 || arrow.isHidden {
+            CATransaction.setDisableActions(true)
+        } else {
+            CATransaction.setAnimationDuration(0.2)
+        }
+        arrow.isHidden = false
+        arrow.setAffineTransform(CGAffineTransform(rotationAngle: CGFloat(angle * .pi / 180)))
     }
 }
 

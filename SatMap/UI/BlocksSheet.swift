@@ -6,7 +6,7 @@ extension UTType {
     static let kmz = UTType(importedAs: "com.google.earth.kmz")
 }
 
-/// Imported KML/KMZ files with the blocks shown on the map.
+/// Imported KML/KMZ files: each one's blocks switched on or off the map, and whether they keep the files' colours.
 struct BlocksSheet: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: KMLLibrary
@@ -20,21 +20,55 @@ struct BlocksSheet: View {
                     Text("Import a .kml or .kmz file to show your blocks on the map.")
                         .foregroundColor(.secondary)
                 }
-                ForEach(library.files) { f in
-                    Button {
-                        if let b = f.document.bounds { model.map?.zoom(to: b) }
-                        dismiss()
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(f.name).foregroundColor(.primary)
-                            Text("\(f.document.features.count) shapes · tap to show on map")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                Section {
+                    ForEach(library.files) { f in
+                        HStack(spacing: 12) {
+                            Button {
+                                library.setShown(f.id, true)
+                                if let b = f.document.bounds { model.map?.zoom(to: b) }
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(f.name).foregroundColor(.primary)
+                                    Text("\(f.document.features.count) shapes · tap to show on map")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            Toggle(isOn: Binding(get: { f.isShown }, set: { library.setShown(f.id, $0) })) {
+                                Text("Show \(f.name) on the map")
+                            }
+                            .labelsHidden()
                         }
                     }
+                    .onDelete { offsets in
+                        offsets.map { library.files[$0].id }.forEach(library.delete)
+                    }
+                } footer: {
+                    if !library.files.isEmpty {
+                        Text("Switch a file off to take its blocks off the map.")
+                    }
                 }
-                .onDelete { offsets in
-                    offsets.map { library.files[$0].id }.forEach(library.delete)
+                if !library.files.isEmpty {
+                    Section {
+                        Button {
+                            library.useFileColours.toggle()
+                        } label: {
+                            Label {
+                                Text("Use the colours in the files").foregroundColor(.primary)
+                            } icon: {
+                                Image(systemName: library.useFileColours ? "checkmark.square.fill" : "square")
+                                    .font(.title3)
+                            }
+                        }
+                        .accessibilityValue(Text(library.useFileColours ? "On" : "Off"))
+                        .accessibilityIdentifier("useFileColours")
+                    } footer: {
+                        Text("Off: every block is drawn in white.")
+                    }
                 }
             }
             .navigationTitle("Blocks")

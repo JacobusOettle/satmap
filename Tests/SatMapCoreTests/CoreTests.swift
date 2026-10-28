@@ -2918,4 +2918,120 @@ final class ScaleBarTests: XCTestCase {
         XCTAssertNil(ScaleBar.choose(metersPerPoint: .nan, maxWidth: 110))
         XCTAssertNil(ScaleBar.choose(metersPerPoint: .infinity, maxWidth: 110))
     }
+
+    // MARK: - Terrain button and elevation colours
+
+    func testTerrainButtonCyclesThroughFourModes() {
+        var m = TerrainMode.contours
+        var seen: [TerrainMode] = []
+        for _ in 0..<4 {
+            seen.append(m)
+            m = m.next
+        }
+        XCTAssertEqual(seen, [.contours, .contoursAndColours, .colours, .off])
+        XCTAssertEqual(m, .contours)
+        XCTAssertEqual(TerrainMode.allCases.filter(\.showsContours), [.contours, .contoursAndColours])
+        XCTAssertEqual(TerrainMode.allCases.filter(\.showsColours), [.contoursAndColours, .colours])
+    }
+
+    func testTerrainModeFromSettingsOfEarlierVersions() {
+        XCTAssertEqual(TerrainMode.saved(mode: nil, showContours: nil), .contours)
+        XCTAssertEqual(TerrainMode.saved(mode: nil, showContours: true), .contours)
+        XCTAssertEqual(TerrainMode.saved(mode: nil, showContours: false), .off)
+        XCTAssertEqual(TerrainMode.saved(mode: "colours", showContours: false), .colours)
+        XCTAssertEqual(TerrainMode.saved(mode: "nonsense", showContours: false), .off)
+    }
+
+    func testColourRampRunsFromBlueToRed() {
+        let low = ElevationColours.colour(at: 0), high = ElevationColours.colour(at: 1)
+        XCTAssertGreaterThan(low.blue, 0.8)
+        XCTAssertLessThan(low.red, 0.3)
+        XCTAssertGreaterThan(high.red, 0.8)
+        XCTAssertLessThan(high.blue, 0.3)
+        // Outside the range: the ends; not a number: the lowest.
+        XCTAssertEqual(ElevationColours.colour(at: -3).blue, low.blue)
+        XCTAssertEqual(ElevationColours.colour(at: 7).red, high.red)
+        XCTAssertEqual(ElevationColours.colour(at: .nan).blue, low.blue)
+        let mid = ElevationColours.colour(at: 0.5)
+        XCTAssertGreaterThan(mid.green, mid.blue)
+    }
+
+    func testRoundRangeAroundTheHeightsOnScreen() {
+        let r = ElevationColours.range(low: 412, high: 587, current: nil)
+        XCTAssertEqual(r, ElevationRange(low: 400, high: 600))
+        // Nearly flat ground: at least 10 m, so noise isn't coloured blue to red.
+        let flat = ElevationColours.range(low: 100.2, high: 101.5, current: nil)
+        XCTAssertGreaterThanOrEqual(flat.high - flat.low, 10)
+        XCTAssertLessThanOrEqual(flat.low, 100.2)
+        XCTAssertGreaterThanOrEqual(flat.high, 101.5)
+        let big = ElevationColours.range(low: 120, high: 2_870, current: nil)
+        XCTAssertEqual(big, ElevationRange(low: 0, high: 3_000))
+    }
+
+    func testRangeKeptWhilePanningAroundAndChangedOnZoomingIn() {
+        let shown = ElevationRange(low: 400, high: 600)
+        // Still within it and filling most of it: the same colours.
+        XCTAssertEqual(ElevationColours.range(low: 420, high: 590, current: shown), shown)
+        XCTAssertEqual(ElevationColours.range(low: 405, high: 530, current: shown), shown)
+        // Beyond it: a new one.
+        XCTAssertNotEqual(ElevationColours.range(low: 380, high: 590, current: shown), shown)
+        // Zoomed in on a small part of it: a range around that part.
+        let zoomed = ElevationColours.range(low: 450, high: 480, current: shown)
+        XCTAssertEqual(zoomed, ElevationRange(low: 450, high: 480))
+    }
+
+    func testRangeOnlyGrowsWhileHeightsAreStillComing() {
+        let shown = ElevationRange(low: 400, high: 600)
+        // Only some tiles in: a narrow spread keeps the range.
+        XCTAssertEqual(ElevationColours.range(low: 450, high: 470, current: shown, complete: false), shown)
+        // Higher ground among them: it grows, still covering what it covered.
+        let grown = ElevationColours.range(low: 450, high: 720, current: shown, complete: false)
+        XCTAssertLessThanOrEqual(grown.low, 400)
+        XCTAssertGreaterThanOrEqual(grown.high, 720)
+    }
+
+    func testNiceSteps() {
+        XCTAssertEqual(ElevationColours.niceStep(17.5), 20)
+        XCTAssertEqual(ElevationColours.niceStep(3), 5)
+        XCTAssertEqual(ElevationColours.niceStep(1), 1)
+        XCTAssertEqual(ElevationColours.niceStep(0.13), 0.2, accuracy: 1e-12)
+        XCTAssertEqual(ElevationColours.niceStep(600), 1_000)
+        XCTAssertEqual(ElevationColours.niceStep(0), 1)
+        XCTAssertEqual(ElevationColours.niceStep(.nan), 1)
+    }
+
+    func testGridExtremesOnlyWithinTheRectAndOnLand() {
+        // 3 × 3 nodes over the tile 0..1: the middle column 10, 20, 30; the left column below sea level.
+        let g = ElevationGrid(nodes: 3, values: [-50, 10, 100,
+                                                 -60, 20, 200,
+                                                 -70, 30, 300])
+        let tile = (minX: 0.0, minY: 0.0, maxX: 1.0, maxY: 1.0)
+        let all = g.extremes(tile: tile, within: tile)
+        XCTAssertEqual(all?.low, 10)
+        XCTAssertEqual(all?.high, 300)
+        // The left half: the sea and the middle column.
+        let left = g.extremes(tile: tile, within: (minX: -1, minY: 0, maxX: 0.5, maxY: 1))
+        XCTAssertEqual(left?.low, 10)
+        XCTAssertEqual(left?.high, 30)
+        // Only the sea, or outside the tile: nothing.
+        XCTAssertNil(g.extremes(tile: tile, within: (minX: 0, minY: 0, maxX: 0.2, maxY: 1)))
+        XCTAssertNil(g.extremes(tile: tile, within: (minX: 2, minY: 2, maxX: 3, maxY: 3)))
+    }
+
+    func testColourPixelsPremultipliedAndClearOverTheSea() {
+        let g = ElevationGrid(nodes: 2, values: [-5, 0, 50, 100])
+        let px = ElevationColours.pixels(g, range: ElevationRange(low: 0, high: 100), alpha: 0.5)
+        XCTAssertEqual(px.count, 16)
+        XCTAssertEqual(Array(px[0..<4]), [0, 0, 0, 0]) // the sea
+        for n in 1..<4 {
+            let a = px[n * 4 + 3]
+            XCTAssertEqual(a, 128)
+            XCTAssertLessThanOrEqual(px[n * 4], a)
+            XCTAssertLessThanOrEqual(px[n * 4 + 1], a)
+            XCTAssertLessThanOrEqual(px[n * 4 + 2], a)
+        }
+        // The lowest blue, the highest red.
+        XCTAssertGreaterThan(px[4 + 2], px[4])
+        XCTAssertGreaterThan(px[12], px[12 + 2])
+    }
 }

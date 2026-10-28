@@ -2,19 +2,18 @@ import Combine
 import MapKit
 import UIKit
 
-/// The map on the car's screen (CarPlay): the satellite imagery with contour lines, the blocks, the track and your
-/// position, following you until it is moved. It lies under CarPlay's map template, which has the buttons
+/// The map on the car's screen (CarPlay): the satellite imagery with contour lines and elevation colours (as on the
+/// phone), the blocks, the track and your position, following you until it is moved. It lies under CarPlay's map template, which has the buttons
 /// (`CarPlaySceneDelegate`): the car's screen doesn't take touches on the map itself.
 final class CarPlayMapController: UIViewController, MKMapViewDelegate {
     private let model: AppModel
     private let mapView = MKMapView()
     private var imagery: DrawnImagery!
+    private var blocks: BlockLayers!
     private let track = TrackOverlay()
     private var trackRenderer: TrackRenderer?
     private var drawnTrackCount = 0
     private var userAnnotation: UserLocationAnnotation?
-    private var blockOverlays: [UUID: [MKOverlay]] = [:]
-    private var blockLabels: [UUID: [MKAnnotation]] = [:]
     private var cancellables = Set<AnyCancellable>()
     /// Whether the map keeps you in the middle (until it is moved).
     private(set) var following = true
@@ -54,13 +53,14 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         mapView.register(UserDotView.self, forAnnotationViewWithReuseIdentifier: UserDotView.reuseID)
         mapView.register(BlockLabelView.self, forAnnotationViewWithReuseIdentifier: BlockLabelView.reuseID)
 
-        // Imagery with contours, blocks (inserted below the track), track.
+        // Imagery with contours and colours, blocks (inserted below the track), track.
         imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isShown ?? false },
-                               showContours: { [weak model] in model?.showContours ?? true })
+                               terrain: { [weak model] in model?.terrainMode ?? .contours })
         imagery.addToMap()
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
+        blocks = BlockLayers(mapView: mapView, below: track)
 
         // Around you, or where the phone's map is, about 1.5 km across.
         let start = model.recorder.location?.coordinate ?? model.map?.centerCoordinate
@@ -74,13 +74,13 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         model.$trackRevision
             .sink { [weak self] _ in DispatchQueue.main.async { self?.trackChanged() } }
             .store(in: &cancellables)
-        model.$showContours
+        model.$terrainMode
             .removeDuplicates()
             .dropFirst()
-            .sink { [weak self] show in DispatchQueue.main.async { self?.imagery.contoursChanged(show) } }
+            .sink { [weak self] mode in DispatchQueue.main.async { self?.imagery.terrainChanged(mode) } }
             .store(in: &cancellables)
-        model.kml.$files
-            .sink { [weak self] files in DispatchQueue.main.async { self?.blocksChanged(files) } }
+        model.kml.$files.combineLatest(model.kml.$useFileColours)
+            .sink { [weak self] files, colours in DispatchQueue.main.async { self?.blocks.update(files, useFileColours: colours) } }
             .store(in: &cancellables)
     }
 
@@ -142,7 +142,7 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         imagery.reload()
     }
 
-    // MARK: - Track and blocks
+    // MARK: - Track
 
     private func trackChanged() {
         let points = model.track
@@ -159,25 +159,6 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         drawnTrackCount = points.count
         let margin = 12 * mapView.visibleMapRect.width / Double(max(1, mapView.bounds.width))
         trackRenderer?.setNeedsDisplay(dirty.insetBy(dx: -margin, dy: -margin))
-    }
-
-    private func blocksChanged(_ files: [KMLLibrary.File]) {
-        let ids = Set(files.map(\.id))
-        for (id, overlays) in blockOverlays where !ids.contains(id) {
-            mapView.removeOverlays(overlays)
-            blockOverlays[id] = nil
-        }
-        for (id, labels) in blockLabels where !ids.contains(id) {
-            mapView.removeAnnotations(labels)
-            blockLabels[id] = nil
-        }
-        for f in files where blockOverlays[f.id] == nil {
-            let (overlays, labels) = MapController.blockShapes(f)
-            for o in overlays { mapView.insertOverlay(o, below: track) }
-            mapView.addAnnotations(labels)
-            blockOverlays[f.id] = overlays
-            blockLabels[f.id] = labels
-        }
     }
 
     // MARK: - MKMapViewDelegate
@@ -203,9 +184,9 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
             trackRenderer = r
             return r
         case let o as BlockPolygons:
-            return MapController.blockRenderer(o)
+            return BlockLayers.renderer(o)
         case let o as BlockLines:
-            return MapController.blockRenderer(o)
+            return BlockLayers.renderer(o)
         default:
             return MKOverlayRenderer(overlay: overlay)
         }

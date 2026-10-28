@@ -1,14 +1,17 @@
 import CarPlay
+import Combine
 import UIKit
 
 /// SatMap on the car's screen: the map (`CarPlayMapController`) under CarPlay's map template, with buttons to zoom in
-/// and out, follow you again, move the map and switch the contour lines. CarPlay shows it only when the app is signed
+/// and out, follow you again, move the map and change what it shows of the terrain (as the phone's terrain button). CarPlay shows it only when the app is signed
 /// with Apple's CarPlay entitlement (see SatMap.entitlements).
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate, CPMapTemplateDelegate {
     private var interfaceController: CPInterfaceController?
     private var window: CPWindow?
     private var map: CarPlayMapController?
     private let template = CPMapTemplate()
+    /// The terrain button's title follows the mode, also when it is changed on the phone.
+    private var terrainChanges: AnyCancellable?
 
     func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene,
                                   didConnect interfaceController: CPInterfaceController, to window: CPWindow) {
@@ -25,6 +28,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         template.automaticallyHidesNavigationBar = true
         template.hidesButtonsWithNavigationBar = false
         updateButtons()
+        terrainChanges = model.$terrainMode
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.updateButtons() } }
         interfaceController.setRootTemplate(template, animated: false, completion: nil)
     }
 
@@ -33,6 +40,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         map?.isShown = false
         if AppModel.shared.carPlayMap === map { AppModel.shared.carPlayMap = nil }
         window.rootViewController = nil
+        terrainChanges = nil
         map = nil
         self.window = nil
         self.interfaceController = nil
@@ -48,7 +56,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
 
     // MARK: - Buttons
 
-    /// Zoom in, zoom out and follow you on the map; move the map and the contour lines in the bar along the top.
+    /// Zoom in, zoom out and follow you on the map; move the map and the terrain (contour lines, elevation colours,
+    /// both, neither: each tap the next, the title says what is shown) in the bar along the top.
     private func updateButtons() {
         let model = AppModel.shared
         let zoomIn = CPMapButton { [weak self] _ in self?.map?.zoom(by: 0.5) }
@@ -68,12 +77,21 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
                 self.template.showPanningInterface(animated: true)
             }
         }
-        let contours = CPBarButton(title: model.showContours ? "Contours off" : "Contours on") { [weak self] _ in
-            model.showContours.toggle()
-            self?.updateButtons()
+        let terrain = CPBarButton(title: Self.shortTitle(model.terrainMode)) { _ in
+            model.terrainMode = model.terrainMode.next
         }
         template.leadingNavigationBarButtons = [move]
-        template.trailingNavigationBarButtons = [contours]
+        template.trailingNavigationBarButtons = [terrain]
+    }
+
+    /// What the map shows of the terrain, short enough for the car's bar.
+    private static func shortTitle(_ mode: TerrainMode) -> String {
+        switch mode {
+        case .contours: return "Contours"
+        case .contoursAndColours: return "Contours + colours"
+        case .colours: return "Colours"
+        case .off: return "No contours"
+        }
     }
 
     // MARK: - CPMapTemplateDelegate

@@ -7,6 +7,9 @@ struct MapScreen: View {
     @ObservedObject var offline: OfflineManager
     @ObservedObject var recorder: LocationRecorder
     @State private var confirmClearTrack = false
+    /// What the terrain button now shows, said for a moment beside it after a tap.
+    @State private var terrainToast: String?
+    @State private var toastEnd: DispatchWorkItem?
 
     var body: some View {
         ZStack {
@@ -38,12 +41,15 @@ struct MapScreen: View {
                 case .off:
                     EmptyView()
                 }
-                // Your own coordinates at the top; a tapped spot's at the bottom, within reach to copy.
+                // Your own coordinates and height at the top; a tapped spot's at the bottom, within reach to copy.
                 if let loc = recorder.location, !model.isDrawingArea {
-                    CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
-                                  text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
-                                  id: "myCoordinates")
-                        .frame(maxWidth: .infinity)
+                    HStack(spacing: 8) {
+                        CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
+                                      text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
+                                      id: "myCoordinates")
+                        HeightBar(elevation: model.userElevation, gpsAltitude: Self.gpsAltitude(loc), id: "myHeight")
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
                     Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
@@ -54,7 +60,12 @@ struct MapScreen: View {
                 // Map credits are in the Offline maps sheet.
                 if !model.isDrawingArea {
                     HStack(alignment: .bottom) {
-                        ScaleBarView(scale: model.scale)
+                        // The contour interval above the scale bar, the elevation colours' heights under it.
+                        VStack(alignment: .leading, spacing: 8) {
+                            ContourKeyView(legend: model.legend)
+                            ScaleBarView(scale: model.scale)
+                            ColourKeyView(legend: model.legend)
+                        }
                         Spacer()
                         controls
                     }
@@ -67,9 +78,13 @@ struct MapScreen: View {
             .padding(.bottom, 8)
             .overlay(alignment: .bottom) {
                 if let p = model.selectedPoint, !model.isDrawingArea {
-                    CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
-                                  onClose: { model.selectedPoint = nil })
-                        .padding(.bottom, 8)
+                    HStack(spacing: 8) {
+                        CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
+                                      onClose: { model.selectedPoint = nil })
+                        HeightBar(elevation: model.selectedElevation, id: "tappedHeight")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
                 }
             }
         }
@@ -104,10 +119,26 @@ struct MapScreen: View {
                 CompassButton(mapView: map)
                     .frame(width: 44, height: 44)
             }
-            MapButton(systemImage: model.showContours ? "mountain.2.fill" : "mountain.2", label: "Contour lines",
-                      dimmed: !model.showContours) { model.showContours.toggle() }
-                .accessibilityValue(Text(model.showContours ? "On" : "Off"))
+            MapButton(systemImage: terrainIcon, label: "Contour lines", dimmed: model.terrainMode == .off,
+                      heightColours: model.terrainMode.showsColours) { nextTerrainMode() }
+                .accessibilityValue(Text(model.terrainMode.title))
+                .overlay(alignment: .trailing) {
+                    if let text = terrainToast {
+                        Text(text)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.75))
+                            .clipShape(Capsule())
+                            .fixedSize()
+                            .offset(x: -60)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
             MapButton(systemImage: "square.dashed", label: "Blocks") { model.sheet = .blocks }
+                .contextMenu { blocksMenu }
             MapButton(systemImage: offline.activeID == nil ? "arrow.down.circle" : "arrow.down.circle.fill",
                       label: "Offline maps", active: offline.activeID != nil) { model.sheet = .offline }
             MapButton(systemImage: "location.magnifyingglass", label: "Go to coordinates") { model.sheet = .coordinates }
@@ -119,6 +150,49 @@ struct MapScreen: View {
                     }
                 }
         }
+    }
+
+    /// Contour lines, contours with elevation colours, colours alone (in the colours: `heightColours`), or neither.
+    private var terrainIcon: String {
+        switch model.terrainMode {
+        case .contours, .contoursAndColours: return "mountain.2.fill"
+        case .colours: return "paintpalette.fill"
+        case .off: return "mountain.2"
+        }
+    }
+
+    /// The terrain button: the next of contours → contours and colours → colours → neither, said beside it for a moment.
+    private func nextTerrainMode() {
+        model.terrainMode = model.terrainMode.next
+        terrainToast = model.terrainMode.title
+        toastEnd?.cancel()
+        let end = DispatchWorkItem { withAnimation { terrainToast = nil } }
+        toastEnd = end
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: end)
+    }
+
+    /// A long press on Blocks: each file's blocks on or off the map, and their colours, without opening the list.
+    @ViewBuilder private var blocksMenu: some View {
+        ForEach(model.kml.files) { f in
+            Button {
+                model.kml.setShown(f.id, !f.isShown)
+            } label: {
+                Label(f.name, systemImage: f.isShown ? "checkmark.circle.fill" : "circle")
+            }
+        }
+        if !model.kml.files.isEmpty {
+            Divider()
+            Button {
+                model.kml.useFileColours.toggle()
+            } label: {
+                Label("Colours from the files", systemImage: model.kml.useFileColours ? "checkmark.square.fill" : "square")
+            }
+        }
+    }
+
+    /// The GPS's own height for you, if it is good to 25 m: shown while the elevation data has none.
+    private static func gpsAltitude(_ loc: CLLocation) -> Double? {
+        loc.verticalAccuracy > 0 && loc.verticalAccuracy <= 25 ? loc.altitude : nil
     }
 
     private var measureIcon: String {
@@ -158,6 +232,8 @@ struct MapButton: View {
     var active = false
     /// A switch that is off: the icon is faded.
     var dimmed = false
+    /// The icon in the elevation colours, low (blue) at the bottom to high (red) at the top.
+    var heightColours = false
     let action: () -> Void
 
     var body: some View {
@@ -165,13 +241,19 @@ struct MapButton: View {
             Image(systemName: systemImage)
                 .font(.system(size: 20, weight: .semibold))
                 .frame(width: 50, height: 50)
-                .foregroundColor(active ? .black : .white.opacity(dimmed ? 0.45 : 1))
+                .foregroundStyle(iconStyle)
                 .background(active ? Color.yellow : Color.black.opacity(0.6))
                 .clipShape(Circle())
                 .overlay(Circle().stroke(Color.white.opacity(0.3), lineWidth: 1))
                 .shadow(color: .black.opacity(0.35), radius: 3)
         }
         .accessibilityLabel(Text(label))
+    }
+
+    private var iconStyle: AnyShapeStyle {
+        if active { return AnyShapeStyle(Color.black) }
+        if heightColours { return AnyShapeStyle(LinearGradient(gradient: ElevationKey.gradient, startPoint: .bottom, endPoint: .top)) }
+        return AnyShapeStyle(Color.white.opacity(dimmed ? 0.45 : 1))
     }
 }
 
@@ -341,6 +423,91 @@ struct ScaleBarView: View {
     }
 }
 
+/// The elevation colours' ramp, for the legend and the terrain button.
+enum ElevationKey {
+    static let gradient = Gradient(stops: ElevationColours.stops.map {
+        Gradient.Stop(color: Color(red: $0.1, green: $0.2, blue: $0.3), location: $0.0)
+    })
+}
+
+/// The contour lines' interval at this zoom, above the scale bar: a thin line every so many metres, a bold one (with
+/// its height on it) every so many more. Shown while contour lines are drawn.
+struct ContourKeyView: View {
+    @ObservedObject var legend: MapLegend
+
+    var body: some View {
+        if let c = legend.key.contours {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Contours")
+                    .font(.caption2.weight(.semibold))
+                    .opacity(0.9)
+                HStack(spacing: 5) {
+                    ContourSample(bold: false)
+                    Text(Format.height(c.step))
+                    ContourSample(bold: true)
+                        .padding(.leading, 4)
+                    Text(Format.height(c.index))
+                }
+                .font(.caption.weight(.semibold).monospacedDigit())
+            }
+            .foregroundColor(.white)
+            .shadow(color: .black, radius: 1.5)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Contour lines")
+            .accessibilityValue(Text("every \(Format.height(c.step)), bold every \(Format.height(c.index))"))
+            .accessibilityIdentifier("contourKey")
+        }
+    }
+}
+
+/// A short piece of contour line in the map's colours (`ContourRenderer`), with its dark edge.
+private struct ContourSample: View {
+    let bold: Bool
+
+    var body: some View {
+        ZStack {
+            Capsule()
+                .fill(Color.black.opacity(0.4))
+                .frame(width: 20, height: bold ? 4.5 : 3)
+            Capsule()
+                .fill(bold ? Color(red: 1.0, green: 0.74, blue: 0.16) : Color(red: 1.0, green: 0.84, blue: 0.32).opacity(0.9))
+                .frame(width: 18, height: bold ? 3 : 1.6)
+        }
+    }
+}
+
+/// The heights the elevation colours run between, under the scale bar: blue the lowest, red the highest. Shown while
+/// the colours are drawn.
+struct ColourKeyView: View {
+    @ObservedObject var legend: MapLegend
+
+    var body: some View {
+        if let r = legend.key.colours {
+            VStack(alignment: .leading, spacing: 3) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(LinearGradient(gradient: ElevationKey.gradient, startPoint: .leading, endPoint: .trailing))
+                    .overlay(RoundedRectangle(cornerRadius: 2).stroke(Color.white.opacity(0.85), lineWidth: 1))
+                    .frame(width: CGFloat(MapScale.maxWidth), height: 8)
+                HStack {
+                    Text(Format.height(r.low))
+                    Spacer(minLength: 6)
+                    Text(Format.height(r.high))
+                }
+                .frame(width: CGFloat(MapScale.maxWidth))
+                .font(.caption.weight(.semibold).monospacedDigit())
+                .foregroundColor(.white)
+                .shadow(color: .black, radius: 1.5)
+            }
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Elevation colours")
+            .accessibilityValue(Text("blue \(Format.height(r.low)) to red \(Format.height(r.high))"))
+            .accessibilityIdentifier("colourKey")
+        }
+    }
+}
+
 /// ⊔: a line with a tick up at each end.
 private struct ScaleBarShape: Shape {
     func path(in r: CGRect) -> Path {
@@ -416,6 +583,52 @@ struct StopMeasuringButton: View {
                 .padding(12)
         }
         .accessibilityLabel(Text("Stop measuring"))
+    }
+}
+
+/// The height above sea level of a spot, beside its coordinates: from the elevation data (as the contour lines), or for
+/// you, while there is none, the GPS's own (marked).
+struct HeightBar: View {
+    let elevation: Double?
+    var gpsAltitude: Double?
+    /// Accessibility identifier, for the UI test.
+    let id: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "mountain.2.fill")
+                .font(.caption)
+            Text(text)
+                .font(.subheadline.monospacedDigit().weight(.semibold))
+                .lineLimit(1)
+            if elevation == nil, gpsAltitude != nil {
+                Text("GPS")
+                    .font(.caption2.weight(.bold))
+                    .opacity(0.75)
+            }
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.65))
+        .clipShape(Capsule())
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Height"))
+        .accessibilityValue(Text(spoken))
+        .accessibilityIdentifier(id)
+    }
+
+    private var text: String {
+        if let h = elevation ?? gpsAltitude { return Format.height(h) }
+        return Connectivity.shared.isOnline ? "… m" : "– m"
+    }
+
+    private var spoken: String {
+        guard let h = elevation ?? gpsAltitude else {
+            return Connectivity.shared.isOnline ? "Loading" : "No elevation data here offline"
+        }
+        return "\(Format.height(h)) above sea level" + (elevation == nil ? ", from GPS" : "")
     }
 }
 

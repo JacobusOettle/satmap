@@ -196,3 +196,50 @@ final class ContourRenderer {
         }
     }
 }
+
+/// The heights of a tile for its elevation colours (`ElevationColours`): a grid of nodes from edge to edge, sampled
+/// from the elevation tiles of its zoom (as its contour lines are), which the imagery layer colours and draws.
+final class HeightGrids {
+    static let shared = HeightGrids()
+
+    private let lock = NSLock()
+    /// A tile asked for again before the first answer shares its work.
+    private var inFlight: [TileID: Task<Tile, Never>] = [:]
+
+    enum Tile {
+        /// The heights; not `complete` when an elevation tile around it was missing, so its edges are approximated.
+        case grid(ElevationGrid, complete: Bool)
+        /// No elevation for it (offline and not downloaded, or the fetch failed).
+        case unavailable
+    }
+
+    func tile(_ t: TileID) async -> Tile {
+        let task: Task<Tile, Never> = lock.withLock {
+            if let existing = inFlight[t] { return existing }
+            let new = Task.detached(priority: .userInitiated) { await Self.load(t) }
+            inFlight[t] = new
+            return new
+        }
+        let tile = await task.value
+        lock.withLock { inFlight[t] = nil }
+        return tile
+    }
+
+    private static func load(_ t: TileID) async -> Tile {
+        let dz = ContourPolicy.demZoom(forTileZoom: t.z)
+        let b = t.worldBounds
+        let (tiles, complete) = await TileRepository.shared.demTiles(zoom: dz, minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY)
+        guard !tiles.isEmpty else {
+            tileLog.error("heights \(t.description, privacy: .public): no elevation tiles")
+            return .unavailable
+        }
+        let nodes = ElevationColours.cells + 1
+        let values = await Work.run(on: Work.contours) {
+            DEMSampler(zoom: dz, tile: { tiles[$0] }).grid(minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY,
+                                                          nodesX: nodes, nodesY: nodes)
+        }
+        guard let values = values else { return .unavailable }
+        tileLog.debug("heights \(t.description, privacy: .public) complete=\(complete)")
+        return .grid(ElevationGrid(nodes: nodes, values: values), complete: complete)
+    }
+}

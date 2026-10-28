@@ -97,7 +97,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release delete test-build --yes --cleanup-tag || true
-          gh release create test-build SatMap.ipa --prerelease --target "$GITHUB_SHA" \
-            --title "SatMap test build" \
-            --notes "Unsigned build of ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Sign and install it with Impactor (or Sideloadly or AltStore) using your Apple ID."
+          notes="Unsigned build of ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Sign and install it with Impactor (or Sideloadly or AltStore) using your Apple ID."
+          # The file is replaced in place, so the download link never goes missing (deleting the release first left
+          # nothing there when creating the new one was refused); a new release only when there is none.
+          if gh release view test-build > /dev/null 2>&1; then
+            gh release upload test-build SatMap.ipa --clobber
+            gh release edit test-build --prerelease --notes "$notes"
+            # The tag follows to this commit (the link goes by the tag's name, so it works either way).
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/test-build" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
+              || echo "The tag stays at the earlier commit."
+          else
+            gh release create test-build SatMap.ipa --prerelease --target "$GITHUB_SHA" --title "SatMap test build" --notes "$notes"
+          fi

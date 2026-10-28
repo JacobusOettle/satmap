@@ -79,6 +79,8 @@ final class ScreenshotTests: XCTestCase {
         if !app.navigationBars["Blocks"].waitForExistence(timeout: 5) { tap("Blocks") } // a tap can be lost while the app is busy
         sleep(2)
         snap("04-blocks-list")
+        XCTAssertTrue(app.switches.firstMatch.exists, "No switch to show or hide the file")
+        XCTAssertTrue(app.buttons["useFileColours"].exists, "No colours checkbox")
         tapRow(startingWith: "Demo farm")
         sleep(25)
         snap("05-blocks-on-map")
@@ -109,15 +111,23 @@ final class ScreenshotTests: XCTestCase {
         sleep(3)
         snap("10-draw-area")
 
-        // Contour lines switched off with the side button.
+        // The terrain button: contour lines with elevation colours, the colours alone, then neither.
         for _ in 0..<4 {
             if app.buttons["Contour lines"].waitForExistence(timeout: 2) { break }
             tap("Cancel")
         }
-        setContours(on: false)
+        setTerrain("Contour lines and elevation colours")
+        sleep(12) // heights for the colours
+        XCTAssertTrue(app.descendants(matching: .any)["colourKey"].firstMatch.exists, "No legend for the colours")
+        XCTAssertTrue(app.descendants(matching: .any)["contourKey"].firstMatch.exists, "No legend for the contour lines")
+        snap("22-contours-and-colours")
+        setTerrain("Elevation colours")
+        sleep(6)
+        snap("23-elevation-colours")
+        setTerrain("Contours and colours off")
         sleep(3)
         snap("11-contours-off")
-        setContours(on: true)
+        setTerrain("Contour lines")
 
         // Tap a spot: its coordinates at the top (your own at the bottom); tapping them copies them.
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.35, dy: 0.45)).tap()
@@ -131,6 +141,13 @@ final class ScreenshotTests: XCTestCase {
             XCTFail("No coordinates for the tapped spot")
         }
         XCTAssertTrue(app.buttons["myCoordinates"].exists, "No coordinates of your position")
+        // The heights beside both.
+        for id in ["myHeight", "tappedHeight"] {
+            let height = app.descendants(matching: .any)[id].firstMatch
+            XCTAssertTrue(height.exists, "No height beside \(id)")
+            XCTAssertTrue((height.value as? String)?.contains("above sea level") == true,
+                          "\(id) has no height: \(String(describing: height.value))")
+        }
 
         // Measuring between two points: a tap anywhere puts a point at the crosshair; the map is moved between them.
         setMeasure(.aiming)
@@ -302,11 +319,11 @@ final class ScreenshotTests: XCTestCase {
         return panel.exists ? .placed : .off
     }
 
-    /// Taps the contour button until it shows the wanted state (a tap can be lost while the app is busy).
-    private func setContours(on: Bool) {
+    /// Taps the terrain button (each tap the next of four) until it shows the wanted mode (a tap can be lost while the
+    /// app is busy).
+    private func setTerrain(_ wanted: String) {
         let button = app.buttons["Contour lines"].firstMatch
-        let wanted = on ? "On" : "Off"
-        for _ in 0..<4 {
+        for _ in 0..<8 {
             if button.value as? String == wanted { return }
             tap("Contour lines")
             sleep(2)

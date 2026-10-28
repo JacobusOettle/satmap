@@ -117,6 +117,78 @@ final class MapScale: ObservableObject {
     }
 }
 
+/// What the legends beside the scale bar show (the contour interval and the elevation colours' range), set by the map
+/// as it zooms. Kept out of `AppModel` so a zoom redraws only them.
+final class MapLegend: ObservableObject {
+    @Published private(set) var key = TerrainKey()
+
+    func update(_ k: TerrainKey) {
+        if k != key { key = k }
+    }
+}
+
+/// Looks up the height of a spot that may keep changing (your position, a tapped spot): one lookup at a time, always
+/// for the latest spot, so moving doesn't queue one for every GPS fix. A failed lookup (no signal) is tried again a few
+/// times, 15 s apart, while the spot stays and the app is on screen. Main thread only.
+final class HeightLookup: @unchecked Sendable {
+    /// The latest spot asked about.
+    private(set) var point: GeoPoint?
+    /// Told the height found for a spot (nil: none to be had).
+    private let found: (GeoPoint, Double?) -> Void
+    private var lookingUp = false
+    private var lookedUp: GeoPoint?
+    private var retries = 0
+    /// Bumped when the spot goes, so a lookup still under way then isn't reported.
+    private var session = 0
+
+    init(found: @escaping (GeoPoint, Double?) -> Void) {
+        self.found = found
+    }
+
+    func set(_ p: GeoPoint?) {
+        guard p != point else { return }
+        point = p
+        retries = 0
+        if p == nil {
+            session += 1
+            lookedUp = nil
+        }
+        lookUp()
+    }
+
+    /// Looks up the latest spot again (the network is back, or the app was opened).
+    func retry() {
+        guard point != nil else { return }
+        lookedUp = nil
+        lookUp()
+    }
+
+    private func lookUp() {
+        guard !lookingUp, let p = point, p != lookedUp else { return }
+        lookingUp = true
+        lookedUp = p
+        let s = session
+        Task.detached(priority: .userInitiated) {
+            let e = await TileRepository.shared.elevation(at: p)
+            DispatchQueue.main.async {
+                self.lookingUp = false
+                if s == self.session {
+                    self.found(p, e)
+                    if e == nil, self.point == p, self.retries < 4 {
+                        self.retries += 1
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                            guard s == self.session, self.point == p,
+                                  UIApplication.shared.applicationState == .active else { return }
+                            self.retry()
+                        }
+                    }
+                }
+                self.lookUp()
+            }
+        }
+    }
+}
+
 /// A shape waiting for the user to confirm an offline download.
 struct PendingArea: Identifiable {
     let id = UUID()
@@ -147,23 +219,48 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     @Published private(set) var trackRevision = 0
 
     @Published var following = true
-    /// Contour lines on the map (side button). Remembered between launches. While off, no elevation tiles are
-    /// fetched for the map; the measuring tool still looks up heights.
-    @Published var showContours = UserDefaults.standard.object(forKey: "showContours") == nil
-        || UserDefaults.standard.bool(forKey: "showContours") { // bool(forKey:) also reads "NO" given at launch (tests)
-        didSet { UserDefaults.standard.set(showContours, forKey: "showContours") }
+    /// What the terrain button shows over the imagery: contour lines, elevation colours, both or neither (each tap the
+    /// next). Remembered between launches. With neither, no elevation tiles are fetched for the map; the measuring
+    /// tool and the heights beside the coordinates still look them up.
+    @Published var terrainMode = TerrainMode.saved(
+        mode: UserDefaults.standard.string(forKey: "terrainMode"),
+        showContours: UserDefaults.standard.object(forKey: "showContours") == nil
+            ? nil : UserDefaults.standard.bool(forKey: "showContours")) { // also reads "NO" given at launch
+        didSet { UserDefaults.standard.set(terrainMode.rawValue, forKey: "terrainMode") }
     }
     @Published private(set) var measure: MeasureMode = .off
-    /// Elevation of the first measuring point, of the last one (with two or more), and of where you are.
+    /// Elevation of the first measuring point, of the last one (with two or more), and of where you are (beside your
+    /// coordinates, and for measuring from you).
     @Published private(set) var markerElevation: Double?
     @Published private(set) var lastElevation: Double?
     @Published private(set) var userElevation: Double?
     /// The spot under the crosshair while aiming.
     let aim = CrosshairAim()
-    /// The scale bar.
+    /// The scale bar, and the legends beside it.
     let scale = MapScale()
-    /// The last point tapped on the map (or placed for measuring); its coordinates are shown at the top.
-    @Published var selectedPoint: GeoPoint?
+    let legend = MapLegend()
+    /// The last point tapped on the map (or placed for measuring); its coordinates are shown at the bottom, with its
+    /// height (`selectedElevation`).
+    @Published var selectedPoint: GeoPoint? {
+        didSet {
+            guard selectedPoint != oldValue else { return }
+            selectedElevation = nil
+            selectedLookup.set(selectedPoint)
+        }
+    }
+    @Published private(set) var selectedElevation: Double?
+    private lazy var selectedLookup = HeightLookup { [weak self] p, e in
+        guard let self = self, p == self.selectedPoint else { return }
+        self.selectedElevation = e
+    }
+    /// Your height, looked up as you move (while the app is on screen).
+    private lazy var userLookup = HeightLookup { [weak self] _, e in
+        guard let self = self else { return }
+        if e?.rounded() != self.userElevation?.rounded() || (e == nil) != (self.userElevation == nil) {
+            self.userElevation = e
+        }
+        if e != nil, self.markerElevation == nil { self.refreshPointElevations() }
+    }
 
     /// Lasso drawing mode for choosing an offline area.
     @Published var isDrawingArea = false
@@ -180,7 +277,6 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     weak var carPlayMap: CarPlayMapController?
 
     private var cancellables = Set<AnyCancellable>()
-    private var elevationTask: Task<Void, Never>?
     private var retryTimer: Timer?
     private var reloadPending = false
     private var lastReload = Date.distantPast
@@ -190,12 +286,14 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         recorder.seed(lastRecorded: track.last)
         recorder.onTrackPoint = { [weak self] p in self?.appendTrack(p) }
         recorder.onFix = { [weak self] loc in self?.locationUpdated(loc) }
+        recorder.onHeading = { [weak self] h in self?.map?.headingUpdated(h) }
 
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             // Elevations aren't looked up in the background; catch up when the app is opened.
             guard let self = self else { return }
             if self.markerElevation == nil || self.lastElevation == nil { self.refreshPointElevations() }
-            if self.measureIsFromYou, let loc = self.recorder.location { self.refreshUserElevation(loc) }
+            if let loc = self.recorder.location { self.refreshUserElevation(loc) }
+            if self.selectedElevation == nil { self.selectedLookup.retry() }
         }
 
         // For the whole app, whichever maps there are (the phone's, the car's, or both): memory trimmed in the background,
@@ -274,6 +372,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             self.map?.reloadImagery()
             self.carPlayMap?.reload()
             self.aim.retry()
+            if self.userElevation == nil { self.userLookup.retry() }
+            if self.selectedElevation == nil { self.selectedLookup.retry() }
         }
     }
 
@@ -297,7 +397,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private func locationUpdated(_ loc: CLLocation) {
         map?.locationUpdated(loc)
         carPlayMap?.locationUpdated(loc)
-        if measureIsFromYou, UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
+        if UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
     }
 
     /// My location: centres the map on you and follows you. Tapped again while it does (also a quick second tap), it
@@ -397,7 +497,6 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         let new = m.points
         if new.first != old.first { markerElevation = nil }
         if new.count < 2 || new.last != old.last || old.count < 2 { lastElevation = nil }
-        if m == .off { userElevation = nil }
         refreshPointElevations()
         if measureIsFromYou, let loc = recorder.location { refreshUserElevation(loc) }
     }
@@ -484,16 +583,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     }
 
     private func refreshUserElevation(_ loc: CLLocation) {
-        let p = GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)
-        elevationTask?.cancel()
-        elevationTask = Task.detached(priority: .utility) {
-            let e = await TileRepository.shared.elevation(at: p)
-            guard !Task.isCancelled else { return }
-            DispatchQueue.main.async {
-                self.userElevation = e
-                if self.markerElevation == nil { self.refreshPointElevations() }
-            }
-        }
+        userLookup.set(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude))
     }
 
     // MARK: - Offline areas

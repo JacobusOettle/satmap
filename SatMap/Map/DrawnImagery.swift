@@ -1,7 +1,20 @@
 import MapKit
 import UIKit
 
-/// The satellite imagery (with the contour lines) of one map view, which SatMap draws itself (`SatelliteRenderer`):
+/// What a map's legends show (`DrawnImagery.onKey`): the contour interval drawn at its zoom, and the heights the
+/// elevation colours run between (blue to red); nil where they aren't drawn.
+struct TerrainKey: Equatable {
+    var contours: ContourInterval?
+    var colours: ElevationRange?
+}
+
+/// Metres between contour lines, and between the bold ones (labelled with their height).
+struct ContourInterval: Equatable {
+    let step: Double
+    let index: Double
+}
+
+/// The satellite imagery (with the contour lines and elevation colours) of one map view, which SatMap draws itself (`SatelliteRenderer`):
 /// the phone's map has one, and with CarPlay the car's map another (the tiles in memory are shared). Tiles that arrive
 /// are shown with a freshly drawn layer put under the shown one, which goes once the new one has painted the screen:
 /// redrawing part of a layer would empty it first (grey).
@@ -9,9 +22,13 @@ final class DrawnImagery {
     private unowned let mapView: MKMapView
     /// Whether the map is on screen: MapKit doesn't paint otherwise.
     private let isVisible: () -> Bool
-    /// Whether contour lines are drawn (a new layer comes when it changes: `contoursChanged`).
-    private let showContours: () -> Bool
+    /// Whether contour lines and elevation colours are drawn (a new layer comes when it changes: `terrainChanged`).
+    private let terrain: () -> TerrainMode
     let map = DrawnMap()
+    /// The heights the elevation colours run between, chosen from those on screen (`updateColourRange`).
+    private(set) var colourRange: ElevationRange?
+    /// Told what the legends should show as it changes (the phone's map has them).
+    var onKey: ((TerrainKey) -> Void)?
 
     /// The layer shown, and while a new one replaces it (`swap`), the one going (on top until the new one has painted).
     private var drawn: SatelliteDrawnOverlay
@@ -27,10 +44,10 @@ final class DrawnImagery {
     private var swapWaiting = false
     private var stopCount = 0
 
-    init(mapView: MKMapView, isVisible: @escaping () -> Bool, showContours: @escaping () -> Bool) {
+    init(mapView: MKMapView, isVisible: @escaping () -> Bool, terrain: @escaping () -> TerrainMode) {
         self.mapView = mapView
         self.isVisible = isVisible
-        self.showContours = showContours
+        self.terrain = terrain
         drawn = SatelliteDrawnOverlay(urlTemplate: nil)
         map.onArrival = { [weak self] t, content in self?.tileArrived(t, content) }
     }
@@ -43,7 +60,9 @@ final class DrawnImagery {
 
     /// The renderer for a layer of the imagery (from the map view delegate).
     func renderer(for overlay: SatelliteDrawnOverlay) -> MKOverlayRenderer {
-        SatelliteRenderer(overlay: overlay, map: map, contours: showContours())
+        let mode = terrain()
+        return SatelliteRenderer(overlay: overlay, map: map, contours: mode.showsContours, colours: mode.showsColours,
+                                 range: colourRange)
     }
 
     private func renderer(_ o: SatelliteDrawnOverlay) -> SatelliteRenderer? {
@@ -72,6 +91,7 @@ final class DrawnImagery {
 
     func visibleRegionChanged() {
         if let levels = levels { setFocus(levels) }
+        reportKey()
     }
 
     private func setFocus(_ levels: (imagery: Int, contours: Int)) {
@@ -89,6 +109,7 @@ final class DrawnImagery {
             self.setFocus(levels)
             ImageryPrefetch.mapStopped(visible: self.mapView.visibleMapRect, level: levels.imagery)
             self.renderer(self.drawn)?.loadStandIns()
+            self.updateColourRange()
         }
     }
 
@@ -129,9 +150,47 @@ final class DrawnImagery {
         if renderer(drawn)?.hasStandIns == true { swap() }
     }
 
-    /// The layer draws the contour lines, so a new one comes, with or without.
-    func contoursChanged(_ show: Bool) {
-        if let r = renderer(drawn), r.drawsContours != show { swap() }
+    /// The layer draws the contour lines and colours, so a new one comes, with or without.
+    func terrainChanged(_ mode: TerrainMode) {
+        if mode.showsColours { updateColourRange() } // from heights already in memory
+        reportKey()
+        guard let r = renderer(drawn) else { return }
+        if r.drawsContours != mode.showsContours || r.drawsColours != mode.showsColours
+            || (mode.showsColours && r.colourRange != colourRange) {
+            swap()
+        }
+    }
+
+    // MARK: - Elevation colours
+
+    /// Chooses the colours' range from the heights in memory for the screen (keeping the one shown while it still
+    /// suits: `ElevationColours.range`); a new one brings a new layer.
+    private func updateColourRange() {
+        guard terrain().showsColours, isVisible(), let levels = levels, levels.contours >= ElevationColours.minTileZoom,
+              let e = SatelliteRenderer.heightExtremes(in: mapView.visibleMapRect, level: levels.contours) else { return }
+        let range = ElevationColours.range(low: e.low, high: e.high, current: colourRange, complete: e.complete)
+        guard range != colourRange else { return }
+        tileLog.debug("colours from \(Int(range.low)) to \(Int(range.high)) m (screen \(Int(e.low))–\(Int(e.high)) m, complete=\(e.complete))")
+        colourRange = range
+        reportKey()
+        if let r = renderer(drawn), r.colourRange != range { scheduleSwap() }
+    }
+
+    /// Tells the legends the contour interval at this zoom (as the layer draws them) and the colours' range.
+    private func reportKey() {
+        guard let report = onKey else { return }
+        let mode = terrain()
+        guard let levels = levels else { return report(TerrainKey()) }
+        var pixelsPerPoint = Double(max(1, mapView.window?.screen.scale ?? mapView.traitCollection.displayScale))
+        let paint = map.lastPaintScale
+        if paint.pixelsPerPoint > 0 { pixelsPerPoint = Double(paint.pixelsPerPoint) }
+        var key = TerrainKey()
+        if mode.showsContours, levels.contours >= ContourPolicy.minTileZoom, let i = ContourPolicy.intervals(
+            forPointZoom: ContourPolicy.pointZoom(tileZoom: levels.contours, screenScale: pixelsPerPoint)) {
+            key.contours = ContourInterval(step: i.step, index: i.index)
+        }
+        if mode.showsColours, levels.contours >= ElevationColours.minTileZoom { key.colours = colourRange }
+        report(key)
     }
 
     /// Back on screen: a new layer owed for tiles that arrived meanwhile.
@@ -143,7 +202,9 @@ final class DrawnImagery {
     }
 
     /// A tile has arrived in memory. If the layer shows a stand-in where it would show better, a new layer replaces it.
+    /// Heights may change the colours' range.
     private func tileArrived(_ t: TileID, _ content: SatelliteRenderer.Content) {
+        if content == .colours { updateColourRange() }
         guard let r = renderer(drawn), r.wouldImprove(with: t, content) else { return }
         scheduleSwap()
     }
@@ -174,7 +235,8 @@ final class DrawnImagery {
         guard outgoing == nil else { return scheduleSwap() } // one at a time
         let old = drawn
         // The new layer paints only decoded tiles: not before the ones shown are (a few tries at most).
-        if let r = renderer(old), swapDeferrals < 3, !r.ownSpotsReady(contours: showContours()) {
+        let mode = terrain()
+        if let r = renderer(old), swapDeferrals < 3, !r.ownSpotsReady(contours: mode.showsContours, colours: mode.showsColours) {
             swapDeferrals += 1
             return scheduleSwap()
         }
