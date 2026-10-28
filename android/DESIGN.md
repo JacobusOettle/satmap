@@ -11,7 +11,8 @@ other, and how the work is ordered and tested.
    needs a decision.
 2. **This document.** It is the truth for structure: classes, threads, the MapLibre style, services, the
    manifest and the tests.
-3. **The five subsystem specs** (rendering, interaction, state, UI, offline). They hold the detailed Android
+3. **The five subsystem specs** in `docs/spec/` (`rendering.md`, `interaction.md`, `state.md`, `ui.md`,
+   `offline.md`; "rendering spec §2.4" means `docs/spec/rendering.md` §2.4). They hold the detailed Android
    mapping. Where they disagree with each other, or with this document, §0 decides.
 
 ---
