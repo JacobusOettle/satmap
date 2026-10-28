@@ -57,6 +57,7 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         // Imagery with contours, blocks (inserted below the track), track.
         imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isShown ?? false },
                                showContours: { [weak model] in model?.showContours ?? true })
+        imagery.addToMap()
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
@@ -182,15 +183,15 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
     // MARK: - MKMapViewDelegate
 
     func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
-        imagery.regionWillChange()
+        imagery?.regionWillChange()
     }
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
-        imagery.regionDidChange()
+        imagery?.regionDidChange()
     }
 
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
-        imagery.visibleRegionChanged()
+        imagery?.visibleRegionChanged()
     }
 
     func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {

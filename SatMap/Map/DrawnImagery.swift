@@ -27,14 +27,18 @@ final class DrawnImagery {
     private var swapWaiting = false
     private var stopCount = 0
 
-    /// Puts the imagery at the bottom of the map (under blocks, track …). It replaces Apple's map.
     init(mapView: MKMapView, isVisible: @escaping () -> Bool, showContours: @escaping () -> Bool) {
         self.mapView = mapView
         self.isVisible = isVisible
         self.showContours = showContours
         drawn = SatelliteDrawnOverlay(urlTemplate: nil)
-        mapView.insertOverlay(drawn, at: 0, level: .aboveLabels)
         map.onArrival = { [weak self] t, content in self?.tileArrived(t, content) }
+    }
+
+    /// Puts the imagery at the bottom of the map (under blocks, track …): it replaces Apple's map. Once the map view's
+    /// delegate holds this, as MapKit may ask it for the layer's renderer straight away.
+    func addToMap() {
+        mapView.insertOverlay(drawn, at: 0, level: .aboveLabels)
     }
 
     /// The renderer for a layer of the imagery (from the map view delegate).

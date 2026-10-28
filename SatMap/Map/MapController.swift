@@ -66,6 +66,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         // Later overlays draw on top: imagery with contours, (blocks inserted below the track), track, measuring line.
         imagery = DrawnImagery(mapView: mapView, isVisible: { [weak self] in self?.isForeground ?? false },
                                showContours: { [weak model] in model?.showContours ?? true })
+        imagery.addToMap()
         track.reset(model.track)
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
@@ -277,20 +278,20 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func mapView(_ mapView: MKMapView, regionWillChangeAnimated animated: Bool) {
         if userIsTouchingMap() { model.following = false }
-        imagery.regionWillChange()
+        imagery?.regionWillChange()
     }
 
     func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
         saveCamera()
         updateAim()
         updateScale()
-        imagery.regionDidChange()
+        imagery?.regionDidChange()
     }
 
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
         updateScale()
-        imagery.visibleRegionChanged()
+        imagery?.visibleRegionChanged()
     }
 
     private func updateScale() {

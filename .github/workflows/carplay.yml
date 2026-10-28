@@ -98,6 +98,29 @@ jobs:
           xcrun simctl launch "$UDID" com.jacobusoettle.satmap
           sleep 40
           xcrun simctl io "$UDID" screenshot --display=internal carplay/phone.png || true
+          xcrun simctl io "$UDID" screenshot --display=external carplay/car-home.png || true
+          # Open SatMap on the car's screen: click its icon in Simulator's CarPlay window (where the CarPlay home
+          # screen puts it, second row, first app: about 205, 300 of the 800 x 480 screen).
+          osascript <<'EOF' 2>&1 | tee -a carplay/menu.txt || true
+          tell application "Simulator" to activate
+          delay 1
+          tell application "System Events"
+            tell process "Simulator"
+              repeat with w in windows
+                if name of w contains "CarPlay" then
+                  set {x, y} to position of w
+                  set {wd, ht} to size of w
+                  set k to wd / 800
+                  set top to y + ht - 480 * k
+                  click at {round (x + 205 * k), round (top + 300 * k)}
+                  return "clicked SatMap at " & (x + 205 * k) & ", " & (top + 300 * k)
+                end if
+              end repeat
+              return "No CarPlay window"
+            end tell
+          end tell
+          EOF
+          sleep 25
           xcrun simctl io "$UDID" screenshot --display=external carplay/car.png || true
           # Drive along the H4-1 towards Skukuza.
           xcrun simctl location "$UDID" start --speed=20 -24.9969,31.5923 -24.9900,31.6100 -24.9800,31.6300 || true
@@ -106,6 +129,8 @@ jobs:
           xcrun simctl location "$UDID" clear || true
           kill $LOGPID || true
           screencapture -x carplay/mac-screen.png || true
+          # Crash reports of the app, if it crashed.
+          find ~/Library/Logs/DiagnosticReports -name "SatMap*" -exec cp {} carplay/ \; 2>/dev/null || true
           ls -l carplay
           grep -E "drawn z|map stopped|error" carplay/app.log | tail -n 20 || true
 
