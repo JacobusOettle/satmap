@@ -1,39 +1,73 @@
 package com.jacobusoettle.satmap
 
+import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import okhttp3.Interceptor
-import okhttp3.OkHttpClient
-import okhttp3.Response
-import org.maplibre.android.MapLibre
-import org.maplibre.android.maps.MapView
-import org.maplibre.android.maps.Style
-import org.maplibre.android.module.http.HttpRequestUtil
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import com.jacobusoettle.satmap.app.AppModel
+import com.jacobusoettle.satmap.app.Defaults
+import com.jacobusoettle.satmap.app.PermissionFlow
+import com.jacobusoettle.satmap.map.MapController
+import com.jacobusoettle.satmap.ui.MapScreen
+import com.jacobusoettle.satmap.ui.SatMapTheme
 
+/** iOS's `WindowGroup` (`SatMapApp.swift`): the map screen, edge to edge and always dark, with white status bar icons
+ *  over the imagery. It creates the map and the permission flow, handles the files and actions other apps send, and
+ *  reads the launch extras (iOS's launch arguments). `singleTask`, so a share lands in the open map. */
 class MainActivity : ComponentActivity() {
-    private lateinit var mapView: MapView
+    private lateinit var mapController: MapController
+    private lateinit var permissions: PermissionFlow
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
-        MapLibre.getInstance(this)
-        HttpRequestUtil.setOkHttpClient(OkHttpClient.Builder().addInterceptor(LocalTiles()).build())
-        mapView = MapView(this)
-        mapView.onCreate(savedInstanceState)
-        mapView.getMapAsync { map -> map.setStyle(Style.Builder().fromJson(STYLE)) }
-        setContentView(mapView)
+        val model = AppModel.shared
+        Defaults.setLaunchArguments(intent.extras)
+        model.applyLaunchArguments()
+        mapController = MapController(this, model, savedInstanceState)
+        permissions = PermissionFlow(this, model.recorder)
+        setContent {
+            SatMapTheme { MapScreen(model, model.offline, model.recorder, mapController) }
+        }
+        if (savedInstanceState == null) handleIncoming(intent)
     }
 
-    override fun onStart() { super.onStart(); mapView.onStart() }
-    override fun onResume() { super.onResume(); mapView.onResume() }
-    override fun onPause() { mapView.onPause(); super.onPause() }
-    override fun onStop() { mapView.onStop(); super.onStop() }
-    override fun onDestroy() { mapView.onDestroy(); super.onDestroy() }
-
-    private class LocalTiles : Interceptor {
-        override fun intercept(chain: Interceptor.Chain): Response = chain.proceed(chain.request())
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncoming(intent)
     }
 
-    companion object {
-        const val STYLE = """{"version":8,"sources":{"imagery":{"type":"raster","tiles":["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],"tileSize":256,"maxzoom":19}},"layers":[{"id":"imagery","type":"raster","source":"imagery"}]}"""
+    override fun onStart() {
+        super.onStart()
+        mapController.sceneWillEnterForeground()
+    }
+
+    /** iOS asks for location (then motion) as the app becomes active. */
+    override fun onResume() {
+        super.onResume()
+        permissions.next()
+    }
+
+    override fun onStop() {
+        mapController.sceneDidEnterBackground()
+        super.onStop()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        mapController.onSaveInstanceState(outState)
+    }
+
+    /** KML/KMZ opened or shared from another app (zoom to it, or the Blocks sheet with the error), and "Save to a
+     *  folder" from the backup chooser. */
+    private fun handleIncoming(intent: Intent) {
+        // M3: the KML intents (DESIGN.md §5.9); M4: BackupSharing.ACTION_SAVE_TO_FOLDER → SharePresenter.requestFolder().
     }
 }

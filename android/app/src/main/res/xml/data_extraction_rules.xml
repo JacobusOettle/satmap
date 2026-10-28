@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 31+: the offline areas stay out of cloud backups and device transfers. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="SatMap/Offline/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="SatMap/Offline/" />
+    </device-transfer>
+</data-extraction-rules>

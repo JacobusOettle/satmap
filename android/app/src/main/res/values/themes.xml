@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Always dark, as iOS's .preferredColorScheme(.dark); MainActivity draws edge to edge (enableEdgeToEdge) with
+         white system bar icons over the imagery. Black behind the map until it draws. -->
+    <style name="Theme.SatMap" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:colorBackground">@android:color/black</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

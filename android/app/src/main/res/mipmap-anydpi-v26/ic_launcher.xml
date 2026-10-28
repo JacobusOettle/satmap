@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The iPhone app's icon (SatMap/Assets.xcassets/AppIcon), drawn at 76 of the 108 dp so the rotors stay inside every
+     mask; its forest continues into the margin. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

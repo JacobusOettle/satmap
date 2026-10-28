@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup up to API 30: the offline areas (many GB, over the 25 MB quota) stay out, as iOS excludes them from
+     backup. The KML files, the track and the preferences are backed up. -->
+<full-backup-content>
+    <exclude domain="file" path="SatMap/Offline/" />
+</full-backup-content>
