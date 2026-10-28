@@ -448,7 +448,7 @@ final class SatelliteRenderer: MKOverlayRenderer {
         defer { UIGraphicsPopContext() }
         context.saveGState()
         defer { context.restoreGState() }
-        context.interpolationQuality = .high
+        context.interpolationQuality = .medium
         for t in tiles(z, in: r) {
             if let own = decoded.value(for: t) {
                 own.draw(in: place(t))

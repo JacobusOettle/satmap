@@ -148,10 +148,11 @@ final class ScreenshotTests: XCTestCase {
             XCTFail("No coordinates for the tapped spot")
         }
         // A tap on a point in the KML file selects it, with its name.
-        let launch = app.staticTexts["Launch 1"].firstMatch
+        // (MapKit may give the point's name as its own text or as the whole annotation, dot on top.)
+        let launch = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Launch 1")).firstMatch
         if launch.waitForExistence(timeout: 5) {
-            let f = launch.frame // the name, under the point's dot
-            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.minY - 7)).tap()
+            let f = launch.frame
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.minY - 1)).tap()
             let name = app.descendants(matching: .any)["tappedName"].firstMatch
             XCTAssertTrue(name.waitForExistence(timeout: 5), "Tapping the KML point didn't select it")
             sleep(3)

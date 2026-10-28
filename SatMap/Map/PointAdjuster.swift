@@ -72,11 +72,7 @@ final class PointAdjuster: NSObject {
         perLoupePoint = Self.metresAcross * perMetre / Double(content)
 
         let frame = Self.makeFrame(side: side)
-        let safe = window.safeAreaInsets
-        var y = touch.y - 44 - side / 2
-        if y - side / 2 < safe.top + 8 { y = touch.y + 44 + side / 2 }
-        let x = min(max(touch.x, safe.left + 12 + side / 2), window.bounds.width - safe.right - 12 - side / 2)
-        frame.center = CGPoint(x: x, y: min(y, window.bounds.height - safe.bottom - 8 - side / 2))
+        frame.center = Self.place(side: side, gap: 44, touch: touch, in: window.bounds.inset(by: window.safeAreaInsets))
         loupe.frame = CGRect(x: border, y: border, width: content, height: content)
         loupe.layer.cornerRadius = 24
         loupe.layer.cornerCurve = .continuous
@@ -169,6 +165,20 @@ final class PointAdjuster: NSObject {
         loupe.setNeedsDisplay()
     }
 
+    /// Where the square goes: above the finger, else below it, else (landscape) beside it, on the side with more room;
+    /// always on screen, and never under the finger when it fits anywhere.
+    private static func place(side: CGFloat, gap: CGFloat, touch: CGPoint, in area: CGRect) -> CGPoint {
+        let r = area.insetBy(dx: 8, dy: 8)
+        let half = side / 2
+        func clampX(_ x: CGFloat) -> CGFloat { min(max(x, r.minX + half), r.maxX - half) }
+        func clampY(_ y: CGFloat) -> CGFloat { min(max(y, r.minY + half), r.maxY - half) }
+        if touch.y - gap - side >= r.minY { return CGPoint(x: clampX(touch.x), y: touch.y - gap - half) }
+        if touch.y + gap + side <= r.maxY { return CGPoint(x: clampX(touch.x), y: touch.y + gap + half) }
+        let left = touch.x - r.minX, right = r.maxX - touch.x
+        let x = left >= right ? touch.x - gap - half : touch.x + gap + half
+        return CGPoint(x: clampX(x), y: clampY(touch.y))
+    }
+
     private static func unit(_ x: Double, _ y: Double) -> (x: Double, y: Double)? {
         let l = hypot(x, y)
         return l > 1e-12 ? (x / l, y / l) : nil
@@ -182,6 +192,8 @@ final class PointAdjuster: NSObject {
         frame.layer.shadowOpacity = 0.35
         frame.layer.shadowRadius = 14
         frame.layer.shadowOffset = CGSize(width: 0, height: 6)
+        // The shape given, so the shadow isn't worked out again from the content at every frame.
+        frame.layer.shadowPath = UIBezierPath(roundedRect: frame.bounds, cornerRadius: 32).cgPath
         var glass: UIView?
         #if compiler(>=6.2) // the iOS 26 SDK (Xcode 26)
         if #available(iOS 26.0, *) {

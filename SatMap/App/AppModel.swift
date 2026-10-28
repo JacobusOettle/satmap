@@ -263,14 +263,21 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     @Published var selectedPoint: GeoPoint? {
         didSet {
             guard selectedPoint != oldValue else { return }
-            selectedElevation = nil
             selectedName = nil
-            selectedLookup.set(selectedPoint)
+            // While a point is being moved, its height is looked up once it is let go (`movePoint`).
+            if !pointMoving { lookUpSelectedHeight() }
         }
     }
+    private var pointMoving = false
     @Published private(set) var selectedElevation: Double?
     /// The name of the KML point selected (a tap on it), shown with its coordinates.
     @Published private(set) var selectedName: String?
+    /// The selected spot's height, unless it is the one already looked up.
+    private func lookUpSelectedHeight() {
+        guard selectedLookup.point != selectedPoint else { return }
+        selectedElevation = nil
+        selectedLookup.set(selectedPoint)
+    }
     private lazy var selectedLookup = HeightLookup { [weak self] p, e in
         guard let self = self, p == self.selectedPoint else { return }
         self.selectedElevation = e
@@ -470,13 +477,17 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     func movePoint(_ which: MovablePoint, to p: GeoPoint, done: Bool) {
         switch which {
         case .selected:
+            pointMoving = !done
             selectedPoint = p
+            if done { lookUpSelectedHeight() }
         case .measure(let i):
             let count = measure.points.count
             guard i < count else { return }
+            pointMoving = !done
             measure = measure.moving(i, to: p)
             selectedPoint = p
             guard done else { return }
+            lookUpSelectedHeight()
             if i == 0 { markerElevation = nil }
             if count >= 2, i == count - 1 { lastElevation = nil }
             refreshPointElevations()

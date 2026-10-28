@@ -13,6 +13,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     /// a map overlay, so it follows a pan frame by frame.
     private let aimLineView = UIView()
     private let aimLine = CAShapeLayer()
+    /// While a measuring point is moved: the measuring line, drawn over the map like the aiming line so it follows the
+    /// point frame by frame (the map's own line would be repainted, blinking, at every move); the map's comes back after.
+    private let dragLine = CAShapeLayer()
+    private var dragLineShown = false
     private let model: AppModel
 
     /// The imagery SatMap draws, with the contour lines and elevation colours.
@@ -27,6 +31,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     /// finger was is recorded straight away by `touchRecorder` (the map may move meanwhile, e.g. following you).
     private let tapRecognizer = UITapGestureRecognizer()
     private let touchRecorder = UITapGestureRecognizer()
+    /// A tap then a second press: a double-tap zoom or a one-finger zoom (tap, then drag).
+    private let tapThenPress = UILongPressGestureRecognizer()
     /// Pressed and held, the tapped spot's pin or a measuring point is moved precisely (`PointAdjuster`); taps right
     /// after are the finger being lifted, not taps.
     private let adjustPress = UILongPressGestureRecognizer()
@@ -93,6 +99,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         aimLine.lineWidth = 3
         aimLine.lineDashPattern = [10, 7]
         aimLineView.layer.addSublayer(aimLine)
+        dragLine.strokeColor = aimLine.strokeColor
+        dragLine.fillColor = UIColor(red: 1, green: 0.18, blue: 0.4, alpha: 0.15).cgColor // as MeasureLineRenderer
+        dragLine.lineWidth = 3
+        dragLine.lineDashPattern = [10, 7]
+        aimLineView.layer.addSublayer(dragLine)
         container.addSubview(aimLineView)
         lasso.translatesAutoresizingMaskIntoConstraints = false
         lasso.isHidden = true
@@ -118,7 +129,6 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         tapRecognizer.delegate = self
         mapView.addGestureRecognizer(tapRecognizer)
         // A tap then a second press is a double-tap zoom or a one-finger zoom (tap, then drag): not a tap on a spot.
-        let tapThenPress = UILongPressGestureRecognizer(target: nil, action: nil)
         tapThenPress.numberOfTapsRequired = 1
         tapThenPress.minimumPressDuration = 0
         tapThenPress.cancelsTouchesInView = false
@@ -130,6 +140,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         adjustPress.minimumPressDuration = 0.35
         adjustPress.delegate = self
         mapView.addGestureRecognizer(adjustPress)
+        // Lifting the finger after moving a point isn't a tap (which would move the pin or add a measuring point).
+        tapRecognizer.require(toFail: adjustPress)
         adjuster.onMove = { [weak self] which, p, done in self?.adjusted(which, to: p, done: done) }
         touchRecorder.addTarget(self, action: #selector(touchEnded(_:)))
         touchRecorder.delegate = self
@@ -266,6 +278,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) {
         updateAim()
+        if dragLineShown { updateDragLine() } // the map scrolls while a point is moved
         updateScale()
         if heading != nil { updateArrow() } // the map may have turned
         imagery?.visibleRegionChanged()
@@ -411,6 +424,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
 
     func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
         guard g === adjustPress else { return true }
+        // Not the press of a one-finger zoom (tap, then press) that happens to pause on a point.
+        guard tapThenPress.state != .began && tapThenPress.state != .changed else { return false }
         return !model.isDrawingArea && movablePoint(near: g.location(in: mapView)) != nil
     }
 
@@ -458,6 +473,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             mapView.isZoomEnabled = false
             mapView.isRotateEnabled = false
             model.following = false
+            if case .measure = target.which {
+                dragLineShown = true
+                updateMeasureLine()
+                updateDragLine()
+            }
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             adjuster.begin(target.which, at: target.point, touch: g.location(in: window), in: window,
                            scene: loupeScene(around: target.point, moving: target.which))
@@ -481,6 +501,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         switch which {
         case .measure(let i):
             if markerAnnotations.indices.contains(i) { markerAnnotations[i].coordinate = c }
+            if done { dragLineShown = false }
+            updateDragLine()
         case .selected:
             selectedAnnotation?.coordinate = c
         }
@@ -488,7 +510,33 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         guard done || now - lastAdjustUpdate >= 1.0 / 15 else { return }
         lastAdjustUpdate = now
         model.movePoint(which, to: p, done: done)
-        if done { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        if done {
+            updateMeasureLine() // the map's own line again, through where the point was left
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        }
+    }
+
+    /// The measuring line over the map while a point is moved: through the markers as they are now (from you, for a
+    /// single point; joined back and filled for a closed shape).
+    private func updateDragLine() {
+        guard dragLineShown else {
+            if dragLine.path != nil { dragLine.path = nil }
+            return
+        }
+        var line = markerAnnotations.map(\.coordinate)
+        if line.count == 1, let me = model.recorder.location?.coordinate { line.insert(me, at: 0) }
+        var closed = false
+        if case .closed = model.measure { closed = line.count >= 3 }
+        let path = CGMutablePath()
+        if line.count >= 2 {
+            path.addLines(between: line.map { mapView.convert($0, toPointTo: aimLineView) })
+            if closed { path.closeSubpath() }
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dragLine.path = path
+        dragLine.fillColor = closed ? UIColor(red: 1, green: 0.18, blue: 0.4, alpha: 0.15).cgColor : nil
+        CATransaction.commit()
     }
 
     /// What the square shows besides the imagery: the blocks near the point, the measuring line and points, and you.
@@ -614,6 +662,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         case .off, .aiming:
             break
         }
+        if dragLineShown { line = [] } // drawn over the map meanwhile (`updateDragLine`)
         let margin = 8 * mapPointsPerPoint
         for rect in measureLine.set(line, closed: closed) {
             measureRenderer?.setNeedsDisplay(rect.insetBy(dx: -margin, dy: -margin))
