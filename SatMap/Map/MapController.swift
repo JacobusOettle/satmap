@@ -6,7 +6,7 @@ import UIKit
 /// Owns the MKMapView: the satellite imagery with contour lines and elevation colours, the recorded track, the
 /// measuring line, imported blocks, your position with the compass and the lasso used to choose offline areas.
 final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
-    let container = UIView()
+    let container = MapContainerView()
     let mapView = MKMapView()
     private let lasso = LassoView()
     /// While aiming the measuring tool: the dashed line from you to the crosshair. Drawn over the map rather than as
@@ -39,6 +39,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     /// Whether the phone's own screen shows the map (its window scene in the foreground). With CarPlay showing SatMap
     /// the app stays in the foreground while the phone is locked.
     private var isShown = UIApplication.shared.applicationState != .background
+    var isOnScreen: Bool { isShown }
     private var cancellables = Set<AnyCancellable>()
     /// No saved camera yet: zoom in on the first GPS fix.
     private let firstLaunch = UserDefaults.standard.array(forKey: "camera") == nil
@@ -101,6 +102,11 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             lasso.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
         lasso.onFinish = { [weak self] pts in self?.lassoFinished(pts) }
+        // Laid out again when the screen turns: the compass follows its top.
+        container.onLayout = { [weak self] in
+            guard let self = self, let o = self.container.window?.windowScene?.interfaceOrientation else { return }
+            self.model.recorder.screenOrientation = o
+        }
 
         tapRecognizer.addTarget(self, action: #selector(mapTapped(_:)))
         tapRecognizer.delegate = self
@@ -563,6 +569,16 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         default:
             return nil
         }
+    }
+}
+
+/// The map's view in the SwiftUI screen, which says when it is laid out (as when the screen turns).
+final class MapContainerView: UIView {
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
     }
 }
 

@@ -39,6 +39,10 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     var headingWanted = false {
         didSet { if headingWanted != oldValue { updateHeading() } }
     }
+    /// How the screen is turned (the phone's map tells as it is laid out): the compass gives the heading of its top.
+    var screenOrientation = UIInterfaceOrientation.portrait {
+        didSet { if screenOrientation != oldValue { applyHeadingOrientation() } }
+    }
 
     /// Set while the measuring marker is placed: on screen, sleep-mode GPS checks run every 15 s instead of every
     /// minute and react to smaller moves, so the live distance follows even steps motion detection misses.
@@ -103,7 +107,6 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         nc.addObserver(self, selector: #selector(didEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(willEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
-        nc.addObserver(self, selector: #selector(orientationChanged), name: UIDevice.orientationDidChangeNotification, object: nil)
     }
 
     /// The last recorded point, so a restart continues the existing track correctly.
@@ -169,30 +172,19 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     private func updateHeading() {
         guard CLLocationManager.headingAvailable() else { return }
         if headingWanted {
-            UIDevice.current.beginGeneratingDeviceOrientationNotifications()
             manager.headingFilter = 2
             applyHeadingOrientation()
             manager.startUpdatingHeading()
         } else {
             manager.stopUpdatingHeading()
-            UIDevice.current.endGeneratingDeviceOrientationNotifications()
             onHeading?(nil)
         }
     }
 
-    /// The phone was turned: once the screen has turned with it (or not, with rotation locked), the compass gives the
-    /// heading of the screen's new top.
-    @objc private func orientationChanged() {
-        guard headingWanted else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.applyHeadingOrientation() }
-    }
-
     private func applyHeadingOrientation() {
-        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            .first { $0.activationState == .foregroundActive }
         // The screen's landscape left is the phone's landscape right (its top turned to the right).
         let o: CLDeviceOrientation
-        switch scene?.interfaceOrientation {
+        switch screenOrientation {
         case .landscapeLeft: o = .landscapeRight
         case .landscapeRight: o = .landscapeLeft
         case .portraitUpsideDown: o = .portraitUpsideDown
@@ -210,8 +202,9 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         onHeading?(heading.trueHeading >= 0 ? heading.trueHeading : heading.magneticHeading)
     }
 
+    /// iOS's calibration screen only while the compass can't tell at all (the arrow is hidden then).
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
-        false
+        headingWanted && (manager.heading?.headingAccuracy ?? -1) < 0
     }
 
     // MARK: - CLLocationManagerDelegate

@@ -43,7 +43,7 @@ struct MapScreen: View {
                 }
                 // Your own coordinates and height at the top; a tapped spot's at the bottom, within reach to copy.
                 if let loc = recorder.location, !model.isDrawingArea {
-                    HStack(spacing: 8) {
+                    CoordinateRow {
                         CoordinateBar(icon: recorder.power == .sleeping ? "location" : "location.fill",
                                       text: Format.coordinate(GeoPoint(lat: loc.coordinate.latitude, lon: loc.coordinate.longitude)),
                                       id: "myCoordinates")
@@ -78,7 +78,7 @@ struct MapScreen: View {
             .padding(.bottom, 8)
             .overlay(alignment: .bottom) {
                 if let p = model.selectedPoint, !model.isDrawingArea {
-                    HStack(spacing: 8) {
+                    CoordinateRow {
                         CoordinateBar(icon: "mappin", text: Format.coordinate(p), id: "tappedCoordinates",
                                       onClose: { model.selectedPoint = nil })
                         HeightBar(elevation: model.selectedElevation, id: "tappedHeight")
@@ -127,11 +127,13 @@ struct MapScreen: View {
                         Text(text)
                             .font(.footnote.weight(.semibold))
                             .foregroundColor(.white)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(Color.black.opacity(0.75))
-                            .clipShape(Capsule())
-                            .fixedSize()
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .frame(width: 230, alignment: .trailing)
                             .offset(x: -60)
                             .allowsHitTesting(false)
                             .accessibilityHidden(true)
@@ -583,6 +585,18 @@ struct StopMeasuringButton: View {
                 .padding(12)
         }
         .accessibilityLabel(Text("Stop measuring"))
+    }
+}
+
+/// A spot's coordinates with its height beside them, or under them when they don't fit side by side (large text).
+struct CoordinateRow<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) { content() }
+            VStack(spacing: 6) { content() }
+        }
     }
 }
 

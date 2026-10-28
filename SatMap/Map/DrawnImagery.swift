@@ -25,8 +25,14 @@ final class DrawnImagery {
     /// Whether contour lines and elevation colours are drawn (a new layer comes when it changes: `terrainChanged`).
     private let terrain: () -> TerrainMode
     let map = DrawnMap()
-    /// The heights the elevation colours run between, chosen from those on screen (`updateColourRange`).
+    /// The heights the elevation colours run between, chosen from those on screen (`updateColourRange`); where it was
+    /// last chosen or kept (one from somewhere else isn't kept); and since when the first range for a place has waited
+    /// for the rest of the screen's heights.
     private(set) var colourRange: ElevationRange?
+    private var rangeArea = MKMapRect.null
+    private var rangeWaitSince: CFTimeInterval?
+    /// Whether the screen has land with heights in memory (else nothing is coloured, and the legend goes).
+    private var heightsOnScreen = false
     /// Told what the legends should show as it changes (the phone's map has them).
     var onKey: ((TerrainKey) -> Void)?
 
@@ -164,11 +170,36 @@ final class DrawnImagery {
     // MARK: - Elevation colours
 
     /// Chooses the colours' range from the heights in memory for the screen (keeping the one shown while it still
-    /// suits: `ElevationColours.range`); a new one brings a new layer.
+    /// suits: `ElevationColours.range`); a new one brings a new layer. A range from somewhere else (the colours were
+    /// off, or the map was zoomed out, while it moved) is dropped, and the first one for a place waits a moment for
+    /// the rest of the screen's heights, so the colours don't step through several.
     private func updateColourRange() {
-        guard terrain().showsColours, isVisible(), let levels = levels, levels.contours >= ElevationColours.minTileZoom,
-              let e = SatelliteRenderer.heightExtremes(in: mapView.visibleMapRect, level: levels.contours) else { return }
-        let range = ElevationColours.range(low: e.low, high: e.high, current: colourRange, complete: e.complete)
+        guard terrain().showsColours, isVisible(), let levels = levels, levels.contours >= ElevationColours.minTileZoom else { return }
+        let visible = mapView.visibleMapRect
+        let current = rangeArea.intersects(visible) ? colourRange : nil
+        if current == nil && colourRange != nil {
+            colourRange = nil
+            rangeArea = .null
+            reportKey()
+        }
+        let e = SatelliteRenderer.heightExtremes(in: visible, level: levels.contours, onScreen: screenPoints)
+        if (e != nil) != heightsOnScreen {
+            heightsOnScreen = e != nil
+            reportKey()
+        }
+        guard let e = e else { return }
+        let now = CACurrentMediaTime()
+        if let since = rangeWaitSince, now - since > 5 { rangeWaitSince = nil } // an earlier wait
+        if current == nil && !e.complete {
+            if rangeWaitSince == nil {
+                rangeWaitSince = now
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in self?.updateColourRange() }
+            }
+            if now - (rangeWaitSince ?? now) < 1.5 { return }
+        }
+        rangeWaitSince = nil
+        rangeArea = visible
+        let range = ElevationColours.range(low: e.low, high: e.high, current: current, complete: e.complete)
         guard range != colourRange else { return }
         tileLog.debug("colours from \(Int(range.low)) to \(Int(range.high)) m (screen \(Int(e.low))–\(Int(e.high)) m, complete=\(e.complete))")
         colourRange = range
@@ -189,16 +220,17 @@ final class DrawnImagery {
             forPointZoom: ContourPolicy.pointZoom(tileZoom: levels.contours, screenScale: pixelsPerPoint)) {
             key.contours = ContourInterval(step: i.step, index: i.index)
         }
-        if mode.showsColours, levels.contours >= ElevationColours.minTileZoom { key.colours = colourRange }
+        if mode.showsColours, heightsOnScreen, levels.contours >= ElevationColours.minTileZoom { key.colours = colourRange }
         report(key)
     }
 
-    /// Back on screen: a new layer owed for tiles that arrived meanwhile.
+    /// Back on screen: a new layer owed for tiles that arrived meanwhile, and the colours' range for heights that did.
     func becameVisible() {
         if swapWaiting {
             swapWaiting = false
             scheduleSwap()
         }
+        updateColourRange()
     }
 
     /// A tile has arrived in memory. If the layer shows a stand-in where it would show better, a new layer replaces it.

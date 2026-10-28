@@ -2980,6 +2980,17 @@ final class ScaleBarTests: XCTestCase {
         XCTAssertEqual(zoomed, ElevationRange(low: 450, high: 480))
     }
 
+    func testRangeKeptWhilePanningOverFlatGround() {
+        // Under the least span, small shifts of the heights on screen keep the colours.
+        let shown = ElevationColours.range(low: 100.2, high: 102.4, current: nil)
+        XCTAssertEqual(ElevationColours.range(low: 101.1, high: 103.2, current: shown), shown)
+        XCTAssertEqual(ElevationColours.range(low: 100.9, high: 103.0, current: shown), shown)
+        // Low ground by the sea: the range starts at 0 m, so the lowest land is blue.
+        let coast = ElevationColours.range(low: 0, high: 2, current: nil)
+        XCTAssertEqual(coast.low, 0)
+        XCTAssertGreaterThanOrEqual(coast.high, 10)
+    }
+
     func testRangeOnlyGrowsWhileHeightsAreStillComing() {
         let shown = ElevationRange(low: 400, high: 600)
         // Only some tiles in: a narrow spread keeps the range.

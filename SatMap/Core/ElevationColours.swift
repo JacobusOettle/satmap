@@ -115,13 +115,13 @@ enum ElevationColours {
     }
 
     /// The range to colour with when the screen shows heights from `low` to `high`: the one shown (`current`) while
-    /// they still fit in it and fill most of it, so panning around doesn't keep changing the colours; else one just
-    /// around them, at round heights. While some tiles on screen have no heights yet (`complete` false), the range
-    /// shown only grows.
+    /// they still fit in it and fill most of it (nearly flat ground: most of the least span), so panning around
+    /// doesn't keep changing the colours; else one just around them, at round heights. While some tiles on screen have
+    /// no heights yet (`complete` false), the range shown only grows.
     static func range(low: Double, high: Double, current: ElevationRange?, complete: Bool = true) -> ElevationRange {
         if let c = current {
             let fits = low >= c.low && high <= c.high
-            if fits && (!complete || high - low >= 0.6 * (c.high - c.low)) { return c }
+            if fits && (!complete || max(high - low, minimumSpan) >= 0.6 * (c.high - c.low)) { return c }
         }
         var lo = low, hi = high
         if !complete, let c = current {
@@ -129,9 +129,10 @@ enum ElevationColours {
             hi = max(hi, c.high)
         }
         if hi - lo < minimumSpan {
-            let mid = (lo + hi) / 2
-            lo = mid - minimumSpan / 2
-            hi = mid + minimumSpan / 2
+            // Around the middle, but not below sea level for land above it (the sea isn't coloured).
+            lo = (lo + hi) / 2 - minimumSpan / 2
+            if low >= 0 { lo = max(0, lo) }
+            hi = lo + minimumSpan
         }
         let step = niceStep((hi - lo) / 10)
         return ElevationRange(low: (lo / step).rounded(.down) * step, high: (hi / step).rounded(.up) * step)

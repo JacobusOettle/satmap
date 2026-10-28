@@ -403,12 +403,18 @@ final class SatelliteRenderer: MKOverlayRenderer {
         return g.complete || !approximate
     }
 
-    /// The lowest and highest heights in memory under a map rect, from the grids of a level's tiles (`complete`:
-    /// every tile there has its heights, or has none to be had for now: offline outside the areas downloaded). Nil
-    /// without any (or only sea).
-    static func heightExtremes(in r: MKMapRect, level z: Int) -> (low: Double, high: Double, complete: Bool)? {
-        let spots = tiles(z, in: r)
-        guard !spots.isEmpty, spots.count <= 400 else { return nil }
+    /// The lowest and highest heights in memory on screen, from the grids of a level's tiles under points across it
+    /// (so a turned map's corners off screen don't count), within the rect around them (`complete`: every one of
+    /// those tiles has its heights, or has none to be had for now: offline outside the areas downloaded). Nil without
+    /// any (or only sea).
+    static func heightExtremes(in r: MKMapRect, level z: Int, onScreen points: [MKMapPoint])
+        -> (low: Double, high: Double, complete: Bool)? {
+        let n = 1 << z
+        let size = MKMapSize.world.width / Double(n)
+        let spots = Set(points.map { p in
+            TileID(z: z, x: min(n - 1, max(0, Int(floor(p.x / size)))), y: min(n - 1, max(0, Int(floor(p.y / size)))))
+        })
+        guard !spots.isEmpty else { return nil }
         let w = MKMapSize.world.width
         let within = (minX: r.minX / w, minY: r.minY / w, maxX: r.maxX / w, maxY: r.maxY / w)
         var low = Float.infinity, high = -Float.infinity, complete = true

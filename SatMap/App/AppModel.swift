@@ -129,7 +129,8 @@ final class MapLegend: ObservableObject {
 
 /// Looks up the height of a spot that may keep changing (your position, a tapped spot): one lookup at a time, always
 /// for the latest spot, so moving doesn't queue one for every GPS fix. A failed lookup (no signal) is tried again a few
-/// times, 15 s apart, while the spot stays and the app is on screen. Main thread only.
+/// times, 31 s apart (after the elevation tile's own 30 s wait, which would otherwise answer the same), while the spot
+/// stays and the app is on screen. Main thread only.
 final class HeightLookup: @unchecked Sendable {
     /// The latest spot asked about.
     private(set) var point: GeoPoint?
@@ -176,7 +177,7 @@ final class HeightLookup: @unchecked Sendable {
                     self.found(p, e)
                     if e == nil, self.point == p, self.retries < 4 {
                         self.retries += 1
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 31) {
                             guard s == self.session, self.point == p,
                                   UIApplication.shared.applicationState == .active else { return }
                             self.retry()
@@ -256,10 +257,10 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     /// Your height, looked up as you move (while the app is on screen).
     private lazy var userLookup = HeightLookup { [weak self] _, e in
         guard let self = self else { return }
-        if e?.rounded() != self.userElevation?.rounded() || (e == nil) != (self.userElevation == nil) {
-            self.userElevation = e
-        }
-        if e != nil, self.markerElevation == nil { self.refreshPointElevations() }
+        let first = self.userElevation == nil && e != nil
+        if e?.rounded() != self.userElevation?.rounded() { self.userElevation = e }
+        // Heights can be had again: those of the measuring points too.
+        if first, self.markerElevation == nil { self.refreshPointElevations() }
     }
 
     /// Lasso drawing mode for choosing an offline area.
@@ -397,7 +398,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private func locationUpdated(_ loc: CLLocation) {
         map?.locationUpdated(loc)
         carPlayMap?.locationUpdated(loc)
-        if UIApplication.shared.applicationState == .active { refreshUserElevation(loc) }
+        // Only for the phone's screen (with CarPlay the app stays active while the phone is locked).
+        if UIApplication.shared.applicationState == .active, map?.isOnScreen == true { refreshUserElevation(loc) }
     }
 
     /// My location: centres the map on you and follows you. Tapped again while it does (also a quick second tap), it
