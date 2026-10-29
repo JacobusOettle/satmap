@@ -375,7 +375,7 @@ class KMLLibrary(context: Context) {
 
 ```
 https://satmap.local/imagery/{gen}/{z}/{x}/{y}
-https://satmap.local/contours/{gen}/{scale}/{z}/{x}/{y}    scale = round(s·100), s = min(max(1, pixelRatio), 3)
+https://satmap.local/contours/{gen}/{scale}/{z}/{x}/{y}    scale = round(s·100): s = 3 on the phone, min(max(1, pixelRatio), 3) in the car
 https://satmap.local/colours/{gen}/{range}/{z}/{x}/{y}     range = "none" | "{low}_{high}" (Double.toString)
 ```
 
@@ -384,6 +384,10 @@ https://satmap.local/colours/{gen}/{range}/{z}/{x}/{y}     range = "none" | "{lo
 - The source id and the layer id are both `"${kind}-${gen}"`.
 - A source is registered in `TileLayers` (`gen → TileLayer(gen, kind, map: DrawnMap)`) when it is added, and unregistered when it is removed.
 - A source's URL can't change in 13.7.1. A new colour range, or a reload, is therefore a new generation, so a new source.
+- The phone's contours are drawn at the iPhone's scale, `TileLevels.PHONE_CONTOUR_SCALE` = 3, whatever the phone's
+  density (an Android difference: iOS uses its own screen's). The tiles are 128 to 256 dp across on both, so the line
+  widths, labels and intervals are the iPhone's in dp. The legend and the source's minzoom use the same scale. The car
+  keeps its own screen's, `TileLevels.contourScale(pixelRatio)`.
 
 **`TileInterceptor.intercept`.**
 1. Requests to other hosts go on with `chain.proceed`.
@@ -428,7 +432,7 @@ maxzoom. The tile sizes below make that equal to iOS's levels (proof in renderin
 | --- | --- | --- | --- | --- |
 | imagery | `round(256 / max(1, pixelRatio))` (98 at 2.625, 85 at 3) | 0 | 22 | `round(Zp + log2 s)`: tiles 256 *pixels* across |
 | colours | 182 | 8 | 22 | `ceil(Zp − 1e-6)` |
-| contours | 182 | `contourMinZoom(s)`: 12 at s = 2, 13 at 2.63 and 3 | 22 | `ceil(Zp − 1e-6)` |
+| contours | 182 | `contourMinZoom(s)`: 13 on the phone (s = 3); in the car 12 at s = 2, 13 at 2.63 | 22 | `ceil(Zp − 1e-6)` |
 
 `Zp = cameraPosition.zoom + 1` (the 256-point zoom). `DrawnImagery` computes its levels with the same
 `TileLevels.level(zoom, tileSize)`, so the focus, prefetch, readiness and legend all use the levels MapLibre
@@ -534,7 +538,8 @@ Both are 256×256 `ARGB_8888` bitmaps, encoded with `compress(PNG, 100)`, on `Wo
 ### 3.7 `DrawnImagery`
 
 ```kotlin
-class DrawnImagery(mapView: MapView, map: MapLibreMap, isVisible: () -> Boolean, terrain: () -> TerrainMode) {
+class DrawnImagery(mapView: MapView, map: MapLibreMap, isVisible: () -> Boolean, terrain: () -> TerrainMode,
+                   contourScale: Double) {   // PHONE_CONTOUR_SCALE on the phone, contourScale(pixelRatio) in the car
     val drawnMap: DrawnMap; var colourRange: ElevationRange?; var onKey: ((TerrainKey) -> Unit)?
     fun addTo(builder: Style.Builder)       // imagery, colours (visibility from mode), contours: each a fresh generation, in that order
     fun regionWillChange(); fun regionDidChange(); fun visibleRegionChanged()
@@ -1256,7 +1261,8 @@ class Connectivity private constructor(context: Context) {
   - **`onSurfaceAvailable`:**
     - `createVirtualDisplay(…, c.width, c.height, c.dpi, c.surface, VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY)`;
     - a `Presentation` with a `MapView(options.textureMode(true), rotate and tilt off)`, `pixelRatio = c.dpi / 160f`;
-    - `setStyle(MapStyle.builder(DrawnImagery(...)))`, then `installOverlays`;
+    - `setStyle(MapStyle.builder(DrawnImagery(...)))` with the car screen's contour scale
+      (`TileLevels.contourScale(pixelRatio)`), then `installOverlays`;
     - `BlockLayers`, `TrackLayer`, `UserDotLayer` and `AviationLayer`, bound to the same model flows as the phone (on `Dispatchers.Main`);
     - zoom limits 3–20, which stand in for MapKit's 150 m – 4,000 km camera clamp.
   - **`onSurfaceDestroyed`:** `MapView` pause/stop/destroy, dismiss the presentation, release the display.

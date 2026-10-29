@@ -43,7 +43,7 @@ Logging: Swift's `tileLog` becomes `Log.d("tiles", …)`, with the same messages
 
 Two definitions:
 - **Point zoom `Zp`:** the web-map zoom with 256-point tiles at the scale on screen. On iOS, `Zp = 20 + log2(points per map point)`. On MapLibre, 512-dp tiles and dp ≈ pt, so **`Zp = cameraPosition.zoom + 1`**.
-- **`s`:** the screen scale (iOS `contentScaleFactor`; Android `MapView.getPixelRatio()`).
+- **`s`:** the screen scale (iOS `contentScaleFactor`; Android `MapView.getPixelRatio()`). The Android phone draws its contour tiles at the iPhone's `s = 3` whatever its density (`TileLevels.PHONE_CONTOUR_SCALE`, §2.3); the car at its own screen's.
 
 **Imagery level.** `SatelliteRenderer.level(pixelsPerMapPoint:)` gives tiles about 256 pixels across on screen:
 ```
@@ -427,14 +427,15 @@ Also, after the map is ready: `map.setPrefetchZoomDelta(3)`.
 **URL scheme** (`TileUrls`, host `satmap.local`):
 ```
 https://satmap.local/imagery/{gen}/{z}/{x}/{y}
-https://satmap.local/contours/{gen}/{scale}/{z}/{x}/{y}     scale = round(s·100), s = min(max(1, pixelRatio), 3)
+https://satmap.local/contours/{gen}/{scale}/{z}/{x}/{y}     scale = round(s·100): s = 3 on the phone, min(max(1, pixelRatio), 3) in the car
 https://satmap.local/colours/{gen}/{range}/{z}/{x}/{y}      range = "none" | "{low}_{high}" (Double.toString, e.g. 300.0_900.0)
 ```
 - `gen` comes from `TileUrls.nextGeneration()`, a global `AtomicInteger` starting at 1, so the phone and car maps never clash.
 - Source id = layer id = `"$kind-$gen"`.
 - Every source is registered in `TileLayers` (gen → `TileLayer`, see 2.5) and unregistered when removed.
 - The range and scale are in the URL so a tile URL says exactly what it draws. The generation lets a new range (or a reload) be a new source; a source's URL cannot change in 13.7.1.
-- Contour PNGs are cached by `"scale/z/x/y"`, so the phone and the car (different densities) don't share wrong lines. iOS keyed them by `z/x/y` only.
+- The phone draws its contours at the iPhone's scale, `TileLevels.PHONE_CONTOUR_SCALE` = 3, whatever its density (an Android difference: iOS uses its own screen's `contentScaleFactor`, which is 3 on the iPhones the screenshots come from). Contour tiles are 128 to 256 dp across on both (§2.4), so the line widths, labels and the interval at each level are the iPhone's in dp; at a density of 2.625 the phone's own scale would give z18 5 m / 25 m instead of the iPhone's 10 m / 50 m, and lines and labels 12 % smaller. The URL, the legend (`reportKey`) and the source's minzoom all take this one scale. The car keeps its own screen's, `TileLevels.contourScale(pixelRatio)`.
+- Contour PNGs are cached by `"scale/z/x/y"`, so the phone and the car (different scales) don't share wrong lines. iOS keyed them by `z/x/y` only.
 
 **Sources** (built in code):
 ```kotlin
@@ -455,7 +456,7 @@ fun layer(kind: TileKind, gen: Int, visible: Boolean, opacity: Float = 1f) =
 |---|---|---|---|
 | imagery | `TileLevels.imageryTileSize(pixelRatio)` = `round(256 / max(1, pixelRatio))` (98 at 2.625, 85 at 3) | 0 | 22 |
 | colours | 182 | 8 | 22 |
-| contours | 182 | `TileLevels.contourMinZoom(s)` = first L in 11…22 with `intervals(pointZoom(L, s)) != null` (12 at s = 2, 13 at 2.625 and 3) | 22 |
+| contours | 182 | `TileLevels.contourMinZoom(s)` = first L in 11…22 with `intervals(pointZoom(L, s)) != null` (13 on the phone, s = 3; in the car 12 at s = 2, 13 at 2.63) | 22 |
 
 Above maxzoom 22 MapLibre enlarges the z22 tile, as iOS's clamp does.
 
@@ -465,7 +466,7 @@ Above maxzoom 22 MapLibre enlarges the z22 tile, as iOS's clamp does.
   "sources": {
     "imagery-1":  {"type":"raster","tiles":["https://satmap.local/imagery/1/{z}/{x}/{y}"],"tileSize":98,"minzoom":0,"maxzoom":22,"volatile":true},
     "colours-2":  {"type":"raster","tiles":["https://satmap.local/colours/2/none/{z}/{x}/{y}"],"tileSize":182,"minzoom":8,"maxzoom":22,"volatile":true},
-    "contours-3": {"type":"raster","tiles":["https://satmap.local/contours/3/263/{z}/{x}/{y}"],"tileSize":182,"minzoom":13,"maxzoom":22,"volatile":true} },
+    "contours-3": {"type":"raster","tiles":["https://satmap.local/contours/3/300/{z}/{x}/{y}"],"tileSize":182,"minzoom":13,"maxzoom":22,"volatile":true} },
   "layers": [
     {"id":"background","type":"background","paint":{"background-color":"#202020"}},
     {"id":"imagery-1","type":"raster","source":"imagery-1","paint":{"raster-fade-duration":0}},
@@ -491,7 +492,7 @@ This equals iOS's imagery level: tiles 256 *pixels* across, 0.7 to 1.4 px per ti
 ```
 round(zoom + 1.4922) = floor(Zp + 0.9922) = ceil(Zp − 0.0078)
 ```
-This equals iOS's `ceil(Zp − 1e-6)`. Tiles are 128 to 256 dp on screen, with 256-px bitmaps, so line widths in dp and label sizes match iOS's points exactly.
+This equals iOS's `ceil(Zp − 1e-6)`. Tiles are 128 to 256 dp on screen, with 256-px bitmaps drawn at the iPhone's `s = 3` on the phone, so line widths in dp and label sizes match iOS's points exactly.
 
 ```kotlin
 object TileLevels {
@@ -502,7 +503,9 @@ object TileLevels {
         val v = zoom + log2(512.0 / tileSize)
         return (if (v >= 0) floor(v + 0.5) else ceil(v - 0.5)).toInt().coerceIn(0, TileSources.imageryMaxZoom)
     }
-    /** Contour drawing scale, quantised as in the URL (2.625 → 2.63). */
+    /** The phone map's contour drawing scale: the iPhone's, whatever the phone's density. */
+    const val PHONE_CONTOUR_SCALE = 3.0
+    /** A screen's contour drawing scale (the car's), quantised as in the URL (2.625 → 2.63). */
     fun contourScale(pixelRatio: Float): Double = (min(max(1.0, pixelRatio.toDouble()), 3.0) * 100).roundToInt() / 100.0
     fun contourMinZoom(s: Double): Int =
         (ContourPolicy.minTileZoom..TileSources.imageryMaxZoom).first { ContourPolicy.intervals(ContourPolicy.pointZoom(it, s)) != null }
@@ -752,7 +755,8 @@ The bilinear filter gives iOS's smooth interpolation between nodes, with node pi
 
 ```kotlin
 class DrawnImagery(private val mapView: MapView, private val map: MapLibreMap,
-                   private val isVisible: () -> Boolean, private val terrain: () -> TerrainMode) {
+                   private val isVisible: () -> Boolean, private val terrain: () -> TerrainMode,
+                   private val contourScale: Double) {   // the contour tiles' s: URL, legend and minzoom
     val drawnMap = DrawnMap()
     var colourRange: ElevationRange? = null; private set
     var onKey: ((TerrainKey) -> Unit)? = null
@@ -771,7 +775,7 @@ class DrawnImagery(private val mapView: MapView, private val map: MapLibreMap,
 - the terrain mode `StateFlow` → `terrainChanged`
 - `reloadImagery()` → `reload()`
 
-The car map (Android Auto) creates its own `DrawnImagery` with its own pixel ratio.
+The phone's `MapController` passes `TileLevels.PHONE_CONTOUR_SCALE`. The car map (Android Auto) creates its own `DrawnImagery` with its own pixel ratio, and its contour scale from it (`TileLevels.contourScale(pixelRatio)`).
 
 **Geometry:**
 - `levels()`: null if `mapView.width < 100·pixelRatio`; otherwise `(TileLevels.level(zoom, imageryTileSize), TileLevels.level(zoom, 182))`.
@@ -786,7 +790,7 @@ The car map (Android Auto) creates its own `DrawnImagery` with its own pixel rat
 - `regionDidChange`: `moving = false`; if a replacement is owed, schedule it; then `mapStopped()`.
 - `mapStopped()`: after 400 ms, debounced by `stopCount`, if the map is visible and has levels: `setFocus`, `ImageryPrefetch.mapStopped(visibleWorldRect(), levels.imagery)`, `updateColourRange()`.
 
-**Colour range:** `updateColourRange()` and `reportKey()` exactly as in 1.9 and 1.10. Use `Handler(Looper.getMainLooper()).postDelayed(…, 1600)` for the re-check, `s = TileLevels.contourScale(pixelRatio)` for intervals, and "the shown colours layer's range" in place of `renderer.colourRange`.
+**Colour range:** `updateColourRange()` and `reportKey()` exactly as in 1.9 and 1.10. Use `Handler(Looper.getMainLooper()).postDelayed(…, 1600)` for the re-check, `s = contourScale` (the one the tiles' URL has) for intervals, and "the shown colours layer's range" in place of `renderer.colourRange`.
 
 **Replacing a layer** (range change, reload). This is the Android counterpart of iOS's swap without flashing.
 - State:
@@ -877,6 +881,7 @@ Everything fits in the normal heap; `largeHeap` is not needed.
 **JVM / Robolectric** (`:app:testDebugUnitTest`):
 - `TileLevels.level` against iOS's formulas across zoom 0–21 for pixel ratios 1, 2, 2.625, 3, 3.5. Imagery may differ from `round(Zp + log2 s)` only within ±0.01 of a .5 boundary. Contours may differ from `ceil(Zp − 1e-6)` only within 0.008 above an integer.
 - `contourMinZoom`: 12 at s = 2, 13 at 2.63 and 3.
+- The phone's contour scale is 3 whatever its density: the legend at z18 shows the iPhone's 10 m / 50 m, the URL says `300`, and the source starts at z13.
 - `TileUrls.format`/`parse` round trip, including `none` and negative or fractional ranges.
 - `RequestLimiter` ordering (urgent > normal > background, newest first, background ≤ 2) and cancellation.
 - The `TileInterceptor` answer table, through an `OkHttpClient` with the interceptor and a fake repository: codes, `Cache-Control`, the 1×1 blank, cancellation.

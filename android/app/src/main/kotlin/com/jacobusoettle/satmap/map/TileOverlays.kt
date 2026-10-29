@@ -37,9 +37,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** Draws 256×256-pixel transparent contour tiles, which the contours layer shows over the imagery (`SatelliteRenderer`
- *  answers MapLibre with them). Stroke widths and fonts are multiplied by the scale it is given (the screen's, in each
- *  tile's URL), and the contour interval is chosen from the equivalent web-map zoom. Drawing uses `android.graphics` on
- *  `Work.contours`. */
+ *  answers MapLibre with them). Stroke widths and fonts are multiplied by the scale it is given (the map's, in each
+ *  tile's URL: the iPhone's 3 on the phone, the screen's in the car), and the contour interval is chosen from the
+ *  equivalent web-map zoom. Drawing uses `android.graphics` on `Work.contours`. */
 class ContourRenderer {
     /** The PNGs drawn (complete ones only), by "scale/z/x/y": the phone and the car draw at different scales. */
     private val cache = object : LruCache<String, ByteArray>(32 shl 20) {
@@ -82,7 +82,7 @@ class ContourRenderer {
         data object Unavailable : Tile
     }
 
-    /** The tile's lines at a drawing scale (the screen's: 1 to 3). */
+    /** The tile's lines at a drawing scale (the map's: 1 to 3). */
     suspend fun tile(t: TileID, scale: Double): Tile {
         val s = if (scale >= 1) min(scale, 3.0) else screenScale
         val key = key(t, s)

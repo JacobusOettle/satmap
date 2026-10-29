@@ -120,7 +120,7 @@ class DrawnImageryTest {
 
     @Test
     fun theContourIntervalIsTheOneDrawnAtTheContourLevel() {
-        // 2.63 (a 2.625 phone): z16 is point zoom 14.6 (01-map), z15 13.6 (22-contours-and-colours).
+        // 2.63 (a 2.625 screen): z16 is point zoom 14.6, z15 13.6.
         assertEquals(TerrainKey(ContourInterval(10.0, 50.0)), DrawnImagery.key(TerrainMode.contours, 16, 2.63, true, range))
         assertEquals(TerrainKey(ContourInterval(20.0, 100.0)), DrawnImagery.key(TerrainMode.contours, 15, 2.63, false, null))
         assertEquals(TerrainKey(ContourInterval(5.0, 25.0)), DrawnImagery.key(TerrainMode.contours, 22, 2.63, false, null))
@@ -129,6 +129,25 @@ class DrawnImageryTest {
         assertEquals(TerrainKey(ContourInterval(100.0, 500.0)), DrawnImagery.key(TerrainMode.contours, 12, 2.0, false, null))
         // Below z11 never.
         assertEquals(TerrainKey(), DrawnImagery.key(TerrainMode.contours, 10, 1.0, false, null))
+    }
+
+    @Test
+    fun thePhonesContoursAreDrawnAtTheIPhonesScaleWhateverItsDensity() {
+        val s = TileLevels.PHONE_CONTOUR_SCALE
+        assertEquals(3.0, s, 0.0)
+        // z16 is point zoom 14.4 (01-map), z15 13.4 (22-contours-and-colours), as on the iPhone.
+        assertEquals(TerrainKey(ContourInterval(10.0, 50.0)), DrawnImagery.key(TerrainMode.contours, 16, s, false, null))
+        assertEquals(TerrainKey(ContourInterval(20.0, 100.0)), DrawnImagery.key(TerrainMode.contours, 15, s, false, null))
+        // z18 (16-measure-two-points, 19-measure-area): point zoom 16.4, the iPhone's 10 m / 50 m. At a 2.625 phone's
+        // own scale it would be 16.6: 5 m / 25 m.
+        assertEquals(TerrainKey(ContourInterval(10.0, 50.0)), DrawnImagery.key(TerrainMode.contours, 18, s, false, null))
+        assertEquals(TerrainKey(ContourInterval(5.0, 25.0)), DrawnImagery.key(TerrainMode.contours, 18, 2.63, false, null))
+        assertEquals(TerrainKey(ContourInterval(5.0, 25.0)), DrawnImagery.key(TerrainMode.contours, 19, s, false, null))
+        // The tiles say the same scale in their URL, so they are drawn with that interval and the iPhone's line widths
+        // and labels; the source starts at z13, as the iPhone's contours do.
+        assertEquals("https://satmap.local/contours/7/300/{z}/{x}/{y}", TileUrls.contours(7, s))
+        assertEquals(13, TileLevels.contourMinZoom(s))
+        assertEquals(TerrainKey(), DrawnImagery.key(TerrainMode.contours, 12, s, false, null))
     }
 
     @Test

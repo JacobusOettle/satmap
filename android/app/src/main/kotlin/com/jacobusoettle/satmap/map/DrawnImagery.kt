@@ -53,6 +53,9 @@ class DrawnImagery(
     private val isVisible: () -> Boolean,
     /** Whether contour lines and elevation colours are drawn (their layers are shown or hidden: `terrainChanged`). */
     private val terrain: () -> TerrainMode,
+    /** The scale the contour tiles are drawn at (in their URL), which the legend's interval and the source's first level
+     *  follow: the iPhone's on the phone (`TileLevels.PHONE_CONTOUR_SCALE`), the screen's in the car. */
+    private val contourScale: Double,
 ) {
     val drawnMap = DrawnMap()
 
@@ -300,7 +303,7 @@ class DrawnImagery(
             key(
                 terrain(),
                 levels()?.contours,
-                TileLevels.contourScale(mapView.pixelRatio),
+                contourScale,
                 colours.heightsOnScreen,
                 colourRange,
             ),
@@ -429,14 +432,14 @@ class DrawnImagery(
     private fun minZoom(kind: TileKind): Int = when (kind) {
         TileKind.imagery -> 0
         TileKind.colours -> ElevationColours.minTileZoom
-        TileKind.contours -> TileLevels.contourMinZoom(TileLevels.contourScale(mapView.pixelRatio))
+        TileKind.contours -> TileLevels.contourMinZoom(contourScale)
     }
 
     private fun source(kind: TileKind, gen: Int, range: ElevationRange? = null): RasterSource {
         val ratio = mapView.pixelRatio
         val url = when (kind) {
             TileKind.imagery -> TileUrls.imagery(gen)
-            TileKind.contours -> TileUrls.contours(gen, TileLevels.contourScale(ratio))
+            TileKind.contours -> TileUrls.contours(gen, contourScale)
             TileKind.colours -> TileUrls.colours(gen, range)
         }
         val tileSize = if (kind == TileKind.imagery) TileLevels.imageryTileSize(ratio) else TileLevels.TERRAIN_TILE_SIZE

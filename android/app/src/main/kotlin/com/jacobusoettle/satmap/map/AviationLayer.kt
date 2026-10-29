@@ -48,12 +48,15 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.text.BreakIterator
 import kotlin.math.PI
+import kotlin.math.acos
+import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sin
+import kotlin.math.tan
 
 /** The aerodromes and navaids shipped with the app (assets/Aviation.tsv, from SatMap/Resources), read once, in the
  *  background (`Dispatchers.IO`), the first time drone mode needs them. `read` gives the file's text (tests read their
@@ -648,16 +651,17 @@ object AviationCard {
 
     /** The icon before a distance, SF Symbols' `location.fill` (you) or `mappin` (the pin), filled in `colour`. iOS
      *  draws a symbol in text at the size of the font around it, here the label's own 17 point font (the attachment
-     *  has none), not the 10 points it was made at: the sizes and places below are those of the iPhone's screenshot
-     *  (docs/screenshots/25-drone-mode.jpg), in dp from the start of the icon and the baseline. The line takes the
-     *  17 point font's height, as on iOS. */
+     *  has none), not the 10 points it was made at: the shapes, sizes and places below are those of the iPhone's
+     *  screenshot (docs/screenshots/25-drone-mode.jpg), in dp from the start of the icon and the baseline, and the
+     *  advances put the distances where the iPhone has them. The line takes the 17 point font's height, as on iOS. */
     class Icon(val symbol: Symbol, val colour: Int, private val density: Float) : ReplacementSpan() {
         enum class Symbol(val advance: Float) {
-            /** An arrow pointing up and to the right, 14.7 dp across. */
+            /** An arrow pointing up and to the right, 15.8 dp across, its tips rounded. */
             location(20.2f),
 
-            /** A ball of radius 2.7 on a needle 1.3 dp wide, 15.5 dp tall. */
-            mappin(17.6f),
+            /** A ball of radius 3.1 with a hole in its upper left, on a needle narrowing from 1.7 to 1.1 dp: 17.4 dp
+             *  tall, from 14.9 above the baseline to 2.5 below. */
+            mappin(17.0f),
         }
 
         override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
@@ -682,20 +686,67 @@ object AviationCard {
             fun px(u: Float) = x + u * d
             fun py(v: Float) = y + v * d
             when (symbol) {
-                Symbol.location -> {
+                Symbol.location -> canvas.drawPath(rounded(ARROW, ARROW_ROUNDING, x, y.toFloat(), d), fill)
+                Symbol.mappin -> {
                     val path = Path().apply {
-                        moveTo(px(16.4f), py(-13.4f))
-                        lineTo(px(1.7f), py(-6.9f))
-                        lineTo(px(8.2f), py(-5.2f))
-                        lineTo(px(9.9f), py(1.3f))
+                        addCircle(px(8.1f), py(-11.75f), 3.1f * d, Path.Direction.CW)
+                        // The hole turns the other way, so it stays empty.
+                        addCircle(px(7.2f), py(-12.65f), 1f * d, Path.Direction.CCW)
+                        // The needle, from inside the ball (clear of the hole).
+                        moveTo(px(7.25f), py(-11.25f))
+                        lineTo(px(8.95f), py(-11.25f))
+                        lineTo(px(8.65f), py(2.5f))
+                        lineTo(px(7.55f), py(2.5f))
                         close()
                     }
                     canvas.drawPath(path, fill)
                 }
-                Symbol.mappin -> {
-                    canvas.drawCircle(px(7.7f), py(-12.1f), 2.7f * d, fill)
-                    canvas.drawRect(px(7.05f), py(-12.1f), px(8.35f), py(0.7f), fill)
+            }
+        }
+
+        private companion object {
+            /** The arrow's corners, x and y in turn: its tip, the wing on the left, the notch at its back and the wing
+             *  below; and the radius each is rounded to (the notch is sharp). */
+            val ARROW = floatArrayOf(17.8f, -14.7f, -0.6f, -6.4f, 8.4f, -5.3f, 9.5f, 3.7f)
+            val ARROW_ROUNDING = floatArrayOf(0.8f, 0.7f, 0f, 0.7f)
+
+            /** A polygon through `corners` (dp, x and y in turn) from (`x`, `y`) at `d` pixels per dp, each corner
+             *  rounded to an arc of its radius, which meets both sides. */
+            fun rounded(corners: FloatArray, radii: FloatArray, x: Float, y: Float, d: Float): Path {
+                val path = Path()
+                val n = radii.size
+                for (i in 0 until n) {
+                    val cx = corners[2 * i]
+                    val cy = corners[2 * i + 1]
+                    val r = radii[i]
+                    if (r <= 0f) {
+                        if (path.isEmpty) path.moveTo(x + cx * d, y + cy * d) else path.lineTo(x + cx * d, y + cy * d)
+                        continue
+                    }
+                    // Unit vectors along the two sides, towards the corners before and after.
+                    val p = (i + n - 1) % n
+                    val q = (i + 1) % n
+                    val ul = hypot(corners[2 * p] - cx, corners[2 * p + 1] - cy)
+                    val vl = hypot(corners[2 * q] - cx, corners[2 * q + 1] - cy)
+                    val ux = (corners[2 * p] - cx) / ul
+                    val uy = (corners[2 * p + 1] - cy) / ul
+                    val vx = (corners[2 * q] - cx) / vl
+                    val vy = (corners[2 * q + 1] - cy) / vl
+                    val half = acos((ux * vx + uy * vy).coerceIn(-1f, 1f)) / 2
+                    // The arc's centre is on the corner's bisector; it meets the sides r / tan(half) from the corner.
+                    val bl = hypot(ux + vx, uy + vy)
+                    val ox = cx + (ux + vx) / bl * r / sin(half)
+                    val oy = cy + (uy + vy) / bl * r / sin(half)
+                    val t = r / tan(half)
+                    val from = atan2(cy + uy * t - oy, cx + ux * t - ox)
+                    var sweep = atan2(cy + vy * t - oy, cx + vx * t - ox) - from
+                    if (sweep > PI) sweep -= (2 * PI).toFloat()
+                    if (sweep < -PI) sweep += (2 * PI).toFloat()
+                    val oval = RectF(x + (ox - r) * d, y + (oy - r) * d, x + (ox + r) * d, y + (oy + r) * d)
+                    path.arcTo(oval, Math.toDegrees(from.toDouble()).toFloat(), Math.toDegrees(sweep.toDouble()).toFloat(), false)
                 }
+                path.close()
+                return path
             }
         }
     }

@@ -246,7 +246,7 @@ class MapController(
         }
         // Later layers draw on top: imagery with contours (DrawnImagery), then the overlays (MapStyle).
         builtTerrain = model.terrainMode.value
-        val drawn = DrawnImagery(mapView, m, { isShown }, { model.terrainMode.value })
+        val drawn = DrawnImagery(mapView, m, { isShown }, { model.terrainMode.value }, TileLevels.PHONE_CONTOUR_SCALE)
         drawn.onKey = { key -> model.legend.update(key) }
         imagery = drawn
         m.setStyle(MapStyle.builder(drawn)) { style -> styleLoaded(m, style) }
