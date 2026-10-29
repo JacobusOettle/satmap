@@ -161,7 +161,9 @@ private fun PasteRow(onPaste: (String) -> Unit) {
                 }
                 .heightIn(min = 34.dp)
                 .padding(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            // The ContentPaste glyph sits 2.25 dp inside each side of its 18 dp box: 3 dp between the box and the
+            // text leaves the 7.4 pt ink-to-ink gap of the iPhone's PasteButton (screenshot 21).
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val colour = if (hasText) Color.White else Color.White.copy(alpha = 0.5f)
