@@ -1,7 +1,12 @@
 package com.jacobusoettle.satmap.map
 
+import android.content.Context
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.RectF
+import android.view.View
+import android.widget.FrameLayout
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.WorldRect
@@ -18,8 +23,9 @@ import kotlin.math.hypot
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** The loupe's geometry and motion (iOS `PointAdjuster`): where the square goes, the finger's way on the ground, the
- *  5 m the point moves freely and how fast the map scrolls beyond it. (Under Robolectric for `PointF` and `RectF`.) */
+/** The loupe's geometry and motion (iOS `PointAdjuster`): where the square goes (in any language's direction), the
+ *  finger's way on the ground, the 5 m the point moves freely and how fast the map scrolls beyond it. (Under
+ *  Robolectric for `PointF`, `RectF` and the views.) */
 @RunWith(AndroidJUnit4::class)
 class PointAdjusterTest {
     /** A phone in portrait, in dp, inside its bars: 412 × 915 less the status bar (24) and the gesture bar (24). */
@@ -67,6 +73,27 @@ class PointAdjusterTest {
         // As much room either side: to the left, as iOS.
         val middle = (48f + 915f) / 2
         assertPoint(middle - 44 - 116, 200f, PointAdjuster.place(232f, 44f, PointF(middle, 200f), landscape))
+    }
+
+    @Test
+    fun theSquareIsWherePlaceSaysInARightToLeftLanguageToo() {
+        // Arabic or Hebrew: FrameLayout's default gravity (START) is the right, where a left margin counts for nothing.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = FrameLayout(context)
+        root.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        val frame = LoupeFrame(context)
+        val loupe = LoupeView(context)
+        frame.addView(loupe, PointAdjuster.at(8, 8, 216))
+        root.addView(frame, PointAdjuster.at(40, 300, 232))
+        root.measure(
+            View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(2400, View.MeasureSpec.EXACTLY),
+        )
+        root.layout(0, 0, 1080, 2400)
+        assertEquals(View.LAYOUT_DIRECTION_RTL, frame.layoutDirection)
+        assertEquals(Rect(40, 300, 40 + 232, 300 + 232), Rect(frame.left, frame.top, frame.right, frame.bottom))
+        // The glass rim as wide all round.
+        assertEquals(Rect(8, 8, 8 + 216, 8 + 216), Rect(loupe.left, loupe.top, loupe.right, loupe.bottom))
     }
 
     /** The square's scale: 15 m across 216 dp. */

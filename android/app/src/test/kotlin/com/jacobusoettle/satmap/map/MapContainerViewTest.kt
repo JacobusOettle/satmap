@@ -7,9 +7,12 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Looper
 import android.os.SystemClock
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
 import android.widget.FrameLayout
@@ -28,7 +31,7 @@ import java.time.Duration
  *  resizes the same map (the manifest handles the change), and MapLibre sends no camera callbacks for a resize. It
  *  runs iOS's press and hold that moves a point (0.35 s; not after moving 10 dp, with a second finger, or as the press
  *  of a tap then press), keeps the gesture from the map while a point moves, records taps, and gives accessibility
- *  services the names on the map. */
+ *  services the names on the map (told of changes once the map settles, found when asked). */
 @RunWith(AndroidJUnit4::class)
 class MapContainerViewTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
@@ -108,7 +111,19 @@ class MapContainerViewTest {
         }
     }
 
+    /** The container's parent: keeps the accessibility events it sends. */
+    private class Recorder(context: Context) : FrameLayout(context) {
+        val events = mutableListOf<AccessibilityEvent>()
+
+        override fun requestSendAccessibilityEvent(child: View, event: AccessibilityEvent): Boolean {
+            events += event
+            return true
+        }
+    }
+
     private val density = context.resources.displayMetrics.density
+    private lateinit var activity: Activity
+    private lateinit var recorder: Recorder
     private lateinit var container: MapContainerView
     private lateinit var map: TouchMap
     private val heard = Heard()
@@ -116,13 +131,15 @@ class MapContainerViewTest {
 
     /** The container on the screen (its delayed press needs a window), with the stand-in map filling it. */
     private fun show() {
-        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        recorder = Recorder(activity)
         container = MapContainerView(activity)
         map = TouchMap(activity)
         val fill = ViewGroup.LayoutParams.MATCH_PARENT
         container.addView(map, FrameLayout.LayoutParams(fill, fill))
         container.touches = heard
-        activity.setContentView(container, ViewGroup.LayoutParams(fill, fill))
+        recorder.addView(container, FrameLayout.LayoutParams(fill, fill))
+        activity.setContentView(recorder, ViewGroup.LayoutParams(fill, fill))
         shadowOf(Looper.getMainLooper()).idle() // laid out in the window
     }
 
@@ -257,8 +274,6 @@ class MapContainerViewTest {
     @Test
     fun theNamesOnTheMapAreAccessibilityNodesWithTheirBoxes() {
         show()
-        val launch = MapContainerView.Label("Launch 1", RectF(100f, 200f, 180f, 262f), PointF(140f, 210f))
-        val other = MapContainerView.Label("Launch 2", RectF(200f, 300f, 280f, 362f), PointF(240f, 310f))
         container.labels = { listOf(launch, other) }
         var clicked: MapContainerView.Label? = null
         container.onLabelClicked = { clicked = it }
@@ -278,5 +293,117 @@ class MapContainerViewTest {
         // Activated, it is tapped where its dot is.
         assertTrue(provider.performAction(1, AccessibilityNodeInfo.ACTION_CLICK, null))
         assertEquals(other, clicked)
+    }
+
+    private val launch = MapContainerView.Label("Launch 1", RectF(100f, 200f, 180f, 262f), PointF(140f, 210f))
+    private val other = MapContainerView.Label("Launch 2", RectF(200f, 300f, 280f, 362f), PointF(240f, 310f))
+
+    /** An accessibility service is on (a screen reader explores by touch). */
+    private fun accessibilityOn(touchExploration: Boolean = false) {
+        val manager = activity.getSystemService(AccessibilityManager::class.java)
+        shadowOf(manager).setEnabled(true)
+        shadowOf(manager).setTouchExplorationEnabled(touchExploration)
+    }
+
+    private val changes
+        get() = recorder.events.filter { it.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED }
+
+    @Test
+    fun changedNamesAreToldOnceTheMapSettlesAndFoundOnlyWhenAsked() {
+        show()
+        var found = 0
+        container.labels = {
+            found++
+            listOf(launch)
+        }
+        // No service on: nothing to tell.
+        container.labelsChanged()
+        idle(1000)
+        assertTrue(recorder.events.isEmpty())
+
+        accessibilityOn()
+        // The map comes to rest every frame while the loupe scrolls it: one event, 100 ms after the last.
+        repeat(10) {
+            container.labelsChanged()
+            idle(16)
+        }
+        idle(83)
+        assertTrue(changes.isEmpty())
+        idle(1)
+        assertEquals(1, changes.size)
+        assertEquals(AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE, changes[0].contentChangeTypes)
+        // The names aren't asked of the map (a query that waits for its renderer) until a service asks for them.
+        assertEquals(0, found)
+        val provider = container.accessibilityNodeProvider
+        val host = provider.createAccessibilityNodeInfo(AccessibilityNodeProvider.HOST_VIEW_ID)!!
+        assertEquals(1, found)
+        assertEquals(2, host.childCount) // the map and the name
+        idle(1000)
+        assertEquals(1, changes.size)
+    }
+
+    @Test
+    fun namesChangedWhileAPointMovesAreToldWhenItIsLetGo() {
+        show()
+        accessibilityOn()
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        idle(300)
+        container.labelsChanged() // due 50 ms after the press began
+        idle(50)
+        assertEquals(listOf("began 100,200"), heard.events)
+        idle(1000)
+        touch(MotionEvent.ACTION_MOVE, 160f, 200f)
+        container.labelsChanged()
+        idle(1000)
+        assertTrue(changes.isEmpty())
+        touch(MotionEvent.ACTION_UP, 160f, 200f)
+        idle(99)
+        assertTrue(changes.isEmpty())
+        idle(1)
+        assertEquals(1, changes.size)
+        // Nothing held back: nothing more when the next point is let go.
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        idle(400)
+        touch(MotionEvent.ACTION_UP, 100f, 200f)
+        idle(1000)
+        assertEquals(1, changes.size)
+    }
+
+    private fun hover(action: Int, x: Float, y: Float): Boolean {
+        val now = SystemClock.uptimeMillis()
+        val e = MotionEvent.obtain(now, now, action, x, y, 0)
+        e.source = InputDevice.SOURCE_TOUCHSCREEN // a pointer's hover goes to dispatchHoverEvent
+        val handled = container.dispatchGenericMotionEvent(e)
+        e.recycle()
+        return handled
+    }
+
+    @Test
+    fun exploringByTouchFindsTheNamesAgainWhenTheyMayHaveChanged() {
+        show()
+        accessibilityOn(touchExploration = true)
+        var shown = listOf(launch)
+        var found = 0
+        container.labels = {
+            found++
+            shown
+        }
+        assertTrue(hover(MotionEvent.ACTION_HOVER_ENTER, 140f, 230f))
+        assertEquals(1, found)
+        assertTrue(hover(MotionEvent.ACTION_HOVER_MOVE, 141f, 231f))
+        assertEquals(1, found)
+        // The map moved: the next touch finds the names where they are now.
+        shown = listOf(other)
+        container.labelsChanged()
+        assertTrue(hover(MotionEvent.ACTION_HOVER_MOVE, 240f, 330f))
+        assertEquals(2, found)
+        // Another name comes before it in the list: the one under the finger is still it, not entered again.
+        shown = listOf(launch, other)
+        container.labelsChanged()
+        assertTrue(hover(MotionEvent.ACTION_HOVER_MOVE, 241f, 331f))
+        assertEquals(3, found)
+        val entered = recorder.events.filter { it.eventType == AccessibilityEvent.TYPE_VIEW_HOVER_ENTER }
+        assertEquals(listOf("Launch 1", "Launch 2"), entered.map { it.contentDescription.toString() })
+        assertTrue(recorder.events.none { it.eventType == AccessibilityEvent.TYPE_VIEW_HOVER_EXIT })
     }
 }

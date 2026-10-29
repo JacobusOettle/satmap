@@ -17,6 +17,7 @@ import android.graphics.Shader
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
 import android.view.Choreographer
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -130,20 +131,12 @@ class PointAdjuster(
         val frame = LoupeFrame(activity)
         (loupe.parent as? ViewGroup)?.removeView(loupe) // still in the square fading out
         val inner = (content * density).roundToInt()
-        frame.addView(
-            loupe,
-            FrameLayout.LayoutParams(inner, inner).apply {
-                leftMargin = (BORDER * density).roundToInt()
-                topMargin = leftMargin
-            },
-        )
+        val border = (BORDER * density).roundToInt()
+        frame.addView(loupe, at(border, border, inner))
         loupe.scene = scene
         loupe.heading = map.cameraPosition.bearing
         loupe.marker = if (which == MovablePoint.Selected) LoupeView.Marker.pin else LoupeView.Marker.measure
-        root.addView(frame, FrameLayout.LayoutParams(side, side).apply {
-            leftMargin = left
-            topMargin = top
-        })
+        root.addView(frame, at(left, top, side))
         frameView = frame
         update()
         val now = System.nanoTime() / 1e9 // Choreographer's frame times are on this clock
@@ -295,6 +288,15 @@ class PointAdjuster(
             val x = if (left >= right) touch.x - gap - half else touch.x + gap + half
             return PointF(clampX(x), clampY(touch.y))
         }
+
+        /** A square's place in a `FrameLayout`: `left` and `top` from the parent's top left corner, `side` across
+         *  (pixels), whatever the language's direction, as iOS frames are (the default gravity, START, is the right
+         *  side in Arabic or Hebrew, where the left margin would count for nothing). */
+        fun at(left: Int, top: Int, side: Int) =
+            FrameLayout.LayoutParams(side, side, Gravity.TOP or Gravity.LEFT).apply {
+                leftMargin = left
+                topMargin = top
+            }
 
         /** The finger's way from where it pressed (`finger`, dp), on the ground: a direction in world units and a
          *  distance in metres at the square's scale. */

@@ -1173,12 +1173,17 @@ class MapContainerView(context: Context) : FrameLayout(context) {
     private fun finish(t: Touches, cancelled: Boolean) {
         adjusting = false
         t.pressEnded(cancelled)
+        if (labelsUntold) {
+            labelsUntold = false
+            labelsChanged()
+        }
     }
 
     override fun onDetachedFromWindow() {
         disarm()
         if (adjusting) touches?.let { finish(it, cancelled = true) }
         swallowing = false
+        removeCallbacks(tellLabels)
         super.onDetachedFromWindow()
     }
 
@@ -1198,10 +1203,32 @@ class MapContainerView(context: Context) : FrameLayout(context) {
 
     override fun getAccessibilityNodeProvider(): AccessibilityNodeProvider = names
 
-    /** The names may have changed (the map came to rest, files were shown): accessibility services read them again. */
+    /** Changed names not yet told, held back while a point is moved. */
+    private var labelsUntold = false
+    private val tellLabels = Runnable { sendLabelsChanged() }
+
+    /** The names may have changed (the map came to rest, files were shown): accessibility services are told so, and
+     *  read them again when they ask (the names are found then, as `ExploreByTouchHelper.invalidateRoot` does; finding
+     *  them asks the map what it shows, which waits for its renderer). Told once things settle, 100 ms after the last
+     *  change (Android's own interval for content changes; the map comes to rest every frame while the loupe scrolls
+     *  it), and only after a point being moved is let go. */
     fun labelsChanged() {
+        names.stale = true
+        removeCallbacks(tellLabels)
         if (accessibility?.isEnabled != true) return
-        names.refresh()
+        if (adjusting) {
+            labelsUntold = true
+        } else {
+            postDelayed(tellLabels, LABELS_SETTLE_MILLIS)
+        }
+    }
+
+    private fun sendLabelsChanged() {
+        if (accessibility?.isEnabled != true) return
+        if (adjusting) {
+            labelsUntold = true
+            return
+        }
         val parent = parent ?: return
         @Suppress("DEPRECATION")
         val e = AccessibilityEvent.obtain(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)
@@ -1222,8 +1249,24 @@ class MapContainerView(context: Context) : FrameLayout(context) {
         private var focused = INVALID
         private var hovered = INVALID
 
+        /** The names may have changed since they were last found. */
+        var stale = true
+
         fun refresh() {
+            val wasHovered = shown.getOrNull(hovered)
+            val wasFocused = shown.getOrNull(focused)
             shown = labels?.invoke().orEmpty()
+            stale = false
+            // Ids are places in the list: the name under the finger and the one in focus keep theirs at their new
+            // places, if they still show.
+            hovered = place(wasHovered)
+            focused = place(wasFocused)
+        }
+
+        private fun place(label: Label?): Int {
+            if (label == null) return INVALID
+            val i = shown.indexOfFirst { it.description == label.description }
+            return if (i >= 0) i else INVALID
         }
 
         override fun createAccessibilityNodeInfo(virtualViewId: Int): AccessibilityNodeInfo? {
@@ -1295,8 +1338,9 @@ class MapContainerView(context: Context) : FrameLayout(context) {
             }
         }
 
-        /** Touch exploration: the name under the finger. */
+        /** Touch exploration: the name under the finger (the names found again first if they may have changed). */
         fun hover(event: MotionEvent): Boolean {
+            if (stale) refresh()
             val id = when (event.actionMasked) {
                 MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE ->
                     shown.indexOfFirst { it.bounds.contains(event.x, event.y) }
@@ -1329,6 +1373,10 @@ class MapContainerView(context: Context) : FrameLayout(context) {
     companion object {
         /** iOS's minimum press duration for moving a point. */
         const val PRESS_MILLIS = 350L
+
+        /** How long the names stay unchanged before services are told: Android's own interval for content changes
+         *  (`ViewConfiguration`'s hidden `SEND_RECURRING_ACCESSIBILITY_EVENTS_INTERVAL_MILLIS`). */
+        const val LABELS_SETTLE_MILLIS = 100L
         private const val INVALID = Int.MIN_VALUE
     }
 }
