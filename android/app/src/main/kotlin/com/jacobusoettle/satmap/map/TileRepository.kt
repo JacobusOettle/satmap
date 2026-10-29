@@ -71,6 +71,10 @@ class TileRepository internal constructor(
             shared = TileRepository(context.applicationContext)
         }
 
+        /** Whether `shared` is set (`init` has run, or a test installed its own): a Robolectric test's application
+         *  runs no `init`. */
+        val isReady: Boolean get() = ::shared.isInitialized
+
         /** An area's file as `MBTiles` (opened for reading and writing, as Swift does, so the map reads while a download
          *  writes), or null if it doesn't exist or can't be opened. */
         private fun openMBTiles(file: File): OfflineStore? {
