@@ -1,17 +1,34 @@
 package com.jacobusoettle.satmap.map
 
+import android.app.Activity
 import android.content.Context
+import android.graphics.PointF
+import android.graphics.Rect
+import android.graphics.RectF
+import android.os.Looper
+import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityNodeProvider
 import android.widget.FrameLayout
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.Shadows.shadowOf
+import java.time.Duration
 
 /** `MapContainerView` tells `MapController` when it was laid out, and whether its frame changed: a turned screen
- *  resizes the same map (the manifest handles the change), and MapLibre sends no camera callbacks for a resize. */
+ *  resizes the same map (the manifest handles the change), and MapLibre sends no camera callbacks for a resize. It
+ *  runs iOS's press and hold that moves a point (0.35 s; not after moving 10 dp, with a second finger, or as the press
+ *  of a tap then press), keeps the gesture from the map while a point moves, records taps, and gives accessibility
+ *  services the names on the map. */
 @RunWith(AndroidJUnit4::class)
 class MapContainerViewTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
@@ -51,5 +68,215 @@ class MapContainerViewTest {
             listOf(true to (1080 to 2400), false to (1080 to 2400), true to (2400 to 1080)),
             heard,
         )
+    }
+
+    // Press and hold to move a point, and taps
+
+    /** Stands in for the `MapView`: takes every touch, and keeps their actions. */
+    private class TouchMap(context: Context) : View(context) {
+        val actions = mutableListOf<Int>()
+
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            actions += event.actionMasked
+            return true
+        }
+    }
+
+    /** What the controller hears. */
+    private class Heard : MapContainerView.Touches {
+        var pressable = true
+        val events = mutableListOf<String>()
+        val taps = mutableListOf<Pair<PointF, PointF>>()
+
+        override fun pressable(x: Float, y: Float) = pressable
+
+        override fun pressBegan(x: Float, y: Float): Boolean {
+            events += "began ${x.toInt()},${y.toInt()}"
+            return true
+        }
+
+        override fun pressMoved(x: Float, y: Float) {
+            events += "moved ${x.toInt()},${y.toInt()}"
+        }
+
+        override fun pressEnded(cancelled: Boolean) {
+            events += if (cancelled) "cancelled" else "ended"
+        }
+
+        override fun touchEnded(down: PointF, up: PointF) {
+            taps += down to up
+        }
+    }
+
+    private val density = context.resources.displayMetrics.density
+    private lateinit var container: MapContainerView
+    private lateinit var map: TouchMap
+    private val heard = Heard()
+    private var downTime = 0L
+
+    /** The container on the screen (its delayed press needs a window), with the stand-in map filling it. */
+    private fun show() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        container = MapContainerView(activity)
+        map = TouchMap(activity)
+        val fill = ViewGroup.LayoutParams.MATCH_PARENT
+        container.addView(map, FrameLayout.LayoutParams(fill, fill))
+        container.touches = heard
+        activity.setContentView(container, ViewGroup.LayoutParams(fill, fill))
+        shadowOf(Looper.getMainLooper()).idle() // laid out in the window
+    }
+
+    private fun touch(action: Int, x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        if (action == MotionEvent.ACTION_DOWN) downTime = now
+        val e = MotionEvent.obtain(downTime, now, action, x, y, 0)
+        container.dispatchTouchEvent(e)
+        e.recycle()
+    }
+
+    /** A second finger landing at (x2, y2) while the first is at (x, y). */
+    private fun secondFinger(x: Float, y: Float, x2: Float, y2: Float) {
+        val properties = Array(2) { i -> MotionEvent.PointerProperties().apply { id = i; toolType = MotionEvent.TOOL_TYPE_FINGER } }
+        val coords = arrayOf(
+            MotionEvent.PointerCoords().apply { this.x = x; this.y = y },
+            MotionEvent.PointerCoords().apply { this.x = x2; this.y = y2 },
+        )
+        val action = MotionEvent.ACTION_POINTER_DOWN or (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+        val e = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 2, properties, coords, 0, 0, 1f, 1f, 0, 0, 0, 0)
+        container.dispatchTouchEvent(e)
+        e.recycle()
+    }
+
+    private fun idle(millis: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(millis))
+
+    @Test
+    fun heldForAThirdOfASecondAPointMovesAndTheMapSeesNoMore() {
+        show()
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        idle(349)
+        assertTrue(heard.events.isEmpty())
+        idle(1)
+        assertEquals(listOf("began 100,200"), heard.events)
+        // The map's own gesture is cancelled at once, and it sees nothing after.
+        assertEquals(listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_CANCEL), map.actions)
+        touch(MotionEvent.ACTION_MOVE, 160f, 200f)
+        touch(MotionEvent.ACTION_MOVE, 200f, 150f)
+        touch(MotionEvent.ACTION_UP, 200f, 150f)
+        assertEquals(listOf("began 100,200", "moved 160,200", "moved 200,150", "ended"), heard.events)
+        assertEquals(listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_CANCEL), map.actions)
+        assertTrue(heard.taps.isEmpty()) // lifting the finger isn't a tap
+        // The next touch is the map's again.
+        touch(MotionEvent.ACTION_DOWN, 100f, 100f)
+        assertEquals(MotionEvent.ACTION_DOWN, map.actions.last())
+    }
+
+    @Test
+    fun aCancelledMovePutsThePointBack() {
+        show()
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        idle(400)
+        touch(MotionEvent.ACTION_CANCEL, 100f, 200f)
+        assertEquals(listOf("began 100,200", "cancelled"), heard.events)
+    }
+
+    @Test
+    fun theFingerMayWanderUpTo10dpBeforeThePressStarts() {
+        show()
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        touch(MotionEvent.ACTION_MOVE, 100f + 9.9f * density, 200f)
+        idle(400)
+        assertEquals(1, heard.events.size)
+        assertTrue(heard.events[0].startsWith("began"))
+    }
+
+    @Test
+    fun movingMoreThan10dpIsAPanNotAPress() {
+        show()
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        touch(MotionEvent.ACTION_MOVE, 100f, 200f + 10.5f * density)
+        idle(1000)
+        assertTrue(heard.events.isEmpty())
+        // The map had the whole gesture.
+        touch(MotionEvent.ACTION_UP, 100f, 200f)
+        assertEquals(listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP), map.actions)
+    }
+
+    @Test
+    fun aSecondFingerIsAPinchNotAPress() {
+        show()
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        secondFinger(100f, 200f, 150f, 250f)
+        idle(1000)
+        assertTrue(heard.events.isEmpty())
+    }
+
+    @Test
+    fun aPressAwayFromAnyPointIsTheMaps() {
+        show()
+        heard.pressable = false
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        idle(1000)
+        assertTrue(heard.events.isEmpty())
+        touch(MotionEvent.ACTION_UP, 100f, 200f)
+        assertEquals(listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP), map.actions)
+    }
+
+    @Test
+    fun aTapThenAPressIsAOneFingerZoomNotAPress() {
+        show()
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        touch(MotionEvent.ACTION_UP, 100f, 200f)
+        idle(100)
+        touch(MotionEvent.ACTION_DOWN, 105f, 203f)
+        idle(1000)
+        assertTrue(heard.events.isEmpty())
+        touch(MotionEvent.ACTION_UP, 105f, 203f)
+        // Later, a press is a press again.
+        idle(1000)
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        idle(400)
+        assertEquals(1, heard.events.size)
+    }
+
+    @Test
+    fun aTapIsRecordedWhereItsFingerWentDownAndCameUp() {
+        show()
+        heard.pressable = false
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        touch(MotionEvent.ACTION_UP, 102f, 201f)
+        assertEquals(listOf(PointF(100f, 200f) to PointF(102f, 201f)), heard.taps)
+        // A drag isn't a tap.
+        touch(MotionEvent.ACTION_DOWN, 100f, 200f)
+        touch(MotionEvent.ACTION_MOVE, 100f, 300f)
+        touch(MotionEvent.ACTION_UP, 100f, 300f)
+        assertEquals(1, heard.taps.size)
+    }
+
+    // The names on the map, for accessibility services
+
+    @Test
+    fun theNamesOnTheMapAreAccessibilityNodesWithTheirBoxes() {
+        show()
+        val launch = MapContainerView.Label("Launch 1", RectF(100f, 200f, 180f, 262f), PointF(140f, 210f))
+        val other = MapContainerView.Label("Launch 2", RectF(200f, 300f, 280f, 362f), PointF(240f, 310f))
+        container.labels = { listOf(launch, other) }
+        var clicked: MapContainerView.Label? = null
+        container.onLabelClicked = { clicked = it }
+        val provider = container.accessibilityNodeProvider
+        val host = provider.createAccessibilityNodeInfo(AccessibilityNodeProvider.HOST_VIEW_ID)!!
+        assertEquals(3, host.childCount) // the map, and the two names
+        val node = provider.createAccessibilityNodeInfo(0)!!
+        assertEquals("Launch 1", node.contentDescription)
+        val r = Rect()
+        @Suppress("DEPRECATION")
+        node.getBoundsInParent(r)
+        assertEquals(Rect(100, 200, 180, 262), r)
+        assertTrue(node.isClickable)
+        assertTrue(node.isVisibleToUser)
+        assertEquals("Launch 2", provider.createAccessibilityNodeInfo(1)!!.contentDescription)
+        assertNull(provider.createAccessibilityNodeInfo(2))
+        // Activated, it is tapped where its dot is.
+        assertTrue(provider.performAction(1, AccessibilityNodeInfo.ACTION_CLICK, null))
+        assertEquals(other, clicked)
     }
 }

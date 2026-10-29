@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.map
 
 import android.content.Context
+import android.graphics.PointF
 import com.jacobusoettle.satmap.core.AviationIndex
 import com.jacobusoettle.satmap.core.AviationPoint
 import com.jacobusoettle.satmap.core.GeoPoint
@@ -38,6 +39,10 @@ class AviationLayer(private val map: MapLibreMap, private val style: Style, priv
     fun distancesChanged(me: GeoPoint?, pin: GeoPoint?) {
         // M5: redraws the cards when you or the pin moved by 20 m or more.
     }
+
+    /** The shown place nearest a spot on the screen (the map view's pixels): within a fingertip (24 dp) of its symbol,
+     *  or on its card; only places whose card MapLibre shows. */
+    fun place(near: PointF): AviationPoint? = null // M5: interaction spec §2.6 hit tests.
 }
 
 /** Paints a place's card (what iOS's `AviationView` drew) into a bitmap. */
