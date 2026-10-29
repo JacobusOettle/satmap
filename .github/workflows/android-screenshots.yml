@@ -128,6 +128,9 @@ jobs:
             a shell pm grant $PKG android.permission.$p || true
           done
           a shell appops set $PKG android:mock_location allow || exit 1
+          # Messages stops responding now and then on the slow emulator, and its dialog covers SatMap and takes the walk's
+          # taps (ScreenshotTest closes any such dialog too).
+          a shell pm disable-user --user 0 com.google.android.apps.messaging || true
 
           # The demo farm blocks, where KMLLibrary keeps its files (filesDir/SatMap/KML), with the index the iPhone app
           # writes (KMLLibrary.swift's Entry: id, name, fileName).

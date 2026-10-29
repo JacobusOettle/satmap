@@ -87,6 +87,8 @@ jobs:
             done
             # The test's position (TestLocations), as XCUIDevice.location on iOS.
             a shell appops set $PKG android:mock_location allow || true
+            # Messages stops responding now and then on the slow emulator, and its dialog would cover the map.
+            a shell pm disable-user --user 0 com.google.android.apps.messaging || true
             a logcat -c || true
             adb logcat -v threadtime -v UTC -s zoomscript TestRunner > "videos/script-$mode.log" 2>&1 &
             LOGPID=$!

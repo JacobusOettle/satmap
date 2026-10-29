@@ -133,7 +133,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: .
           # The runner starts each line in its own `sh -c`: every check is one line. Every permission the app asks for
-          # is granted first, so no system dialog covers the map in the screenshot or leaves MainActivity paused.
+          # is granted first, and Messages (which stops responding now and then on the slow emulator) is turned off, so
+          # no system dialog covers the map in the screenshot or leaves MainActivity paused.
           # The last check reads the middle of the screen from a raw capture (android-launch.raw: a 12- or 16-byte
           # header, then 4 bytes a pixel), taken right after the screenshot: imagery (many colours), or, when Esri's
           # servers don't answer the emulator, mostly the map's background #202020, which only a running map renderer
@@ -144,6 +145,7 @@ jobs:
             adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_COARSE_LOCATION || true
             adb shell pm grant com.jacobusoettle.satmap android.permission.ACTIVITY_RECOGNITION || true
             adb shell pm grant com.jacobusoettle.satmap android.permission.POST_NOTIFICATIONS || true
+            adb shell pm disable-user --user 0 com.google.android.apps.messaging || true
             adb shell svc power stayon true || true
             adb shell input keyevent KEYCODE_WAKEUP || true
             adb shell wm dismiss-keyguard || true
