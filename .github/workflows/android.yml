@@ -113,8 +113,7 @@ jobs:
           path: SatMap.apk
 
       # A build that doesn't open must not replace the one people install: start it on an emulator first. MapLibre is
-      # its OpenGL build (android/DESIGN.md D1), which the emulator's SwiftShader GPU draws; the default build needs
-      # Vulkan.
+      # its multi-backend build (android/DESIGN.md D1), which draws with the emulator's SwiftShader Vulkan.
       - name: Enable KVM for the emulator
         working-directory: .
         run: |
@@ -137,7 +136,7 @@ jobs:
           # is granted first, so no system dialog covers the map in the screenshot or leaves MainActivity paused.
           # The last check reads the middle of the screen from a raw capture (android-launch.raw: a 12- or 16-byte
           # header, then 4 bytes a pixel), taken right after the screenshot: imagery (many colours), or, when Esri's
-          # servers don't answer the emulator, mostly the map's background #202020, which only a running GL renderer
+          # servers don't answer the emulator, mostly the map's background #202020, which only a running map renderer
           # draws. A black or other flat screen fails.
           script: |
             adb install -r SatMap.apk

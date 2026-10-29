@@ -21,7 +21,7 @@ other, and how the work is ordered and tested.
 
 | # | Topic | Decision |
 | --- | --- | --- |
-| D1 | MapLibre artifact | Use **`org.maplibre.gl:android-sdk-opengl:13.7.1`**, not `android-sdk`. The plain `android-sdk` 13.7.1 artifact is the Vulkan build: its manifest declares `android.hardware.vulkan.version` with `required="true"`, which shuts out older phones and needs Vulkan on the CI emulator. I diffed the two with `javap`: the public API is the same (`MapView`, `MapLibreMapOptions`, `RasterSource` …). Only the renderer internals differ (`OpenGLRendererStrategy` instead of `VulkanRendererStrategy`). |
+| D1 | MapLibre artifact | Use **`org.maplibre.gl:android-sdk-vulkan-opengl:13.7.1`**, the multi-backend build: it draws with Vulkan where the phone has Vulkan 1.0.3 (`RenderingEngine.getDefaultRenderingEngine`) and with OpenGL ES otherwise, and its manifest declares `android.hardware.vulkan.version` with `required="false"`. Not the plain `android-sdk` artifact, the Vulkan-only build, whose manifest has `required="true"`, which shuts out older phones. Not `android-sdk-opengl` either: on the CI emulator (SwiftShader) its OpenGL ES renderer draws no icon symbols and no dashed lines, so your dot, the track, the measuring line and markers, the pin and the KML names and points were missing, while circles, plain lines, fills, patterns and rasters drew (every OpenGL release from 12.3.1 to 13.7.1, also on a bare `MapView` with an empty style; the Vulkan renderer draws them all). The public API is the same (`MapView`, `MapLibreMapOptions`, `RasterSource` …); only the renderer internals differ. The cost: both native renderers are in the APK. |
 | D2 | Tile URLs | Use the rendering spec's scheme with a generation and the drawing parameters in the path (§3.2). The car map uses the same scheme through its own `DrawnImagery`. The car section's `satmap.local/<layer>/{z}/{x}/{y}` with tileSize 256 is dropped. |
 | D3 | Foreground/background | Everything uses **`AppLifecycle`** (§2.3), which merges the phone's activities with the Android Auto session. Nothing else observes `ProcessLifecycleOwner` directly. |
 | D4 | Writing state | No public `MutableStateFlow` anywhere. A Swift `@Published var x` becomes `val x: StateFlow<T>` plus `fun setX(v)`, which runs the Swift `didSet`. `model.sheet.value = …` and `model.selectedPoint = …` are not used. |
@@ -355,7 +355,7 @@ class KMLLibrary(context: Context) {
 
 ### 3.1 MapLibre setup
 
-- **Artifact:** `org.maplibre.gl:android-sdk-opengl:13.7.1` (D1). It brings `android-sdk-geojson:6.0.1` and `maplibre-android-gestures:0.0.4`.
+- **Artifact:** `org.maplibre.gl:android-sdk-vulkan-opengl:13.7.1` (D1): Vulkan, or OpenGL ES without it. It brings `android-sdk-geojson:6.0.1` and `maplibre-android-gestures:0.0.4`.
 - **Never import `org.maplibre.android.offline.*`.** Our `OfflineManager` has the same name, and MapLibre's offline database is not used.
 - **Global setup:** §2.2 step 3.
 - **`TileInterceptor.mapClient`:**
@@ -1133,7 +1133,7 @@ Core's `TileDownloadJob.run` returns `DownloadOutcome.Cancelled` on cancellation
 ### 5.5 Build and resources (done in M0)
 
 **Gradle:**
-- `libs.maplibre` → `org.maplibre.gl:android-sdk-opengl`.
+- `libs.maplibre` → `org.maplibre.gl:android-sdk-vulkan-opengl`.
 - Add `implementation(libs.car.app)`, `implementation(libs.car.app.projected)`.
 - Add `testImplementation("androidx.car.app:app-testing:1.7.0")` and `testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")`.
 - Remove `workmanager` (D21).
