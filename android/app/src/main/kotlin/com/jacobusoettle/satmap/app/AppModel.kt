@@ -1,28 +1,50 @@
 package com.jacobusoettle.satmap.app
 
 import android.app.Application
+import android.os.SystemClock
+import androidx.annotation.VisibleForTesting
+import com.jacobusoettle.satmap.core.Aviation
+import com.jacobusoettle.satmap.core.AviationPoint
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TrackLog
 import com.jacobusoettle.satmap.core.TrackPoint
+import com.jacobusoettle.satmap.core.rounded
 import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.location.GpsFix
 import com.jacobusoettle.satmap.location.LocationRecorder
+import com.jacobusoettle.satmap.map.AviationStore
+import com.jacobusoettle.satmap.map.ContourRenderer
+import com.jacobusoettle.satmap.map.ImageryMemory
 import com.jacobusoettle.satmap.map.MovablePoint
+import com.jacobusoettle.satmap.map.SatelliteRenderer
 import com.jacobusoettle.satmap.map.TerrainKey
 import com.jacobusoettle.satmap.map.TileRepository
 import com.jacobusoettle.satmap.offline.OfflineManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
 import java.util.UUID
+import kotlin.math.max
 
 /** Looks up a spot's height (`TileRepository` answers it). Safe to call from the main thread. */
 interface ElevationSource {
@@ -100,8 +122,17 @@ sealed interface MeasureMode {
     }
 }
 
+/** A height asked of the source; a failure counts as none (the Swift lookup can't fail). */
+private suspend fun ElevationSource.heightOrNull(p: GeoPoint): Double? = try {
+    elevation(p)
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    null
+}
+
 /** While aiming the measuring tool: the spot under the crosshair and its height, which change as the map moves. Kept
- *  out of `AppModel` so a pan recomposes only the measuring panel, not the whole screen. */
+ *  out of `AppModel` so a pan recomposes only the measuring panel, not the whole screen. Main thread only. */
 class CrosshairAim(private val source: ElevationSource) {
     private val _point = MutableStateFlow<GeoPoint?>(null)
     val point: StateFlow<GeoPoint?> = _point.asStateFlow()
@@ -111,17 +142,61 @@ class CrosshairAim(private val source: ElevationSource) {
     val elevation: StateFlow<Double?> = _elevation.asStateFlow()
     private val _elevationPoint = MutableStateFlow<GeoPoint?>(null)
     val elevationPoint: StateFlow<GeoPoint?> = _elevationPoint.asStateFlow()
+    private var lookingUp = false
+    private var lookedUp: GeoPoint? = null
 
-    /** The spot under the crosshair (nil when not aiming). */
+    /** Bumped when aiming ends, so a lookup still under way then isn't shown when aiming again. */
+    private var session = 0
+    private var retries = 0
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** The spot under the crosshair (null when not aiming). */
     fun set(p: GeoPoint?) {
         if (p == _point.value) return
         _point.value = p
-        // M3: the Swift lookUp (one lookup at a time, 31 s retries capped at 4, session bump on nil).
+        retries = 0
+        if (p == null) {
+            session += 1
+            _elevation.value = null
+            _elevationPoint.value = null
+            lookedUp = null
+        }
+        lookUp()
     }
 
     /** The network is back: looks up a height that couldn't be found. */
     fun retry() {
-        // M3: lookedUp = nil; lookUp().
+        if (_point.value == null || _elevation.value != null) return
+        lookedUp = null
+        lookUp()
+    }
+
+    /** One lookup at a time, always for the latest spot, so a pan doesn't queue one for every frame. A failed lookup
+     *  (no signal) is tried again a few times while the crosshair stays on the spot, 31 s apart: after the elevation
+     *  tile's own 30 s wait, which would otherwise answer the same. */
+    private fun lookUp() {
+        val p = _point.value
+        if (lookingUp || p == null || p == lookedUp) return
+        lookingUp = true
+        lookedUp = p
+        val s = session
+        scope.launch {
+            val e = source.heightOrNull(p)
+            lookingUp = false
+            if (s == session) {
+                _elevation.value = e
+                _elevationPoint.value = p
+                if (e == null && _point.value == p && retries < 4) {
+                    retries += 1
+                    scope.launch {
+                        delay(31_000)
+                        if (s != session || _point.value != p || !AppLifecycle.isActive) return@launch
+                        retry()
+                    }
+                }
+            }
+            lookUp()
+        }
     }
 }
 
@@ -136,10 +211,9 @@ class MapScale {
     /** Metres or kilometres, feet or miles, or nautical miles (as distances are shown). */
     var unit: DistanceUnit = DistanceUnit.metric
         set(value) {
-            if (value != field) {
-                field = value
-                choose()
-            }
+            val old = field
+            field = value
+            if (value != old) choose()
         }
     private var metersPerPoint: Double? = null
 
@@ -149,7 +223,11 @@ class MapScale {
     }
 
     private fun choose() {
-        // M1: label and width from unit.scale(metersPerPoint, maxWidth), the width rounded to half points.
+        val m = metersPerPoint ?: return
+        val s = unit.scale(m, maxWidth) ?: return
+        val w = (s.width * 2).rounded() / 2
+        if (s.label != _label.value) _label.value = s.label
+        if (w != _width.value) _width.value = w
     }
 
     companion object {
@@ -174,21 +252,61 @@ class MapLegend {
 }
 
 /** Looks up the height of a spot that may keep changing (your position, a tapped spot): one lookup at a time, always
- *  for the latest spot. Main thread only. */
+ *  for the latest spot, so moving doesn't queue one for every GPS fix. A failed lookup (no signal) is tried again a few
+ *  times, 31 s apart (after the elevation tile's own 30 s wait, which would otherwise answer the same), while the spot
+ *  stays and the app is on screen. Main thread only. */
 class HeightLookup(private val source: ElevationSource, private val found: (GeoPoint, Double?) -> Unit) {
     /** The latest spot asked about. */
     var point: GeoPoint? = null
         private set
+    private var lookingUp = false
+    private var lookedUp: GeoPoint? = null
+    private var retries = 0
+
+    /** Bumped when the spot goes, so a lookup still under way then isn't reported. */
+    private var session = 0
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     fun set(p: GeoPoint?) {
         if (p == point) return
         point = p
-        // M1: the Swift lookUp (one lookup at a time, 31 s retries capped at 4 while active, session bump on nil).
+        retries = 0
+        if (p == null) {
+            session += 1
+            lookedUp = null
+        }
+        lookUp()
     }
 
     /** Looks up the latest spot again (the network is back, or the app was opened). */
     fun retry() {
-        // M1: lookedUp = nil; lookUp().
+        if (point == null) return
+        lookedUp = null
+        lookUp()
+    }
+
+    private fun lookUp() {
+        val p = point
+        if (lookingUp || p == null || p == lookedUp) return
+        lookingUp = true
+        lookedUp = p
+        val s = session
+        scope.launch {
+            val e = source.heightOrNull(p)
+            lookingUp = false
+            if (s == session) {
+                found(p, e)
+                if (e == null && point == p && retries < 4) {
+                    retries += 1
+                    scope.launch {
+                        delay(31_000)
+                        if (s != session || point != p || !AppLifecycle.isActive) return@launch
+                        retry()
+                    }
+                }
+            }
+            lookUp()
+        }
     }
 }
 
@@ -197,9 +315,9 @@ data class PendingArea(val id: UUID = UUID.randomUUID(), val name: String, val s
 
 enum class ActiveSheet { blocks, offline, coordinates }
 
-/** The app's state, for the whole process (not a ViewModel: recording, downloads and Android Auto run without an
- *  activity). All of it is written on the main thread; a Swift `@Published var x` is `val x: StateFlow` plus
- *  `fun setX(v)`, which runs the Swift `didSet`. */
+/** App state shared by the map and the controls, for the whole process (not a ViewModel: recording, downloads and
+ *  Android Auto run without an activity). Used on the main thread only (background work comes back on the main
+ *  thread). A Swift `@Published var x` is `val x: StateFlow` plus `fun setX(v)`, which runs the Swift `didSet`. */
 class AppModel(private val app: Application, private val elevation: ElevationSource = TileRepository.shared) :
     AppLifecycle.Observer {
 
@@ -210,23 +328,27 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         fun init(app: Application) {
             shared = AppModel(app)
         }
+
+        /** Seconds on a monotonic clock, for the reload's 20 s spacing (Swift: `Date`). */
+        private fun now(): Double = SystemClock.elapsedRealtime() / 1000.0
     }
 
     /** The model's own work, for the process lifetime; off-main work uses withContext(IO/Default). */
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /** The same, for what the Swift does with `DispatchQueue.main.async(After)`: always a later turn of the main
+     *  thread, never in the middle of the caller. */
+    private val mainScope = CoroutineScope(scope.coroutineContext + Dispatchers.Main)
+
     val recorder = LocationRecorder(app)
     val kml = KMLLibrary(app)
     val offline = OfflineManager(app)
+    private val trackLog = TrackLog(AppPaths.track)
 
-    val aim = CrosshairAim(elevation)
-    val scale = MapScale()
-    val legend = MapLegend()
-
-    private val _track = ArrayList<TrackPoint>()
-
-    /** Read on the main thread only. */
+    /** The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the list). Read on
+     *  the main thread only; a reader that hands it to another thread copies it first. */
     val track: List<TrackPoint> get() = _track
+    private val _track = ArrayList<TrackPoint>()
     private val _trackRevision = MutableStateFlow(0)
     val trackRevision: StateFlow<Int> = _trackRevision.asStateFlow()
 
@@ -237,40 +359,46 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         _following.value = v
     }
 
-    private val _terrainMode = MutableStateFlow(
-        TerrainMode.saved(Defaults.string("terrainMode"), Defaults.bool("showContours")),
-    )
+    /** What the terrain button shows over the imagery: contour lines, elevation colours, both or neither (each tap the
+     *  next). Remembered between launches. With neither, no elevation tiles are fetched for the map; the measuring
+     *  tool and the heights beside the coordinates still look them up. Also reads the legacy "showContours" (a launch
+     *  extra "NO" too, as iOS). */
+    private val _terrainMode = MutableStateFlow(TerrainMode.saved(Defaults.string("terrainMode"), Defaults.bool("showContours")))
     val terrainMode: StateFlow<TerrainMode> = _terrainMode.asStateFlow()
 
     fun setTerrainMode(m: TerrainMode) {
         _terrainMode.value = m
-        // M1: write "terrainMode" = m.rawValue; M5: updateDroneReport().
+        Defaults.putString("terrainMode", m.rawValue)
+        updateDroneReport()
     }
 
-    private val _distanceUnit = MutableStateFlow(
-        Defaults.string("distanceUnit")?.let { DistanceUnit(it) } ?: DistanceUnit.metric,
-    )
+    /** Distances in kilometres, miles or nautical miles, heights in metres or feet (a tap on one changes them). */
+    private val _distanceUnit = MutableStateFlow(Defaults.string("distanceUnit")?.let { DistanceUnit(it) } ?: DistanceUnit.metric)
     val distanceUnit: StateFlow<DistanceUnit> = _distanceUnit.asStateFlow()
 
-    fun nextDistanceUnit() {
-        // M1: distanceUnit = distanceUnit.next, written to "distanceUnit", and scale.unit.
+    private fun setDistanceUnit(u: DistanceUnit) {
+        _distanceUnit.value = u
+        Defaults.putString("distanceUnit", u.rawValue)
+        scale.unit = u
     }
 
-    private val _heightUnit = MutableStateFlow(
-        Defaults.string("heightUnit")?.let { HeightUnit(it) } ?: HeightUnit.metres,
-    )
+    private val _heightUnit = MutableStateFlow(Defaults.string("heightUnit")?.let { HeightUnit(it) } ?: HeightUnit.metres)
     val heightUnit: StateFlow<HeightUnit> = _heightUnit.asStateFlow()
 
-    fun nextHeightUnit() {
-        // M1: heightUnit = heightUnit.next, written to "heightUnit".
+    private fun setHeightUnit(u: HeightUnit) {
+        _heightUnit.value = u
+        Defaults.putString("heightUnit", u.rawValue)
     }
 
+    /** In drone mode: you, and the tapped spot, from the nearest airfield. */
     private val _droneReport = MutableStateFlow(DroneReport())
     val droneReport: StateFlow<DroneReport> = _droneReport.asStateFlow()
 
     private val _measure = MutableStateFlow<MeasureMode>(MeasureMode.Off)
     val measure: StateFlow<MeasureMode> = _measure.asStateFlow()
 
+    /** Elevation of the first measuring point, of the last one (with two or more), and of where you are (beside your
+     *  coordinates, and for measuring from you). */
     private val _markerElevation = MutableStateFlow<Double?>(null)
     val markerElevation: StateFlow<Double?> = _markerElevation.asStateFlow()
     private val _lastElevation = MutableStateFlow<Double?>(null)
@@ -278,30 +406,59 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     private val _userElevation = MutableStateFlow<Double?>(null)
     val userElevation: StateFlow<Double?> = _userElevation.asStateFlow()
 
-    /** Placed: from your fix to A; path: along the points; closed: around the shape. */
-    val markerDistance: Double?
-        get() = null // M3: as Swift (Geo.distance / Geo.pathLength).
+    /** The spot under the crosshair while aiming. */
+    val aim = CrosshairAim(elevation)
 
-    /** The closed shape's area, m². */
-    val measuredArea: Double?
-        get() = null // M3: Geo.ringArea for closed.
+    /** The scale bar, and the legends beside it. */
+    val scale = MapScale()
+    val legend = MapLegend()
 
+    /** The last point tapped on the map (or placed for measuring); its coordinates are shown at the bottom, with its
+     *  height (`selectedElevation`). */
     private val _selectedPoint = MutableStateFlow<GeoPoint?>(null)
     val selectedPoint: StateFlow<GeoPoint?> = _selectedPoint.asStateFlow()
 
     fun setSelectedPoint(p: GeoPoint?) {
         if (p == _selectedPoint.value) return
         _selectedPoint.value = p
-        // M1: selectedName = null, the height lookup (unless a point is moving), updateDroneReport().
+        _selectedName.value = null
+        // While a point is being moved, its height is looked up once it is let go (`movePoint`).
+        if (!pointMoving) lookUpSelectedHeight()
+        updateDroneReport()
     }
 
+    private var pointMoving = false
     private val _selectedElevation = MutableStateFlow<Double?>(null)
     val selectedElevation: StateFlow<Double?> = _selectedElevation.asStateFlow()
+
+    /** The name of the KML point selected (a tap on it), shown with its coordinates. */
     private val _selectedName = MutableStateFlow<String?>(null)
     val selectedName: StateFlow<String?> = _selectedName.asStateFlow()
 
+    /** The selected spot's height, unless it is the one already looked up. */
+    private fun lookUpSelectedHeight() {
+        if (selectedLookup.point == _selectedPoint.value) return
+        _selectedElevation.value = null
+        selectedLookup.set(_selectedPoint.value)
+    }
+
+    private val selectedLookup = HeightLookup(elevation) { p, e ->
+        if (p == _selectedPoint.value) _selectedElevation.value = e
+    }
+
+    /** Your height, looked up as you move (while the app is on screen). */
+    private val userLookup = HeightLookup(elevation) { _, e ->
+        val first = _userElevation.value == null && e != null
+        if (e?.rounded() != _userElevation.value?.rounded()) _userElevation.value = e
+        // Heights can be had again: those of the measuring points too.
+        if (first && _markerElevation.value == null) refreshPointElevations()
+    }
+
+    /** Lasso drawing mode for choosing an offline area. */
     private val _isDrawingArea = MutableStateFlow(false)
     val isDrawingArea: StateFlow<Boolean> = _isDrawingArea.asStateFlow()
+
+    /** While drawing: true = finger draws the lasso, false = finger moves the map. */
     private val _lassoActive = MutableStateFlow(true)
     val lassoActive: StateFlow<Boolean> = _lassoActive.asStateFlow()
 
@@ -309,6 +466,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         _lassoActive.value = v
     }
 
+    /** The lasso polygon, shown on the map until confirmed or discarded. */
     private val _draftArea = MutableStateFlow<List<GeoPoint>?>(null)
     val draftArea: StateFlow<List<GeoPoint>?> = _draftArea.asStateFlow()
 
@@ -332,7 +490,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
 
     private var mapRef: WeakReference<MapHost>? = null
 
-    /** The phone's map, while it exists (held weakly). */
+    /** Set by the map so the model can read the centre of the screen and move the camera (held weakly). */
     var map: MapHost?
         get() = mapRef?.get()
         set(value) {
@@ -341,62 +499,252 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
 
     private var carMapRef: WeakReference<CarMapHost>? = null
 
-    /** The car's map, while Android Auto shows SatMap (held weakly). */
+    /** The map on the car's screen while Android Auto shows SatMap (held weakly). */
     var carMap: CarMapHost?
         get() = carMapRef?.get()
         set(value) {
             carMapRef = value?.let { WeakReference(it) }
         }
 
+    private var retryJob: Job? = null
+    private var reloadPending = false
+    private var lastReload = Double.NEGATIVE_INFINITY
+
     init {
         scale.unit = _distanceUnit.value
-        // M1: load the track, seed the recorder, wire onTrackPoint/onFix/onHeading, subscribe to Connectivity and
-        // offline.completedRevision, start the retry timer when in the foreground.
-        // After the recorder and the offline manager, which registered in their own inits: the Swift order.
+        _track.addAll(trackLog.loadAll())
+        recorder.seed(_track.lastOrNull())
+        recorder.onTrackPoint = { p -> appendTrack(p) }
+        recorder.onFix = { loc -> locationUpdated(loc) }
+        recorder.onHeading = { h -> map?.headingUpdated(h) }
+
+        // For the whole app, whichever maps there are (the phone's, the car's, or both): memory trimmed in the
+        // background, and tiles that failed asked for again. After the recorder and the offline manager, which
+        // registered in their own inits: the Swift order.
         AppLifecycle.addObserver(this)
+
+        // MapLibre isn't told of a network that came back. When it does, after a temporary failure, or when an
+        // offline area finishes, reload the tiles (debounced, in the foreground only). As the Swift sinks: every
+        // value is seen as it is set (collected at once from here, so a quick offline → online isn't merged into
+        // one value), and what is done hops to a later turn of the main thread (DispatchQueue.main.async).
+        Connectivity.shared.state
+            .map { it.isOnline }
+            .distinctUntilChanged()
+            .drop(1)
+            .filter { it }
+            .onEach {
+                mainScope.launch {
+                    TileRepository.shared.resetFailureState()
+                    requestReload()
+                }
+            }
+            .launchIn(scope)
+        offline.completedRevision
+            .drop(1)
+            .onEach { mainScope.launch { requestReload() } }
+            .launchIn(scope)
+        // Only in the foreground (iOS also starts it when launched into the background, where it runs until the
+        // next didEnterBackground): it starts with each willEnterForeground.
+        if (AppLifecycle.isForeground) startRetryTimer()
         recorder.start()
     }
 
+    // Reloading tiles
+
+    /** Every 30 s in the foreground: reload tiles if some failed for temporary reasons. */
+    private fun startRetryTimer() {
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            while (true) {
+                delay(30_000)
+                val recovered = withContext(Dispatchers.IO) { TileRepository.shared.probeRecovery() }
+                if (recovered) requestReload()
+            }
+        }
+    }
+
+    /** Tiles may be had again: the maps ask again for those that failed (at most every 20 s). */
+    @VisibleForTesting
+    internal fun requestReload() {
+        reloadPending = true
+        if (!AppLifecycle.isForeground) return // done on return to the foreground
+        val wait = max(0.0, 20 - (now() - lastReload))
+        mainScope.launch {
+            delay((wait * 1000).toLong())
+            if (!reloadPending || !AppLifecycle.isForeground) return@launch
+            reloadPending = false
+            lastReload = now()
+            SatelliteRenderer.reload()
+            map?.reloadImagery()
+            carMap?.reload()
+            aim.retry()
+            if (_userElevation.value == null) userLookup.retry()
+            if (_selectedElevation.value == null) selectedLookup.retry()
+        }
+    }
+
+    // Units
+
+    fun nextDistanceUnit() {
+        setDistanceUnit(_distanceUnit.value.next)
+    }
+
+    fun nextHeightUnit() {
+        setHeightUnit(_heightUnit.value.next)
+    }
+
+    // Drone mode
+
+    /** The reporting lines for you and the tapped spot, from the nearest airfield with a code (not a helipad) within
+     *  150 NM, else the nearest airfield at all. */
+    private fun updateDroneReport() {
+        if (!_terrainMode.value.showsAviation) {
+            if (_droneReport.value != DroneReport()) _droneReport.value = DroneReport()
+            return
+        }
+        val index = AviationStore.shared.index
+        if (index == null) {
+            AviationStore.shared.load(app) { updateDroneReport() }
+            return
+        }
+        fun report(p: GeoPoint?): String? {
+            p ?: return null
+            val limit = 150 * Aviation.metresPerNauticalMile
+            val found = index.nearest(p, limit) {
+                it.kind.isAerodrome && it.kind != AviationPoint.Kind.heliport && it.code.isNotEmpty()
+            } ?: index.nearest(p, limit)
+            return found?.let { Aviation.report(p, index.points[it.index]) }
+        }
+        val new = DroneReport(you = report(recorder.location.value?.point), pin = report(_selectedPoint.value))
+        if (new != _droneReport.value) _droneReport.value = new
+    }
+
+    // Track
+
+    private fun appendTrack(p: TrackPoint) {
+        _track.add(p)
+        trackLog.append(p)
+        _trackRevision.value += 1
+    }
+
+    fun clearTrack() {
+        _track.clear()
+        trackLog.clear()
+        recorder.seed(null)
+        _trackRevision.value += 1
+    }
+
+    // Location
+
+    private fun locationUpdated(loc: GpsFix) {
+        map?.locationUpdated(loc)
+        carMap?.locationUpdated(loc)
+        updateDroneReport()
+        // Only for the phone's screen (with Android Auto the app stays foreground while the phone is locked).
+        if (AppLifecycle.isActive && map?.isOnScreen == true) refreshUserElevation(loc)
+    }
+
+    /** My location: centres the map on you and follows you. Tapped again while it does (also a quick second tap), it
+     *  zooms in until the screen is 300 m across. */
+    fun centerOnUser() {
+        val loc = recorder.location.value
+        if (_following.value && loc != null) {
+            map?.zoom(onto = loc.point, metersAcross = 300.0)
+            return
+        }
+        _following.value = true
+        if (loc != null) map?.center(on = loc.point, animated = true)
+    }
+
+    // Measuring (M3)
+
+    /** A tap on a point in a KML file (a launch point …): selected at its own position, with its name. */
     fun pointTapped(p: GeoPoint, name: String?) {
         // M3: selectedPoint = p, then selectedName = name (null when empty).
     }
 
+    /** A tap on the map: shows the spot's coordinates; while measuring, places a point at the crosshair wherever the
+     *  tap was (a finger covers the spot it taps). */
     fun mapTapped(p: GeoPoint) {
         // M3: off → selectedPoint = p; otherwise addPointAtCrosshair().
     }
 
+    /** A point being moved precisely (pressed and held): the tapped spot, or a measuring point. Heights are looked up
+     *  again once it is let go (`done`). */
     fun movePoint(which: MovablePoint, p: GeoPoint, done: Boolean) {
-        // M3: the Swift movePoint (selected or measure(i)), elevation resets when done.
+        // M3: the Swift movePoint (selected or measure(i)), with pointMoving and the elevation resets when done.
     }
 
+    /** The measure button: shows the crosshair, then places a point at it each time (A, B, C …); after a shape is
+     *  closed it clears. */
     fun measureButtonTapped() {
         // M3: off → aiming; aiming, placed, path → addPointAtCrosshair(); closed → clearMeasure().
     }
 
+    /** Joins the last point back to the first (tap on A, or "Close shape"): the area. */
     fun closeMeasureShape() {
         // M3: path with 3 or more points → closed.
     }
 
+    /** Removes the last point (or reopens a closed shape). */
     fun undoMeasurePoint() {
         // M3: the Swift undo table, then selectedPoint = measure.points.last.
     }
 
-    /** Go to coordinates: show the spot and measure from it. */
+    /** Distance from you to the point, or the total length of the line through the points (around the shape when
+     *  it is closed). */
+    val markerDistance: Double?
+        get() = null // M3: as Swift (Geo.distance / Geo.pathLength).
+
+    /** The closed shape's area in square metres. */
+    val measuredArea: Double?
+        get() = null // M3: Geo.ringArea for closed.
+
+    /** Looks up the elevations of the first and last measuring points that aren't known yet (not for a closed
+     *  shape). A failed lookup (no signal) is tried again a few times, 15 s apart, while the point stays and the app
+     *  is on screen. */
+    private fun refreshPointElevations(attempt: Int = 0) {
+        val m = _measure.value
+        if (m is MeasureMode.Closed) return
+        val points = m.points
+        val first = points.firstOrNull() ?: return
+        val wanted = ArrayList<Pair<Boolean, GeoPoint>>()
+        if (_markerElevation.value == null) wanted.add(true to first)
+        if (points.size >= 2 && _lastElevation.value == null) wanted.add(false to points.last())
+        for ((isFirst, p) in wanted) {
+            scope.launch {
+                val e = elevation.heightOrNull(p)
+                val now = _measure.value.points
+                val still = if (isFirst) now.firstOrNull() else if (now.size >= 2) now.last() else null
+                if (still != p) return@launch
+                if (isFirst) _markerElevation.value = e else _lastElevation.value = e
+                if (e == null && attempt < 4) {
+                    scope.launch {
+                        delay(15_000)
+                        if (!AppLifecycle.isActive) return@launch
+                        refreshPointElevations(attempt + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    /** A position typed or pasted in: measuring starts from it (point A, with the live distance from you), and the map
+     *  shows it, with you too if you are within 50 km. */
     fun measure(from: GeoPoint) {
         // M3: sheet = null; following = false; setMeasure(placed(p)); selectedPoint = p; zoom or centre.
     }
 
+    /** The ✕ on the measuring panel. */
     fun clearMeasure() {
         // M3: setMeasure(off); selectedPoint = null.
     }
 
-    fun centerOnUser() {
-        // M1: zoom onto you at 300 m when following, else follow and centre on you.
+    private fun refreshUserElevation(loc: GpsFix) {
+        userLookup.set(loc.point)
     }
 
-    fun clearTrack() {
-        // M1: track = []; trackLog.clear(); recorder.seed(null); trackRevision += 1.
-    }
+    // Offline areas (M4)
 
     fun startDrawingArea() {
         // M4: sheet = null, draft cleared, following = false, lassoActive = true, isDrawingArea = true.
@@ -414,16 +762,18 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         // M4: pendingArea = PendingArea("Area <count + 1>", CoverageShape(polygons = [draft])).
     }
 
-    fun discardPendingArea() {
-        // M4: pendingArea = null, draft cleared.
-    }
-
+    /** `roads` or `preset`: download satellite imagery only along these roads (or a road set shipped with the app). */
     fun startDownload(area: PendingArea, roads: List<List<GeoPoint>>?, preset: String?, maxZoom: Int, allowCellular: Boolean) {
-        // M4: offline.add(...), end drawing.
+        // M4: offline.add(...), pendingArea and draft cleared.
     }
 
+    /** "Where I've been": imagery along the recorded track, added to (or creating) the track area. */
     fun startTrackDownload(name: String, lines: List<List<GeoPoint>>, maxZoom: Int, allowCellular: Boolean) {
         // M4: offline.updateTrackArea(...).
+    }
+
+    fun discardPendingArea() {
+        // M4: pendingArea = null, draft cleared.
     }
 
     /** Re-reads terrainMode, distanceUnit and heightUnit after `Defaults.setLaunchArguments`, without writing them
@@ -433,19 +783,29 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         _distanceUnit.value = Defaults.string("distanceUnit")?.let { DistanceUnit(it) } ?: DistanceUnit.metric
         _heightUnit.value = Defaults.string("heightUnit")?.let { HeightUnit(it) } ?: HeightUnit.metres
         scale.unit = _distanceUnit.value
-        // M5: updateDroneReport().
+        updateDroneReport()
     }
+
+    // App state
 
     override fun willEnterForeground() {
-        // M1: TileRepository.restoreAfterBackground(), retry timer on, the pending reload.
+        TileRepository.shared.restoreAfterBackground()
+        startRetryTimer()
+        if (reloadPending) requestReload()
     }
 
+    /** Elevations aren't looked up in the background; catch up when the app is opened. */
     override fun didBecomeActive() {
-        // M1: the elevation refreshes.
+        if (_markerElevation.value == null || _lastElevation.value == null) refreshPointElevations()
+        recorder.location.value?.let { refreshUserElevation(it) }
+        if (_selectedElevation.value == null) selectedLookup.retry()
     }
 
     override fun didEnterBackground() {
-        // M1: retry timer off, TileRepository.trimForBackground(), ImageryMemory.enteredBackground(),
-        // ContourRenderer.shared.clearCaches().
+        retryJob?.cancel()
+        retryJob = null
+        TileRepository.shared.trimForBackground()
+        ImageryMemory.enteredBackground()
+        ContourRenderer.shared.clearCaches()
     }
 }
