@@ -1,11 +1,13 @@
 # SatMap
 
-An iPhone map for flying drones: satellite imagery, contour lines and elevation colours, your position
-(with a compass arrow), height and dotted track, your KML blocks, a measuring tool with live distance
+A map for flying drones, for iPhone and Android: satellite imagery, contour lines and elevation colours, your
+position (with a compass arrow), height and dotted track, your KML blocks, a measuring tool with live distance
 and height difference, and offline satellite maps of areas you draw (or take from a KML file), at the
 highest detail the imagery has.
 
-Native Swift + MapKit, no third-party dependencies.
+Native on both: Swift + MapKit on the iPhone, with no third-party dependencies; Kotlin + Jetpack Compose +
+MapLibre on Android (`android/`). The two apps look and work the same, and offline maps exported on one restore
+on the other.
 
 ## Screenshots
 
@@ -31,6 +33,13 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/22-contours-and-colours.jpg" width="250"> | <img src="docs/screenshots/23-elevation-colours.jpg" width="250"> | <img src="docs/screenshots/24-kml-point.jpg" width="250"> |
 | **Drone mode** | **Finding a place to save offline** | **Saving a reserve within its boundary** |
 | <img src="docs/screenshots/25-drone-mode.jpg" width="250"> | <img src="docs/screenshots/26-find-place.jpg" width="250"> | <img src="docs/screenshots/27-place-area.jpg" width="250"> |
+
+The Android app's screenshots, taken the same way on an Android emulator (`.github/workflows/android-screenshots.yml`),
+are in [docs/screenshots/android](docs/screenshots/android):
+
+| Map | Measuring | Offline maps | Drone mode |
+| --- | --- | --- | --- |
+| <img src="docs/screenshots/android/01-map.jpg" width="180"> | <img src="docs/screenshots/android/03-measure-live.jpg" width="180"> | <img src="docs/screenshots/android/09-offline-areas.jpg" width="180"> | <img src="docs/screenshots/android/25-drone-mode.jpg" width="180"> |
 
 ## Features
 
@@ -96,8 +105,28 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
   (the iPhone's file system shares the data between the area and its export), and downloads wait until the
   share sheet closes. *Restore from a backup* adds the areas
   back from those files (choose both files of each area), also after reinstalling SatMap. The files carry the
-  area's settings inside, and other map apps (QGIS, for example) can open them as ordinary MBTiles.
+  area's settings inside, and other map apps (QGIS, for example) can open them as ordinary MBTiles. The Android
+  app writes and reads the same files (see below).
 - The size estimate is an upper bound. Most of the space goes into the deepest zoom levels.
+
+### Offline maps between iPhone and Android
+
+A backup made on an iPhone restores on an Android phone, and the other way round: both apps write the same two
+MBTiles files per area, with the area's settings (its shape, roads, zoom, name) inside. To move your offline maps:
+
+1. On the phone that has them: **Offline** → *Export all offline maps* (or long-press one area → *Export*).
+2. Put the files somewhere the other phone can reach. AirDrop and Quick Share don't work between an iPhone and an
+   Android phone, so use Google Drive, OneDrive or Dropbox (installed on both), a computer (copy them to it,
+   then to the other phone), e-mail for small areas, or a USB stick (the Files app on the iPhone and on Android
+   both open one). On Android, *Save to a folder* in the share list saves them to the phone or a USB stick
+   directly.
+3. On the other phone: **Offline** → *Restore from a backup*, and choose the files (both files of each area,
+   several areas at once if you like). The file names don't matter, so renamed copies or "(1)" duplicates from a
+   download folder work too.
+
+An area keeps its name, shape, roads and detail level, and *Going deeper later* carries on from what was saved.
+The format is pinned by tests on both sides (`Tests/SatMapCoreTests/BackupCompatibilityTests.swift` and its
+Kotlin twin), each reading a backup made by the other app (`Tests/SatMapCoreTests/Fixtures/backup`).
 
 ### Battery
 
@@ -120,6 +149,11 @@ Limits imposed by iOS:
   and starts again when you open it.
 - With **Precise Location** turned off for SatMap, iOS only gives positions to within kilometres, so no
   track can be recorded. The app shows a warning when that happens.
+
+On Android the policy and every number are the same. The GPS is driven through Android's own location service
+(no Google Play services needed), with the phone's significant-motion and step sensors in place of the motion
+coprocessor. Recording in the background and downloads each run as a foreground service with a notification
+(Android requires one), which has a **Stop** button.
 
 ## Install on your iPhone
 
@@ -145,6 +179,26 @@ You need a Mac with **Xcode 16 or newer** and an iPhone with **iOS 16 or newer**
 
 With a free Apple ID the app expires after 7 days and must be run from Xcode again. Your data is kept.
 A paid Apple Developer account ($99/year) extends this to a year, and also allows TestFlight.
+
+## Install on Android
+
+Download **[SatMap.apk](https://github.com/JacobusOettle/satmap/releases/download/android-test-build/SatMap.apk)**
+on the phone (rebuilt automatically after every change to the app, `.github/workflows/android.yml`) and open it.
+Android asks to allow installing apps from the browser (or Files) the first time: allow it, then tap **Install**.
+It needs Android 8.0 or newer. Later builds install over it and keep your data. When SatMap starts, allow
+**location** and **physical activity** (the step sensor, for waking the GPS when you walk); the first download asks
+for **notifications**, where its progress shows.
+
+The APK is signed with a test key that is public (`android/signing`), so anyone could sign an app that installs
+over it. That is fine for trying it out; to sign with your own key, add it as repository secrets (see
+`android/signing/README.md`) and the next build uses it. Installing a build signed with a different key needs
+the old one removed first, which deletes its offline maps, so export them before.
+
+**Android Auto:** SatMap shows on the car's screen with the satellite map, contours, your track, blocks and
+drone mode (the button at the top cycles them, like the mountain button on the phone). Android Auto only lists
+apps installed from the Play Store unless you allow others: in the Android Auto settings on the phone, tap
+*Version* ten times to unlock developer mode, then in the ⋮ menu → *Developer settings* turn on *Unknown
+sources*. This part hasn't been tried in a car yet.
 
 ## Map data and licensing — please read
 
@@ -181,15 +235,22 @@ SatMap/
   Core/       platform-independent logic: tile maths, area → tile coverage, PNG/Terrarium decoding,
               marching-squares contours, KML/KMZ parsing, MBTiles (SQLite), track log, download engine
 Tests/        unit tests for Core (run with `swift test`, also on Linux)
+android/      the Android app (Gradle): a file-for-file port of the above
+  core/       SatMap/Core in Kotlin, with the same tests ported
+  app/        app, location, map (MapLibre), offline, KML, Compose screens, Android Auto
+  PORTING.md  how the Swift maps to Kotlin, and the rules for files shared with the iPhone app
+  DESIGN.md   the Android app's design: files, threading, the map, screens, services, tests
 ```
 
-`Core` has no iOS dependencies, so it can be reused or ported (for example to Android) later.
+`Core` has no iOS dependencies; the Android app's `core` is its Kotlin port, function for function. The shipped
+data (`SatMap/Resources`) and the test fixtures are shared, not copied.
 
 ### Why Swift and not Rust
 
 Battery use is decided by how the GPS is driven, which is Core Location's job, and by the map
 renderer, which is Apple's MapKit on Metal. Both are only available natively. A Rust core would add an
-FFI layer and buy nothing, because the CPU work here is small: contour tiles, SQLite reads and HTTP.
+FFI layer and buy nothing, because the CPU work here is small: contour tiles, SQLite reads and HTTP. The same
+holds on Android, so the Android app is written natively in Kotlin rather than sharing a core.
 
 ## Development
 
@@ -200,3 +261,17 @@ xcodebuild build -project SatMap.xcodeproj -scheme SatMap \
 ```
 
 GitHub Actions (`.github/workflows/build.yml`) runs both on every push, with two Xcode versions.
+
+The Android app (JDK 17 and the Android SDK with `platforms;android-36` and `build-tools;36.1.0`):
+
+```
+export ANDROID_HOME=$HOME/android-sdk
+cd android
+./gradlew :core:test                 # the ported core tests (JVM)
+./gradlew :app:testDebugUnitTest     # app logic and screens (Robolectric)
+./gradlew :app:assembleDebug         # the APK, in app/build/outputs/apk/debug
+```
+
+`.github/workflows/android.yml` runs the tests, builds the signed APK, starts it on an emulator to check it
+launches and draws, and publishes it. `android-screenshots.yml` walks through every screen on the emulator and
+commits the screenshots.
