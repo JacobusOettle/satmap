@@ -120,6 +120,26 @@ class MainActivityTest {
     }
 
     @Test
+    fun anIntentReplayedFromRecentsIsntHandledAgain() {
+        val a = Uri.parse("content://com.example.files/document/Farm.kml")
+        val view = Intent(Intent.ACTION_VIEW, a)
+        val send = Intent(Intent.ACTION_SEND).setType("application/octet-stream").putExtra(Intent.EXTRA_STREAM, a)
+        // As it first came (also when it starts the task), it's handled.
+        assertFalse(MainActivity.isReplay(view))
+        assertFalse(MainActivity.isReplay(Intent(view).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)))
+        assertFalse(MainActivity.isReplay(send))
+        // Reopened from Recents, Android hands the task's first intent over again, with the action still set.
+        val replayedView = Intent(view).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)
+        val replayedSend = Intent(send).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)
+        assertTrue(MainActivity.isReplay(replayedView))
+        assertTrue(MainActivity.isReplay(replayedSend))
+        // Its file is still in it (clearing the action didn't reach the task), so handleIncoming checks this first.
+        assertEquals(listOf(a), MainActivity.incomingFiles(replayedView))
+        // The launcher reopened from Recents too, which has no files anyway.
+        assertTrue(MainActivity.isReplay(Intent(Intent.ACTION_MAIN).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)))
+    }
+
+    @Test
     fun anImportedFileIsShownOnTheMap() {
         val model = AppModel(app, noHeights)
         val map = FakeMap()

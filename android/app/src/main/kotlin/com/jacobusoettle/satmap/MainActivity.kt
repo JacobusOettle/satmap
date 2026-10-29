@@ -74,12 +74,18 @@ class MainActivity : ComponentActivity() {
     /** KML/KMZ opened or shared from another app (zoom to it, or the Blocks sheet with the error), and "Save to a
      *  folder" from the backup chooser. */
     private fun handleIncoming(intent: Intent) {
+        if (isReplay(intent)) return
         // M4: BackupSharing.ACTION_SAVE_TO_FOLDER → SharePresenter.requestFolder().
         // Once imported, a recreated activity (its intent kept) doesn't import the files again.
         if (openFiles(AppModel.shared, intent)) setIntent(Intent(intent).setAction(null))
     }
 
     companion object {
+        /** An intent Android hands over again when SatMap is reopened from Recents: the one that started its task
+         *  (before Android 12 Back finishes the activity but leaves the task there, with that intent). Its files were
+         *  imported, or its folder chosen, when it first came, and iOS hands each opened file to the app only once. */
+        fun isReplay(intent: Intent): Boolean = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
+
         /** iOS's `onOpenURL`: each .kml/.kmz shared into the app ("Open with SatMap" / "Share to SatMap") is imported
          *  at once (the permission to read it lives with the activity that received it); the map then zooms to it, or
          *  the Blocks sheet shows why the import failed. False when the intent brings no file. */

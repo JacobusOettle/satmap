@@ -1213,7 +1213,8 @@ class Connectivity private constructor(context: Context) {
 - **KML in:** the three `MainActivity` intent filters (offline spec §2.9). `MainActivity.handleIncoming(intent)` runs from `onCreate` (when `savedInstanceState == null`) and `onNewIntent`:
   - it takes the URIs from `data` or `EXTRA_STREAM`;
   - for each: `model.kml.importFile(uri) { f -> f?.document?.bounds?.let { model.map?.zoom(it) } ?: model.setSheet(ActiveSheet.blocks) }`;
-  - then it clears the intent action.
+  - then it clears the intent action;
+  - it does nothing for an intent replayed from Recents (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, `MainActivity.isReplay`): clearing the action doesn't change the task's base intent, which Recents relaunches with on API 26–30 after Back finished the activity.
 - **Export:**
   1. `OfflineManager.export(ids)` holds downloads and pauses an exported area that is downloading.
   2. `OfflineBackup.prepareExport` (core) writes the metadata and checkpoints.
