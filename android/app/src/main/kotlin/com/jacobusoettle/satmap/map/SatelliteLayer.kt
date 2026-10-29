@@ -11,6 +11,8 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import com.jacobusoettle.satmap.app.TileSources
+import com.jacobusoettle.satmap.core.ElevationGrid
+import com.jacobusoettle.satmap.core.ElevationRange
 import com.jacobusoettle.satmap.core.RecentCache
 import com.jacobusoettle.satmap.core.TileFallback
 import com.jacobusoettle.satmap.core.TileID
@@ -29,12 +31,14 @@ import kotlin.math.floor
 import kotlin.math.log2
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 // Satellite imagery, so the map never goes blank: MapLibre asks for every tile through `TileInterceptor`, and
 // `SatelliteRenderer` answers each with its own imagery from memory, the offline areas or the network, else with the
 // nearest coarser tile in memory enlarged (asked for again when that one's retry is due), else with nothing (MapLibre
 // then shows a coarser tile of its own). `ImageryPrefetch` keeps coarse tiles around the screen in memory for it. The
-// style has no map of its own under the imagery, so nothing else is downloaded.
+// style has no map of its own under the imagery, so nothing else is downloaded. The elevation colours and the contour
+// lines over it are answered the same way, drawn on the phone from the heights (`HeightGrids`, `ContourRenderer`).
 
 /** Imagery tiles loaded for the screen (JPEG data, 15–60 KB each), decoded as needed. */
 object ImageryMemory {
@@ -105,17 +109,41 @@ object SatelliteRenderer {
     /** The land heights on screen (`heightExtremes`), and whether every tile under it has its heights. */
     data class Extremes(val low: Double, val high: Double, val complete: Boolean)
 
+    /** A tile's contour lines (PNG; `ContourRenderer`), and whether they are complete. */
+    private class ContourImage(val png: ByteArray, val complete: Boolean)
+
+    /** A tile's heights (`HeightGrids`), and whether they are complete. */
+    internal class HeightGrid(val grid: ElevationGrid, val complete: Boolean)
+
     /** Decoded tiles (256 KB each) for the stand-in crops and the loupe (MapLibre decodes what it shows itself). */
     val decoded = RecentCache<TileID, Bitmap>(64)
 
     /** The stand-in crops made, by (spot, ancestor). */
     private val standInJpegs = RecentCache<Pair<TileID, TileID>, ByteArray>(256)
 
+    /** Contour tiles (`ContourRenderer`), and those with nothing to draw, by "scale/z/x/y": the phone and the car draw
+     *  them at different scales. */
+    private val contourImages = RecentCache<String, ContourImage>(240)
+    private val noContours = RecentCache<String, Boolean>(4000)
+
+    /** The heights of tiles for the elevation colours (17 KB each; `HeightGrids`), at the contour tiles' level. */
+    internal val heightGrids = RecentCache<TileID, HeightGrid>(400)
+
+    /** Colour tiles made, by "low_high/z/x/y", with the grid each was made from (better heights make a new one). */
+    private val colourImages = RecentCache<String, Pair<ElevationGrid, ByteArray>>(200)
+
     private val loads = Any()
     private val loading = HashMap<TileID, Deferred<TileRepository.NearestImagery?>>()
 
     /** Until when (s) not to ask again, and whether the tile is deeper than the imagery goes. */
     private val retryAfter = HashMap<TileID, Pair<Double, Boolean>>()
+    private val contoursLoading = HashMap<String, Deferred<ContourRenderer.Tile>>()
+    private val contoursRetryAfter = HashMap<String, Double>()
+    private val gridsLoading = HashMap<TileID, Deferred<Unit>>()
+    private val gridsRetryAfter = HashMap<TileID, Double>()
+
+    /** Tiles in memory being decoded for the loupe (`prepare`). */
+    private val decoding = HashSet<TileID>()
 
     /** Seconds on the clock of the gates (`CACurrentMediaTime` in Swift); a test may set its own. */
     @Volatile
@@ -123,10 +151,11 @@ object SatelliteRenderer {
 
     /** The answer to one tile request. The imagery: the tile's own from memory, else loaded (shared with any load of it
      *  under way, unless it is to be left for a while), else the nearest coarser tile in memory enlarged, else nothing;
-     *  both asked for again once the tile's retry is due. Contours and colours come with M2. */
+     *  both asked for again once the tile's retry is due. Contour lines and colours: drawn from the heights. */
     suspend fun answer(route: TileRoute, layer: TileLayer): TileAnswer = when (route) {
         is TileRoute.Imagery -> imagery(route.tile, layer.map)
-        is TileRoute.Contours, is TileRoute.Colours -> TileAnswer.empty(maxAge = 30) // M2: rendering spec §2.6.
+        is TileRoute.Contours -> contours(route.tile, route.scale)
+        is TileRoute.Colours -> colours(route.tile, route.range)
     }
 
     private suspend fun imagery(t: TileID, map: DrawnMap?): TileAnswer {
@@ -153,10 +182,10 @@ object SatelliteRenderer {
     }
 
     /** Seconds left before a tile is to be asked for again (at least 1): MapLibre asks again then. */
-    private fun gateLeft(t: TileID): Int {
-        val until = synchronized(loads) { retryAfter[t]?.first } ?: return 1 // forgotten (`reload`): ask again soon
-        return max(1.0, ceil(until - now())).toInt()
-    }
+    private fun gateLeft(t: TileID): Int = left(synchronized(loads) { retryAfter[t]?.first })
+
+    /** Seconds left until then (at least 1); 1 when the gate was forgotten (`reload`): asked for again soon. */
+    private fun left(until: Double?): Int = if (until == null) 1 else max(1.0, ceil(until - now())).toInt()
 
     /** A spot's part of an ancestor, enlarged to 256 pixels (JPEG q90): drawn from the whole decoded ancestor, so the
      *  filtering crosses the crop's edges and neighbouring crops meet without a seam, as iOS's one enlarged image. */
@@ -184,6 +213,207 @@ object SatelliteRenderer {
         }
     }
 
+    // Contour lines
+
+    /** A contour tile: its own lines (drawn into memory by `loadContours`); blank where there are none (never a 204,
+     *  or MapLibre would show the parent's lines); while they can't be had, or only with their edges approximated,
+     *  what there is (else a 204), asked for again once the tile's retry is due. */
+    private suspend fun contours(t: TileID, scale: Double): TileAnswer {
+        val key = contourKey(t, scale)
+        if (noContours.contains(key)) return blank(lacking = null)
+        contourImages.value(key)?.let { if (it.complete) return png(it.png, maxAge = null, lacking = null) }
+        when (val tile = loadContours(t, scale, key)?.await()) {
+            is ContourRenderer.Tile.Lines ->
+                return if (tile.complete) png(tile.png, null, null) else png(tile.png, contoursGateLeft(key), lacking = true)
+            ContourRenderer.Tile.Blank -> return blank(lacking = null)
+            ContourRenderer.Tile.Unavailable, null -> {}
+        }
+        // Left for a while: what there is, approximated at its edges, else nothing.
+        val held = contourImages.peek(key)
+        return when {
+            held == null -> TileAnswer.empty(contoursGateLeft(key), lacking = false)
+            held.complete -> png(held.png, maxAge = null, lacking = null) // (completed meanwhile by another request)
+            else -> png(held.png, contoursGateLeft(key), lacking = true)
+        }
+    }
+
+    private fun contoursGateLeft(key: String): Int = left(synchronized(loads) { contoursRetryAfter[key] })
+
+    /** "scale/z/x/y", the scale as in the URL (round(s·100)). */
+    private fun contourKey(t: TileID, scale: Double): String = "${(scale * 100).roundToInt()}/${t.z}/${t.x}/${t.y}"
+
+    /** Draws a spot's contour lines into memory (`ContourRenderer`), once at a time, and announces them. Those that
+     *  can't be had, or only with their edges approximated, are asked for again in a while. Null while the tile is to be
+     *  left for a while. */
+    private fun loadContours(t: TileID, scale: Double, key: String): Deferred<ContourRenderer.Tile>? {
+        val time = now()
+        return synchronized(loads) {
+            val until = contoursRetryAfter[key]
+            if (until != null && time < until) return@synchronized null
+            contoursLoading[key] ?: TileRepository.shared.scope.async {
+                var arrived = false
+                var again = true
+                try {
+                    val tile = ContourRenderer.shared.tile(t, scale)
+                    val had = contourImages.contains(key)
+                    when (tile) {
+                        is ContourRenderer.Tile.Lines -> {
+                            noContours.remove(key)
+                            contourImages.set(ContourImage(tile.png, tile.complete), key)
+                            arrived = tile.complete || !had
+                            again = !tile.complete
+                        }
+                        ContourRenderer.Tile.Blank -> {
+                            noContours.set(true, key)
+                            contourImages.remove(key)
+                            arrived = true
+                            again = false
+                        }
+                        ContourRenderer.Tile.Unavailable -> {}
+                    }
+                    tile
+                } finally {
+                    synchronized(loads) {
+                        contoursLoading.remove(key)
+                        if (again) contoursRetryAfter[key] = now() + 30 else contoursRetryAfter.remove(key)
+                    }
+                    if (arrived) DrawnMap.announce(t, Content.contours)
+                }
+            }.also { contoursLoading[key] = it }
+        }
+    }
+
+    // Elevation colours
+
+    /** A colour tile: the tile's heights (loaded into memory by `loadGrid`, also while there is no range yet: it is
+     *  chosen from them) in the layer's range; while they can't be had, or only with their edges approximated, what
+     *  there is (else a 204), asked for again once the tile's retry is due. Without a range: blank. */
+    private suspend fun colours(t: TileID, range: ElevationRange?): TileAnswer {
+        var g = heightGrids.value(t)
+        if (g == null || !g.complete) {
+            loadGrid(t)?.await()
+            g = heightGrids.value(t)
+        }
+        // The heights the tile lacks, for a new layer (`DrawnImagery.reload`): approximated (true), or none (false).
+        val lacking = if (g == null) false else if (g.complete) null else true
+        if (range == null) return blank(lacking)
+        if (g == null) return TileAnswer.empty(gridsGateLeft(t), lacking = false)
+        val png = colourImage(t, g.grid, range) ?: return TileAnswer.empty(gridsGateLeft(t), lacking = false)
+        return png(png, if (g.complete) null else gridsGateLeft(t), lacking)
+    }
+
+    private fun gridsGateLeft(t: TileID): Int = left(synchronized(loads) { gridsRetryAfter[t] })
+
+    /** A tile's colours in a range, made once for its grid (on the contour pool). */
+    private suspend fun colourImage(t: TileID, grid: ElevationGrid, range: ElevationRange): ByteArray? {
+        val key = "${range.low}_${range.high}/${t.description}"
+        colourImages.value(key)?.let { (g, png) -> if (g === grid) return png }
+        val png = withContext(Work.contours) { colourPng(grid, range) } ?: return null
+        colourImages.set(Pair(grid, png), key)
+        return png
+    }
+
+    /** Loads a spot's heights into memory (`HeightGrids`), once at a time, and announces them. Those that can't be had,
+     *  or only with their edges approximated, are asked for again in a while. Null while the tile is to be left for a
+     *  while. */
+    private fun loadGrid(t: TileID): Deferred<Unit>? {
+        val time = now()
+        return synchronized(loads) {
+            val until = gridsRetryAfter[t]
+            if (until != null && time < until) return@synchronized null
+            gridsLoading[t] ?: TileRepository.shared.scope.async {
+                var arrived = false
+                var again = true
+                try {
+                    val tile = HeightGrids.shared.tile(t)
+                    if (tile is HeightGrids.Tile.Grid) {
+                        val had = heightGrids.contains(t)
+                        if (tile.complete || !had) heightGrids.set(HeightGrid(tile.grid, tile.complete), t)
+                        arrived = tile.complete || !had
+                        again = !tile.complete
+                    }
+                } finally {
+                    synchronized(loads) {
+                        gridsLoading.remove(t)
+                        if (again) gridsRetryAfter[t] = now() + 30 else gridsRetryAfter.remove(t)
+                    }
+                    if (arrived) DrawnMap.announce(t, Content.colours)
+                }
+            }.also { gridsLoading[t] = it }
+        }
+    }
+
+    /** The lowest and highest heights in memory on screen, from the grids of a level's tiles under points across it
+     *  (so a turned map's corners off screen don't count), within the rect around them (`complete`: every one of those
+     *  tiles has its heights, or has none to be had for now: offline outside the areas downloaded). Null without any
+     *  (or only sea). */
+    fun heightExtremes(r: WorldRect, level: Int, onScreen: List<XY>): Extremes? {
+        val z = level
+        val n = 1 shl z
+        val spots = onScreen.mapTo(LinkedHashSet()) { p ->
+            TileID(z = z, x = min(n - 1, max(0, floor(p.x * n).toInt())), y = min(n - 1, max(0, floor(p.y * n).toInt())))
+        }
+        if (spots.isEmpty()) return null
+        var low = Float.POSITIVE_INFINITY
+        var high = Float.NEGATIVE_INFINITY
+        var complete = true
+        for (t in spots) {
+            val g = heightGrids.peek(t)
+            if (g == null) {
+                if (complete) {
+                    complete = synchronized(loads) { gridsRetryAfter[t] != null && t !in gridsLoading }
+                }
+                continue
+            }
+            g.grid.extremes(tile = t.worldBounds, within = r)?.let { e ->
+                low = min(low, e.low)
+                high = max(high, e.high)
+            }
+        }
+        return if (low <= high) Extremes(low.toDouble(), high.toDouble(), complete) else null
+    }
+
+    /** A 200 with the 1×1 transparent PNG: nothing drawn here (a 204 would show the parent's). */
+    private fun blank(lacking: Boolean?): TileAnswer = TileAnswer(200, TileAnswer.BLANK_PNG, "image/png", maxAge = null, lacking)
+
+    private fun png(data: ByteArray, maxAge: Int?, lacking: Boolean?): TileAnswer =
+        TileAnswer(200, data, "image/png", maxAge, lacking)
+
+    // The loupe
+
+    /** For the square that moves a point precisely (`LoupeView`): draws the imagery in memory for a world rect into a
+     *  rect of a canvas, each spot's own tile at `level`, else the nearest coarser one in memory enlarged, and loads what
+     *  is missing (announced, as for the maps). Main thread. */
+    fun drawImagery(r: WorldRect, level: Int, canvas: Canvas, target: RectF) {
+        val width = r.maxX - r.minX
+        if (!(width > 0)) return
+        val scale = target.width() / width
+        fun place(t: TileID): RectF {
+            val m = t.worldBounds
+            return RectF(
+                (target.left + (m.minX - r.minX) * scale).toFloat(),
+                (target.top + (m.minY - r.minY) * scale).toFloat(),
+                (target.left + (m.maxX - r.minX) * scale).toFloat(),
+                (target.top + (m.maxY - r.minY) * scale).toFloat(),
+            )
+        }
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        for (t in tiles(level, r)) {
+            val own = decoded.value(t)
+            if (own != null) {
+                canvas.drawBitmap(own, null, place(t), paint)
+                continue
+            }
+            if (ImageryMemory.tiles.contains(t)) prepare(listOf(t)) else load(t, urgent = true)
+            val a = TileFallback.ancestor(t, maxLevels = 12, has = ::has) ?: continue
+            val coarse = image(a) ?: continue
+            canvas.save()
+            canvas.clipRect(place(t))
+            canvas.drawBitmap(coarse, null, place(a), paint)
+            canvas.restore()
+        }
+    }
+
     /** The imagery level drawn at a zoom: tiles about 256 pixels across on screen (the Swift
      *  `level(pixelsPerMapPoint:)`, with the world, 0…1, as the unit). */
     fun level(pixelsPerWorld: Double): Int {
@@ -196,14 +426,6 @@ object SatelliteRenderer {
         val r = f.rect ?: return false
         val b = t.worldBounds
         return abs(t.z - f.level) <= 1 && r.minX < b.maxX && r.maxX > b.minX && r.minY < b.maxY && r.maxY > b.minY
-    }
-
-    fun heightExtremes(r: WorldRect, level: Int, onScreen: List<XY>): Extremes? = null // M2: as Swift.
-
-    /** The loupe: each spot's own tile, else an ancestor in memory up to 12 levels up; what is missing is loaded
-     *  urgently. */
-    fun drawImagery(r: WorldRect, level: Int, canvas: Canvas, target: RectF) {
-        // M3: as Swift (DESIGN.md D7).
     }
 
     /** Loads a tile into memory, once at a time; `urgent` ones before the others. If it can't be had, the nearest
@@ -235,7 +457,28 @@ object SatelliteRenderer {
     fun reload() {
         synchronized(loads) {
             retryAfter.entries.removeAll { !it.value.second }
-            // M2: contoursRetryAfter and gridsRetryAfter cleared.
+            contoursRetryAfter.clear()
+            gridsRetryAfter.clear()
+        }
+    }
+
+    /** Decodes tiles in memory (off the main thread), so the loupe can draw them at once: each is announced
+     *  (`DrawnMap.announce`) when it is ready. */
+    private fun prepare(tiles: List<TileID>) {
+        val wanted = synchronized(loads) {
+            tiles.filter { it !in decoding && !decoded.contains(it) && ImageryMemory.tiles.contains(it) }
+                .also { decoding.addAll(it) }
+        }
+        for (t in wanted) {
+            TileRepository.shared.scope.launch(Work.prepare) {
+                var ready = false
+                try {
+                    ready = image(t) != null
+                } finally {
+                    synchronized(loads) { decoding.remove(t) }
+                }
+                if (ready) DrawnMap.announce(t, Content.imagery)
+            }
         }
     }
 
@@ -255,8 +498,23 @@ object SatelliteRenderer {
 
     fun trim(count: Int) {
         decoded.trim(count)
-        standInJpegs.trim(count) // (Android's own cache: crops are made again when asked for)
-        // M2: contourImages.trim(count); heightGrids.trim(count).
+        contourImages.trim(count)
+        heightGrids.trim(count)
+        // (Android's own caches: crops and colour tiles are made again when asked for.)
+        standInJpegs.trim(count)
+        colourImages.trim(count)
+    }
+
+    /** The tiles of a level under a world rect (clamped to the world). */
+    internal fun tiles(z: Int, r: WorldRect): List<TileID> {
+        val n = 1 shl z
+        val size = 1.0 / n
+        val x0 = max(0, floor(r.minX / size).toInt())
+        val x1 = min(n - 1, ceil(r.maxX / size).toInt() - 1)
+        val y0 = max(0, floor(r.minY / size).toInt())
+        val y1 = min(n - 1, ceil(r.maxY / size).toInt() - 1)
+        if (!(x0 <= x1 && y0 <= y1)) return emptyList()
+        return (y0..y1).flatMap { y -> (x0..x1).map { TileID(z = z, x = it, y = y) } }
     }
 
     /** Forgets every load, gate and cache (Robolectric keeps the object from one test to the next). */
@@ -264,10 +522,20 @@ object SatelliteRenderer {
         synchronized(loads) {
             loading.clear()
             retryAfter.clear()
+            contoursLoading.clear()
+            contoursRetryAfter.clear()
+            gridsLoading.clear()
+            gridsRetryAfter.clear()
+            decoding.clear()
         }
         decoded.trim(0)
         standInJpegs.trim(0)
+        contourImages.trim(0)
+        noContours.trim(0)
+        heightGrids.trim(0)
+        colourImages.trim(0)
         ImageryMemory.tiles.trim(0)
+        ContourRenderer.shared.clearCaches()
         now = { SystemClock.uptimeMillis() / 1000.0 }
     }
 }

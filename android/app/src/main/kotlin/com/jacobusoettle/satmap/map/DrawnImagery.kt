@@ -4,7 +4,9 @@ import android.graphics.PointF
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import com.jacobusoettle.satmap.app.TileSources
+import com.jacobusoettle.satmap.core.ContourPolicy
 import com.jacobusoettle.satmap.core.ElevationColours
 import com.jacobusoettle.satmap.core.ElevationRange
 import com.jacobusoettle.satmap.core.GeoPoint
@@ -36,27 +38,29 @@ data class TerrainKey(val contours: ContourInterval? = null, val colours: Elevat
 /** Metres between contour lines, and between the bold ones (labelled with their height). */
 data class ContourInterval(val step: Double, val index: Double)
 
-/** The satellite imagery (with the contour lines and elevation colours) of one map view: the style's raster sources and
- *  layers, each a generation of `TileUrls` whose tiles `TileInterceptor` answers. The phone's map has one, and with
- *  Android Auto the car's map another (the tiles in memory are shared). MapLibre replaces a tile in place when a better
- *  answer comes (`Cache-Control`); a whole new layer, put under the shown one and shown once it has its tiles, is only
- *  for tiles to be asked for again at once (`reload`) and (M2) a new colour range.
+/** The satellite imagery, with the contour lines and elevation colours, of one map view: the style's raster sources
+ *  and layers (imagery, colours, contours), each a generation of `TileUrls` whose tiles `TileInterceptor` answers. The
+ *  phone's map has one, and with Android Auto the car's map another (the tiles in memory are shared). MapLibre replaces
+ *  a tile in place when a better answer comes (`Cache-Control`); a whole new layer, shown once it has its tiles, is only
+ *  for a new colour range and for tiles to be asked for again at once (`reload`).
  *  `MapController` (or `CarMapController`) calls the hooks; this registers no listeners (DESIGN.md D18), and holds it
- *  as long as the map view lives: the sources' registrations (`TileLayers`) hold `drawnMap` only weakly, and go with
- *  it. Main thread only. */
+ *  as long as the map view lives (`destroy` when it goes): the sources' registrations (`TileLayers`) hold `drawnMap`
+ *  only weakly. Main thread only. */
 class DrawnImagery(
     private val mapView: MapView,
     private val map: MapLibreMap,
     /** Whether the map is on screen: new layers wait otherwise. */
     private val isVisible: () -> Boolean,
-    /** Whether contour lines and elevation colours are drawn. */
+    /** Whether contour lines and elevation colours are drawn (their layers are shown or hidden: `terrainChanged`). */
     private val terrain: () -> TerrainMode,
 ) {
     val drawnMap = DrawnMap()
 
-    /** The heights the elevation colours run between, chosen from those on screen (M2: `updateColourRange`). */
-    var colourRange: ElevationRange? = null
-        private set
+    /** The colours' range and how it was chosen (`updateColourRange`). */
+    private val colours = ColourRangeChoice()
+
+    /** The heights the elevation colours run between, chosen from those on screen (`updateColourRange`). */
+    val colourRange: ElevationRange? get() = colours.range
 
     /** Told what the legends should show as it changes (the phone's map has them). */
     var onKey: ((TerrainKey) -> Unit)? = null
@@ -67,6 +71,9 @@ class DrawnImagery(
     /** The layers shown, and while new ones replace them (`swap`), the ones coming (shown once they have their tiles). */
     private val shown = HashMap<TileKind, Drawn>()
     private val incoming = HashMap<TileKind, Drawn>()
+
+    /** The kinds whose layers are hidden (contours or colours not shown): they ask for no tiles. */
+    private val hidden = HashSet<TileKind>()
 
     /** Kinds to replace at the next `swap`. */
     private val wanted = HashSet<TileKind>()
@@ -81,23 +88,48 @@ class DrawnImagery(
     /** A new layer owed for a replacement asked for while the map moved or was off screen. */
     private var swapWaiting = false
     private var stopCount = 0
+    private var destroyed = false
     private val main = Handler(Looper.getMainLooper())
 
-    // (M2: heights arriving update the colour range: `drawnMap.onArrival`. Imagery arriving needs nothing here:
-    // MapLibre asks again for a stand-in when its max-age is up.)
+    init {
+        // Heights that arrive may change the colours' range. (Imagery and contour lines that arrive need nothing here:
+        // MapLibre asks again for a tile when its max-age is up, and shows the old one until the new one is drawn.)
+        drawnMap.onArrival = { _, content ->
+            if (content == SatelliteRenderer.Content.colours) updateColourRange()
+        }
+    }
 
-    /** Adds the imagery (M2: then the colours, visibility from the mode, and the contours), each a fresh generation,
-     *  in that order: `MapStyle.builder` puts them above the background and under every overlay. */
+    /** Adds the imagery, then the colours and the contours (shown or hidden as the terrain mode says), each a fresh
+     *  generation, in that order: `MapStyle.builder` puts them above the background and under every overlay. */
     fun addTo(builder: Style.Builder) {
         // A new style: the sources of an earlier one went with it.
         for (d in shown.values + incoming.values) TileLayers.remove(d.gen)
         shown.clear()
         incoming.clear()
         wanted.clear()
-        val gen = TileUrls.nextGeneration()
-        TileLayers.add(TileLayer(gen, TileKind.imagery, drawnMap))
-        builder.withSource(source(TileKind.imagery, gen)).withLayer(layer(TileKind.imagery, gen))
-        shown[TileKind.imagery] = Drawn(gen)
+        hidden.clear()
+        val mode = terrain()
+        for (kind in listOf(TileKind.imagery, TileKind.colours, TileKind.contours)) {
+            if (!shows(kind, mode)) hidden.add(kind)
+            val d = Drawn(TileUrls.nextGeneration(), if (kind == TileKind.colours) colourRange else null)
+            TileLayers.add(TileLayer(d.gen, kind, drawnMap))
+            builder.withSource(source(kind, d.gen, d.range)).withLayer(layer(kind, d.gen, visible = kind !in hidden))
+            shown[kind] = d
+        }
+    }
+
+    /** The map view is going (`MapController.onDestroy`, before `MapView.onDestroy`): no more timers (the map stopped,
+     *  the colours' re-check, new layers and their retirement), arrivals or style calls, and its sources are no longer
+     *  answered. */
+    fun destroy() {
+        destroyed = true
+        main.removeCallbacksAndMessages(null)
+        drawnMap.onArrival = null
+        onKey = null
+        for (d in shown.values + incoming.values) TileLayers.remove(d.gen)
+        shown.clear()
+        incoming.clear()
+        wanted.clear()
     }
 
     // The map moving
@@ -108,6 +140,7 @@ class DrawnImagery(
     }
 
     fun regionDidChange() {
+        if (destroyed) return
         moving = false
         if (swapWaiting) {
             swapWaiting = false
@@ -117,6 +150,7 @@ class DrawnImagery(
     }
 
     fun visibleRegionChanged() {
+        if (destroyed) return
         levels()?.let { setFocus(it) }
         reportKey()
     }
@@ -129,12 +163,12 @@ class DrawnImagery(
     }
 
     /** The map has stopped: once it has been still a moment (so the tiles on screen go first), gets the imagery ready
-     *  for the next zoom or pan (`ImageryPrefetch`). */
+     *  for the next zoom or pan (`ImageryPrefetch`), and the colours' range for the heights on screen. */
     private fun mapStopped() {
         stopCount += 1
         val n = stopCount
         main.postDelayed({
-            if (mapView.isDestroyed || n != stopCount || !isVisible()) return@postDelayed
+            if (destroyed || mapView.isDestroyed || n != stopCount || !isVisible()) return@postDelayed
             val levels = levels() ?: return@postDelayed
             setFocus(levels)
             visibleWorldRect()?.let { ImageryPrefetch.mapStopped(it, levels.imagery) }
@@ -180,29 +214,49 @@ class DrawnImagery(
     // New layers
 
     /** Tiles may be had again (the network is back, an area finished): a new layer asks again for those answered with
-     *  a stand-in or nothing in focus. */
+     *  a stand-in or nothing in focus (imagery), or without their own complete heights (contour lines and colours, as
+     *  they are shown). */
     fun reload() {
+        if (destroyed) return
         val f = drawnMap.focuses
         val mode = terrain()
         for ((kind, d) in shown) {
-            val drawn = when (kind) {
-                TileKind.imagery -> true
-                TileKind.contours -> mode.showsContours
-                TileKind.colours -> mode.showsColours
-            }
             val focus = if (kind == TileKind.imagery) f.imagery else f.contours
             val lacking = TileLayers[d.gen]?.lacking ?: continue
-            if (drawn && lacking.keys.any { SatelliteRenderer.inFocus(it, focus) }) wanted.add(kind)
+            if (shows(kind, mode) && lacking.keys.any { SatelliteRenderer.inFocus(it, focus) }) wanted.add(kind)
         }
         if (wanted.isNotEmpty()) swap()
     }
 
+    /** Contour lines and colours switched on or off: their layers are shown or hidden (a hidden layer asks for no
+     *  tiles, so with neither shown no elevation is downloaded). A hidden colours layer whose range no longer suits is
+     *  replaced as it is shown, so the old colours don't show first. */
     fun terrainChanged(mode: TerrainMode) {
-        // M2: the colour range, the colours' and contours' visibility, a stale hidden colours layer replaced, the key.
+        if (destroyed) return
+        if (mode.showsColours) updateColourRange() // from heights already in memory
+        val style = map.style?.takeIf { it.isFullyLoaded }
+        if (style != null) {
+            val c = shown[TileKind.colours]
+            if (mode.showsColours && TileKind.colours in hidden && c != null && c.range != colourRange &&
+                TileKind.colours !in incoming
+            ) {
+                wanted.remove(TileKind.colours)
+                replaceNow(style, TileKind.colours, c)
+            }
+            for (kind in listOf(TileKind.colours, TileKind.contours)) {
+                val show = shows(kind, mode)
+                if (show) hidden.remove(kind) else hidden.add(kind)
+                for (d in listOfNotNull(shown[kind], incoming[kind])) {
+                    style.getLayer(id(kind, d.gen))?.setProperties(visibility(if (show) Property.VISIBLE else Property.NONE))
+                }
+            }
+        }
+        reportKey()
     }
 
-    /** Back on screen: a new layer owed meanwhile, and (M2) the colours' range for heights that arrived. */
+    /** Back on screen: a new layer owed meanwhile, and the colours' range for heights that arrived. */
     fun becameVisible() {
+        if (destroyed) return
         if (swapWaiting) {
             swapWaiting = false
             scheduleSwap()
@@ -212,12 +266,45 @@ class DrawnImagery(
 
     // Elevation colours
 
+    /** Looks again whether the first range for a place can be chosen (`ColourRangeChoice` waits for the rest of the
+     *  screen's heights). */
+    private val recheckColours = Runnable { updateColourRange() }
+
+    /** Chooses the colours' range from the heights in memory for the screen (keeping the one shown while it still
+     *  suits: `ElevationColours.range`); a new one brings a new layer. A range from somewhere else (the colours were
+     *  off, or the map was zoomed out, while it moved) is dropped, and the first one for a place waits a moment for the
+     *  rest of the screen's heights, so the colours don't step through several. */
     private fun updateColourRange() {
-        // M2: rendering spec §1.9, exactly as Swift.
+        if (destroyed || mapView.isDestroyed) return
+        if (!terrain().showsColours || !isVisible()) return
+        val levels = levels() ?: return
+        if (levels.contours < ElevationColours.minTileZoom) return
+        val visible = visibleWorldRect() ?: return
+        val range = colours.update(
+            visible,
+            SatelliteRenderer.heightExtremes(visible, levels.contours, screenPoints()),
+            now(),
+            reportKey = ::reportKey,
+            recheck = { main.postDelayed(recheckColours, 1600) },
+        ) ?: return
+        if (shown[TileKind.colours]?.range != range) {
+            wanted.add(TileKind.colours)
+            scheduleSwap()
+        }
     }
 
+    /** Tells the legends the contour interval at this zoom (as the contour tiles draw them) and the colours' range. */
     private fun reportKey() {
-        // M2: rendering spec §1.10, exactly as Swift.
+        val report = onKey ?: return
+        report(
+            key(
+                terrain(),
+                levels()?.contours,
+                TileLevels.contourScale(mapView.pixelRatio),
+                colours.heightsOnScreen,
+                colourRange,
+            ),
+        )
     }
 
     /** At most about once a second, so replacements asked for one after another come in together; not while the map
@@ -238,9 +325,10 @@ class DrawnImagery(
 
     /** Asks again for the wanted kinds' tiles with fresh layers: the imagery's goes under the shown one, which covers it
      *  while it loads; translucent ones go over theirs, all but invisible (MapLibre loads a layer's tiles only while it
-     *  has some opacity). The shown ones go once the new ones have their tiles on screen. */
+     *  has some opacity). The shown ones go once the new ones have their tiles on screen. A hidden layer is replaced at
+     *  once. */
     private fun swap() {
-        if (mapView.isDestroyed) return
+        if (destroyed || mapView.isDestroyed) return
         if (!isVisible()) {
             swapWaiting = true // on return
             return
@@ -251,36 +339,42 @@ class DrawnImagery(
         wanted.clear()
         if (kinds.isEmpty()) return
         lastSwap = now()
-        val mode = terrain()
         for (kind in kinds) {
             val old = shown.getValue(kind)
+            if (kind in hidden) {
+                // Nothing on screen to keep.
+                replaceNow(style, kind, old)
+                continue
+            }
             val new = Drawn(TileUrls.nextGeneration(), if (kind == TileKind.colours) colourRange else null)
             TileLayers.add(TileLayer(new.gen, kind, drawnMap))
             style.addSource(source(kind, new.gen, new.range))
             when (kind) {
                 TileKind.imagery -> style.addLayerBelow(layer(kind, new.gen), id(kind, old.gen))
-                TileKind.colours, TileKind.contours -> {
-                    val visible = if (kind == TileKind.colours) mode.showsColours else mode.showsContours
-                    if (!visible) {
-                        // Nothing on screen to keep: replaced at once.
-                        style.addLayerAbove(layer(kind, new.gen, visible = false), id(kind, old.gen))
-                        remove(style, kind, old)
-                        shown[kind] = new
-                        continue
-                    }
-                    style.addLayerAbove(layer(kind, new.gen, opacity = 0.01f), id(kind, old.gen))
-                }
+                // At 1 % opacity MapLibre loads the layer's tiles (at 0 it would not: a layer with nothing to draw
+                // isn't needed); over the shown one, which draws the same, it doesn't show.
+                TileKind.colours, TileKind.contours -> style.addLayerAbove(layer(kind, new.gen, opacity = 0.01f), id(kind, old.gen))
             }
             incoming[kind] = new
         }
         if (incoming.isNotEmpty()) retire(ticks = 0)
     }
 
+    /** Replaces a layer at once with a new one (for colours, in the range now), as hidden or shown as it was. */
+    private fun replaceNow(style: Style, kind: TileKind, old: Drawn) {
+        val new = Drawn(TileUrls.nextGeneration(), if (kind == TileKind.colours) colourRange else null)
+        TileLayers.add(TileLayer(new.gen, kind, drawnMap))
+        style.addSource(source(kind, new.gen, new.range))
+        style.addLayerAbove(layer(kind, new.gen, visible = kind !in hidden), id(kind, old.gen))
+        remove(style, kind, old)
+        shown[kind] = new
+    }
+
     /** Shows the new layers once they have their tiles under the screen, and removes the old ones. If they haven't in
      *  2 s on screen, the new ones go instead, the old ones stay, and the replacement is tried again. */
     private fun retire(ticks: Int) {
         main.postDelayed({
-            if (mapView.isDestroyed || incoming.isEmpty()) return@postDelayed
+            if (destroyed || mapView.isDestroyed || incoming.isEmpty()) return@postDelayed
             val visible = isVisible()
             val levels = if (visible) levels() else null
             val points = if (levels != null) screenPoints() else emptyList()
@@ -289,8 +383,8 @@ class DrawnImagery(
                 // A moment more for MapLibre to show the last tiles answered; then all in one go, so in one frame.
                 val coming = HashMap(incoming)
                 main.postDelayed({
-                    if (mapView.isDestroyed || incoming != coming) return@postDelayed
-                    val style = map.style ?: return@postDelayed
+                    if (destroyed || mapView.isDestroyed || incoming != coming) return@postDelayed
+                    val style = map.style?.takeIf { it.isFullyLoaded } ?: return@postDelayed
                     for ((kind, new) in coming) {
                         if (kind != TileKind.imagery) style.getLayer(id(kind, new.gen))?.setProperties(rasterOpacity(1f))
                         shown[kind]?.let { remove(style, kind, it) }
@@ -299,7 +393,7 @@ class DrawnImagery(
                     incoming.clear()
                 }, 400)
             } else if (visible && ticks >= 20) {
-                val style = map.style
+                val style = map.style?.takeIf { it.isFullyLoaded }
                 for ((kind, new) in incoming) {
                     if (style != null) remove(style, kind, new) else TileLayers.remove(new.gen)
                     wanted.add(kind)
@@ -313,8 +407,9 @@ class DrawnImagery(
     }
 
     /** Whether MapLibre has had every tile of a layer under these points answered at the layer's level (or the level
-     *  is below the source's). */
+     *  is below the source's, or the layer is hidden: then it asks for none). */
     private fun hasTiles(kind: TileKind, gen: Int, points: List<XY>, levels: Levels): Boolean {
+        if (kind in hidden) return true
         val layer = TileLayers[gen] ?: return false
         val z = if (kind == TileKind.imagery) levels.imagery else levels.contours
         if (z < minZoom(kind)) return true
@@ -358,6 +453,7 @@ class DrawnImagery(
         }
     }
 
+    /** A raster layer, at full opacity but while it comes in: the colours' half transparency is in their pixels. */
     private fun layer(kind: TileKind, gen: Int, visible: Boolean = true, opacity: Float = 1f): RasterLayer =
         RasterLayer(id(kind, gen), id(kind, gen)).withProperties(
             rasterOpacity(opacity),
@@ -369,6 +465,26 @@ class DrawnImagery(
     private fun now(): Double = SystemClock.uptimeMillis() / 1000.0
 
     companion object {
+        /** Whether a mode shows a kind's layer (the imagery always). */
+        internal fun shows(kind: TileKind, mode: TerrainMode): Boolean = when (kind) {
+            TileKind.imagery -> true
+            TileKind.contours -> mode.showsContours
+            TileKind.colours -> mode.showsColours
+        }
+
+        /** What the legends show: the contour interval at the contour level (as `ContourRenderer` draws them at the
+         *  scale `s`) and the colours' range while there are heights on screen, as the mode shows them; nothing without
+         *  levels (the map narrower than 100 dp). */
+        internal fun key(mode: TerrainMode, contourLevel: Int?, s: Double, heightsOnScreen: Boolean, range: ElevationRange?): TerrainKey {
+            val cz = contourLevel ?: return TerrainKey()
+            var contours: ContourInterval? = null
+            if (mode.showsContours && cz >= ContourPolicy.minTileZoom) {
+                ContourPolicy.intervals(ContourPolicy.pointZoom(cz, s))?.let { contours = ContourInterval(it.step, it.index) }
+            }
+            val colours = if (mode.showsColours && heightsOnScreen && cz >= ElevationColours.minTileZoom) range else null
+            return TerrainKey(contours, colours)
+        }
+
         /** The world rect around points on the map (its corners), with x unwrapped around the centre's, so it is one
          *  rect across the date line. */
         internal fun worldRect(corners: List<GeoPoint>, centre: GeoPoint): WorldRect {
@@ -385,4 +501,65 @@ class DrawnImagery(
             }
         }
     }
+}
+
+/** The colours' range, chosen from the heights on screen as Swift's `DrawnImagery.updateColourRange` does, apart from
+ *  the map so it can be tested: the range; where it was last chosen or kept (one from somewhere else isn't kept); since
+ *  when the first range for a place has waited for the rest of the screen's heights; and whether the screen has land
+ *  with heights in memory (else nothing is coloured, and the legend goes). */
+internal class ColourRangeChoice {
+    var range: ElevationRange? = null
+        private set
+    private var area: WorldRect? = null
+    private var waitSince: Double? = null
+    var heightsOnScreen = false
+        private set
+
+    /** Chooses the range for a map showing `visible`, with these heights on screen (`SatelliteRenderer.heightExtremes`),
+     *  at `now` (s): the one shown while they still suit it (`ElevationColours.range`). `reportKey` is called when what
+     *  the legend shows changes, and `recheck` when the first range for a place starts waiting (to come back in 1.6 s).
+     *  Returns a newly chosen range: a new layer is due for it. */
+    fun update(
+        visible: WorldRect,
+        extremes: SatelliteRenderer.Extremes?,
+        now: Double,
+        reportKey: () -> Unit,
+        recheck: () -> Unit,
+    ): ElevationRange? {
+        val current = if (area?.let { intersects(it, visible) } == true) range else null
+        if (current == null && range != null) {
+            range = null
+            area = null
+            reportKey()
+        }
+        val e = extremes
+        if ((e != null) != heightsOnScreen) {
+            heightsOnScreen = e != null
+            reportKey()
+        }
+        if (e == null) return null
+        waitSince?.let { if (now - it > 5) waitSince = null } // an earlier wait
+        if (current == null && !e.complete) {
+            if (waitSince == null) {
+                waitSince = now
+                recheck()
+            }
+            if (now - (waitSince ?: now) < 1.5) return null
+        }
+        waitSince = null
+        area = visible
+        val chosen = ElevationColours.range(e.low, e.high, current, e.complete)
+        if (chosen == range) return null
+        Log.d(
+            "tiles",
+            "colours from ${chosen.low.toInt()} to ${chosen.high.toInt()} m (screen ${e.low.toInt()}–${e.high.toInt()} m, " +
+                "complete=${e.complete})",
+        )
+        range = chosen
+        reportKey()
+        return chosen
+    }
+
+    private fun intersects(a: WorldRect, b: WorldRect): Boolean =
+        a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY
 }
