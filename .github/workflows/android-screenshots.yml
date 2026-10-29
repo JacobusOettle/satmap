@@ -1,0 +1,211 @@
+name: Android screenshots
+
+# Runs the Android app on an emulator, walks through its screens (android/app/src/androidTest/.../ScreenshotTest.kt, the
+# iPhone walkthrough SatMapUITests/ScreenshotTests.swift step for step) and commits the screenshots to
+# docs/screenshots/android on the branch it was started on (android/DESIGN.md §8.2).
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "android/**"
+      - "SatMap/Resources/**"
+      - "SatMapUITests/DemoFarm.kml"
+      - ".github/workflows/android-screenshots.yml"
+
+# Read-only: the build runs Gradle plugins, dependencies and third-party actions from the internet. Only the commit job
+# can write to the repository.
+permissions:
+  contents: read
+
+# A newer push makes a running set of screenshots out of date.
+concurrency:
+  group: android-screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # Reads the caches that android.yml saves; this workflow adds none of its own.
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+
+      # Built before the emulator starts, so a compile error shows on its own.
+      - name: Build the app and its instrumented tests
+        working-directory: android
+        run: ./gradlew --console=plain :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # What runs on the emulator, as one script (the emulator runner starts each line of its script on its own).
+      - name: Write the walkthrough script
+        run: |
+          cat > "$RUNNER_TEMP/walkthrough.sh" <<'EOF'
+          set -u
+          cd "$GITHUB_WORKSPACE"
+          PKG=com.jacobusoettle.satmap
+          ID=6F1C2D3E-4B5A-4C7D-8E9F-0A1B2C3D4E5F
+          KML=files/SatMap/KML
+
+          (cd android && ./gradlew --console=plain :app:installDebug :app:installDebugAndroidTest) || exit 1
+          (cd android && ./gradlew --stop) || true
+
+          # A screen that stays on and unlocked, location on, every permission SatMap asks for, and SatMap allowed to
+          # give mock positions (TestLocations: the test's walk, as XCUIDevice.location on iOS).
+          adb shell svc power stayon true || true
+          adb shell input keyevent KEYCODE_WAKEUP || true
+          adb shell wm dismiss-keyguard || true
+          adb shell cmd location set-location-enabled true || true
+          for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACTIVITY_RECOGNITION POST_NOTIFICATIONS; do
+            adb shell pm grant $PKG android.permission.$p || true
+          done
+          adb shell appops set $PKG android:mock_location allow || exit 1
+
+          # The demo farm blocks, where KMLLibrary keeps its files (filesDir/SatMap/KML), with the index the iPhone app
+          # writes (KMLLibrary.swift's Entry: id, name, fileName).
+          adb shell run-as $PKG mkdir -p $KML || exit 1
+          adb shell "run-as $PKG sh -c 'cat > $KML/$ID.kml'" < SatMapUITests/DemoFarm.kml || exit 1
+          printf '[{"id":"%s","name":"Demo farm","fileName":"%s.kml"}]' "$ID" "$ID" \
+            | adb shell "run-as $PKG sh -c 'cat > $KML/index.json'" || exit 1
+          adb shell run-as $PKG ls -l $KML
+          adb shell run-as $PKG cat $KML/index.json
+          echo
+
+          # The status bar of the iPhone screenshots: 09:41, full battery and Wi-Fi, no notifications.
+          adb shell settings put global sysui_demo_allowed 1
+          demo() { adb shell am broadcast -a com.android.systemui.demo -e command "$@" > /dev/null; }
+          demo enter
+          demo clock -e hhmm 0941
+          demo battery -e level 100 -e plugged false -e powersave false
+          demo network -e wifi show -e level 4 -e fully true
+          demo network -e mobile show -e datatype none -e level 4 -e fully true
+          demo notifications -e visible false
+
+          adb logcat -c
+          adb logcat -v time -s tiles location offline roads places ScreenshotTest TestRunner AndroidRuntime > logcat.txt 2>&1 &
+          LOGCAT=$!
+          adb shell am instrument -w -e class $PKG.ScreenshotTest $PKG.test/androidx.test.runner.AndroidJUnitRunner > test-output.txt 2>&1
+          kill $LOGCAT 2> /dev/null || true
+          adb logcat -d -b crash >> logcat.txt 2>&1 || true
+          cat test-output.txt
+
+          # The checks that failed (one assertion at the end of the walk lists them all), or the test's OK.
+          {
+            echo "## Android screenshot walkthrough"
+            echo '```'
+            grep -E '^OK \(|^Tests run|^INSTRUMENTATION_RESULT: shortMsg' test-output.txt || true
+            awk '/failed checks:/ { p = 1 } p && /^[[:space:]]+at / { exit } p' test-output.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          rm -rf shots
+          adb pull /sdcard/Android/data/$PKG/files/screenshots shots || true
+          if ! ls shots/*.png > /dev/null 2>&1; then
+            mkdir -p shots
+            adb exec-out "run-as $PKG tar cf - -C /sdcard/Android/data/$PKG/files/screenshots ." | tar xf - -C shots || true
+          fi
+          ls -lR shots
+          ls shots/*.png > /dev/null 2>&1 || { echo "No screenshots were taken."; exit 1; }
+          echo "Test reported failures, if any, above; keeping the screenshots taken."
+          EOF
+
+      - name: Take screenshots
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          ram-size: 4096M
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash "$RUNNER_TEMP/walkthrough.sh"
+
+      - uses: actions/setup-python@v6
+        if: always()
+        with:
+          python-version: "3.x"
+
+      # As the iPhone screenshots: 600 px wide JPEGs at quality 82 (debug shots stay in the artifact only).
+      - name: Resize the screenshots to 600 px wide
+        if: always()
+        run: |
+          python -m pip install --quiet pillow
+          python - <<'EOF'
+          import pathlib
+          from PIL import Image
+
+          out = pathlib.Path("jpg")
+          out.mkdir(exist_ok=True)
+          for f in sorted(pathlib.Path("shots").glob("*.png")):
+              image = Image.open(f).convert("RGB")
+              height = round(image.height * 600 / image.width)
+              image.resize((600, height), Image.LANCZOS).save(out / (f.stem + ".jpg"), "JPEG", quality=82)
+              print(f.stem)
+          EOF
+          ls -l jpg
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-screenshots
+          path: |
+            shots
+            jpg
+            test-output.txt
+            logcat.txt
+          if-no-files-found: warn
+
+  # Only this job can write: it commits the screenshots of a finished walkthrough to the branch.
+  commit:
+    needs: screenshots
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-screenshots
+          path: ${{ runner.temp }}/screenshots
+
+      - name: Commit screenshots to the branch
+        run: |
+          shots="$RUNNER_TEMP/screenshots/jpg"
+          if ! ls "$shots"/*.jpg > /dev/null 2>&1; then
+            echo "No screenshots to commit."
+            exit 0
+          fi
+          ls -l "$shots"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # The branch may have moved while the screenshots were taken (new code, or another run's screenshots):
+          # put these on top of whatever it holds now.
+          for attempt in 1 2 3; do
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard FETCH_HEAD
+            mkdir -p docs/screenshots/android
+            cp "$shots"/*.jpg docs/screenshots/android/
+            git add docs/screenshots/android
+            git commit -m "Update Android app screenshots" || { echo "No changes"; exit 0; }
+            git push origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep 10
+          done
+          exit 1

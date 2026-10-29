@@ -135,11 +135,11 @@ jobs:
           working-directory: .
           # The runner starts each line in its own `sh -c`: every check is one line. Every permission the app asks for
           # is granted first, so no system dialog covers the map in the screenshot or leaves MainActivity paused.
-          # The last check reads the screen's centre pixel from a raw capture (android-launch.raw: a 12- or 16-byte
-          # header, then 4 bytes a pixel), taken right after the screenshot: until M1 the map is only its background,
-          # #202020, which only a running GL renderer draws (MapLibre's foregroundLoadColor is #202020 too, so it
-          # proves the map draws, not that the style loaded). From M1, check instead for imagery that isn't one flat
-          # colour.
+          # The last check reads the middle of the screen from a raw capture (android-launch.raw: a 12- or 16-byte
+          # header, then 4 bytes a pixel), taken right after the screenshot: imagery (many colours), or, in a build
+          # without the imagery yet (M1 merges it), mostly the map's background #202020, which only a running GL
+          # renderer draws (MapLibre's foregroundLoadColor is #202020 too, so that proves the map draws, not that the
+          # style loaded). A black or other flat screen fails. Once every build has the imagery, accept only imagery.
           script: |
             adb install -r SatMap.apk
             adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_FINE_LOCATION || true
@@ -158,7 +158,7 @@ jobs:
             if adb logcat -d -b crash | grep -q com.jacobusoettle.satmap; then echo "SatMap crashed after it was opened (and was started again): not publishing this build."; adb logcat -d -b crash; exit 1; fi
             if adb logcat -d -b events | grep am_anr | grep -q com.jacobusoettle.satmap; then echo "SatMap stopped responding after it was opened: not publishing this build."; adb logcat -d -b events | grep am_anr; adb logcat -d | grep -iE "satmap|ANR" | tail -n 150; exit 1; fi
             adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | grep -q 'com.jacobusoettle.satmap/.MainActivity' || { echo "SatMap's map is not the resumed activity: not publishing this build."; adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp|mCurrentFocus'; adb logcat -d | grep -iE "satmap|AndroidRuntime" | tail -n 150; exit 1; }
-            python3 -I -c "import struct, sys; d = open('android-launch.raw', 'rb').read(); w, h = struct.unpack('<2I', d[:8]); assert len(d) - w * h * 4 in (12, 16), 'not a 4-byte-a-pixel capture'; o = len(d) - w * h * 4 + (h // 2 * w + w // 2) * 4; p = tuple(d[o:o + 3]); print('Centre pixel of the', w, 'x', h, 'screen:', p); sys.exit(p != (32, 32, 32))" || { echo "SatMap's map was not drawn: the centre of the screen is not the map's background colour #202020. Not publishing this build."; adb logcat -d | grep -iE "satmap|maplibre|mbgl|EGL|OpenGLRenderer" | tail -n 150; exit 1; }
+            python3 -I -c "import collections, struct, sys; d = open('android-launch.raw', 'rb').read(); w, h = struct.unpack('<2I', d[:8]); head = len(d) - w * h * 4; assert head in (12, 16), 'not a 4-byte-a-pixel capture'; px = [tuple(d[head + (y * w + x) * 4:head + (y * w + x) * 4 + 3]) for y in range(h * 35 // 100, h * 65 // 100, 8) for x in range(w * 30 // 100, w * 70 // 100, 8)]; common = collections.Counter(px).most_common(1)[0][0]; kinds = len(set(px)); print('Middle of the', w, 'x', h, 'screen:', kinds, 'colours, mostly', common); sys.exit(not (common == (32, 32, 32) or kinds > 64))" || { echo "SatMap's map was not drawn: the middle of the screen is neither imagery nor the map's background colour #202020. Not publishing this build."; adb logcat -d | grep -iE "satmap|maplibre|mbgl|EGL|OpenGLRenderer" | tail -n 150; exit 1; }
             echo "SatMap is running, with its map in front and drawn."
 
       - uses: actions/upload-artifact@v7
