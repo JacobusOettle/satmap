@@ -5,9 +5,10 @@ name: Android screenshots
 # docs/screenshots/android on the branch it was started on (android/DESIGN.md §8.2).
 #
 # A run never waits for ever: the walk has 45 minutes (it stops itself after 40 and reports what failed), every adb
-# command has a time limit, an emulator that stops answering is noticed within a minute and reported, and the
-# screenshots are pulled while the walk goes on, so a run cut short keeps the ones it got. (The first run lost the
-# emulator after step 10 and then waited for it until the job's two-hour limit, with no screenshots pulled.)
+# command has a time limit, an emulator that quits is reported as soon as the walk ends and one that stops answering
+# within a minute, and the screenshots are pulled while the walk goes on, so a run cut short keeps the ones it got. (The
+# first run lost the emulator after step 10 and then waited for it until the job's two-hour limit, with no screenshots
+# pulled.)
 on:
   workflow_dispatch:
   push:
@@ -193,11 +194,23 @@ jobs:
 
           wait $TEST
           STATUS=$?
+          LAST=$(grep -E ' ScreenshotTest *: snap ' logcat-full.txt | tail -n 1 | sed 's/.*: snap //')
+          PROBLEM=""
+          # When the emulator quits, adb's connection to it closes and the walk returns at once, without a result and
+          # before the watchdog has missed an answer: a walk that ended without a result is the emulator's loss when it
+          # no longer answers, and a problem of its own when it still does (the instrumentation's connection dropped).
+          # The watchdog is for an emulator that hangs.
+          if [ ! -f emulator-lost.txt ] && [ $STATUS -ne 124 ] && [ $STATUS -ne 137 ] \
+            && ! grep -qE '^(OK \(|Tests run|INSTRUMENTATION_(RESULT|FAILED|CODE))' test-output.txt; then
+            if LIMIT=20 a shell true > /dev/null 2>&1; then
+              PROBLEM="The walk ended without a result (am instrument exited $STATUS) after screenshot ${LAST:-(none)}."
+            else
+              date -u '+%H:%M:%S' > emulator-lost.txt
+            fi
+          fi
           kill $WATCHDOG 2> /dev/null
           wait $PULLER
 
-          LAST=$(grep -E ' ScreenshotTest *: snap ' logcat-full.txt | tail -n 1 | sed 's/.*: snap //')
-          PROBLEM=""
           if [ -f emulator-lost.txt ]; then
             PROBLEM="The emulator stopped answering at $(cat emulator-lost.txt) UTC, after screenshot ${LAST:-(none)}: the walk ended there. diagnostics/host.txt in the artifact has the machine's memory, out-of-memory kills and the emulator's crash reports."
           elif [ $STATUS -eq 124 ] || [ $STATUS -eq 137 ]; then
@@ -235,7 +248,8 @@ jobs:
           set -u
           cd "$GITHUB_WORKSPACE" || exit 1
           . "$RUNNER_TEMP/adb-helpers.sh"
-          if LIMIT=15 a get-state > /dev/null 2>&1; then
+          # `adb get-state` still reads "device" for an emulator that hangs with its connection open: ask it to answer.
+          if LIMIT=20 a shell true > /dev/null 2>&1; then
             echo "The emulator still runs: pulling what it holds."
             pull_new
             [ -s logcat-full.txt ] || LIMIT=120 a logcat -d -v threadtime -b main,system,crash,events > logcat-full.txt 2>&1

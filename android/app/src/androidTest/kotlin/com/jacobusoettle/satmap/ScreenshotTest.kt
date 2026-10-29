@@ -30,7 +30,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import androidx.test.uiautomator.By
-import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
 import com.jacobusoettle.satmap.app.AppModel
@@ -661,25 +660,25 @@ class ScreenshotTest {
     }
 
     /** Location (and motion) permission prompts come from the system's permission controller (none shows when the rule
-     *  above has granted the permissions). Up to 6 s for each prompt, as on iOS, but for its buttons all at once: with
-     *  no prompt, the walk goes on after 6 s rather than 24. */
+     *  above has granted the permissions). As on iOS, up to 6 s for each button in turn, twice: with no prompt (as in
+     *  CI) the walk starts 24 s after launch, so the first screenshot gives the imagery as long to load as on iOS. */
     private fun allowPermissionPrompts() {
         val controller = Pattern.compile(".*permissioncontroller")
-        val buttons = listOf("While using the app", "Only this time", "Allow", "OK").map { label ->
-            label to By.pkg(controller).text(Pattern.compile(Pattern.quote(label), Pattern.CASE_INSENSITIVE))
-        }
         for (i in 0 until 2) {
-            var shown: Pair<String, BySelector>? = null
-            waitUntil(6.0) {
-                shown = buttons.firstOrNull { device.hasObject(it.second) }
-                shown != null
+            var handled = false
+            for (label in listOf("While using the app", "Only this time", "Allow", "OK")) {
+                val b = By.pkg(controller).text(Pattern.compile(Pattern.quote(label), Pattern.CASE_INSENSITIVE))
+                if (waitUntil(6.0) { device.hasObject(b) }) {
+                    try {
+                        device.findObject(b)?.click()
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Prompt button '$label': ${short(e)}")
+                    }
+                    handled = true
+                    break
+                }
             }
-            val (label, b) = shown ?: break
-            try {
-                device.findObject(b)?.click()
-            } catch (e: Exception) {
-                Log.w(TAG, "Prompt button '$label': ${short(e)}")
-            }
+            if (!handled) break
         }
     }
 
@@ -822,9 +821,11 @@ class ScreenshotTest {
     private fun waitForExistence(q: Query, seconds: Int) = waitUntil(seconds.toDouble()) { exists(q) }
 
     /** Waits up to `seconds` for `done`, as iOS waits for a download to finish, but only while a download is under way
-     *  and moving: it gives up after a minute with no area queued or downloading (none was started, as before M4, or
-     *  it stopped: paused, incomplete, waiting for a network), or after three minutes in which the running download
-     *  got no further. Returns whether `done` came true. */
+     *  or will be: it gives up after a minute with no area queued, downloading or waiting for a network (none was
+     *  started, as before M4, or it stopped for good: paused or incomplete), or after three minutes in which a running
+     *  download got no further. An area waiting for a network is retried by the app itself after 15 s, 30 s, 60 s …
+     *  up to 10 minutes (also while the phone is online, when the tile server stops answering for a while), so that
+     *  wait counts as under way, and as moving: as on iOS, the walk rides it out. Returns whether `done` came true. */
     private fun waitForDownload(seconds: Double, done: () -> Boolean): Boolean {
         val offline = AppModel.shared.offline
         var lastBusy = SystemClock.uptimeMillis()
@@ -840,8 +841,10 @@ class ScreenshotTest {
             val now = SystemClock.uptimeMillis()
             val areas = offline.areas.value
             val active = offline.activeID.value
-            val busy = active != null ||
-                areas.any { it.status == OfflineArea.Status.queued || it.status == OfflineArea.Status.downloading }
+            val busy = active != null || areas.any {
+                it.status == OfflineArea.Status.queued || it.status == OfflineArea.Status.downloading ||
+                    it.status == OfflineArea.Status.waitingForNetwork
+            }
             if (busy) lastBusy = now
             val p = offline.progress.value
             val mark = "$active ${p?.layer} ${p?.zoom} ${p?.levelDone} ${p?.overallDone} ${p?.failed}"
@@ -849,6 +852,8 @@ class ScreenshotTest {
                 lastMark = mark
                 lastMoved = now
             }
+            // Only a running download can get stuck: between runs (waiting to retry) nothing moves.
+            if (active == null) lastMoved = now
             val states = areas.joinToString { a -> "${a.name}: ${a.status}" + (a.problem?.let { ", $it" } ?: "") }
             why = when {
                 now - lastBusy >= 60_000 -> "no download under way (${states.ifEmpty { "no areas" }})"

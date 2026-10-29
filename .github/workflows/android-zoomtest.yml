@@ -111,8 +111,9 @@ jobs:
             kill $LOGPID $TILEPID 2> /dev/null || true
             cat "videos/script-$mode.log"
             grep -E 'TestRunner *: (started|finished)' "videos/script-$mode.log" | tee -a videos/times.txt || true
-            # A lost emulator ends the run here, with the videos so far.
-            LIMIT=20 a get-state > /dev/null 2>&1 || { echo "::error::The emulator stopped answering during $mode."; exit 1; }
+            # A lost emulator ends the run here, with the videos so far. (It has to answer: `adb get-state` still reads
+            # "device" for an emulator that hangs with its connection open.)
+            LIMIT=20 a shell true > /dev/null 2>&1 || { echo "::error::The emulator stopped answering during $mode."; exit 1; }
           done
           ls -l videos
           EOF
