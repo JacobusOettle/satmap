@@ -1,0 +1,139 @@
+name: Android zoom test
+
+# Records the emulator's screen while ZoomTest (android/app/src/androidTest/.../ZoomTest.kt, the iPhone's
+# SatMapUITests/ZoomTests) lets the map zoom and pan itself through the same steps each time (ZoomScript), once for each
+# terrain mode, from a fresh install each time (nothing cached). The videos are uploaded for frame-by-frame checks of
+# empty blocks while tiles load (android/DESIGN.md §8.2). Runs when the test, the imagery layers or this file change (or
+# by hand).
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths:
+      - "android/app/src/androidTest/kotlin/com/jacobusoettle/satmap/ZoomTest.kt"
+      - "android/app/src/main/kotlin/com/jacobusoettle/satmap/map/SatelliteLayer.kt"
+      - "android/app/src/main/kotlin/com/jacobusoettle/satmap/map/DrawnImagery.kt"
+      - "android/app/src/main/kotlin/com/jacobusoettle/satmap/map/ZoomScript.kt"
+      - ".github/workflows/android-zoomtest.yml"
+
+# Read-only: the build runs Gradle plugins, dependencies and third-party actions from the internet.
+permissions:
+  contents: read
+
+concurrency:
+  group: android-zoomtest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zoom:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      # Reads the caches that android.yml saves; this workflow adds none of its own.
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+
+      # Built before the emulator starts; Gradle then stops, so the emulator has the machine's memory to itself.
+      - name: Build the app and its instrumented tests
+        working-directory: android
+        run: |
+          ./gradlew --console=plain :app:assembleDebug :app:assembleDebugAndroidTest
+          ./gradlew --stop
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # What runs on the emulator, as one script (the emulator runner starts each line of its script on its own).
+      - name: Write the zoom script
+        run: |
+          cat > "$RUNNER_TEMP/zoom.sh" <<'EOF'
+          set -u
+          cd "$GITHUB_WORKSPACE" || exit 1
+          export PATH="$PATH:${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools"
+          PKG=com.jacobusoettle.satmap
+          APKS=android/app/build/outputs/apk
+          # adb with a time limit (LIMIT seconds, 60 unless set): with the emulator gone, an adb command can wait for it
+          # for ever.
+          a() { timeout -k 10 "${LIMIT:-60}" adb "$@"; }
+
+          mkdir -p videos
+          LIMIT=300 a install -r -t $APKS/androidTest/debug/app-debug-androidTest.apk || exit 1
+          a shell svc power stayon true || true
+          a shell input keyevent KEYCODE_WAKEUP || true
+          a shell wm dismiss-keyguard || true
+          a shell cmd location set-location-enabled true || true
+
+          # Without and with contour lines, with contour lines and elevation colours, with the colours alone, and in
+          # drone mode (ZoomTest.scriptOff … scriptDrone). The screen is recorded at 720 × 1600, two thirds of its
+          # pixels each way.
+          for mode in off contours contoursAndColours colours drone; do
+            test="script${mode^}"
+            # A fresh install each time: nothing cached.
+            a uninstall $PKG > /dev/null 2>&1 || true
+            LIMIT=300 a install -r -t -g $APKS/debug/app-debug.apk || { echo "::error::SatMap didn't install."; exit 1; }
+            for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACTIVITY_RECOGNITION POST_NOTIFICATIONS; do
+              a shell pm grant $PKG android.permission.$p || true
+            done
+            # The test's position (TestLocations), as XCUIDevice.location on iOS.
+            a shell appops set $PKG android:mock_location allow || true
+            a logcat -c || true
+            adb logcat -v threadtime -v UTC -s zoomscript TestRunner > "videos/script-$mode.log" 2>&1 &
+            LOGPID=$!
+            # Tile requests and drawing, for what lies behind grey in the video.
+            adb logcat -v threadtime -v UTC -s tiles zoomscript > "videos/tiles-$mode.log" 2>&1 &
+            TILEPID=$!
+            adb shell screenrecord --size 720x1600 --bit-rate 6000000 --time-limit 180 "/sdcard/zoom-$mode.mp4" \
+              > "videos/record-$mode.log" 2>&1 &
+            REC=$!
+            date -u +"recording $mode started %Y-%m-%d %H:%M:%S.%N" | tee -a videos/times.txt
+            sleep 2
+            timeout -k 10 10m adb shell am instrument -w -e class "$PKG.ZoomTest#$test" \
+              $PKG.test/androidx.test.runner.AndroidJUnitRunner > "videos/test-$mode.log" 2>&1
+            grep -q '^OK (' "videos/test-$mode.log" || tail -n 30 "videos/test-$mode.log"
+            # The recording ends at its time limit, or now (screenrecord finishes the file when interrupted).
+            LIMIT=10 a shell pkill -INT screenrecord > /dev/null 2>&1 || true
+            for _ in $(seq 30); do kill -0 $REC 2> /dev/null || break; sleep 1; done
+            kill $REC 2> /dev/null || true
+            LIMIT=120 a pull "/sdcard/zoom-$mode.mp4" "videos/zoom-$mode.mp4" > /dev/null \
+              || echo "::warning::No video of $mode: $(cat "videos/record-$mode.log")"
+            a shell rm -f "/sdcard/zoom-$mode.mp4" || true
+            kill $LOGPID $TILEPID 2> /dev/null || true
+            cat "videos/script-$mode.log"
+            grep -E 'TestRunner *: (started|finished)' "videos/script-$mode.log" | tee -a videos/times.txt || true
+            # A lost emulator ends the run here, with the videos so far.
+            LIMIT=20 a get-state > /dev/null 2>&1 || { echo "::error::The emulator stopped answering during $mode."; exit 1; }
+          done
+          ls -l videos
+          EOF
+
+      - name: Zoom and pan, recording the screen
+        timeout-minutes: 45
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          ram-size: 4096M
+          heap-size: 576M
+          disk-size: 8G
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash "$RUNNER_TEMP/zoom.sh"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: zoom-videos
+          path: videos

@@ -3,6 +3,11 @@ name: Android screenshots
 # Runs the Android app on an emulator, walks through its screens (android/app/src/androidTest/.../ScreenshotTest.kt, the
 # iPhone walkthrough SatMapUITests/ScreenshotTests.swift step for step) and commits the screenshots to
 # docs/screenshots/android on the branch it was started on (android/DESIGN.md §8.2).
+#
+# A run never waits for ever: the walk has 45 minutes (it stops itself after 40 and reports what failed), every adb
+# command has a time limit, an emulator that stops answering is noticed within a minute and reported, and the
+# screenshots are pulled while the walk goes on, so a run cut short keeps the ones it got. (The first run lost the
+# emulator after step 10 and then waited for it until the job's two-hour limit, with no screenshots pulled.)
 on:
   workflow_dispatch:
   push:
@@ -26,7 +31,10 @@ concurrency:
 jobs:
   screenshots:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
+    outputs:
+      # How many screenshots were taken: the commit job runs only when there are some.
+      captured: ${{ steps.resize.outputs.captured }}
     steps:
       - uses: actions/checkout@v5
 
@@ -40,10 +48,13 @@ jobs:
         with:
           cache-read-only: true
 
-      # Built before the emulator starts, so a compile error shows on its own.
+      # Built before the emulator starts, so a compile error shows on its own. Gradle then stops: the APKs are
+      # installed with adb, and the emulator has the machine's memory without a Gradle daemon beside it.
       - name: Build the app and its instrumented tests
         working-directory: android
-        run: ./gradlew --console=plain :app:assembleDebug :app:assembleDebugAndroidTest
+        run: |
+          ./gradlew --console=plain :app:assembleDebug :app:assembleDebugAndroidTest
+          ./gradlew --stop
 
       - name: Enable KVM for the emulator
         run: |
@@ -51,43 +62,85 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # What runs on the emulator, as one script (the emulator runner starts each line of its script on its own).
-      - name: Write the walkthrough script
+      # What runs on the emulator, as scripts (the emulator runner starts each line of its script on its own): the
+      # helpers, the walk, and what a later step collects if the emulator step was cut off.
+      - name: Write the walkthrough scripts
         run: |
+          cat > "$RUNNER_TEMP/adb-helpers.sh" <<'EOF'
+          export PATH="$PATH:${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools"
+          PKG=com.jacobusoettle.satmap
+          SHOTS=/sdcard/Android/data/$PKG/files/screenshots
+
+          # adb with a time limit (LIMIT seconds, 60 unless set): with the emulator gone, an adb command can wait for it
+          # for ever ("- waiting for device -").
+          a() { timeout -k 10 "${LIMIT:-60}" adb "$@"; }
+
+          # Pulls the screenshots taken since the last pull into shots/ (the debug ones into shots/debug/). The test
+          # writes each as <name>.png.part and then renames it, so only finished ones are pulled; each comes in under a
+          # temporary name too, so one cut off halfway is never kept.
+          pull_new() {
+            mkdir -p shots
+            a shell "cd $SHOTS 2> /dev/null && find . -type f -name '*.png'" 2> /dev/null | tr -d '\r' | while IFS= read -r f; do
+              f=${f#./}
+              [ -s "shots/$f" ] && continue
+              mkdir -p "shots/$(dirname "$f")"
+              a pull "$SHOTS/$f" "shots/$f.part" < /dev/null > /dev/null 2>&1 && mv "shots/$f.part" "shots/$f"
+              rm -f "shots/$f.part"
+            done
+          }
+
+          # What the machine running the emulator says, into diagnostics/: its memory, the emulator process, the
+          # kernel's out-of-memory kills, the disk, and the emulator's crash reports.
+          host_report() {
+            mkdir -p diagnostics
+            {
+              echo "== $(date -u '+%Y-%m-%d %H:%M:%S') UTC"
+              echo "== Memory"; free -m
+              echo "== The emulator process"; pgrep -a -f qemu-system || echo "(none: the emulator has quit)"
+              echo "== Out-of-memory kills (kernel log)"
+              sudo -n dmesg -T 2> /dev/null | grep -iE 'out of memory|oom-kill|killed process' | tail -n 20
+              echo "== Disk"; df -h / "$HOME"
+              echo "== The emulator's crash reports"; find /tmp/android-* -path '*emu-crash*' -type f 2> /dev/null | head -n 50
+            } >> diagnostics/host.txt 2>&1
+            find /tmp/android-* -path '*emu-crash*' -name '*.dmp' -exec cp {} diagnostics/ \; 2> /dev/null || true
+          }
+          EOF
+
           cat > "$RUNNER_TEMP/walkthrough.sh" <<'EOF'
           set -u
-          cd "$GITHUB_WORKSPACE"
-          PKG=com.jacobusoettle.satmap
+          cd "$GITHUB_WORKSPACE" || exit 1
+          . "$RUNNER_TEMP/adb-helpers.sh"
           ID=6F1C2D3E-4B5A-4C7D-8E9F-0A1B2C3D4E5F
           KML=files/SatMap/KML
+          APKS=android/app/build/outputs/apk
 
-          (cd android && ./gradlew --console=plain :app:installDebug :app:installDebugAndroidTest) || exit 1
-          (cd android && ./gradlew --stop) || true
+          LIMIT=300 a install -r -t -g $APKS/debug/app-debug.apk || exit 1
+          LIMIT=300 a install -r -t $APKS/androidTest/debug/app-debug-androidTest.apk || exit 1
 
           # A screen that stays on and unlocked, location on, every permission SatMap asks for, and SatMap allowed to
           # give mock positions (TestLocations: the test's walk, as XCUIDevice.location on iOS).
-          adb shell svc power stayon true || true
-          adb shell input keyevent KEYCODE_WAKEUP || true
-          adb shell wm dismiss-keyguard || true
-          adb shell cmd location set-location-enabled true || true
+          a shell svc power stayon true || true
+          a shell input keyevent KEYCODE_WAKEUP || true
+          a shell wm dismiss-keyguard || true
+          a shell cmd location set-location-enabled true || true
           for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACTIVITY_RECOGNITION POST_NOTIFICATIONS; do
-            adb shell pm grant $PKG android.permission.$p || true
+            a shell pm grant $PKG android.permission.$p || true
           done
-          adb shell appops set $PKG android:mock_location allow || exit 1
+          a shell appops set $PKG android:mock_location allow || exit 1
 
           # The demo farm blocks, where KMLLibrary keeps its files (filesDir/SatMap/KML), with the index the iPhone app
           # writes (KMLLibrary.swift's Entry: id, name, fileName).
-          adb shell run-as $PKG mkdir -p $KML || exit 1
-          adb shell "run-as $PKG sh -c 'cat > $KML/$ID.kml'" < SatMapUITests/DemoFarm.kml || exit 1
+          a shell run-as $PKG mkdir -p $KML || exit 1
+          a shell "run-as $PKG sh -c 'cat > $KML/$ID.kml'" < SatMapUITests/DemoFarm.kml || exit 1
           printf '[{"id":"%s","name":"Demo farm","fileName":"%s.kml"}]' "$ID" "$ID" \
-            | adb shell "run-as $PKG sh -c 'cat > $KML/index.json'" || exit 1
-          adb shell run-as $PKG ls -l $KML
-          adb shell run-as $PKG cat $KML/index.json
+            | a shell "run-as $PKG sh -c 'cat > $KML/index.json'" || exit 1
+          a shell run-as $PKG ls -l $KML
+          a shell run-as $PKG cat $KML/index.json
           echo
 
           # The status bar of the iPhone screenshots: 09:41, full battery and Wi-Fi, no notifications.
-          adb shell settings put global sysui_demo_allowed 1
-          demo() { adb shell am broadcast -a com.android.systemui.demo -e command "$@" > /dev/null; }
+          a shell settings put global sysui_demo_allowed 1
+          demo() { a shell am broadcast -a com.android.systemui.demo -e command "$@" > /dev/null; }
           demo enter
           demo clock -e hhmm 0941
           demo battery -e level 100 -e plugged false -e powersave false
@@ -95,45 +148,123 @@ jobs:
           demo network -e mobile show -e datatype none -e level 4 -e fully true
           demo notifications -e visible false
 
-          adb logcat -c
-          adb logcat -v time -s tiles location offline roads places ScreenshotTest TestRunner AndroidRuntime > logcat.txt 2>&1 &
+          # The emulator's whole log as it comes (logcat.txt is SatMap's and the test's lines from it).
+          a logcat -c || true
+          a logcat -G 16M || true
+          adb logcat -v threadtime -b main,system,crash,events > logcat-full.txt 2>&1 &
           LOGCAT=$!
-          adb shell am instrument -w -e class $PKG.ScreenshotTest $PKG.test/androidx.test.runner.AndroidJUnitRunner > test-output.txt 2>&1
-          kill $LOGCAT 2> /dev/null || true
-          adb logcat -d -b crash >> logcat.txt 2>&1 || true
+
+          # The walk: at most 45 minutes (it stops itself after 40, ScreenshotTest.WALK_MINUTES, to report what failed).
+          timeout -k 30 45m adb shell am instrument -w -e class $PKG.ScreenshotTest \
+            $PKG.test/androidx.test.runner.AndroidJUnitRunner > test-output.txt 2>&1 &
+          TEST=$!
+
+          # The screenshots pulled as they are taken: within 3 s of each "snap" in the log, and once a minute anyway.
+          (
+            seen=0
+            ticks=0
+            while kill -0 $TEST 2> /dev/null; do
+              sleep 3
+              ticks=$((ticks + 1))
+              snaps=$(grep -c ' ScreenshotTest *: snap ' logcat-full.txt 2> /dev/null)
+              if [ "${snaps:-0}" != "$seen" ] || [ $((ticks % 20)) -eq 0 ]; then
+                seen=${snaps:-0}
+                pull_new
+              fi
+            done
+          ) &
+          PULLER=$!
+
+          # Whether the emulator still answers, every 15 s. After a minute without an answer it counts as lost: the
+          # walk is stopped, and the loss reported.
+          (
+            misses=0
+            while kill -0 $TEST 2> /dev/null; do
+              sleep 15
+              if LIMIT=20 a shell true > /dev/null 2>&1; then misses=0; else misses=$((misses + 1)); fi
+              if [ $misses -ge 4 ]; then
+                date -u '+%H:%M:%S' > emulator-lost.txt
+                kill $TEST 2> /dev/null
+                break
+              fi
+            done
+          ) &
+          WATCHDOG=$!
+
+          wait $TEST
+          STATUS=$?
+          kill $WATCHDOG 2> /dev/null
+          wait $PULLER
+
+          LAST=$(grep -E ' ScreenshotTest *: snap ' logcat-full.txt | tail -n 1 | sed 's/.*: snap //')
+          PROBLEM=""
+          if [ -f emulator-lost.txt ]; then
+            PROBLEM="The emulator stopped answering at $(cat emulator-lost.txt) UTC, after screenshot ${LAST:-(none)}: the walk ended there. diagnostics/host.txt in the artifact has the machine's memory, out-of-memory kills and the emulator's crash reports."
+          elif [ $STATUS -eq 124 ] || [ $STATUS -eq 137 ]; then
+            PROBLEM="The walk didn't finish within 45 minutes and was stopped (the last screenshot: ${LAST:-(none)})."
+            LIMIT=30 a shell am force-stop $PKG || true
+          fi
+          host_report
+          [ -f emulator-lost.txt ] || pull_new
+          kill $LOGCAT 2> /dev/null
+          grep -E ' [VDIWEF] (tiles|location|offline|roads|places|ScreenshotTest|TestRunner|AndroidRuntime|DEBUG|libc|Mbgl[^ ]*) *: ' \
+            logcat-full.txt > logcat.txt || true
           cat test-output.txt
 
           # The checks that failed (one assertion at the end of the walk lists them all), or the test's OK.
+          COUNT=$(ls shots/*.png 2> /dev/null | wc -l)
           {
             echo "## Android screenshot walkthrough"
+            if [ -n "$PROBLEM" ]; then echo "**$PROBLEM**"; echo; fi
+            echo "$COUNT screenshots; the last: ${LAST:-(none)}."
             echo '```'
-            grep -E '^OK \(|^Tests run|^INSTRUMENTATION_RESULT: shortMsg' test-output.txt || true
+            grep -E '^OK \(|^Tests run|^INSTRUMENTATION_RESULT: shortMsg|^INSTRUMENTATION_FAILED' test-output.txt || true
             awk '/failed checks:/ { p = 1 } p && /^[[:space:]]+at / { exit } p' test-output.txt
             echo '```'
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-          rm -rf shots
-          adb pull /sdcard/Android/data/$PKG/files/screenshots shots || true
-          if ! ls shots/*.png > /dev/null 2>&1; then
-            mkdir -p shots
-            adb exec-out "run-as $PKG tar cf - -C /sdcard/Android/data/$PKG/files/screenshots ." | tar xf - -C shots || true
-          fi
           ls -lR shots
-          ls shots/*.png > /dev/null 2>&1 || { echo "No screenshots were taken."; exit 1; }
+          [ -z "$PROBLEM" ] || echo "::error::$PROBLEM"
+          [ "$COUNT" -gt 0 ] || { echo "::error::No screenshots were taken."; exit 1; }
+          [ -z "$PROBLEM" ] || exit 1
           echo "Test reported failures, if any, above; keeping the screenshots taken."
           EOF
 
+          # When the emulator step was cut off by its time limit the emulator may still run: what it holds is pulled.
+          cat > "$RUNNER_TEMP/collect.sh" <<'EOF'
+          set -u
+          cd "$GITHUB_WORKSPACE" || exit 1
+          . "$RUNNER_TEMP/adb-helpers.sh"
+          if LIMIT=15 a get-state > /dev/null 2>&1; then
+            echo "The emulator still runs: pulling what it holds."
+            pull_new
+            [ -s logcat-full.txt ] || LIMIT=120 a logcat -d -v threadtime -b main,system,crash,events > logcat-full.txt 2>&1
+          fi
+          [ -f diagnostics/host.txt ] || host_report
+          ls -lR shots 2> /dev/null || echo "No screenshots."
+          EOF
+
       - name: Take screenshots
+        timeout-minutes: 65
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           arch: x86_64
           target: google_apis
           profile: pixel_7
+          # 4 GB of memory, the Java heap of a phone of that size, and room on the data partition for the walk's two
+          # offline areas and the tile cache.
           ram-size: 4096M
+          heap-size: 576M
+          disk-size: 8G
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash "$RUNNER_TEMP/walkthrough.sh"
+
+      - name: Collect what the run left
+        if: always()
+        timeout-minutes: 10
+        run: bash "$RUNNER_TEMP/collect.sh"
 
       - uses: actions/setup-python@v6
         if: always()
@@ -142,6 +273,7 @@ jobs:
 
       # As the iPhone screenshots: 600 px wide JPEGs at quality 82 (debug shots stay in the artifact only).
       - name: Resize the screenshots to 600 px wide
+        id: resize
         if: always()
         run: |
           python -m pip install --quiet pillow
@@ -158,6 +290,7 @@ jobs:
               print(f.stem)
           EOF
           ls -l jpg
+          echo "captured=$(ls jpg/*.jpg 2> /dev/null | wc -l)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -168,12 +301,15 @@ jobs:
             jpg
             test-output.txt
             logcat.txt
+            logcat-full.txt
+            diagnostics
           if-no-files-found: warn
 
-  # Only this job can write: it commits the screenshots of a finished walkthrough to the branch.
+  # Only this job can write: it commits the screenshots a walk took to the branch, also when the walk failed or was
+  # cut short later on (each is a screenshot of this build), and is skipped when none was taken.
   commit:
     needs: screenshots
-    if: github.ref_type == 'branch'
+    if: ${{ !cancelled() && github.ref_type == 'branch' && needs.screenshots.outputs.captured != '' && needs.screenshots.outputs.captured != '0' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
