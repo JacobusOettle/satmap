@@ -289,7 +289,7 @@ class NewAreaViewTest {
         assertFalse(isSelected("Zoom 22"))
         list().performScrollToNode(hasText("Tiles (most)"))
         compose.onNodeWithText("Up to zoom 20").assertExists()
-        compose.onNodeWithText(countText(imageryTo.getValue(20) + 25)).assertExists()
+        compose.onNodeWithText(Format.count(imageryTo.getValue(20) + 25)).assertExists()
         compose.onNodeWithText(Format.bytes(s.freeSpace!!)).assertExists()
         compose.onNodeWithText(
             "Zoom 22 needs up to ${Format.bytes(bytes(22))}, more than half the free space, so less detail is chosen. " +

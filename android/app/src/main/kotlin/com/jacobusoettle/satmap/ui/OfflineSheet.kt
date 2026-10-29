@@ -439,7 +439,7 @@ internal fun areaStatusText(area: OfflineArea, progress: DownloadProgress?, onli
             if (area.allowCellular || !online) "Waiting for internet" else "Waiting for Wi-Fi"
         OfflineArea.Status.complete -> "Ready offline"
         OfflineArea.Status.incomplete -> area.problem?.let { "Stopped: $it Tap ↻ to continue." }
-            ?: "Incomplete: ${countText(area.failedTiles)} tiles failed. Tap ↻ to retry."
+            ?: "Incomplete: ${Format.count(area.failedTiles)} tiles failed. Tap ↻ to retry."
     }
 
 private fun areaStatusColour(area: OfflineArea): Color = when (area.status) {

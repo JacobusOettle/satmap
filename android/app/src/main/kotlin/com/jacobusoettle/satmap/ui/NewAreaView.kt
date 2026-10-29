@@ -59,8 +59,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.NumberFormat
-import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
 
@@ -485,7 +483,7 @@ private fun SizeSection(state: NewAreaState) {
             e != null -> {
                 val chosen = state.chosenZoom
                 FormValueRow("Up to zoom $chosen", state.sizeText(chosen))
-                FormValueRow("Tiles (most)", countText(e.tiles))
+                FormValueRow("Tiles (most)", Format.count(e.tiles))
                 state.freeSpace?.let { free ->
                     FormValueRow("Free space", Format.bytes(free))
                     if (e.bytes > free - OfflineManager.minimumFreeSpace) {
@@ -526,10 +524,6 @@ private fun SizeSection(state: NewAreaState) {
 /** "%.1f km" under 10 km, else whole kilometres grouped ("7,930 km"). */
 internal fun kilometres(km: Double): String =
     if (km < 10) stringFormat("%.1f km", km) else "${Format.count(km.rounded().toInt())} km"
-
-/** `Format.count` for a tile count, which can pass an `Int` (Swift's `Int` is 64-bit): grouped in the phone's
- *  language, as `Format.count`. */
-internal fun countText(n: Long): String = NumberFormat.getIntegerInstance(Locale.getDefault()).format(n)
 
 /** Android only: notifications are asked for at the first tap of a Download button (DESIGN.md D10), so a download's
  *  progress can show in one. Asked once per install (`notificationPermissionAsked`); the download starts whatever the

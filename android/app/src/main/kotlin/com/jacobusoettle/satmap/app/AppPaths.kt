@@ -151,4 +151,7 @@ object Format {
 
     /** Grouped in the phone's language, as NumberFormatter `.decimal`. */
     fun count(n: Int): String = NumberFormat.getIntegerInstance(Locale.getDefault()).format(n)
+
+    /** The same for tile counts, which can pass Int's range (Swift's Int is 64-bit). */
+    fun count(n: Long): String = NumberFormat.getIntegerInstance(Locale.getDefault()).format(n)
 }
