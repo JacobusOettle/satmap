@@ -3,11 +3,9 @@ package com.jacobusoettle.satmap.core
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -62,7 +60,7 @@ data class OfflineArea(
     fun toJson(): JsonObject = buildJsonObject {
         put("id", id.toString().uppercase())
         put("name", name)
-        put("created", swiftNumber(created - referenceDate))
+        put("created", swiftJSONNumber(created - referenceDate))
         put("shape", shape.toJson())
         roads?.let { r -> put("roads", buildJsonArray { r.forEach { line -> add(buildJsonArray { line.forEach { add(it.toJson()) } }) } }) }
         preset?.let { put("preset", it) }
@@ -88,7 +86,7 @@ data class OfflineArea(
             return OfflineArea(
                 id = uuid(value("id").jsonPrimitive.content),
                 name = string(value("name")),
-                created = value("created").jsonPrimitive.double + referenceDate,
+                created = jsonDouble(value("created")) + referenceDate,
                 shape = CoverageShape.fromJson(value("shape")),
                 roads = optional("roads")?.jsonArray?.map { line -> line.jsonArray.map(GeoPoint::fromJson) },
                 preset = optional("preset")?.let(::string),
@@ -121,15 +119,6 @@ data class OfflineArea(
             p.content.toLongOrNull()?.let { return it }
             val d = BigDecimal(p.content)
             return d.toBigIntegerExact().longValueExact()
-        }
-
-        /** A `Double` as Swift's `JSONEncoder` writes it: in full, a whole number without a decimal point
-         *  ("783388800", "783388800.25"). */
-        private fun swiftNumber(v: Double): JsonPrimitive {
-            if (!v.isFinite()) return JsonPrimitive(v)
-            var d = BigDecimal(v.toString()).stripTrailingZeros()
-            if (d.scale() < 0) d = d.setScale(0)
-            return JsonPrimitive(d)
         }
     }
 }

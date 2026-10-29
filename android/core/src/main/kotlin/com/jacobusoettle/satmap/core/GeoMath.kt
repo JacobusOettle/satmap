@@ -1,13 +1,18 @@
 package com.jacobusoettle.satmap.core
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonUnquotedLiteral
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.math.BigDecimal
+import java.math.MathContext
+import java.math.RoundingMode
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.asin
@@ -28,17 +33,54 @@ import kotlin.math.sqrt
 data class GeoPoint(val lat: Double, val lon: Double) {
     /** The Swift `Codable` form, `{"lat":…,"lon":…}`, so saved areas read the same on both platforms. */
     fun toJson(): JsonObject = buildJsonObject {
-        put("lat", lat)
-        put("lon", lon)
+        put("lat", swiftJSONNumber(lat))
+        put("lon", swiftJSONNumber(lon))
     }
 
     companion object {
         /** Reads `toJson()`'s form; throws if it isn't one. */
         fun fromJson(json: JsonElement): GeoPoint {
             val o = json.jsonObject
-            return GeoPoint(lat = o.getValue("lat").jsonPrimitive.double, lon = o.getValue("lon").jsonPrimitive.double)
+            return GeoPoint(lat = jsonDouble(o.getValue("lat")), lon = jsonDouble(o.getValue("lon")))
         }
     }
+}
+
+/** A `Double` as Swift's `JSONDecoder` reads one: a JSON number (not a string, nor NaN, hex, "1.5d", "+1", ".5"),
+ *  that a `Double` holds (not overflowing to infinity, nor a non-zero number underflowing to 0). Throws otherwise. */
+internal fun jsonDouble(json: JsonElement): Double {
+    val p = json.jsonPrimitive
+    require(!p.isString && jsonNumber.matches(p.content)) { "Not a number: $p" }
+    val d = p.content.toDouble()
+    require(d.isFinite() && (d != 0.0 || p.content.substringBefore('e').substringBefore('E').none { it in '1'..'9' })) {
+        "Number ${p.content} is not representable"
+    }
+    return d
+}
+
+private val jsonNumber = Regex("""-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
+
+/** A Double as Swift's JSONEncoder writes it: its `description` without a trailing ".0"
+ *  ("150", "0.000123", "1e-07", "1.2345678901234568e+17", "-0"). */
+@OptIn(ExperimentalSerializationApi::class)
+internal fun swiftJSONNumber(v: Double): JsonPrimitive {
+    if (!v.isFinite()) return JsonPrimitive(v) // Swift's encoder throws; never written
+    if (v == 0.0) return JsonUnquotedLiteral(if (1.0 / v < 0) "-0" else "0")
+    // Shortest digits that read back as v, the closest of them, even on a tie (Swift's rule); not Double.toString,
+    // which can differ (4.9E-324) and isn't always shortest on Android.
+    val exact = BigDecimal(v)
+    val d = (1..17).firstNotNullOf { length ->
+        val nearest = exact.round(MathContext(length, RoundingMode.HALF_EVEN))
+        // At a power of two the gap below is half the gap above: there the farther neighbour may read back alone.
+        val other = exact.round(MathContext(length, if (nearest < exact) RoundingMode.CEILING else RoundingMode.FLOOR))
+        listOf(nearest, other).firstOrNull { it.toDouble() == v }
+    }.stripTrailingZeros()
+    val exp = d.precision() - d.scale() - 1
+    if (exp >= -4 && abs(v) <= 9007199254740992.0) return JsonUnquotedLiteral(d.toPlainString())
+    val digits = d.unscaledValue().abs().toString()
+    val mantissa = if (digits.length == 1) digits else digits[0] + "." + digits.substring(1)
+    val e = (if (exp < 0) "-" else "+") + abs(exp).toString().padStart(2, '0')
+    return JsonUnquotedLiteral((if (v < 0) "-" else "") + mantissa + "e" + e)
 }
 
 /** A point in a plane: the Swift code's `(x: Double, y: Double)` tuple (world units, tile units, metres or pixels). */
@@ -132,7 +174,7 @@ object Geo {
         val dφ = φ2 - φ1
         val dλ = (b.lon - a.lon) * PI / 180
         val h = sin(dφ / 2) * sin(dφ / 2) + cos(φ1) * cos(φ2) * sin(dλ / 2) * sin(dλ / 2)
-        return 2 * earthRadius * asin(min(1.0, sqrt(h)))
+        return 2 * earthRadius * asin(swiftMin(1.0, sqrt(h)))
     }
 
     /** The initial great-circle bearing from `a` to `b`, degrees clockwise from true north (0–360). */
@@ -219,10 +261,10 @@ data class GeoBounds(var minLat: Double, var minLon: Double, var maxLat: Double,
 
     /** The Swift `Codable` form, `{"minLat":…,"minLon":…,"maxLat":…,"maxLon":…}`. */
     fun toJson(): JsonObject = buildJsonObject {
-        put("minLat", minLat)
-        put("minLon", minLon)
-        put("maxLat", maxLat)
-        put("maxLon", maxLon)
+        put("minLat", swiftJSONNumber(minLat))
+        put("minLon", swiftJSONNumber(minLon))
+        put("maxLat", swiftJSONNumber(maxLat))
+        put("maxLon", swiftJSONNumber(maxLon))
     }
 
     companion object {
@@ -240,10 +282,10 @@ data class GeoBounds(var minLat: Double, var minLon: Double, var maxLat: Double,
         fun fromJson(json: JsonElement): GeoBounds {
             val o = json.jsonObject
             return GeoBounds(
-                minLat = o.getValue("minLat").jsonPrimitive.double,
-                minLon = o.getValue("minLon").jsonPrimitive.double,
-                maxLat = o.getValue("maxLat").jsonPrimitive.double,
-                maxLon = o.getValue("maxLon").jsonPrimitive.double,
+                minLat = jsonDouble(o.getValue("minLat")),
+                minLon = jsonDouble(o.getValue("minLon")),
+                maxLat = jsonDouble(o.getValue("maxLat")),
+                maxLon = jsonDouble(o.getValue("maxLon")),
             )
         }
     }

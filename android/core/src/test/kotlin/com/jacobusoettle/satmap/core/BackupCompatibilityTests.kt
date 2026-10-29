@@ -1,6 +1,8 @@
 package com.jacobusoettle.satmap.core
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
@@ -9,6 +11,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
@@ -41,6 +44,18 @@ class BackupCompatibilityTests {
         assertEquals(setOf("polygons", "lines", "points", "bufferMeters"), shape.keys)
         val ring = shape.getValue("polygons").jsonArray.first().jsonArray
         assertEquals(mapOf("lat" to -33.9245, "lon" to 18.9232), ring.first().jsonObject.mapValues { it.value.jsonPrimitive.double })
+        // Numbers as Swift's JSONEncoder writes them: whole ones without ".0".
+        assertTrue(json, json.contains(""""created":783388800,""") && json.contains(""""bufferMeters":150}"""))
+    }
+
+    @Test
+    fun testAreaJSONReadsNumbersOnlyAsSwiftDoes() {
+        // Swift's JSONDecoder refuses a date written as a string, or one a Double can't hold.
+        val obj = BackupFixture.area.toJson()
+        assertEquals(BackupFixture.area, OfflineArea.fromJson(Json.parseToJsonElement(obj.toString())))
+        assertThrows(Exception::class.java) { OfflineArea.fromJson(JsonObject(obj + ("created" to JsonPrimitive("783388800")))) }
+        val huge = Json.parseToJsonElement(obj.toString().replace(""""created":783388800""", """"created":1e400"""))
+        assertThrows(Exception::class.java) { OfflineArea.fromJson(huge) }
     }
 
     @Test

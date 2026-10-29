@@ -5,10 +5,8 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -45,7 +43,7 @@ data class CoverageShape(
         put("polygons", buildJsonArray { polygons.forEach { add(pointsJson(it)) } })
         put("lines", buildJsonArray { lines.forEach { add(pointsJson(it)) } })
         put("points", pointsJson(points))
-        put("bufferMeters", bufferMeters)
+        put("bufferMeters", swiftJSONNumber(bufferMeters))
     }
 
     companion object {
@@ -56,7 +54,7 @@ data class CoverageShape(
                 polygons = o.getValue("polygons").jsonArray.map(::pointsFromJson),
                 lines = o.getValue("lines").jsonArray.map(::pointsFromJson),
                 points = pointsFromJson(o.getValue("points")),
-                bufferMeters = o.getValue("bufferMeters").jsonPrimitive.double,
+                bufferMeters = jsonDouble(o.getValue("bufferMeters")),
             )
         }
 
@@ -80,6 +78,20 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
     /** An x-extent in tile units. */
     private class Extent(val lo: Double, val hi: Double)
 
+    /** One row's x-extents as (lo, hi) pairs in a `DoubleArray`, like the Swift's inline `(Double, Double)` tuples:
+     *  an object per extent would need about twice the Swift's memory, too much for a continent-sized area at zoom 22. */
+    private class Extents {
+        var values = DoubleArray(8)
+        var size = 0
+
+        fun add(lo: Double, hi: Double) {
+            if (size + 2 > values.size) values = values.copyOf(values.size * 2)
+            values[size] = lo
+            values[size + 1] = hi
+            size += 2
+        }
+    }
+
     /** A polygon edge crossing a horizontal line, and which way it goes. */
     private class Crossing(val x: Double, val dir: Int)
 
@@ -99,11 +111,11 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
                 max(0.0, shape.bufferMeters) / Geo.metersPerWorldUnit(min(abs(lat), WebMercator.maxLatitude)) * n
 
             /** Per row, x-extents already grown by their buffer. */
-            val extents = HashMap<Int, MutableList<Extent>>()
+            val extents = HashMap<Int, Extents>()
 
             fun add(row: Int, x0: Double, x1: Double, buf: Double) {
                 if (row < 0 || row > maxIndex) return
-                extents.getOrPut(row) { mutableListOf() }.add(Extent(min(x0, x1) - buf, max(x0, x1) + buf))
+                extents.getOrPut(row) { Extents() }.add(min(x0, x1) - buf, max(x0, x1) + buf)
             }
 
             fun toTile(p: GeoPoint): XY {
@@ -205,9 +217,12 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
             val builtRows = mutableListOf<Row>()
             var count = 0L
             for (y in extents.keys.sorted()) {
-                val ranges = extents.getValue(y).map { e ->
-                    val start = max(0, floor(e.lo).toInt())
-                    val end = min(maxIndex, max(start, ceil(e.hi).toInt() - 1))
+                // Each row's extents are let go once its ranges are built.
+                val e = extents.remove(y)!!
+                val ranges = (0 until e.size step 2).map { i ->
+                    val start = max(0, floor(e.values[i]).toInt())
+                    // In Long, as Swift's 64-bit Int: far west of the world an Int would saturate, then wrap at "- 1".
+                    val end = min(maxIndex.toLong(), max(start.toLong(), ceil(e.values[i + 1]).toLong() - 1)).toInt()
                     start..max(start, end)
                 }.sortedBy { it.first }
                 val merged = mutableListOf<IntRange>()
@@ -220,7 +235,7 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
                     }
                 }
                 count += merged.sumOf { it.size }
-                builtRows.add(Row(y, merged))
+                builtRows.add(Row(y, merged.toList()))
             }
             rows = builtRows
             tileCount = count

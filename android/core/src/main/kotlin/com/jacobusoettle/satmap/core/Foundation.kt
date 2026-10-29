@@ -23,6 +23,9 @@ fun Float.rounded(): Float {
     return if (abs(this - t) >= 0.5f) t + sign(this) else t
 }
 
+/** Swift's `min` for doubles: `y < x ? y : x`, so a NaN second argument gives the first (Kotlin's `min` gives NaN). */
+fun swiftMin(x: Double, y: Double): Double = if (y < x) y else x
+
 /** Swift's `String(format:)` for the conversions the app uses: `%f`, `%e` and `%g` with an optional precision
  *  (`%.2f`), and `%%`. Rounds as C's printf does, from the exact binary value with halves to even. Java's
  *  `String.format` rounds the shortest decimal form with halves up instead ("%.2f" of 0.125 is "0.13" there, "0.12"

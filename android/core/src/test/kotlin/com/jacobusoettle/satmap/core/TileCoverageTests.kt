@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -124,5 +125,41 @@ class TileCoverageTests {
         single.forEachTile { if (!looped.contains(it)) missing += 1 }
         assertEquals(0, missing)
         assertGreaterThan(single.tileCount, 40L)
+    }
+
+    @Test
+    fun testFarWestLongitudeCoversOneTileNotTheWholeRow() {
+        // Far off the map to the west the column stays negative (Swift's Int is 64-bit), so it is the row's first tile.
+        val point = TileCoverage(shape = CoverageShape(points = listOf(GeoPoint(lat = 10.0, lon = -1e6))), zoom = 22)
+        assertEquals(1L, point.tileCount)
+        assertEquals(listOf(TileCoverage.Row(y = 1980047, ranges = listOf(0..0))), point.rows)
+        val line = CoverageShape(lines = listOf(listOf(GeoPoint(lat = 10.0, lon = 0.0), GeoPoint(lat = 10.5, lon = -1e6))))
+        assertEquals(2_103_072L, TileCoverage(shape = line, zoom = 22).tileCount)
+        assertEquals(1L, TileCoverage(shape = CoverageShape(points = listOf(GeoPoint(lat = 10.0, lon = -1e12))), zoom = 1).tileCount)
+    }
+
+    @Test
+    fun testContinentSizedLassoAtZoom22FitsInAPhoneHeap() {
+        // The iPhone app counts the tiles of an Africa-sized area at every zoom; at 22 it needs about 220 MB. Here in a
+        // JVM with a 256 MB heap, about what an Android app gets without largeHeap.
+        val java = File(System.getProperty("java.home"), "bin/java").path
+        val process = ProcessBuilder(java, "-Xmx256m", "-cp", System.getProperty("java.class.path"), ContinentCoverage::class.java.name)
+            .redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(output, 0, process.waitFor())
+        assertEquals("900949 rows, 582791590276 tiles", output.lines().last { it.isNotBlank() })
+    }
+}
+
+/** Prints the rows and tiles of an Africa-sized lasso at zoom 22: run in a JVM of its own, with a phone's heap. */
+object ContinentCoverage {
+    @JvmStatic
+    fun main(args: Array<String>) {
+        val ring = (0 until 200).map { k ->
+            val a = k.toDouble() / 200 * 2 * PI
+            GeoPoint(lat = 2 + 36 * sin(a), lon = 17 + 36 * cos(a))
+        }
+        val coverage = TileCoverage(shape = CoverageShape(polygons = listOf(ring)), zoom = 22)
+        println("${coverage.rows.size} rows, ${coverage.tileCount} tiles")
     }
 }

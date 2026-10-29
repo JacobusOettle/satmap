@@ -35,6 +35,17 @@ class GeoTests {
     }
 
     @Test
+    fun testDistanceFromNaNOrInfinityIsHalfwayRoundTheEarth() {
+        // Swift's min(1, NaN) is 1 (Kotlin's min gives NaN), so these come out as π × the Earth's radius on iOS.
+        val half = 20_015_114.442035925
+        val b = GeoPoint(lat = 1.0, lon = 2.0)
+        assertEquals(half, Geo.distance(GeoPoint(lat = Double.NaN, lon = 10.0), b), 0.0)
+        assertEquals(half, Geo.distance(GeoPoint(lat = 0.0, lon = Double.POSITIVE_INFINITY), b), 0.0)
+        assertEquals(half, Geo.distance(GeoPoint(lat = 0.0, lon = Double.NEGATIVE_INFINITY), b), 0.0)
+        assertEquals(40_030_228.88407185, Geo.pathLength(listOf(b, GeoPoint(lat = Double.NaN, lon = 2.0), GeoPoint(lat = 1.5, lon = 2.5))), 0.0)
+    }
+
+    @Test
     fun testPathLengthAndShapeArea() {
         // A 100 m × 100 m square near Skukuza (1 ha), measured corner to corner.
         val lat = -24.99
