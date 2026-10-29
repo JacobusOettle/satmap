@@ -794,7 +794,7 @@ ModalBottomSheet(
 
 1. **The text field and Paste button.**
    - Text field row: placeholder `Paste or type coordinates`, multi-line (`minLines = 1, maxLines = 4`), `KeyboardOptions(autoCorrectEnabled = false, capitalization = KeyboardCapitalization.None, keyboardType = KeyboardType.Text)`, Enter inserts a newline. `testTag("coordinateText")`.
-   - Paste row (padding h16 v8): `Button(colors = containerColor PasteFill, contentColor White, shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(12.dp, 7.dp))` with `Icons.Outlined.ContentPaste` (18 dp) and `Paste` (Body).
+   - Paste row (padding h16 v5, so 44 dp tall): a `Row` clipped to `RoundedCornerShape(8.dp)` on `PasteFill` (alpha 0.4 while disabled), `heightIn(min = 34.dp)`, padding h12 v6, `Arrangement.spacedBy(3.dp)`, with `Icons.Outlined.ContentPaste` (18 dp) and `Paste` (Body), both White (alpha 0.5 while disabled). The 3 dp spacing gives iOS's 7.4 pt ink-to-ink gap, as the glyph sits 2.25 dp inside its 18 dp box.
      - Enabled when `clipboard.hasPrimaryClip() && primaryClipDescription.hasMimeType("text/*")`. Reading the description doesn't trigger Android's paste toast.
      - On tap: `text = primaryClip.getItemAt(0).coerceToText(ctx).toString()`.
    - Footer: `Any format: -25.0969, 31.4371 · 25.0969 S 31.4371 E · 25° 05.814' S 31° 26.227' E · 25°05'48.8"S 31°26'13.6"E · 2505.814,S,03126.227,E (GPS) · map and geo: links · UTM 36J 342401 7223411 · MGRS 36J UT 42401 23411 · plus code 5G6HWC3P+6R`.
@@ -939,7 +939,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
 | `Toggle` | `IosSwitch` (drawn: 51 × 31 track, 27 dp knob) in a `toggleable` row (§1.5) |
 | `Picker(.segmented)` | `SingleChoiceSegmentedButtonRow` + `SegmentedButton(icon = {})` |
 | `TextField` (in a form) | `BasicTextField` + placeholder decoration |
-| `PasteButton` | `Button` (PasteFill) reading `ClipboardManager` |
+| `PasteButton` | a pressable `Row` on PasteFill (§3.10) reading `ClipboardManager` |
 | `ProgressView()` / `ProgressView(value:)` / `ProgressView("…")` | `CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)` / `LinearProgressIndicator(progress = {…})` / spinner over a secondary label |
 | `Button` `.bordered`, `.tint(.white)` | `FilledTonalButton` (White@0.15, White) |
 | `Label(text, systemImage:)` | `Row { Icon; Spacer(…); Text }` |
