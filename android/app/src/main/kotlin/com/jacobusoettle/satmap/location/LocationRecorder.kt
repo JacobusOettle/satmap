@@ -187,7 +187,9 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
 
     private val stepListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
-            stepDetected()
+            // When the step was taken (`timestamp` is on the elapsedRealtimeNanos clock): the plain step detector keeps
+            // the steps made while the CPU sleeps and hands them over together when it wakes.
+            stepDetected(min(now(), event.timestamp / 1e9))
         }
 
         override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
@@ -200,6 +202,11 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
 
     // Sleep mode.
     private var sleepAnchor: GpsFix? = null
+
+    /** The moving episode (its `motionMovingSince`) going on when it fell asleep, which the 600 s veto stopped waiting
+     *  for; null when motion said not moving. */
+    private var sleepEpisode: Double? = null
+
     private var peeking = false
     private val peekTimer = WakeTimer(context, "peek") { startPeek() }
     private val peekEndTimer = WakeTimer(context, "peekEnd") { endPeek() }
@@ -643,6 +650,7 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     private fun enterSleep() {
         _power.value = Power.sleeping
         sleepAnchor = _location.value
+        sleepEpisode = if (motionSaysMoving(now())) motionMovingSince else null
         stationaryTimer.cancel()
         dutyTimer.cancel()
         gpsResting = false
@@ -782,22 +790,22 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         val now = now()
         noteMoving(now)
         lastSignificantMotionAt = now
-        if (_power.value == Power.sleeping) wake()
+        if (_power.value == Power.sleeping && !sameEpisodeAsSleep()) wake()
         // It disarms itself after firing.
         armSignificantMotion()
     }
 
     /** iOS: walking or running. Steady walking (6 steps in 6 s) is the high-confidence case: wake now. Fewer steps are
-     *  the medium one: wait 6 s for a contradiction (the steps stopping) before waking the GPS. Timed as they arrive,
-     *  as iOS handles an activity when it comes. */
-    private fun stepDetected() {
+     *  the medium one: wait 6 s for a contradiction (the steps stopping) before waking the GPS. Timed when they were
+     *  taken (`at`), as the coprocessor judges walking from the real step times: a batch handed over at once isn't
+     *  steady walking. */
+    private fun stepDetected(at: Double) {
         if (!started) return
-        val now = now()
-        noteMoving(now)
-        lastStepAt = now
-        recentSteps.addLast(now)
-        trimSteps(now)
-        if (_power.value != Power.sleeping) return
+        noteMoving(at)
+        lastStepAt = at
+        recentSteps.addLast(at)
+        trimSteps(at)
+        if (_power.value != Power.sleeping || sameEpisodeAsSleep()) return
         if (recentSteps.size >= 6) {
             wake()
         } else if (!pendingMotionWake.scheduled) {
@@ -818,6 +826,14 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     /** iOS: a translating activity of medium or high confidence. */
     private fun noteMoving(now: Double) {
         if (!motionSaysMoving(now)) motionMovingSince = now
+    }
+
+    /** Still the moving episode we fell asleep in, which `evaluateStationary` stopped waiting for after 600 s. iOS is
+     *  told an activity only when it or its confidence changes, so it gets nothing more while that walk or drive goes
+     *  on and stays asleep (the peeks still run). A new episode, once motion has said not moving, wakes. */
+    private fun sameEpisodeAsSleep(): Boolean {
+        val since = motionMovingSince ?: return false
+        return since == sleepEpisode
     }
 
     /** Motion says we're walking/driving: a step in the last 15 s, or significant motion in the last 60 s. Once it

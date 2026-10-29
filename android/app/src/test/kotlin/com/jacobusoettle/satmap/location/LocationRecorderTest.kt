@@ -194,10 +194,12 @@ class LocationRecorderTest {
         return sensor
     }
 
-    /** One step. */
-    private fun step(sensor: Sensor) {
-        shadowOf(app.getSystemService(SensorManager::class.java))
-            .sendSensorEventToListeners(SensorEventBuilder.newBuilder(sensor, floatArrayOf(1f)).build(), sensor)
+    /** One step, taken `ago` seconds before it is handed over (steps kept in the sensor's FIFO while the CPU slept). */
+    private fun step(sensor: Sensor, ago: Double = 0.0) {
+        val event = SensorEventBuilder.newBuilder(sensor, floatArrayOf(1f))
+            .setTimestamp(SystemClock.elapsedRealtimeNanos() - (ago * 1e9).roundToLong())
+            .build()
+        shadowOf(app.getSystemService(SensorManager::class.java)).sendSensorEventToListeners(event, sensor)
         shadowOf(Looper.getMainLooper()).idle()
     }
 
@@ -680,6 +682,29 @@ class LocationRecorderTest {
     }
 
     @Test
+    fun significantMotionInTheMovingItFellAsleepInDoesntWake() {
+        addSignificantMotion()
+        val r = onScreen()
+        gps(home)
+        pass(110.0)
+        // As above: moving by the sensor from 110 s, asleep at 720 s.
+        repeat(20) {
+            ShadowTriggerSensors.fire()
+            pass(30.0)
+        }
+        pass(10.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        // At 720 s, 40 s after the last trigger: the same drive, which iOS isn't told about again. Asleep, armed again.
+        ShadowTriggerSensors.fire()
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        assertEquals(1, ShadowTriggerSensors.armed.size)
+        // A minute without motion ends it; the next trigger is new motion: awake.
+        pass(70.0)
+        ShadowTriggerSensors.fire()
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+    }
+
+    @Test
     fun withoutTheSensorNothingIsArmed() {
         onScreen()
         assertEquals(0, ShadowTriggerSensors.armed.size)
@@ -771,6 +796,54 @@ class LocationRecorderTest {
         step(steps)
         pass(10.0)
         assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+    }
+
+    @Test
+    fun walkingOnTheSpotDoesntWakeOnceItHasFallenAsleep() {
+        val steps = addStepDetector()
+        val r = onScreen()
+        gps(home)
+        // Walking on the spot, two steps a second, for 900 s: sleep is put off for 600 s, then the same walk doesn't
+        // wake it again (iOS is told no new activity while it goes on); only the peeks run.
+        var sleptAt: Double? = null
+        repeat(1800) { i ->
+            step(steps)
+            pass(0.5)
+            val t = (i + 1) * 0.5
+            if (r.power.value == LocationRecorder.Power.sleeping) {
+                if (sleptAt == null) sleptAt = t
+            } else {
+                assertNull("awake again at $t s", sleptAt)
+            }
+        }
+        assertEquals(600.0, sleptAt!!, 15.0)
+        // A 20 s pause ends that walk. Six steps are then a new one: awake.
+        pass(20.0)
+        repeat(5) {
+            step(steps)
+            pass(0.5)
+        }
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        step(steps)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+    }
+
+    @Test
+    fun stepsHandedOverTogetherCountWhenTheyWereTaken() {
+        val steps = addStepDetector()
+        val r = asleep()
+        background()
+        pass(300.0)
+        // The CPU wakes and the sensor's FIFO is emptied: six steps taken 30 s apart, handed over at once. That isn't
+        // steady walking: no wake now, and the pending one finds that the steps stopped.
+        for (ago in listOf(150.0, 120.0, 90.0, 60.0, 30.0, 0.0)) step(steps, ago)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        assertEquals(6.0, dueIn("motion"), 0.0)
+        pass(6.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        // Six steps taken within 6 s are, even when handed over together: awake.
+        for (ago in listOf(2.5, 2.0, 1.5, 1.0, 0.5, 0.0)) step(steps, ago)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
     }
 
     @Test
