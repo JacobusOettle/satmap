@@ -1,10 +1,15 @@
 package com.jacobusoettle.satmap.map
 
+import android.app.Activity
 import android.content.Context
 import android.graphics.PointF
+import android.graphics.Rect
+import android.os.Looper
 import android.os.SystemClock
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.core.GeoPoint
@@ -17,13 +22,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.maplibre.geojson.Polygon
+import org.robolectric.Robolectric
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import kotlin.math.cos
 import kotlin.math.sin
 
 /** Choosing an offline area with the lasso: one finger adds a point every 3 dp and hands the loop over on lift; the
  *  loop is simplified (Douglas–Peucker, 4 dp) into the ring the model is given, or none when it isn't an area; the
- *  draft area is that ring as a closed polygon. */
+ *  draft area is that ring as a closed polygon. While the lasso shows, a stroke from the screen's side edge draws
+ *  rather than going Back. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "xhdpi") // 2 pixels per dp
 class LassoTest {
@@ -201,6 +209,33 @@ class LassoTest {
         // No ring, or fewer than 3 points: nothing.
         assertTrue(DraftAreaLayer.features(null).features()!!.isEmpty())
         assertTrue(DraftAreaLayer.features(ring.take(2)).features()!!.isEmpty())
+    }
+
+    @Test
+    fun whileItShowsTheSideEdgesAreTheLassosNotBack() {
+        // Laid out and showing: its whole frame (the system grants its share of each side edge).
+        assertEquals(listOf(Rect(0, 0, 800, 1600)), lasso.systemGestureExclusionRects)
+
+        // Over a window, hidden and shown as MapController does.
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val shown = LassoView(activity).apply { visibility = View.GONE }
+        val fill = ViewGroup.LayoutParams.MATCH_PARENT
+        activity.setContentView(FrameLayout(activity).apply { addView(shown, FrameLayout.LayoutParams(fill, fill)) })
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(shown.systemGestureExclusionRects.isEmpty())
+
+        shown.visibility = View.VISIBLE
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(shown.width > 0 && shown.height > 0)
+        assertEquals(listOf(Rect(0, 0, shown.width, shown.height)), shown.systemGestureExclusionRects)
+
+        // A new size (a turned screen): the new frame.
+        shown.layoutParams = FrameLayout.LayoutParams(shown.width / 2, shown.height / 2)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf(Rect(0, 0, shown.width, shown.height)), shown.systemGestureExclusionRects)
+
+        shown.visibility = View.GONE
+        assertTrue(shown.systemGestureExclusionRects.isEmpty())
     }
 
     @Test

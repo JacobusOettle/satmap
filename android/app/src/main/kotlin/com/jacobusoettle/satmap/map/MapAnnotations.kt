@@ -11,6 +11,7 @@ import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.os.Build
 import android.util.DisplayMetrics
@@ -403,8 +404,9 @@ class DraftAreaLayer(private val map: MapLibreMap, private val style: Style, pri
 }
 
 /** Captures one finger drawing a closed loop around the area to download. Over the map and `GONE` unless the lasso
- *  is on, so while it shows it takes every touch and the map none. A point is added each time the finger has moved
- *  3 dp; on lift the loop is closed (with 3 points or more) and handed over, in view pixels. */
+ *  is on, so while it shows it takes every touch and the map none, also one starting at the screen's left or right
+ *  edge (see `excludeSystemGestures`). A point is added each time the finger has moved 3 dp; on lift the loop is
+ *  closed (with 3 points or more) and handed over, in view pixels. */
 class LassoView(context: Context) : View(context) {
     var onFinish: ((List<PointF>) -> Unit)? = null
     private val density = resources.displayMetrics.density
@@ -489,6 +491,25 @@ class LassoView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         canvas.drawPath(path, fill)
         canvas.drawPath(path, stroke)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        excludeSystemGestures()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (changedView === this) excludeSystemGestures()
+    }
+
+    /** Android only (the iPhone has no gesture at the screen's sides): with gesture navigation a finger that starts at
+     *  the left or right edge and moves inward goes Back, which would end the drawing and lose the loop. While the
+     *  lasso shows it asks for its whole frame to be left to it, and gives it back when `GONE`. While the navigation
+     *  bar shows, the system grants at most 200 dp of height per side, the lowest part of the frame. */
+    private fun excludeSystemGestures() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        systemGestureExclusionRects = if (visibility == VISIBLE) listOf(Rect(0, 0, width, height)) else emptyList()
     }
 
     companion object {
