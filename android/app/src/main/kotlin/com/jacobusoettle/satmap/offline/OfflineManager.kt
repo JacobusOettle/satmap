@@ -3,10 +3,12 @@ package com.jacobusoettle.satmap.offline
 import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
+import android.provider.OpenableColumns
 import android.util.AtomicFile
 import com.jacobusoettle.satmap.app.AppLifecycle
 import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Connectivity
+import com.jacobusoettle.satmap.app.Format
 import com.jacobusoettle.satmap.app.TileSources
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DownloadLayer
@@ -15,6 +17,7 @@ import com.jacobusoettle.satmap.core.DownloadProgress
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.MBTiles
 import com.jacobusoettle.satmap.core.OfflineArea
+import com.jacobusoettle.satmap.core.OfflineBackup
 import com.jacobusoettle.satmap.core.Roads
 import com.jacobusoettle.satmap.core.SqlException
 import com.jacobusoettle.satmap.core.SqlResult
@@ -25,6 +28,8 @@ import com.jacobusoettle.satmap.core.TileID
 import com.jacobusoettle.satmap.core.WebMercator
 import com.jacobusoettle.satmap.map.HTTPTileFetcher
 import com.jacobusoettle.satmap.map.TileRepository
+import com.jacobusoettle.satmap.ui.SharePresenter
+import com.jacobusoettle.satmap.ui.ShareRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -43,8 +48,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonArray
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.util.UUID
+import kotlin.math.max
 import kotlin.math.min
 
 /** Offline areas: each is a shape (lasso or KML) downloaded as satellite imagery up to `maxZoom` plus elevation tiles
@@ -86,6 +93,44 @@ class OfflineManager(
         fun progressText(p: DownloadProgress): String {
             val percent = if (p.overallTotal > 0) (p.overallDone.toDouble() / p.overallTotal.toDouble() * 100).toInt() else 0
             return "${p.layer} · zoom ${p.zoom} of ${p.maxZoom} · $percent%"
+        }
+
+        /** The restore picker's types (several files at once): any file. MBTiles has no registered type, providers
+         *  report octet-stream, vnd.sqlite3 and others, and the files say themselves what they are (DESIGN.md D13). */
+        val restoreTypes = arrayOf("*/*")
+
+        private val backupLayers = listOf(
+            OfflineBackup.Layer(fileName = TileRepository.Layer.imagery.fileName, key = "imagery", label = "satellite"),
+            OfflineBackup.Layer(fileName = TileRepository.Layer.terrain.fileName, key = "terrain", label = "elevation"),
+        )
+
+        /** Core's `OfflineBackup.export` without its copy (offline spec §2.8 asks core for this as
+         *  `OfflineBackup.prepareExport`; until core has it, it is here): writes the area's settings into its tile
+         *  files and folds their write-ahead logs into them, so each file holds everything by itself, and returns the
+         *  files with the names they are shared under ("Farm - satellite.mbtiles"). Layers not downloaded yet are
+         *  skipped. `usedNames` keeps the names unique (" (2)", compared without case). */
+        internal fun prepareExport(areaFolder: File, layers: List<OfflineBackup.Layer>, name: String, areaJSON: String,
+                                   usedNames: MutableSet<String>): List<Pair<File, String>> {
+            var base = OfflineBackup.fileSafe(name)
+            var n = 2
+            while (base.lowercase() in usedNames) {
+                base = "${OfflineBackup.fileSafe(name)} ($n)"
+                n += 1
+            }
+            usedNames.add(base.lowercase())
+
+            val out = mutableListOf<Pair<File, String>>()
+            for (layer in layers) {
+                val source = File(areaFolder, layer.fileName)
+                if (!source.exists()) continue
+                val store = MBTiles(source, create = false)
+                store.setMetadata(mapOf(OfflineBackup.areaKey to areaJSON, OfflineBackup.layerKey to layer.key))
+                val ready = store.checkpoint()
+                store.close()
+                if (!ready) throw OfflineBackup.Failure.Busy(name)
+                out.add(Pair(source, "$base - ${layer.label}.mbtiles"))
+            }
+            return out
         }
     }
 
@@ -134,6 +179,10 @@ class OfflineManager(
     /** The download paused for an export, resumed by `finishExport`. */
     private var pausedForExport: UUID? = null
 
+    /** Downloads paused because another app opened their area's exported files, resumed when the last one closes
+     *  (Android only). */
+    private val pausedForReaders = HashSet<UUID>()
+
     private var networkRetryDelay = 15.0
 
     /** Set while SatMap, in the background, waits for the signal to come back before giving up its background time:
@@ -179,15 +228,29 @@ class OfflineManager(
             }
         }
         publishToMap()
+        // The road sets shipped with the app (Kruger) are read from its assets.
+        RoadPresets.init(context)
         // Registered here, as the Swift does in its init: AppModel creates the recorder, then this, before itself, so
         // the three are told in that order (DESIGN.md §2.3).
         AppLifecycle.addObserver(this)
         background.onExpire = { backgroundTimeEnded() }
+        background.onStop = { stopFromNotification() }
         background.onStatusChange = { _backgroundStatus.value = it }
         measureFreeSpace() // before anything starts
         // On the main thread after the change, as the Swift's hop to the main queue (DESIGN.md §2.4 rule 2). A
         // StateFlow gives each new state once, and the current one first.
         scope.launch(Dispatchers.Main) { network.collect { networkChanged() } }
+        // Other apps reading exported files (Android only, see `BackupFileProvider`).
+        scope.launch(Dispatchers.Main) {
+            var before = emptyMap<UUID, Int>()
+            ExportShares.readerCounts.collect { now ->
+                val opened = now.keys - before.keys
+                val closed = before.keys - now.keys
+                before = now
+                for (id in opened) readerOpened(id)
+                if (closed.isNotEmpty()) readersClosed(closed)
+            }
+        }
         post { startNextIfIdle() }
     }
 
@@ -321,9 +384,11 @@ class OfflineManager(
     }
 
     fun delete(id: UUID) {
-        // Another app may be reading the area's files (an export): forget the shared files, as iOS removes its
-        // exported copies, which share the area's storage.
-        ExportShares.clear()
+        // Another app may be reading the area's files (an export): forget its shared files, as iOS removes its
+        // exported copies, which share the area's storage. (An app reading one keeps its open file; the space is
+        // freed when it closes it.)
+        ExportShares.forget(id)
+        pausedForReaders.remove(id)
         val wasActive = _activeID.value == id
         val running = task
         _areas.value = _areas.value.filter { it.id != id }
@@ -361,20 +426,79 @@ class OfflineManager(
         _backupMessage.value = null
     }
 
-    /** Exports areas: pauses a download running in one of them, writes each area's settings into its files and shares
-     *  them read-only with the app the user picks. */
+    /** Exports areas: pauses a download running in one of them, writes each area's settings into its files (satellite
+     *  and elevation) and opens the share sheet. Its own presentation, so it works even if the Offline maps sheet is
+     *  closed meanwhile. iOS shares clones of the files; Android shares the files themselves, read-only, as copying a
+     *  15 GB area isn't possible (`BackupFileProvider`). */
     fun export(ids: List<UUID>) {
-        // M4: offline spec §1.13 and §2.8 (zero-copy share through BackupFileProvider), with holdDownloads and
-        // pausedForExport as the Swift.
+        if (_backupStatus.value != null) return
+        _backupStatus.value = "Preparing export…"
+        holdDownloads = true
+        prepareExport(ids) { result ->
+            _backupStatus.value = null
+            result.fold(
+                onSuccess = { uris ->
+                    if (uris.isNotEmpty()) {
+                        SharePresenter.present(ShareRequest(uris, saveToFolder = ::saveToFolder) { finishExport() })
+                    } else {
+                        finishExport()
+                        _backupMessage.value = "Nothing has been downloaded yet to export."
+                    }
+                },
+                onFailure = { e ->
+                    finishExport()
+                    _backupMessage.value = when (e) {
+                        is OfflineBackup.Failure -> e.errorDescription
+                        is MBTiles.StoreError -> e.errorDescription
+                        else -> "Couldn't export."
+                    }
+                },
+            )
+        }
     }
 
-    /** Adds the areas in exported files (normally both files of each area; the satellite file alone also works, and ↻
-     *  then downloads the elevation). The summary for the user ends up in `backupMessage`. */
-    fun restore(uris: List<Uri>) {
-        // M4: offline spec §1.13 and §2.8.
+    private fun prepareExport(ids: List<UUID>, completion: (Result<List<Uri>>) -> Unit) {
+        val chosen = _areas.value.filter { it.id in ids }
+        var waitFor: Job? = null
+        val active = _activeID.value
+        val running = task
+        if (active != null && active in ids && running != null) {
+            pause(active)
+            pausedForExport = active
+            waitFor = running
+        }
+        class Item(val id: UUID, val folder: File, val name: String, val json: String)
+        val items = chosen.map { a ->
+            val saved = a.copy(status = if (a.status == OfflineArea.Status.complete) OfflineArea.Status.complete else OfflineArea.Status.paused)
+            Item(a.id, a.directory, a.name, saved.toJson().toString())
+        }
+        // The files of the export before are no longer offered (iOS removes its export folder).
+        ExportShares.clear()
+        scope.launch {
+            waitFor?.join()
+            val result = withContext(io) {
+                runCatching {
+                    val used = HashSet<String>()
+                    items.flatMap { item ->
+                        prepareExport(item.folder, backupLayers, item.name, item.json, used).map { (file, name) ->
+                            ExportShares.Share(area = item.id, file = file, displayName = name)
+                        }
+                    }
+                }
+            }
+            completion(result.mapCatching { shares ->
+                shares.map { s ->
+                    val uri = BackupFileProvider.uriFor(context, s.file, s.displayName)
+                    ExportShares.register(uri, s)
+                    uri
+                }
+            })
+        }
     }
 
-    /** The share flow returned: downloads may run again, including one paused for the export. */
+    /** The share sheet closed: downloads may run again, including one paused for the export. The shared files stay
+     *  readable until the next export, a deleted area or the next launch, in case the system is still sending them;
+     *  while another app reads them, their area doesn't download (`readerOpened`). */
     fun finishExport() {
         holdDownloads = false
         val id = pausedForExport
@@ -384,6 +508,197 @@ class OfflineManager(
         } else {
             startNextIfIdle()
         }
+    }
+
+    /** "Save to a folder" in the share sheet (Android only: stock Android has no "Save to Files"): copies the export's
+     *  files into the folder picked, a USB drive or a folder on the phone. While a file is copied its area doesn't
+     *  download. */
+    private fun saveToFolder(tree: Uri) {
+        val files = ExportShares.all()
+        if (_backupStatus.value != null || files.isEmpty()) return
+        val total = files.sumOf { it.file.length() }
+        _backupStatus.value = copyingText(0, total)
+        _backupProgress.value = 0.0
+        scope.launch {
+            val report = progressReporter(total)
+            val failed = withContext(io) { BackupSharing.copyInto(context, tree, files, report) }
+            _backupStatus.value = null
+            _backupProgress.value = null
+            if (failed.isNotEmpty()) _backupMessage.value = failed.joinToString("\n") { "Couldn't save $it." }
+            finishExport()
+        }
+    }
+
+    /** Adds the areas in exported files (normally both files of each area; the satellite file alone also works, and ↻
+     *  then downloads the elevation). The files can come from any app or folder (Google Drive, a computer, e-mail …),
+     *  under any name: they say themselves which area and layer they are. The summary for the user ends up in
+     *  `backupMessage`. */
+    fun restore(uris: List<Uri>) {
+        if (_backupStatus.value != null || uris.isEmpty()) return
+        _backupStatus.value = "Restoring…"
+        val known = _areas.value.map { it.id }.toSet()
+        scope.launch {
+            val (restored, problems) = withContext(io) { restoreFiles(uris, known) }
+            val added = restored.filter { a -> _areas.value.none { it.id == a.id } }
+            _areas.value = _areas.value + added
+            save()
+            publishToMap()
+            if (added.isNotEmpty()) _completedRevision.value += 1
+            val lines = mutableListOf<String>()
+            if (added.isNotEmpty()) lines += "Restored ${added.joinToString(", ") { it.name }}."
+            if (added.any { it.status != OfflineArea.Status.complete }) {
+                lines += "Tap ↻ on an area marked Paused to download what its backup didn't include."
+            }
+            lines += problems
+            _backupStatus.value = null
+            _backupProgress.value = null
+            _backupMessage.value = if (lines.isEmpty()) "Nothing to restore." else lines.joinToString("\n")
+        }
+    }
+
+    /** `restore`'s work, on `io`: the restored areas (their files in place) and the problems, for the message. */
+    private fun restoreFiles(uris: List<Uri>, known: Set<UUID>): Pair<List<OfflineArea>, List<String>> {
+        val cr = context.contentResolver
+        val staging = AppPaths.restoreFolder
+        staging.deleteRecursively()
+        staging.mkdirs()
+        try {
+            // The files' names and sizes, for the messages and the progress bar (they can be gigabytes, from Google
+            // Drive or a USB drive). A size the providing app doesn't tell counts as 0.
+            val described = uris.map { uri ->
+                var name: String? = null
+                var size = 0L
+                try {
+                    cr.query(uri, arrayOf(OpenableColumns.SIZE, OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                        if (c.moveToFirst()) {
+                            val s = c.getColumnIndex(OpenableColumns.SIZE)
+                            val n = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                            if (s >= 0 && !c.isNull(s)) size = c.getLong(s)
+                            if (n >= 0 && !c.isNull(n)) name = c.getString(n)
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Neither is told: the name of the address, and no progress for it.
+                }
+                Pair(name?.takeIf { it.isNotEmpty() } ?: uri.lastPathSegment ?: uri.toString(), max(0L, size))
+            }
+            val total = described.sumOf { it.second }
+            var before = 0L
+            val report = progressReporter(total)
+            report(0)
+
+            val problems = mutableListOf<String>()
+            // Copy each file in first: a file of another app can't be opened in place.
+            val found = LinkedHashMap<UUID, Pair<OfflineArea, HashMap<String, File>>>()
+            for ((i, uri) in uris.withIndex()) {
+                val (name, size) = described[i]
+                val local = File(staging, "$i.mbtiles")
+                val copied = try {
+                    val input = cr.openInputStream(uri) ?: throw IOException("No stream")
+                    input.use { FileOutputStream(local).use { out -> BackupSharing.copy(input, out) { report(before + it) } } }
+                    true
+                } catch (e: Exception) {
+                    local.delete() // not left taking space while the others are copied
+                    false
+                }
+                before += size
+                report(before)
+                if (!copied) {
+                    problems += "Couldn't copy $name (is there enough free space?)."
+                    continue
+                }
+                try {
+                    val info = OfflineBackup.inspect(local)
+                    val area = OfflineArea.fromJson(Json.parseToJsonElement(String(info.areaJSON, Charsets.UTF_8)))
+                    found.getOrPut(area.id) { Pair(area, HashMap()) }.second[info.layerKey] = local
+                } catch (e: Exception) {
+                    // Named as the user knows the file (Swift's `inspect` names the copy, "0.mbtiles").
+                    problems += (e as? MBTiles.StoreError)?.errorDescription ?: "$name isn't a SatMap backup."
+                }
+            }
+
+            val restored = mutableListOf<OfflineArea>()
+            for ((id, item) in found) {
+                val (saved, files) = item
+                if (id in known) {
+                    problems += "${saved.name} is already in SatMap."
+                    continue
+                }
+                val folder = AppPaths.offlineArea(id)
+                var complete = true
+                for (layer in backupLayers) {
+                    val target = File(folder, layer.fileName)
+                    target.delete()
+                    val file = files[layer.key]
+                    if (file != null && move(file, target)) continue
+                    complete = false
+                }
+                restored += saved.copy(
+                    status = if (complete && saved.status == OfflineArea.Status.complete) OfflineArea.Status.complete else OfflineArea.Status.paused,
+                    problem = null,
+                    bytesOnDisk = AppPaths.size(folder),
+                )
+            }
+            return Pair(restored, problems)
+        } finally {
+            staging.deleteRecursively()
+        }
+    }
+
+    /** Moves a file within the app's storage (one file system), or copies it when that can't be done. */
+    private fun move(file: File, target: File): Boolean {
+        if (file.renameTo(target)) return true
+        return try {
+            file.copyTo(target, overwrite = true)
+            file.delete()
+            true
+        } catch (e: IOException) {
+            target.delete()
+            false
+        }
+    }
+
+    /** Shows how far a copy of `total` bytes has got ("Copying 1.2 GB of 3.4 GB…"), at most every 0.1 s and at the end.
+     *  Called on `io`; the texts are set on the main thread. */
+    private fun progressReporter(total: Long): (Long) -> Unit {
+        var shown = SystemClock.elapsedRealtime()
+        return report@{ done ->
+            val now = SystemClock.elapsedRealtime()
+            if (total <= 0 || !(now - shown > 100 || done >= total)) return@report
+            shown = now
+            val text = copyingText(done, total)
+            val share = min(1.0, done.toDouble() / total.toDouble())
+            post {
+                // (Not once the task has ended.)
+                if (_backupStatus.value != null) {
+                    _backupStatus.value = text
+                    _backupProgress.value = share
+                }
+            }
+        }
+    }
+
+    private fun copyingText(done: Long, total: Long) = "Copying ${Format.bytes(min(done, total))} of ${Format.bytes(total)}…"
+
+    // Other apps reading exported files
+
+    /** Another app opened one of an area's shared files: while it reads, the area doesn't download, so the file stays
+     *  as it was exported (iOS shares a clone, which a download can't change). */
+    private fun readerOpened(id: UUID) {
+        if (_activeID.value == id && task != null) {
+            pause(id)
+            pausedForReaders += id
+        }
+    }
+
+    /** The last reader of these areas closed: a download paused for them goes on, and the queue moves. */
+    private fun readersClosed(ids: Set<UUID>) {
+        for (id in ids) {
+            if (pausedForReaders.remove(id) && _areas.value.any { it.id == id && it.status == OfflineArea.Status.paused }) {
+                resume(id)
+            }
+        }
+        startNextIfIdle()
     }
 
     /** Deletes area folders that no longer belong to an area (e.g. the app was closed while deleting one). */
@@ -461,11 +776,14 @@ class OfflineManager(
     /** The notification's Stop. Android shows the notification with SatMap open too: there it pauses the area, as the
      *  row's pause button does; in the background it is iOS's Lock Screen stop. */
     fun stopFromNotification() {
-        // M4: the service's `stopping` comes first, so `allowsBackgroundWork` is false and nothing starts again.
+        // (In the background `BackgroundDownload` has already stopped allowing background work, so nothing starts again
+        // until SatMap is opened.)
         if (inForeground) {
             _activeID.value?.let { pause(it) }
-        } else {
+        } else if (task != null) {
             backgroundTimeEnded()
+        } else {
+            background.end(success = false) // only waiting for a signal
         }
     }
 

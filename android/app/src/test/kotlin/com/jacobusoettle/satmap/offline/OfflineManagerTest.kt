@@ -18,6 +18,8 @@ import com.jacobusoettle.satmap.core.MBTiles
 import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.OfflineArea.Status
 import com.jacobusoettle.satmap.core.OfflineBackup
+import com.jacobusoettle.satmap.core.Roads
+import com.jacobusoettle.satmap.core.TileCoverage
 import com.jacobusoettle.satmap.core.TileFetchResult
 import com.jacobusoettle.satmap.core.TileFetching
 import com.jacobusoettle.satmap.core.TileID
@@ -47,6 +49,7 @@ import java.io.File
 import java.time.Duration
 import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 
 /** `OfflineManager`'s list and queue (offline spec §1.1–1.5, §2.14): the runs are real (`TileDownloadJob` into
@@ -443,9 +446,13 @@ class OfflineManagerTest {
             val b = add(m, "B")
             idleUntil { area(b).status == Status.incomplete && m.activeID.value == null } // the low-space stop
             settle()
+            // (`io` waits until the space is freed, so the measure after the refusal finds it whatever the threads do.)
+            val hold = CountDownLatch(1)
+            executor.submit { hold.await() }
             val c = add(m, "C")
             assertEquals(Status.incomplete, area(c).status) // refused at once, by the last measure
             free = 20L shl 30
+            hold.countDown()
             settle() // (measured again after the refusal)
             val n = measuredOn.size
             process.currentState = Lifecycle.State.CREATED
@@ -476,6 +483,28 @@ class OfflineManagerTest {
         idle()
         assertEquals(listOf(b), runs)
         assertEquals(Status.complete, area(b).status)
+    }
+
+    @Test
+    fun theKrugerAreaDownloadsAlongItsShippedRoads() {
+        val m = makeManager()
+        idle()
+        // The roads from the app's assets (KrugerRoads.json), not stored with the area.
+        val a = add(m, "Kruger National Park roads", maxZoom = 10, preset = RoadPresets.kruger)
+        idle()
+        val done = area(a)
+        assertEquals(Status.complete, done.status)
+        assertNull(done.roads)
+        val roads = RoadPresets.load(RoadPresets.kruger)!!.roads
+        assertEquals(roads, done.roadLines)
+        // Imagery along the roads only; elevation for the whole area.
+        val corridor = Roads.corridor(roads)
+        val imagery = MBTiles(File(done.directory, "imagery.mbtiles"), create = false)
+        assertEquals((0..10).sumOf { TileCoverage(shape = corridor, zoom = it).tileCount }, imagery.tileCount())
+        imagery.close()
+        val terrain = MBTiles(File(done.directory, "terrain.mbtiles"), create = false)
+        assertEquals((0..15).sumOf { TileCoverage(shape = farm, zoom = it).tileCount }, terrain.tileCount())
+        terrain.close()
     }
 
     @Test
@@ -654,10 +683,12 @@ class OfflineManagerTest {
         val a = add(m, "A")
         idle()
         assertEquals(Status.downloading, area(a).status)
-        // Left, and the background time ends: back to queued, to continue when opened.
+        // Left without the foreground service (Robolectric doesn't start it), and the background time ends after 25 s:
+        // back to queued, to continue when opened.
         process.currentState = Lifecycle.State.CREATED
-        m.backgroundTimeEnded()
-        idle()
+        wait(24.9)
+        assertEquals(Status.downloading, area(a).status)
+        wait(0.1)
         assertEquals(Status.queued, area(a).status)
         assertNull(m.activeID.value)
         val b = add(m, "B")

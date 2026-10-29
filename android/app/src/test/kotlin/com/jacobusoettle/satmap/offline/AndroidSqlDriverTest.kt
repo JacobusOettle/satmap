@@ -441,7 +441,7 @@ class AndroidSqlDriverTest {
     }
 
     /** The backup both apps' tests expect (core's `BackupFixture`, and the Swift tests', have the same values). */
-    private object Fixture {
+    internal object Fixture {
         val area = OfflineArea(
             id = UUID.fromString("6F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9"),
             name = "Fixture farm",
