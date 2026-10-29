@@ -247,7 +247,7 @@ final class ScreenshotTests: XCTestCase {
         dragMap(dx: -0.25, dy: 0)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.45)).tap() // D
         sleep(2)
-        tap("Close shape") // (the map glides on a little after each drag, so where A ends up isn't known exactly)
+        tap("Close shape") // (rather than A itself, whose spot after the drags isn't known to the point)
         sleep(3)
         XCTAssertEqual(currentMeasureState(), .shape)
         XCTAssertTrue(app.staticTexts["Shape A–D · 4 corners"].exists, "The shape didn't get four corners")
@@ -425,10 +425,12 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertFalse(bar.exists, "The \(title) sheet didn't close")
     }
 
-    /// Moves the map by dragging it, a share of the screen each way (slowly, so it doesn't glide on).
+    /// Moves the map by dragging it, a share of the screen each way: slowly, and held still before the finger is
+    /// lifted, so the map has no speed to glide on with and moves by the drag.
     private func dragMap(dx: CGFloat, dy: CGFloat) {
         let from = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
-        from.press(forDuration: 0.2, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5 + dx, dy: 0.45 + dy)))
+        let to = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5 + dx, dy: 0.45 + dy))
+        from.press(forDuration: 0.2, thenDragTo: to, withVelocity: .slow, thenHoldForDuration: 0.5)
         sleep(2)
     }
 

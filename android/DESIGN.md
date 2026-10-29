@@ -133,6 +133,9 @@ package owns the file (§7). Only the owner edits a file.
   - Plus `TestApplication.kt`: a bare `Application` that initialises nothing (not even `MBTiles.driver`, §2.2).
   - Plus `src/test/resources/robolectric.properties` with `application=com.jacobusoettle.satmap.TestApplication` and `sdk=35`, so MapLibre's native code is never loaded under Robolectric.
 - `app/src/androidTest/kotlin/com/jacobusoettle/satmap/`: `ScreenshotTest.kt`, `ZoomTest.kt`, `TestLocations.kt`, `Gestures.kt` (§8.2).
+- `app/src/sharedTest/kotlin/com/jacobusoettle/satmap/`: `Touches.kt`, where and when the walk touches the screen. It is
+  compiled into both the instrumented tests and the unit tests (`TouchesTest`), which give its drags to MapLibre's own
+  gesture detector.
 - `app/src/main/res/`: listed in §5.5.
 
 ---
@@ -1372,8 +1375,9 @@ reported at the end).
 | `navigationBars["Blocks"]` | `onNodeWithTag("screenTitle")` with text `Blocks` |
 | `.value` (`above sea level`, `ft`, the terrain button) | `SemanticsProperties.StateDescription` |
 | `.label` (`Copied`, `measuredDistance` units) | `ContentDescription` / `Text` |
-| map taps at normalised offsets | `UiDevice.click(x·W, y·H)` |
-| `press(forDuration:thenDragTo:)`, `dragMap` | `Gestures.pressAndDrag(from, to, holdMs)`, built from `MotionEvent`s through `UiAutomation.injectInputEvent` (down, hold, 20 moves, up) |
+| map taps at normalised offsets (`app.coordinate(withNormalizedOffset:)` on the 402 × 874 pt window) | `UiDevice.click` at the same distance from the map's centre (the crosshair) in dp as the iPhone's point is from its window's middle in points (`Touches.iphonePoint`), not at shares of the taller screen |
+| `press(forDuration:thenDragTo:)` (the pin, form scrolls) | `Gestures.pressAndDrag(from, to, holdMs)`, built from `MotionEvent`s through `UiAutomation.injectInputEvent` (down, hold, 20 moves 16 ms apart, up) |
+| `dragMap`: `press(forDuration: 0.2, thenDragTo:, withVelocity: .slow, thenHoldForDuration: 0.5)`, held still before lifting so MapKit doesn't glide on | `Gestures.dragMap`: the same, plus a first move of 5 dp along the drag and as much further at the end, since MapLibre doesn't apply the move that passes its 4 dp threshold (`Touches.mapDrag`). Neither map glides on, so both walks come out the same each time. |
 | "Save to Files" in the share sheet | `UiDevice.wait(Until.hasObject(By.text("Save to a folder")), 30 s)` |
 | `XCUIScreen.screenshot()` | `UiDevice.takeScreenshot(File(targetContext.getExternalFilesDir("screenshots"), "$name.png"))` |
 

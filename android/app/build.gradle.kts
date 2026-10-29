@@ -55,6 +55,9 @@ android {
     sourceSets {
         // The same shipped data as the iPhone app: aviation places and the Kruger roads.
         getByName("main").assets.srcDirs("../../SatMap/Resources")
+        // Where the screenshot walk touches the screen: made on the emulator, checked by the unit tests.
+        getByName("test").kotlin.srcDir("src/sharedTest/kotlin")
+        getByName("androidTest").kotlin.srcDir("src/sharedTest/kotlin")
     }
 
     testOptions {

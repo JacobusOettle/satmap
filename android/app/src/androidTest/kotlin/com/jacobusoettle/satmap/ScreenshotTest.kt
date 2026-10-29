@@ -373,7 +373,7 @@ class ScreenshotTest {
         dragMap(-0.25, 0.0)
         tapScreen(0.3, 0.45) // D
         sleep(2)
-        tap("Close shape") // (the map glides on a little after each drag, so where A ends up isn't known exactly)
+        tap("Close shape") // (rather than A itself, whose spot after the drags isn't known to the point)
         sleep(3)
         checkEqual(currentMeasureState(), MeasureState.shape)
         check(exists(staticText("Shape A–D · 4 corners")), "The shape didn't get four corners")
@@ -538,9 +538,11 @@ class ScreenshotTest {
         check(!exists(bar), "The $title sheet didn't close")
     }
 
-    /** Moves the map by dragging it, a share of the screen each way (slowly, so it doesn't glide on). */
+    /** Moves the map by dragging it, a share of the screen each way: slowly, and held still before the finger is
+     *  lifted, so the map has no speed to glide on with and moves by the drag. (MapLibre leaves out the first few dp
+     *  of a drag: `Gestures.dragMap` goes that much further.) */
     private fun dragMap(dx: Double, dy: Double) {
-        Gestures.pressAndDrag(screenPoint(0.5, 0.45), screenPoint(0.5 + dx, 0.45 + dy), 200)
+        Gestures.dragMap(screenPoint(0.5, 0.45), screenPoint(0.5 + dx, 0.45 + dy), 200, 500, density)
         sleep(2)
     }
 
@@ -596,7 +598,6 @@ class ScreenshotTest {
      *  bar and the navigation bar (lists only create the rows near the screen, and a tap on a sliver at the bottom edge
      *  is lost). */
     private fun scrollTo(element: Query) {
-        val density = instrumentation.targetContext.resources.displayMetrics.density
         for (i in 0 until 8) {
             val frame = screenFrame(element)
             if (frame != null && isHittable(element) &&
@@ -927,9 +928,29 @@ class ScreenshotTest {
 
     // Screen and map
 
-    /** `app.coordinate(withNormalizedOffset:)`: a share of the screen's width and height, in pixels. */
-    private fun screenPoint(x: Double, y: Double) =
-        PointF((x * device.displayWidth).toFloat(), (y * device.displayHeight).toFloat())
+    /** `app.coordinate(withNormalizedOffset:)` on the iPhone's 402 × 874 pt window, in screen pixels: as far from the
+     *  map's centre (the crosshair) in dp as the iPhone's point is from its window's middle in points
+     *  (`Touches.iphonePoint`), so taps and drags land where they do on the iPhone, relative to the map. */
+    private fun screenPoint(x: Double, y: Double) = Touches.iphonePoint(x, y, mapCentre(), density)
+
+    /** The map's centre on the screen, in pixels (the screen's centre without a map). */
+    private fun mapCentre(): PointF {
+        var centre = PointF(device.displayWidth / 2f, device.displayHeight / 2f)
+        instrumentation.runOnMainSync {
+            // (On the main thread an exception would end the app.)
+            try {
+                val view = (AppModel.shared.map as? MapController)?.container ?: return@runOnMainSync
+                if (view.width == 0 || view.height == 0) return@runOnMainSync
+                val at = IntArray(2).also { view.getLocationOnScreen(it) }
+                centre = PointF(at[0] + view.width / 2f, at[1] + view.height / 2f)
+            } catch (e: Throwable) {
+                Log.w(TAG, "The map's centre: ${short(e)}")
+            }
+        }
+        return centre
+    }
+
+    private val density: Float get() = instrumentation.targetContext.resources.displayMetrics.density
 
     private fun tapScreen(x: Double, y: Double) {
         val p = screenPoint(x, y)
