@@ -102,11 +102,11 @@ class ZipArchive(data: ByteArray) {
             if (decompressedSize > Int.MAX_VALUE - 8) return null
             val size = decompressedSize.toInt()
             val out = ByteArray(size)
-            // nowrap: raw DEFLATE (no zlib header or checksum). Inflater's documentation asks for one extra "dummy"
-            // input byte with nowrap.
+            // nowrap: raw DEFLATE (no zlib header or checksum). No extra "dummy" input byte, as in `Inflate.raw`: zlib
+            // 1.2+ doesn't need it, and with one a stream cut short would decode the missing end from that zero byte.
             val inflater = Inflater(true)
             try {
-                inflater.setInput(input.copyOf(input.size + 1))
+                inflater.setInput(input)
                 var written = 0
                 while (written < size) {
                     val n = inflater.inflate(out, written, size - written)

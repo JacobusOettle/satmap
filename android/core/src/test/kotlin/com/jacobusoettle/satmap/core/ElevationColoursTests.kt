@@ -100,6 +100,26 @@ class ElevationColoursTests {
     }
 
     @Test
+    fun testRangeIgnoresNaNInCurrentWhileHeightsAreStillComing() {
+        // Swift's min and max keep the other value when one is NaN.
+        val nanLow = ElevationRange(low = Double.NaN, high = 1.84)
+        assertEquals(
+            ElevationRange(low = 0.0, high = 3_000.0),
+            ElevationColours.range(low = 3.95, high = 2_782.0, current = nanLow, complete = false),
+        )
+        val nanHigh = ElevationRange(low = 100.0, high = Double.NaN)
+        assertEquals(
+            ElevationRange(low = 0.0, high = 3_000.0),
+            ElevationColours.range(low = 3.95, high = 2_782.0, current = nanHigh, complete = false),
+        )
+        // Swift's max(0, NaN) is 0.
+        assertEquals(
+            ElevationRange(low = 0.0, high = 10.0),
+            ElevationColours.range(low = Double.POSITIVE_INFINITY, high = Double.NEGATIVE_INFINITY, current = null),
+        )
+    }
+
+    @Test
     fun testNiceSteps() {
         assertEquals(20.0, ElevationColours.niceStep(17.5), 0.0)
         assertEquals(5.0, ElevationColours.niceStep(3.0), 0.0)

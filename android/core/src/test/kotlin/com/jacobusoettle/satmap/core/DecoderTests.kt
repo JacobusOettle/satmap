@@ -45,4 +45,34 @@ class DecoderTests {
     fun testRejectsGarbage() {
         assertNull(PNGDecoder.decode(byteArrayOf(1, 2, 3)))
     }
+
+    @Test
+    fun testRejectsDeflateStreamCutShort() {
+        // As on iOS (compression_decode_buffer can't write bytes that aren't in the input): nil, not a zero byte.
+        assertNull(Inflate.raw(bytes(0x01, 0x01, 0x00, 0xFE, 0xFF), decompressedSize = 1))
+        assertArrayEquals(bytes(0x41), Inflate.raw(bytes(0x01, 0x01, 0x00, 0xFE, 0xFF, 0x41), decompressedSize = 1))
+        // A 4x4 black RGB PNG whose IDAT (a stored zlib stream) lacks the last byte of its checksum, so one byte of the
+        // image data is missing: no image, and no Terrarium tile (not 16 heights of -32768 m).
+        val idat = bytes(0x78, 0x01, 0x01, 0x34, 0x00, 0xCB, 0xFF) + ByteArray(52) + bytes(0x00, 0x34, 0x00, 0x01)
+        val good = png(idat)
+        val cut = png(idat.copyOf(idat.size - 1))
+        assertEquals(119, cut.size)
+        assertNotNull(PNGDecoder.decode(good))
+        assertEquals(-32768f, Terrarium.decode(good, id = TileID(z = 12, x = 0, y = 0))!!.values[15])
+        assertNull(PNGDecoder.decode(cut))
+        assertNull(Terrarium.decode(cut, id = TileID(z = 12, x = 0, y = 0)))
+    }
+
+    private fun bytes(vararg b: Int) = ByteArray(b.size) { b[it].toByte() }
+
+    /** A 4x4 8-bit RGB PNG with the given IDAT data (the decoder doesn't check the chunks' CRCs: zeros). */
+    private fun png(idat: ByteArray): ByteArray {
+        fun chunk(type: String, data: ByteArray): ByteArray {
+            val n = data.size
+            return bytes(n ushr 24, (n ushr 16) and 0xFF, (n ushr 8) and 0xFF, n and 0xFF) + type.encodeToByteArray() +
+                data + ByteArray(4)
+        }
+        return bytes(137, 80, 78, 71, 13, 10, 26, 10) +
+            chunk("IHDR", bytes(0, 0, 0, 4, 0, 0, 0, 4, 8, 2, 0, 0, 0)) + chunk("IDAT", idat) + chunk("IEND", ByteArray(0))
+    }
 }

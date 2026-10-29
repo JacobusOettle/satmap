@@ -12,10 +12,11 @@ object Inflate {
         if (input.isEmpty() || decompressedSize <= 0) return null
         val out = ByteArray(decompressedSize)
         // nowrap: raw DEFLATE (no zlib header or checksum). Inflater's documentation asks for one extra "dummy" input
-        // byte with nowrap, which zlib may read past the end of the stream.
+        // byte with nowrap, but zlib 1.2+ (on the JVM and on Android) doesn't need it; and with one, a stream cut short
+        // decodes the missing end from that invented zero byte, which Apple's compression_decode_buffer cannot do.
         val inflater = Inflater(true)
         try {
-            inflater.setInput(input.copyOf(input.size + 1))
+            inflater.setInput(input)
             var written = 0
             while (written < decompressedSize) {
                 val n = inflater.inflate(out, written, decompressedSize - written)

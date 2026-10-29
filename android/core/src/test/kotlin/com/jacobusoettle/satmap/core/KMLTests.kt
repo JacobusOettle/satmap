@@ -98,4 +98,30 @@ class KMLTests {
     fun testRejectsGarbage() {
         assertThrows(Exception::class.java) { KMLParser.parse("hello".encodeToByteArray()) }
     }
+
+    @Test
+    fun testKMZEntryWithDeflateDataCutShortIsCorrupt() {
+        // A stored DEFLATE block of 1 byte whose byte is missing: corrupt, as on iOS (not a zero byte).
+        val cut = ZipArchive(zip("doc.kml", deflated = bytes(0x01, 0x01, 0x00, 0xFE, 0xFF), size = 1))
+        assertThrows(ZipArchive.ZipError.Corrupt::class.java) { cut.extract(cut.entries[0]) }
+        val whole = ZipArchive(zip("doc.kml", deflated = bytes(0x01, 0x01, 0x00, 0xFE, 0xFF, 0x41), size = 1))
+        assertEquals("A", whole.extract(whole.entries[0]).decodeToString())
+    }
+
+    private fun bytes(vararg b: Int) = ByteArray(b.size) { b[it].toByte() }
+
+    /** A zip archive of one DEFLATE entry (CRC left at 0: not checked). */
+    private fun zip(name: String, deflated: ByteArray, size: Int): ByteArray {
+        fun le16(v: Int) = bytes(v and 0xFF, (v ushr 8) and 0xFF)
+        fun le32(v: Int) = le16(v and 0xFFFF) + le16(v ushr 16)
+        val n = name.encodeToByteArray()
+        val local = bytes(0x50, 0x4B, 0x03, 0x04) + le16(20) + le16(0) + le16(8) + le16(0) + le16(0) + le32(0) +
+            le32(deflated.size) + le32(size) + le16(n.size) + le16(0) + n + deflated
+        val central = bytes(0x50, 0x4B, 0x01, 0x02) + le16(20) + le16(20) + le16(0) + le16(8) + le16(0) + le16(0) +
+            le32(0) + le32(deflated.size) + le32(size) + le16(n.size) + le16(0) + le16(0) + le16(0) + le16(0) +
+            le32(0) + le32(0) + n
+        val end = bytes(0x50, 0x4B, 0x05, 0x06) + le16(0) + le16(0) + le16(1) + le16(1) + le32(central.size) +
+            le32(local.size) + le16(0)
+        return local + central + end
+    }
 }

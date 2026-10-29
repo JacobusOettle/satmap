@@ -153,13 +153,13 @@ object ElevationColours {
         var hi = high
         if (!complete && current != null) {
             val c = current
-            lo = min(lo, c.low)
-            hi = max(hi, c.high)
+            lo = if (c.low < lo) c.low else lo // Swift's min/max: a NaN in current is ignored
+            hi = if (c.high >= hi) c.high else hi
         }
         if (hi - lo < minimumSpan) {
             // Around the middle, but not below sea level for land above it (the sea isn't coloured).
             lo = (lo + hi) / 2 - minimumSpan / 2
-            if (low >= 0) lo = max(0.0, lo)
+            if (low >= 0) lo = if (lo >= 0) lo else 0.0 // Swift's max(0, lo): NaN gives 0
             hi = lo + minimumSpan
         }
         val step = niceStep((hi - lo) / 10)
