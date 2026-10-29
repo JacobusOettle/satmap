@@ -289,15 +289,25 @@ fun FormTextFieldRow(
     }
 }
 
-/** A row deleted by swiping it to the left (red "Delete"), also offered as an accessibility action. */
+/** A row deleted by swiping it to the left (red "Delete"), also offered as TalkBack's "Delete" action (iOS's
+ *  `.onDelete`). `content` gets that action as a modifier for the row's tappable node (its button, or the row when it
+ *  is one): TalkBack only lands on nodes that can be tapped or have text, never on the swipe box itself.
+ *  Callers key each row by its item's id, `key(item.id) { FormSwipeToDeleteRow(...) }`: the swipe stays settled at
+ *  "deleted", so without the key the row that moves up into a deleted row's place takes over its swipe and is
+ *  deleted too, and so on down the list. */
 @Composable
-fun FormSwipeToDeleteRow(onDelete: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+fun FormSwipeToDeleteRow(
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable (deleteAction: Modifier) -> Unit,
+) {
     val state = rememberSwipeToDismissBoxState()
+    val deleteAction = Modifier.semantics {
+        customActions = listOf(CustomAccessibilityAction("Delete") { onDelete(); true })
+    }
     SwipeToDismissBox(
         state = state,
-        modifier = modifier.semantics {
-            customActions = listOf(CustomAccessibilityAction("Delete") { onDelete(); true })
-        },
+        modifier = modifier,
         backgroundContent = {
             Box(
                 Modifier.fillMaxWidth().fillMaxHeight().background(SystemRed).padding(end = 20.dp),
@@ -309,6 +319,6 @@ fun FormSwipeToDeleteRow(onDelete: () -> Unit, modifier: Modifier = Modifier, co
         enableDismissFromStartToEnd = false,
         onDismiss = { if (it == SwipeToDismissBoxValue.EndToStart) onDelete() },
     ) {
-        Box(Modifier.background(CellBackground)) { content() }
+        Box(Modifier.background(CellBackground)) { content(deleteAction) }
     }
 }

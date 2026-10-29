@@ -36,6 +36,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -136,6 +137,13 @@ private fun PasteRow(onPaste: (String) -> Unit) {
     val context = LocalContext.current
     val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
     var hasText by remember { mutableStateOf(clipboardHasText(clipboard)) }
+    // Android 10+ tells only the app in front about clipboard changes, and reads nothing before the window has the
+    // focus: a position copied in another app is seen when the sheet's window gets the focus back.
+    val focused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(focused) {
+        if (focused) hasText = clipboardHasText(clipboard)
+    }
+    // Copies made in SatMap.
     DisposableEffect(clipboard) {
         val listener = ClipboardManager.OnPrimaryClipChangedListener { hasText = clipboardHasText(clipboard) }
         clipboard?.addPrimaryClipChangedListener(listener)

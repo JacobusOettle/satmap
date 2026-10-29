@@ -4,6 +4,13 @@ import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.WindowInfo
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
@@ -34,6 +41,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowClipboardManager
+import org.robolectric.util.ReflectionHelpers
 
 /** "Go to coordinates" (CoordinateEntryView.swift, screenshot 21; UI spec §3.10): how the text is read as it is typed,
  *  the rows, Paste, and "Show and measure from here". */
@@ -51,6 +60,9 @@ class CoordinateEntryViewTest {
     private lateinit var model: AppModel
     private var closed = 0
 
+    /** Whether the sheet's window has the focus (false while another app is in front). */
+    private var windowFocused by mutableStateOf(true)
+
     @Before
     fun setUp() {
         Defaults.init(app)
@@ -58,7 +70,17 @@ class CoordinateEntryViewTest {
         Connectivity.init(app)
         AppLifecycle.init()
         model = AppModel(app, noHeights)
-        compose.setContent { SatMapTheme { CoordinateEntryView(model, close = { closed++ }) } }
+        compose.setContent {
+            val window = LocalWindowInfo.current
+            val testWindow = remember(window) {
+                object : WindowInfo by window {
+                    override val isWindowFocused get() = windowFocused
+                }
+            }
+            CompositionLocalProvider(LocalWindowInfo provides testWindow) {
+                SatMapTheme { CoordinateEntryView(model, close = { closed++ }) }
+            }
+        }
     }
 
     @After
@@ -126,5 +148,27 @@ class CoordinateEntryViewTest {
         paste.assertIsEnabled().performClick()
         field.assertTextEquals("-25.0969, 31.4371")
         compose.onNodeWithText("-25.096900, 31.437100").assertExists()
+    }
+
+    @Test
+    fun pasteWakesUpWhenSatMapIsBackInFrontWithTextCopiedElsewhere() {
+        val paste = compose.onNode(hasText("Paste") and hasClickAction())
+        paste.assertIsNotEnabled()
+        // Off to another app, which copies a position: Android 10+ tells no listener in SatMap (the clip is set here
+        // without telling them).
+        windowFocused = false
+        compose.waitForIdle()
+        ReflectionHelpers.setStaticField(
+            ShadowClipboardManager::class.java,
+            "clip",
+            ClipData.newPlainText("Coordinates", "-25.0969, 31.4371"),
+        )
+        compose.waitForIdle()
+        paste.assertIsNotEnabled()
+        // Back in SatMap: the window has the focus again.
+        windowFocused = true
+        compose.waitForIdle()
+        paste.assertIsEnabled().performClick()
+        field.assertTextEquals("-25.0969, 31.4371")
     }
 }

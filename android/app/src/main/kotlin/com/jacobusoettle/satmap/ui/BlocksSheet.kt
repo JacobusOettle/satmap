@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -84,10 +85,12 @@ fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
         } else {
             item {
                 FormSection(footer = "Switch a file off to take its blocks off the map.", first = true) {
-                    for (f in files) {
-                        FormSwipeToDeleteRow(onDelete = { library.delete(f.id) }) {
+                    // Keyed by the file, as iOS's ForEach: a swipe deletes that file only.
+                    for (f in files) key(f.id) {
+                        FormSwipeToDeleteRow(onDelete = { library.delete(f.id) }) { deleteAction ->
                             FileRow(
                                 f,
+                                deleteAction,
                                 onShow = {
                                     library.setShown(f.id, true)
                                     f.document.bounds?.let { model.map?.zoom(to = it) }
@@ -109,13 +112,14 @@ fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
     importError?.let { ImportErrorAlert(it, onDismiss = library::clearImportError) }
 }
 
-/** A file: its name and how many shapes (a tap shows it and zooms to it), and its switch. */
+/** A file: its name and how many shapes (a tap shows it and zooms to it), and its switch. `deleteAction` goes on the
+ *  name's button, where TalkBack lands. */
 @Composable
-private fun FileRow(f: KMLLibrary.File, onShow: () -> Unit, onShownChange: (Boolean) -> Unit) {
+private fun FileRow(f: KMLLibrary.File, deleteAction: Modifier, onShow: () -> Unit, onShownChange: (Boolean) -> Unit) {
     // The switch keeps its 48 dp touch area within the 56 dp row; the texts' button fills the row's height.
     FormRow(verticalPadding = 0.dp) {
         Column(
-            Modifier.weight(1f).pressable(onClick = onShow).padding(vertical = 8.dp),
+            Modifier.weight(1f).then(deleteAction).pressable(onClick = onShow).padding(vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(f.name, style = Body, color = LabelPrimary)

@@ -8,9 +8,11 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
-import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.assertLeftPositionInRootIsEqualTo
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
@@ -19,6 +21,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.AppLifecycle
@@ -46,7 +50,8 @@ import org.robolectric.annotation.Config
 import java.io.File
 
 /** "Blocks" (BlocksSheet.swift, screenshot 04; UI spec §3.1): one row per file with its switch, the colours checkbox,
- *  a tap on a file showing it and zooming to it, deleting, the empty list and the import error. */
+ *  a tap on a file showing it and zooming to it, deleting by swipe and by TalkBack, the empty list and the import
+ *  error. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "w402dp-h874dp")
 class BlocksSheetTest {
@@ -185,22 +190,39 @@ class BlocksSheetTest {
         assertEquals(false, Defaults.bool("kmlFileColours"))
     }
 
+    private val offersDelete = SemanticsMatcher("offers Delete") { n ->
+        n.config.getOrNull(SemanticsActions.CustomActions)?.any { it.label == "Delete" } == true
+    }
+
     @Test
     fun aFileIsDeletedWithItsDeleteAction() {
         show()
         import("Demo farm.kml", farm)
         import("Roads.kml", farm.replace("Demo farm", "Roads"))
         assertEquals(2, library.files.value.size)
-        // TalkBack's "Delete" (the swipe's counterpart) on the Roads row.
-        val row = compose.onNode(
-            SemanticsMatcher("has Delete") { n ->
-                n.config.getOrNull(SemanticsActions.CustomActions)?.any { it.label == "Delete" } == true
-            } and hasAnyDescendant(hasText("Roads")),
-        ).fetchSemanticsNode()
+        // TalkBack's "Delete" (the swipe's counterpart) is on the node TalkBack lands on: the file's button.
+        compose.onNode(hasText("Demo farm") and hasClickAction()).assert(offersDelete)
+        val row = compose.onNode(hasText("Roads") and hasClickAction()).assert(offersDelete).fetchSemanticsNode()
         compose.runOnUiThread { row.config[SemanticsActions.CustomActions].single { it.label == "Delete" }.action() }
         compose.waitForIdle()
         assertEquals(listOf("Demo farm"), library.files.value.map { it.name })
         compose.onNodeWithText("Roads").assertDoesNotExist()
+    }
+
+    @Test
+    fun aSwipeDeletesThatFileOnly() {
+        show()
+        import("Demo farm.kml", farm)
+        import("Roads.kml", farm.replace("Demo farm", "Roads"))
+        assertEquals(listOf("Demo farm", "Roads"), library.files.value.map { it.name })
+        val left = compose.onNode(hasText("Roads") and hasClickAction()).getUnclippedBoundsInRoot().left
+        compose.onNode(hasText("Demo farm") and hasClickAction()).performTouchInput { swipeLeft() }
+        compose.waitForIdle()
+        // Roads moves up into the deleted row's place: it is neither deleted with it nor left swiped away.
+        assertEquals(listOf("Roads"), library.files.value.map { it.name })
+        compose.onNodeWithText("Demo farm").assertDoesNotExist()
+        compose.onNode(hasText("Roads") and hasClickAction()).assertIsDisplayed().assertLeftPositionInRootIsEqualTo(left)
+        compose.onNodeWithContentDescription("Show Roads on the map").assertIsOn()
     }
 
     @Test
