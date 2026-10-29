@@ -11,10 +11,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsEqualTo
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
@@ -30,6 +32,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.AppLifecycle
@@ -369,10 +372,11 @@ class OfflineSheetTest {
         compose.setContent {
             SatMapTheme { AreaRow(shown, null, canDownloadNow = true, onPause = { paused++ }, onResume = { resumed++ }, online = true) }
         }
-        compose.onNodeWithContentDescription("Pause").performClick()
+        // The symbol sits at the button's right end (as iOS's against the chevron); the touch target stays 44 dp.
+        compose.onNodeWithContentDescription("Pause").assertWidthIsEqualTo(44.dp).assertHeightIsEqualTo(44.dp).performClick()
         assertEquals(1, paused)
         shown = downloading.copy(status = OfflineArea.Status.paused)
-        compose.onNodeWithContentDescription("Resume").performClick()
+        compose.onNodeWithContentDescription("Resume").assertWidthIsEqualTo(44.dp).assertHeightIsEqualTo(44.dp).performClick()
         assertEquals(1, resumed)
         shown = downloading.copy(status = OfflineArea.Status.complete)
         compose.onNode(hasContentDescription("Pause") or hasContentDescription("Resume")).assertDoesNotExist()

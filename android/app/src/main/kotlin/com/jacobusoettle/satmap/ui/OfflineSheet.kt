@@ -385,7 +385,8 @@ fun AreaRow(
             Text(areaStatusText(area, progress, online), style = Caption, color = areaStatusColour(area))
             Text(areaInfoText(area), style = Caption2, color = LabelSecondary)
         }
-        // The symbol at title2 size (26 dp), in a 44 dp button.
+        // The symbol at title2 size (26 dp), at the right end of a 44 dp box (the button's touch target), as on iOS,
+        // where the Spacer pushes the .title2 image against the row's trailing edge, just before the chevron.
         when (area.status) {
             OfflineArea.Status.downloading, OfflineArea.Status.queued, OfflineArea.Status.waitingForNetwork ->
                 StatusButton("Pause", onPause) {
@@ -393,14 +394,21 @@ fun AreaRow(
                 }
             OfflineArea.Status.paused, OfflineArea.Status.incomplete ->
                 StatusButton("Resume", onResume) { RetryCircle(Accent) }
-            OfflineArea.Status.complete -> Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
-                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = SystemGreen, modifier = Modifier.size(26.dp))
+            OfflineArea.Status.complete -> Box(Modifier.size(44.dp), contentAlignment = Alignment.CenterEnd) {
+                Icon(
+                    Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = SystemGreen,
+                    modifier = Modifier.padding(end = 2.dp).size(26.dp),
+                )
             }
         }
     }
 }
 
-/** A borderless button in a row (iOS's in an area row): its symbol, dimmed while pressed. */
+/** A borderless button in a row (iOS's in an area row): its symbol, dimmed while pressed. The 44 dp touch target
+ *  reaches left of the symbol; the symbol is centred in the same 26 dp slot as the check mark, 2 dp from the right,
+ *  whatever its own inset (RetryCircle's ring fills its 24 dp, the Material circles have 2 dp round them). */
 @Composable
 private fun StatusButton(label: String, onClick: () -> Unit, icon: @Composable () -> Unit) {
     Box(
@@ -415,9 +423,11 @@ private fun StatusButton(label: String, onClick: () -> Unit, icon: @Composable (
                     true
                 }
             },
-        contentAlignment = Alignment.Center,
+        contentAlignment = Alignment.CenterEnd,
     ) {
-        icon()
+        Box(Modifier.padding(end = 2.dp).size(26.dp), contentAlignment = Alignment.Center) {
+            icon()
+        }
     }
 }
 
