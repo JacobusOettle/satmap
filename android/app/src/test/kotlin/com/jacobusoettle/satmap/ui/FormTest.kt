@@ -12,11 +12,15 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -81,22 +85,31 @@ class FormTest {
     }
 
     @Test
-    fun aRowCanBeDeletedWithTheAccessibilityAction() {
+    fun aRowIsDeletedBySwipingItLeftOrWithTalkBacksAction() {
         var deleted = 0
+        var opened = 0
         compose.setContent {
             SatMapTheme {
                 FormSection {
-                    FormSwipeToDeleteRow(onDelete = { deleted++ }) { FormValueRow("Kruger", "2 GB") }
+                    FormSwipeToDeleteRow(onDelete = { deleted++ }) { deleteAction ->
+                        FormLinkRow("Kruger", modifier = deleteAction) { opened++ }
+                    }
                 }
             }
         }
+        // The action is on the node TalkBack lands on, the row's button.
         val row = compose.onNode(
-            SemanticsMatcher("offers Delete") { n ->
+            hasText("Kruger") and hasClickAction() and SemanticsMatcher("offers Delete") { n ->
                 n.config.getOrNull(SemanticsActions.CustomActions)?.any { it.label == "Delete" } == true
             },
         )
         row.fetchSemanticsNode().config[SemanticsActions.CustomActions].single { it.label == "Delete" }.action()
         assertEquals(1, deleted)
+        row.performTouchInput { swipeLeft() }
+        compose.waitForIdle()
+        assertEquals(2, deleted)
+        // The swipe is not a tap.
+        assertEquals(0, opened)
     }
 
     @Test

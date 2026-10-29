@@ -17,11 +17,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -29,15 +28,19 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowCircleDown
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckCircle
@@ -54,6 +57,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Landscape
 import androidx.compose.material.icons.outlined.NearMe
+import androidx.compose.material.icons.outlined.Pentagon
 import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -69,6 +73,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -90,10 +95,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -110,6 +115,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -128,19 +134,26 @@ import com.jacobusoettle.satmap.app.Format
 import com.jacobusoettle.satmap.app.MapLegend
 import com.jacobusoettle.satmap.app.MapScale
 import com.jacobusoettle.satmap.app.MeasureMode
+import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.DownloadProgress
 import com.jacobusoettle.satmap.core.ElevationColours
+import com.jacobusoettle.satmap.core.ElevationRange
+import com.jacobusoettle.satmap.core.Geo
+import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
 import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.rounded
 import com.jacobusoettle.satmap.location.GpsFix
 import com.jacobusoettle.satmap.location.LocationRecorder
+import com.jacobusoettle.satmap.map.ContourInterval
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.MapViewRepresentable
 import com.jacobusoettle.satmap.offline.OfflineManager
+import kotlin.math.abs
+import kotlin.math.max
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.max
 import androidx.compose.ui.graphics.shadow.Shadow as DropShadow
 
 /** The map with everything over it (DESIGN.md §4.1). `map` is null in Robolectric Compose tests (no MapLibre), and the
@@ -157,16 +170,16 @@ fun MapScreen(model: AppModel, offline: OfflineManager, recorder: LocationRecord
         }
         val sheet by model.sheet.collectAsStateWithLifecycle()
         SheetHost(sheet, onDismiss = { model.setSheet(null) }) { s ->
-            val close = { model.setSheet(null) }
             when (s) {
                 ActiveSheet.blocks -> BlocksSheet(model, model.kml, close)
                 ActiveSheet.offline -> OfflineSheet(model, offline, model.kml, close)
-                ActiveSheet.coordinates -> CoordinateEntryView(model, close)
+                ActiveSheet.coordinates -> CoordinateEntryView(model, close, sheetState)
             }
         }
         val pending by model.pendingArea.collectAsStateWithLifecycle()
+        // Swift's onDismiss: the drawn loop goes with the sheet.
         SheetHost(pending, onDismiss = { model.setPendingArea(null); model.setDraftArea(null) }) { area ->
-            NewAreaView(model, area, showsCancel = true, close = { model.setPendingArea(null) })
+            NewAreaView(model, area, showsCancel = true, close = close)
         }
         if (confirmClearTrack) ClearTrackDialog(onClear = model::clearTrack, onDismiss = { confirmClearTrack = false })
         ShareHost()
@@ -757,9 +770,210 @@ fun Hint(text: String, onClose: (() -> Unit)? = null, onTap: (() -> Unit)? = nul
     }
 }
 
+/** Live distance and height from you to the marker; or the length of the line through the points, the height from
+ *  A to the last point, and once closed, the shape's area and perimeter. */
 @Composable
 fun MeasurePanel(model: AppModel, recorder: LocationRecorder) {
-    // M3: UI spec §2.3.4.
+    val measure by model.measure.collectAsStateWithLifecycle()
+    val location by recorder.location.collectAsStateWithLifecycle()
+    val markerElevation by model.markerElevation.collectAsStateWithLifecycle()
+    val lastElevation by model.lastElevation.collectAsStateWithLifecycle()
+    val userElevation by model.userElevation.collectAsStateWithLifecycle()
+    val distanceUnit by model.distanceUnit.collectAsStateWithLifecycle()
+    val heightUnit by model.heightUnit.collectAsStateWithLifecycle()
+    // The model's derived values, read again whenever the points or your position change (the Swift view reads them
+    // on every change of the model or the recorder).
+    val markerDistance = remember(measure, location) { model.markerDistance }
+    val measuredArea = remember(measure) { model.measuredArea }
+    MeasurePanel(
+        measure, markerDistance, measuredArea, markerElevation, lastElevation, userElevation, distanceUnit, heightUnit,
+        online = connectivityOnline(),
+        onNextDistanceUnit = model::nextDistanceUnit,
+        onUndo = model::undoMeasurePoint,
+        onCloseShape = model::closeMeasureShape,
+        onStop = model::clearMeasure,
+    )
+}
+
+/** The panel for what the model says: `markerDistance` and `measuredArea` as `AppModel`'s. */
+@Composable
+fun MeasurePanel(
+    measure: MeasureMode,
+    markerDistance: Double?,
+    measuredArea: Double?,
+    markerElevation: Double?,
+    lastElevation: Double?,
+    userElevation: Double?,
+    distanceUnit: DistanceUnit,
+    heightUnit: HeightUnit,
+    online: Boolean,
+    onNextDistanceUnit: () -> Unit,
+    onUndo: () -> Unit,
+    onCloseShape: () -> Unit,
+    onStop: () -> Unit,
+) {
+    MeasuringPanel(onStop) {
+        val points = measure.points
+        when (measure) {
+            is MeasureMode.Closed -> {
+                Text(
+                    "Shape ${MeasureMode.label(0)}–${MeasureMode.label(points.size - 1)} · ${points.size} corners",
+                    style = panelTitle,
+                    modifier = Modifier.alpha(0.85f),
+                )
+                Text(measuredArea?.let(Format::hectares) ?: "–", style = bigNumber)
+                Text(
+                    "Perimeter ${markerDistance?.let { Format.distance(it, distanceUnit) } ?: "–"}",
+                    style = Headline,
+                    modifier = Modifier.unitSwitch(onNextDistanceUnit),
+                )
+                if (measuredArea != null && measuredArea < 1_000_000) {
+                    Text("${Format.count(measuredArea.rounded().toInt())} m²", style = Caption, modifier = Modifier.alpha(0.85f))
+                }
+                MeasureActions(close = false, onUndo, onCloseShape)
+            }
+            is MeasureMode.Path -> {
+                val last = MeasureMode.label(points.size - 1)
+                Text(
+                    if (points.size == 2) "From A to B" else "From A to $last · ${points.size} points",
+                    style = panelTitle,
+                    modifier = Modifier.alpha(0.85f),
+                )
+                Text(
+                    markerDistance?.let { Format.distance(it, distanceUnit) } ?: "–",
+                    style = bigNumber,
+                    modifier = Modifier.unitSwitch(onNextDistanceUnit).testTag("measuredDistance"),
+                )
+                Text(measureHeightText(measure, markerElevation, lastElevation, userElevation, heightUnit, online), style = Headline)
+                if (points.size >= 3) {
+                    val leg = Geo.distance(points[points.size - 2], points[points.size - 1])
+                    Text(
+                        "Last leg ${MeasureMode.label(points.size - 2)} → $last: ${Format.distance(leg, distanceUnit)}",
+                        style = Caption,
+                        modifier = Modifier.alpha(0.85f),
+                    )
+                }
+                if (markerElevation != null && lastElevation != null) {
+                    Text(
+                        "A ${Format.height(markerElevation, heightUnit)} · $last ${Format.height(lastElevation, heightUnit)} above sea level",
+                        style = Caption,
+                        modifier = Modifier.alpha(0.85f),
+                    )
+                }
+                MeasureActions(close = points.size >= 3, onUndo, onCloseShape)
+                Text(
+                    if (points.size >= 3) {
+                        "Move the crosshair and tap the map for more points, or tap A to close the shape and see its area."
+                    } else {
+                        "Move the crosshair and tap the map for more points."
+                    },
+                    style = Caption2,
+                    modifier = Modifier.alpha(0.7f),
+                )
+            }
+            else -> {
+                Text(
+                    markerDistance?.let { Format.distance(it, distanceUnit) } ?: "Waiting for GPS…",
+                    style = bigNumber,
+                    modifier = Modifier.unitSwitch(onNextDistanceUnit),
+                )
+                Text(measureHeightText(measure, markerElevation, lastElevation, userElevation, heightUnit, online), style = Headline)
+                if (markerElevation != null && userElevation != null) {
+                    Text(
+                        "Marker ${Format.height(markerElevation, heightUnit)} · You ${Format.height(userElevation, heightUnit)} above sea level",
+                        style = Caption,
+                        modifier = Modifier.alpha(0.85f),
+                    )
+                }
+                Text(
+                    "Move the crosshair to the next spot and tap the map for point B.",
+                    style = Caption2,
+                    modifier = Modifier.alpha(0.7f),
+                )
+            }
+        }
+    }
+}
+
+/** Marker vs you, or the last point vs A. */
+private fun measureHeightText(
+    measure: MeasureMode,
+    markerElevation: Double?,
+    lastElevation: Double?,
+    userElevation: Double?,
+    unit: HeightUnit,
+    online: Boolean,
+): String {
+    val isPath = measure is MeasureMode.Path
+    val m = markerElevation
+    val u = if (isPath) lastElevation else userElevation
+    if (m == null || u == null) return missingHeightText(online)
+    if (isPath) {
+        val last = MeasureMode.label(measure.points.size - 1)
+        val diff = u - m
+        if (unit.whole(abs(diff)) == 0) return "$last is level with A"
+        val d = Format.heightDifference(diff, unit)
+        return if (diff > 0) "▲ $last is $d higher than A" else "▼ $last is $d lower than A"
+    }
+    val diff = m - u
+    if (unit.whole(abs(diff)) == 0) return "Marker is level with you"
+    val d = Format.heightDifference(diff, unit)
+    return if (diff > 0) "▲ Marker is $d higher than you" else "▼ Marker is $d lower than you"
+}
+
+/** A height that isn't known (yet): being looked up, or not to be had offline. */
+private fun missingHeightText(online: Boolean): String =
+    if (online) "Height: loading elevation…" else "Height: no elevation data here offline (download this area)"
+
+/** The panels' small title: caption, semibold. */
+private val panelTitle = Caption.copy(fontWeight = FontWeight.SemiBold)
+
+/** The distance or area: 30 bold, tabular digits. */
+private val bigNumber = BigNumber.copy(fontFeatureSettings = TabularDigits)
+
+/** The measuring panels: black 70 %, 12 dp corners, the full width, their lines 4 dp apart, with the ✕ (stop
+ *  measuring) over their top right corner. */
+@Composable
+private fun MeasuringPanel(onStop: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    CompositionLocalProvider(LocalContentColor provides Color.White) {
+        Box(Modifier.fillMaxWidth().blocksMap().panel(0.7f)) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalAlignment = Alignment.Start,
+                content = content,
+            )
+            StopMeasuringButton(onStop, Modifier.align(Alignment.TopEnd))
+        }
+    }
+}
+
+/** Undo the last point; close the shape (three or more points). */
+@Composable
+private fun MeasureActions(close: Boolean, onUndo: () -> Unit, onCloseShape: () -> Unit) {
+    Row(Modifier.padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        PanelButton("Undo", Icons.AutoMirrored.Filled.Undo, onUndo)
+        if (close) PanelButton("Close shape", Icons.Outlined.Pentagon, onCloseShape)
+    }
+}
+
+/** SwiftUI's `.bordered` button tinted white: its label (subheadline, semibold) on a light rounded box, 32 dp tall as
+ *  in screenshot 16; it dims while pressed. */
+@Composable
+private fun PanelButton(title: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color.White.copy(alpha = 0.25f))
+            .pressable(onClick = onClick)
+            .heightIn(min = 32.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Text(title, style = Subheadline.copy(fontWeight = FontWeight.SemiBold))
+    }
 }
 
 /** The map's scale, bottom left: a round distance and its length on the map, changing as the map zooms. A tap on
@@ -802,19 +1016,106 @@ object ElevationKey {
         .toTypedArray()
 }
 
+/** The contour lines' interval at this zoom, above the scale bar: a thin line every so many metres, a bold one (with
+ *  its height on it) every so many more. Shown while contour lines are drawn. */
 @Composable
 fun ContourKeyView(legend: MapLegend) {
-    // M2: UI spec §2.4.1.
+    val key by legend.key.collectAsStateWithLifecycle()
+    ContourKeyView(key.contours)
 }
 
 @Composable
-fun ContourSample(bold: Boolean) {
-    // M2: UI spec §2.4.1.
+fun ContourKeyView(c: ContourInterval?) {
+    c ?: return
+    // In metres, as the lines are drawn (the Swift passes no unit).
+    val step = Format.height(c.step)
+    val index = Format.height(c.index)
+    // Takes no touches: the map under it gets them.
+    Column(
+        Modifier.clearAndSetSemantics {
+            contentDescription = "Contour lines"
+            stateDescription = "every $step, bold every $index"
+            testTag = "contourKey"
+        },
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            "Contours",
+            style = Caption2.copy(fontWeight = FontWeight.SemiBold, shadow = mapTextShadow),
+            color = Color.White,
+            modifier = Modifier.alpha(0.9f),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+            val style = keyText
+            ContourSample(bold = false)
+            Text(step, style = style, color = Color.White)
+            ContourSample(bold = true, Modifier.padding(start = 4.dp))
+            Text(index, style = style, color = Color.White)
+        }
+    }
 }
 
+/** A short piece of contour line in the map's colours (`ContourRenderer`), with its dark edge. */
+@Composable
+fun ContourSample(bold: Boolean, modifier: Modifier = Modifier) {
+    Spacer(modifier.size(20.dp, if (bold) 4.5.dp else 3.dp).drawShadowed { n, size -> drawContourSample(n, size, bold) })
+}
+
+/** The sample's two capsules, centred on a `size` canvas (px): the dark edge 20 dp long, the line 18 dp. */
+internal fun Density.drawContourSample(n: android.graphics.Canvas, size: Size, bold: Boolean) {
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    fun capsule(width: Float, height: Float, colour: Color) {
+        paint.color = colour.toArgb()
+        val left = (size.width - width) / 2
+        val top = (size.height - height) / 2
+        n.drawRoundRect(left, top, left + width, top + height, height / 2, height / 2, paint)
+    }
+    capsule(size.width, size.height, Color.Black.copy(alpha = 0.4f))
+    capsule(18.dp.toPx(), (if (bold) 3.dp else 1.6.dp).toPx(), if (bold) ContourBold else ContourThin.copy(alpha = 0.9f))
+}
+
+/** The legends' heights: caption, semibold, tabular digits, with the map's text shadow. */
+private val keyText: TextStyle
+    @Composable @ReadOnlyComposable
+    get() = Caption.copy(fontWeight = FontWeight.SemiBold, fontFeatureSettings = TabularDigits, shadow = mapTextShadow)
+
+/** The heights the elevation colours run between, under the scale bar: blue the lowest, red the highest. Shown while
+ *  the colours are drawn. */
 @Composable
 fun ColourKeyView(legend: MapLegend) {
-    // M2: UI spec §2.4.3.
+    val key by legend.key.collectAsStateWithLifecycle()
+    ColourKeyView(key.colours)
+}
+
+@Composable
+fun ColourKeyView(r: ElevationRange?) {
+    r ?: return
+    // In metres, as the Swift (it passes no unit).
+    val low = Format.height(r.low)
+    val high = Format.height(r.high)
+    val shape = RoundedCornerShape(2.dp)
+    // Takes no touches: the map under it gets them.
+    Column(
+        Modifier.clearAndSetSemantics {
+            contentDescription = "Elevation colours"
+            stateDescription = "blue $low to red $high"
+            testTag = "colourKey"
+        },
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Spacer(
+            Modifier
+                .size(MapScale.maxWidth.dp, 8.dp)
+                .background(Brush.horizontalGradient(*ElevationKey.colorStops), shape)
+                .border(1.dp, Color.White.copy(alpha = 0.85f), shape),
+        )
+        Row(Modifier.width(MapScale.maxWidth.dp)) {
+            Text(low, style = keyText, color = Color.White)
+            Spacer(Modifier.weight(1f).widthIn(min = 6.dp))
+            Text(high, style = keyText, color = Color.White)
+        }
+    }
 }
 
 /** The scale bar's ⊔: a line with a tick up at each end, `width` dp wide. Takes no touches. */
@@ -839,14 +1140,90 @@ internal fun Density.drawScaleBar(n: android.graphics.Canvas, size: Size) {
     n.drawPath(path, paint)
 }
 
+/** While aiming: the live distance and height from you to the spot under the crosshair, as the map moves. */
 @Composable
 fun AimPanel(model: AppModel, aim: CrosshairAim, recorder: LocationRecorder) {
-    // M3: UI spec §2.3.3.
+    val location by recorder.location.collectAsStateWithLifecycle()
+    val point by aim.point.collectAsStateWithLifecycle()
+    val elevation by aim.elevation.collectAsStateWithLifecycle()
+    val elevationPoint by aim.elevationPoint.collectAsStateWithLifecycle()
+    val userElevation by model.userElevation.collectAsStateWithLifecycle()
+    val distanceUnit by model.distanceUnit.collectAsStateWithLifecycle()
+    val heightUnit by model.heightUnit.collectAsStateWithLifecycle()
+    AimPanel(
+        location?.point, point, elevation, elevationPoint, userElevation, distanceUnit, heightUnit,
+        online = connectivityOnline(),
+        onNextDistanceUnit = model::nextDistanceUnit,
+        onStop = model::clearMeasure,
+    )
 }
 
+/** `you`: your position (null before the first fix); `point`, `elevation` and `elevationPoint` as `CrosshairAim`'s. */
 @Composable
-fun StopMeasuringButton(onClick: () -> Unit) {
-    // M3: UI spec §2.3.5.
+fun AimPanel(
+    you: GeoPoint?,
+    point: GeoPoint?,
+    elevation: Double?,
+    elevationPoint: GeoPoint?,
+    userElevation: Double?,
+    distanceUnit: DistanceUnit,
+    heightUnit: HeightUnit,
+    online: Boolean,
+    onNextDistanceUnit: () -> Unit,
+    onStop: () -> Unit,
+) {
+    // Swift: CLLocation.distance(from:); Geo.distance here, as everywhere on Android (state spec §2.11).
+    val distanceText = when {
+        you == null -> "Waiting for GPS…"
+        point == null -> "–"
+        else -> Format.distance(Geo.distance(you, point), distanceUnit)
+    }
+    val heightText = if (elevation == null || userElevation == null) {
+        missingHeightText(online)
+    } else {
+        val diff = elevation - userElevation
+        val d = Format.heightDifference(diff, heightUnit)
+        when {
+            heightUnit.whole(abs(diff)) == 0 -> "Crosshair is level with you"
+            diff > 0 -> "▲ Crosshair is $d higher than you"
+            else -> "▼ Crosshair is $d lower than you"
+        }
+    }
+    MeasuringPanel(onStop) {
+        Text("You to the crosshair", style = panelTitle, modifier = Modifier.alpha(0.85f))
+        Text(distanceText, style = bigNumber, modifier = Modifier.unitSwitch(onNextDistanceUnit))
+        // While the map moves, the height is an earlier spot's until the lookup catches up: dimmed.
+        val current = elevationPoint == point
+        Text(heightText, style = Headline, modifier = Modifier.alpha(if (current) 1f else 0.6f))
+        if (elevation != null && userElevation != null) {
+            Text(
+                "Crosshair ${Format.height(elevation, heightUnit)} · You ${Format.height(userElevation, heightUnit)} above sea level",
+                style = Caption,
+                modifier = Modifier.alpha(if (current) 0.85f else 0.5f),
+            )
+        }
+        Text(
+            "Move the crosshair onto the spot and tap the map (or the measure button) for point A.",
+            style = Caption2,
+            modifier = Modifier.alpha(0.7f),
+        )
+    }
+}
+
+/** The ✕ in the corner of the measuring hint and panel. Its cross is as big as iOS's (13 dp across in screenshot 02,
+ *  so a 22 dp Close), centred 21 dp from the panel's corner. */
+@Composable
+fun StopMeasuringButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .size(42.dp)
+            .pressable(onClick = onClick)
+            .semantics { contentDescription = "Stop measuring" }
+            .testTag("stopMeasuring"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Filled.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+    }
 }
 
 /** A spot's coordinates with its height beside them, or under them when they don't fit side by side (large text):
@@ -945,16 +1322,6 @@ fun Modifier.unitSwitch(onTap: () -> Unit): Modifier = clickable(
     role = Role.Button,
     onClick = onTap,
 )
-
-/** iOS's plain button: what it shows dims while pressed (no ripple). */
-@Composable
-private fun Modifier.pressable(onClickLabel: String? = null, onClick: () -> Unit): Modifier {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    return this
-        .clickable(interaction, indication = null, onClickLabel = onClickLabel, role = Role.Button, onClick = onClick)
-        .graphicsLayer { alpha = if (pressed) 0.35f else 1f }
-}
 
 @Composable
 fun DroneCard(report: DroneReport) {
