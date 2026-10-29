@@ -437,8 +437,8 @@ final class ScreenshotTests: XCTestCase {
         if hint.exists { return .aiming }
         if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "From A to")).firstMatch.exists { return .pair }
         if app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Shape A")).firstMatch.exists { return .shape }
-        let panel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
-                                                         "than you", "Height:", "Waiting for GPS")).firstMatch
+        let panel = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@ OR label CONTAINS %@ OR label BEGINSWITH %@ OR label BEGINSWITH %@",
+                                                         "than you", "level with you", "Height:", "Waiting for GPS")).firstMatch
         return panel.exists ? .placed : .off
     }
 

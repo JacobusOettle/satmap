@@ -548,8 +548,8 @@ class ScreenshotTest {
         if (exists(staticText(startingWith = "Move the crosshair onto the spot"))) return MeasureState.aiming
         if (exists(staticText(startingWith = "From A to"))) return MeasureState.pair
         if (exists(staticText(startingWith = "Shape A"))) return MeasureState.shape
-        val panel = exists(staticText(containing = "than you")) || exists(staticText(startingWith = "Height:")) ||
-            exists(staticText(startingWith = "Waiting for GPS"))
+        val panel = exists(staticText(containing = "than you")) || exists(staticText(containing = "level with you")) ||
+            exists(staticText(startingWith = "Height:")) || exists(staticText(startingWith = "Waiting for GPS"))
         return if (panel) MeasureState.placed else MeasureState.off
     }
 
