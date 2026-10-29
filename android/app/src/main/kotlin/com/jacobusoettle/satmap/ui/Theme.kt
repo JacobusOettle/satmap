@@ -8,11 +8,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -58,6 +63,9 @@ val Caption2 = TextStyle(fontSize = 11.sp, lineHeight = 13.sp)
 /** `.system(size: 30, weight: .bold)` */
 val BigNumber = TextStyle(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold)
 
+/** `.monospacedDigit()`: digits all one width, so a changing number doesn't jiggle. */
+const val TabularDigits = "tnum"
+
 /** The iOS text styles in Material's slots, so stock components look right. */
 val SatTypography = Typography(
     bodyLarge = Body,
@@ -83,17 +91,29 @@ fun SatMapTheme(content: @Composable () -> Unit) {
     )
 }
 
+/** The blur of SwiftUI's `.shadow(color: .black, radius: 1.5)` on text and lines over the map, as an Android
+ *  shadow-layer radius (DESIGN.md §4.3). */
+val ShadowBlur: Dp = 3.dp
+
+/** The text shadow that keeps white text readable on bright imagery. */
+val mapTextShadow: Shadow
+    @Composable @ReadOnlyComposable
+    get() = Shadow(Color.Black, Offset.Zero, with(LocalDensity.current) { ShadowBlur.toPx() })
+
 /** Panels and pills over the map take every touch, so a tap on them never reaches the map (it would place a
- *  measuring point); their own clickable children handle their taps first. */
+ *  measuring point); their own clickable children handle their taps first. Being hit is enough: Compose then offers
+ *  the touch to nothing under the panel, the map's view included. It must not consume: a parent that consumes a
+ *  move cancels its children's taps, so a finger that moves a little would no longer tap a button in the panel. */
 fun Modifier.blocksMap(): Modifier = pointerInput(Unit) {
     awaitPointerEventScope {
-        while (true) awaitPointerEvent().changes.forEach { it.consume() }
+        while (true) awaitPointerEvent()
     }
 }
 
-/** A capsule over the map: black 65 %, padding 12 / 8. */
-fun Modifier.pill(): Modifier =
-    background(Color.Black.copy(alpha = 0.65f), CircleShape).padding(horizontal = 12.dp, vertical = 8.dp)
+/** A capsule over the map: black 65 %, padding 12 / 8 (the height pill 10 / 8, a point's name 12 / 5). */
+fun Modifier.pill(horizontal: Dp = 12.dp, vertical: Dp = 8.dp): Modifier =
+    background(Color.Black.copy(alpha = 0.65f), CircleShape).padding(horizontal = horizontal, vertical = vertical)
 
-/** A panel over the map: black at `alpha`, 12 dp corners (padding per panel). */
-fun Modifier.panel(alpha: Float): Modifier = background(Color.Black.copy(alpha = alpha), RoundedCornerShape(12.dp))
+/** A panel over the map: black at `alpha`, 12 dp corners (10 for the hint; padding per panel). */
+fun Modifier.panel(alpha: Float, cornerRadius: Dp = 12.dp): Modifier =
+    background(Color.Black.copy(alpha = alpha), RoundedCornerShape(cornerRadius))

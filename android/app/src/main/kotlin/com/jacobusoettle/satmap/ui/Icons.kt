@@ -39,10 +39,11 @@ object SatIcons {
         }
     }
 
-    /** `mappin` */
+    /** `mappin`: a small head on a long needle, as SF's (screenshot 15: 5.4 × 16.8 pt at body size, so 20 dp tall
+     *  here). Narrow like SF's frame (16 × 24), so give it a height and its width follows. */
     val MapPin: ImageVector by lazy {
-        icon("MapPin") {
-            fill("M12,2.5a4.25,4.25 0 1 1 0,8.5a4.25,4.25 0 1 1 0,-8.5z M11.15,10.5h1.7v9.6a0.85,0.85 0 0 1 -1.7,0z")
+        icon("MapPin", width = 16f) {
+            fill("M8,2a3.25,3.25 0 1 1 0,6.5a3.25,3.25 0 1 1 0,-6.5z M7.3,8h1.4v13.3a0.7,0.7 0 0 1 -1.4,0z")
         }
     }
 
@@ -68,8 +69,8 @@ object SatIcons {
         }
     }
 
-    private fun icon(name: String, paths: ImageVector.Builder.() -> Unit): ImageVector =
-        ImageVector.Builder(name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
+    private fun icon(name: String, width: Float = 24f, paths: ImageVector.Builder.() -> Unit): ImageVector =
+        ImageVector.Builder(name, defaultWidth = width.dp, defaultHeight = 24.dp, viewportWidth = width, viewportHeight = 24f)
             .apply(paths)
             .build()
 
