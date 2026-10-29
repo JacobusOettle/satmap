@@ -15,8 +15,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.shadows.ShadowSystemClock
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.time.Duration
 import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -67,21 +69,21 @@ class TileRepositoryTest {
 
     private val area = File("/offline/area")
 
-    private fun repository(store: FakeStore? = null, terrainStore: FakeStore? = null): TileRepository {
-        val r = TileRepository(
-            browseClient = OkHttpClient(),
-            fetchURL = { fetch(it) },
-            isOnlineNow = { online },
-            now = { clock },
-            openStore = { f ->
-                opened.add(f)
-                when (f.name) {
-                    "imagery.mbtiles" -> store
-                    "terrain.mbtiles" -> terrainStore
-                    else -> null
-                }
-            },
-        )
+    /** `phoneClock`: the repository's own clock (Robolectric's `SystemClock`), instead of `clock`. */
+    private fun repository(store: FakeStore? = null, terrainStore: FakeStore? = null, phoneClock: Boolean = false): TileRepository {
+        val openStore = { f: File ->
+            opened.add(f)
+            when (f.name) {
+                "imagery.mbtiles" -> store
+                "terrain.mbtiles" -> terrainStore
+                else -> null
+            }
+        }
+        val r = if (phoneClock) {
+            TileRepository(browseClient = OkHttpClient(), fetchURL = { fetch(it) }, isOnlineNow = { online }, openStore = openStore)
+        } else {
+            TileRepository(browseClient = OkHttpClient(), fetchURL = { fetch(it) }, isOnlineNow = { online }, now = { clock }, openStore = openStore)
+        }
         r.setAreas(listOf(TileRepository.AreaRef(UUID.randomUUID(), area, 0.0, 0.0, 1.0, 1.0)))
         return r
     }
@@ -221,6 +223,23 @@ class TileRepositoryTest {
         assertEquals(t, repository.nearestImagery(t)!!.tile)
     }
 
+    /** The pause, like the elevation gates and the area files' retry, is on a clock that goes on while the phone
+     *  sleeps, as iOS's `Date()` does: begun just before the screen went off, it is over 45 s later however much of
+     *  that the phone slept. */
+    @Test
+    fun thePauseGoesOnWhileThePhoneSleeps() = runBlocking {
+        otherwise = TileFetchResult.Failed
+        val repository = repository(phoneClock = true)
+        for (i in 0 until 8) assertNull(repository.nearestImagery(TileID(18, i, 0)))
+        ShadowSystemClock.simulateDeepSleep(Duration.ofSeconds(44))
+        assertNull(repository.nearestImagery(TileID(18, 8, 0)))
+        assertEquals(8, asked.size) // still paused
+        ShadowSystemClock.simulateDeepSleep(Duration.ofSeconds(2))
+        imagery[t] = TileFetchResult.Data(jpeg(1))
+        assertEquals(t, repository.nearestImagery(t)!!.tile)
+        assertEquals(9, asked.size)
+    }
+
     @Test
     fun imageryInBackgroundIsOnlyTheTileItself() = runBlocking {
         imagery[t] = TileFetchResult.Missing
@@ -277,6 +296,18 @@ class TileRepositoryTest {
         repository.offlineTile(t, TileRepository.Layer.imagery)
         assertEquals(listOf(File(area, "imagery.mbtiles")), opened)
         clock += 0.2
+        repository.offlineTile(t, TileRepository.Layer.imagery)
+        assertEquals(2, opened.size)
+    }
+
+    @Test
+    fun anAreasFileIsTriedAgainAfter10SecondsOfSleep() = runBlocking {
+        val repository = repository(store = null, phoneClock = true)
+        repository.offlineTile(t, TileRepository.Layer.imagery)
+        ShadowSystemClock.simulateDeepSleep(Duration.ofSeconds(9))
+        repository.offlineTile(t, TileRepository.Layer.imagery)
+        assertEquals(1, opened.size)
+        ShadowSystemClock.simulateDeepSleep(Duration.ofSeconds(1))
         repository.offlineTile(t, TileRepository.Layer.imagery)
         assertEquals(2, opened.size)
     }
@@ -348,6 +379,21 @@ class TileRepositoryTest {
         assertNull(repository.elevation(spot))
         assertEquals(6, asked.size)
         clock += 30
+        terrain[dem15] = TileFetchResult.Data(terrariumPng(7.0))
+        assertEquals(7.0, repository.elevation(spot)!!, 1e-9)
+        assertEquals(7, asked.size)
+    }
+
+    @Test
+    fun elevationTilesThatFailedWait30SecondsAsleepOrAwake() = runBlocking {
+        otherwise = TileFetchResult.Failed
+        val repository = repository(phoneClock = true)
+        assertNull(repository.elevation(spot))
+        assertEquals(6, asked.size)
+        ShadowSystemClock.simulateDeepSleep(Duration.ofSeconds(29))
+        assertNull(repository.elevation(spot))
+        assertEquals(6, asked.size)
+        ShadowSystemClock.simulateDeepSleep(Duration.ofSeconds(1))
         terrain[dem15] = TileFetchResult.Data(terrariumPng(7.0))
         assertEquals(7.0, repository.elevation(spot)!!, 1e-9)
         assertEquals(7, asked.size)

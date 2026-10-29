@@ -129,10 +129,11 @@ object SatelliteRenderer {
         is TileRoute.Contours, is TileRoute.Colours -> TileAnswer.empty(maxAge = 30) // M2: rendering spec §2.6.
     }
 
-    private suspend fun imagery(t: TileID, map: DrawnMap): TileAnswer {
+    private suspend fun imagery(t: TileID, map: DrawnMap?): TileAnswer {
         ImageryMemory.tiles.value(t)?.let { return own(it) }
         // The tiles three levels above the map's are MapLibre's prefetch: the coarse tile that fills a whole new place.
-        val focus = map.focuses.imagery.level
+        // (A map that has gone: its level unknown.)
+        val focus = map?.focuses?.imagery?.level ?: -1
         val r = load(t, urgent = focus >= 0 && t.z <= focus - 3)?.await()
         if (r != null && r.tile == t) return own(r.data)
         val maxAge = gateLeft(t)

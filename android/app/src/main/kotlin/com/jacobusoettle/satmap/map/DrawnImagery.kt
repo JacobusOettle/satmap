@@ -41,8 +41,9 @@ data class ContourInterval(val step: Double, val index: Double)
  *  Android Auto the car's map another (the tiles in memory are shared). MapLibre replaces a tile in place when a better
  *  answer comes (`Cache-Control`); a whole new layer, put under the shown one and shown once it has its tiles, is only
  *  for tiles to be asked for again at once (`reload`) and (M2) a new colour range.
- *  `MapController` (or `CarMapController`) calls the hooks; this registers no listeners (DESIGN.md D18). Main thread
- *  only. */
+ *  `MapController` (or `CarMapController`) calls the hooks; this registers no listeners (DESIGN.md D18), and holds it
+ *  as long as the map view lives: the sources' registrations (`TileLayers`) hold `drawnMap` only weakly, and go with
+ *  it. Main thread only. */
 class DrawnImagery(
     private val mapView: MapView,
     private val map: MapLibreMap,

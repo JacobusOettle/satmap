@@ -54,8 +54,10 @@ class TileRepository internal constructor(
     private val fetchURL: suspend (String) -> TileFetchResult = { HTTPTileFetcher.fetch(it, browseClient) },
     /** `Connectivity.isOnlineNow`. */
     private val isOnlineNow: () -> Boolean = { Connectivity.shared.isOnlineNow },
-    /** Seconds on the clock of the tile gates (`SystemClock.uptimeMillis`, DESIGN.md §2.4). */
-    private val now: () -> Double = { SystemClock.uptimeMillis() / 1000.0 },
+    /** Seconds on the clock of the network pause, the elevation gates and the area files' retry (`Date()` in Swift):
+     *  `SystemClock.elapsedRealtime`, which goes on while the phone sleeps, as `Date()` does, without its jumps.
+     *  (`SatelliteRenderer`'s gates are on uptime, as iOS's `CACurrentMediaTime`.) */
+    private val now: () -> Double = { SystemClock.elapsedRealtime() / 1000.0 },
     /** Opens an area's file for reading, or null (an `MBTiles` reader through `MBTiles.driver`). */
     private val openStore: (File) -> OfflineStore? = { openMBTiles(it) },
 ) : ElevationSource {

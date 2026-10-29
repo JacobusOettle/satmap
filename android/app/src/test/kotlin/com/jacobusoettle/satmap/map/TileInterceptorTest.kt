@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap.map
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.os.Looper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.PNGDecoder
@@ -24,6 +25,7 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.GraphicsMode
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -42,11 +44,14 @@ import kotlin.math.abs
 class TileInterceptorTest {
     private val t = TileID.containing(GeoPoint(-24.99, 31.59), 18)
     private lateinit var layer: TileLayer
+
+    /** The map the layer belongs to (held here, as its `DrawnImagery` holds it: a layer holds it weakly). */
+    private val drawnMap = DrawnMap()
     private val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 1, 2, 3)
 
     @Before
     fun setUp() {
-        layer = TileLayer(TileUrls.nextGeneration(), TileKind.imagery, DrawnMap())
+        layer = TileLayer(TileUrls.nextGeneration(), TileKind.imagery, drawnMap)
         TileLayers.add(layer)
     }
 
@@ -105,7 +110,7 @@ class TileInterceptorTest {
 
     @Test
     fun aBlankContourTileIsA1x1TransparentPNG() {
-        val contours = TileLayer(TileUrls.nextGeneration(), TileKind.contours, DrawnMap())
+        val contours = TileLayer(TileUrls.nextGeneration(), TileKind.contours, drawnMap)
         TileLayers.add(contours)
         try {
             val r = client { route, _ ->
@@ -139,6 +144,42 @@ class TileInterceptorTest {
         }
         assertEquals(0, calls.get())
         assertTrue(layer.answered.isEmpty())
+    }
+
+    /** A layer registered for a map that nothing else holds: as one whose view was destroyed with its sources still
+     *  registered (the activity finished while recording, a car screen gone). */
+    private fun layerOfAMapThatGoes(): TileLayer =
+        TileLayer(TileUrls.nextGeneration(), TileKind.imagery, DrawnMap()).also { TileLayers.add(it) }
+
+    /** Waits for the garbage collector to take the layer's map (tasks posted to the main thread, which may hold it, run
+     *  first). */
+    private fun awaitMapGone(l: TileLayer) {
+        for (i in 0 until 100) {
+            shadowOf(Looper.getMainLooper()).idle()
+            if (l.map == null) return
+            System.gc()
+            Thread.sleep(10)
+        }
+        fail("the map was kept")
+    }
+
+    @Test
+    fun theSourcesOfAMapThatHasGoneAreForgotten() {
+        val gone = layerOfAMapThatGoes()
+        awaitMapGone(gone)
+        val next = TileLayer(TileUrls.nextGeneration(), TileKind.imagery, drawnMap)
+        TileLayers.add(next)
+        try {
+            assertNull(TileLayers[gone.gen])
+            assertEquals(layer, TileLayers[layer.gen]) // its map is still there
+            assertEquals(next, TileLayers[next.gen])
+            // Asked for still: as a removed source.
+            val r = client { _, _ -> fail("a source forgotten"); TileAnswer.empty(null) }.get(imageryURL(gen = gone.gen))
+            assertEquals(204, r.code)
+            assertNull(r.header("Cache-Control"))
+        } finally {
+            TileLayers.remove(next.gen)
+        }
     }
 
     @Test
@@ -257,6 +298,22 @@ class TileInterceptorTest {
         assertArrayEquals(jpeg, r.body!!.bytes())
         assertArrayEquals(jpeg, ImageryMemory.tiles.peek(t))
         assertFalse(layer.lacking.containsKey(t))
+    }
+
+    @Test
+    fun aMapThatHasGoneBeforeItsSourceIsRemovedIsStillAnswered() {
+        val c = renderer()
+        val gone = layerOfAMapThatGoes()
+        try {
+            awaitMapGone(gone)
+            server[t] = TileFetchResult.Data(jpeg)
+            val r = c.get(imageryURL(gen = gone.gen)) // its level unknown: not urgent
+            assertEquals(200, r.code)
+            assertArrayEquals(jpeg, r.body!!.bytes())
+            assertTrue(t in gone.answered)
+        } finally {
+            TileLayers.remove(gone.gen)
+        }
     }
 
     @Test

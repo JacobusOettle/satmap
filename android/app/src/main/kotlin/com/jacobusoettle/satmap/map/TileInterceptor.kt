@@ -24,6 +24,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.File
 import java.io.IOException
+import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -142,8 +143,15 @@ class TileAnswer(val code: Int, val body: ByteArray, val type: String?, val maxA
 }
 
 /** One raster source of one map (its generation): which tiles MapLibre has had answered, and which of them lack their
- *  own content (for `DrawnImagery`'s replacement and `reload`). */
-class TileLayer(val gen: Int, val kind: TileKind, val map: DrawnMap) {
+ *  own content (for `DrawnImagery`'s replacement and `reload`). A source belongs to its map view and goes with it, as
+ *  iOS's overlays and their renderers go with the `MKMapView`: the map is held weakly, so a map view destroyed with its
+ *  sources still registered (the activity finished, a car screen gone) isn't kept by them. */
+class TileLayer(val gen: Int, val kind: TileKind, map: DrawnMap) {
+    private val mapRef = WeakReference(map)
+
+    /** The map's side of the imagery (its `DrawnImagery` holds it); null once that map has gone. */
+    val map: DrawnMap? get() = mapRef.get()
+
     val answered: MutableSet<TileID> = ConcurrentHashMap.newKeySet()
     val lacking = ConcurrentHashMap<TileID, Boolean>()
 
@@ -159,7 +167,9 @@ object TileLayers {
 
     operator fun get(gen: Int): TileLayer? = layers[gen]
 
+    /** Registers a source, and forgets those whose map has gone (and their bookkeeping with them). */
     fun add(layer: TileLayer) {
+        layers.values.removeAll { it.map == null }
         layers[layer.gen] = layer
     }
 
