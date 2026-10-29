@@ -7,12 +7,15 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.os.Build
 import android.util.DisplayMetrics
+import android.view.MotionEvent
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
 import com.jacobusoettle.satmap.app.MeasureMode
@@ -25,9 +28,11 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.Point
+import org.maplibre.geojson.Polygon
 import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -380,18 +385,139 @@ class SelectedPointLayer(private val map: MapLibreMap, private val style: Style,
 
 /** The drawn area waiting to be confirmed (dashed white outline, 15 % fill). */
 class DraftAreaLayer(private val map: MapLibreMap, private val style: Style, private val context: Context) {
+    /** Shows the ring (none: nothing). Above the measuring line (the `draft` layers, MapStyle). */
     fun update(ring: List<GeoPoint>?) {
-        // M4: the ring as a polygon, or empty.
+        val source = style.getSourceAs<GeoJsonSource>(MapIds.DRAFT) ?: return
+        source.setGeoJson(features(ring))
+    }
+
+    companion object {
+        /** The ring as one polygon, ending where it starts (MapKit closes a polygon by itself; MapLibre's outline would
+         *  leave out the last side); nothing for fewer than 3 points. */
+        fun features(ring: List<GeoPoint>?): FeatureCollection {
+            if (ring == null || ring.size < 3) return MapStyle.empty()
+            val points = ring.map { Point.fromLngLat(it.lon, it.lat) }
+            val closed = if (ring.first() != ring.last()) points + points[0] else points
+            return FeatureCollection.fromFeature(Feature.fromGeometry(Polygon.fromLngLats(listOf(closed))))
+        }
     }
 }
 
-/** Drawing an area with one finger (`GONE` unless drawing): a point every 3 dp, handed over on lift. */
+/** Captures one finger drawing a closed loop around the area to download. Over the map and `GONE` unless the lasso
+ *  is on, so while it shows it takes every touch and the map none, also one starting at the screen's left or right
+ *  edge (see `excludeSystemGestures`). A point is added each time the finger has moved 3 dp; on lift the loop is
+ *  closed (with 3 points or more) and handed over, in view pixels. */
 class LassoView(context: Context) : View(context) {
-    /** The loop drawn, in view pixels. */
     var onFinish: ((List<PointF>) -> Unit)? = null
+    private val density = resources.displayMetrics.density
+    private val points = ArrayList<PointF>()
+    private val path = Path()
+
+    /** The finger drawing (iOS `isMultipleTouchEnabled = false`: other fingers are not seen). */
+    private var pointerId = NONE
+
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+        color = 0x26FFFFFF // white 15 %
+    }
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = Color.WHITE
+        strokeWidth = 3 * density
+        strokeJoin = Paint.Join.ROUND
+        strokeCap = Paint.Cap.ROUND
+        pathEffect = DashPathEffect(floatArrayOf(8 * density, 6 * density), 0f)
+    }
+
+    init {
+        setBackgroundColor(0x14000000) // black 8 %
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    /** The loop drawn so far, in view pixels. */
+    val drawn: List<PointF> get() = points.map { PointF(it.x, it.y) }
 
     fun reset() {
-        // M4: forgets the loop.
+        points.clear()
+        path.reset()
+        pointerId = NONE
+        invalidate()
+    }
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pointerId = event.getPointerId(0)
+                points.clear()
+                points.add(PointF(event.x, event.y))
+                redraw()
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val i = event.findPointerIndex(pointerId)
+                if (i < 0) return true
+                val p = PointF(event.getX(i), event.getY(i))
+                if (!adds(points.lastOrNull(), p, density)) return true
+                points.add(p)
+                redraw()
+            }
+            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_UP ->
+                if (event.getPointerId(event.actionIndex) == pointerId) touchesEnded()
+            MotionEvent.ACTION_CANCEL -> reset()
+        }
+        return true
+    }
+
+    private fun touchesEnded() {
+        pointerId = NONE
+        val done = points.toList()
+        if (done.size >= 3) {
+            path.reset()
+            path.moveTo(done[0].x, done[0].y)
+            for (p in done.drop(1)) path.lineTo(p.x, p.y)
+            path.close()
+            invalidate()
+        }
+        onFinish?.invoke(done.map { PointF(it.x, it.y) })
+    }
+
+    private fun redraw() {
+        path.reset()
+        val first = points.firstOrNull() ?: return
+        path.moveTo(first.x, first.y)
+        for (p in points.drop(1)) path.lineTo(p.x, p.y)
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        canvas.drawPath(path, fill)
+        canvas.drawPath(path, stroke)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        excludeSystemGestures()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (changedView === this) excludeSystemGestures()
+    }
+
+    /** Android only (the iPhone has no gesture at the screen's sides): with gesture navigation a finger that starts at
+     *  the left or right edge and moves inward goes Back, which would end the drawing and lose the loop. While the
+     *  lasso shows it asks for its whole frame to be left to it, and gives it back when `GONE`. While the navigation
+     *  bar shows, the system grants at most 200 dp of height per side, the lowest part of the frame. */
+    private fun excludeSystemGestures() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        systemGestureExclusionRects = if (visibility == VISIBLE) listOf(Rect(0, 0, width, height)) else emptyList()
+    }
+
+    companion object {
+        private const val NONE = -1
+
+        /** Whether the finger at `p` adds a point after `last`: once it is 3 dp away (pixels, `density` per dp). */
+        fun adds(last: PointF?, p: PointF, density: Float): Boolean =
+            last == null || hypot(p.x - last.x, p.y - last.y) >= 3 * density
     }
 }
 

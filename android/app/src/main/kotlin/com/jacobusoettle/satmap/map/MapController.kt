@@ -39,9 +39,11 @@ import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.KMLGeometry
+import com.jacobusoettle.satmap.core.Simplify
 import com.jacobusoettle.satmap.core.TerrainMode
 import com.jacobusoettle.satmap.core.WebMercator
 import com.jacobusoettle.satmap.core.WorldRect
+import com.jacobusoettle.satmap.core.XY
 import com.jacobusoettle.satmap.location.GpsFix
 import com.jacobusoettle.satmap.location.LocationRecorder
 import kotlinx.coroutines.CoroutineScope
@@ -105,12 +107,15 @@ class MapController(
      *  it, so it follows a pan frame by frame. */
     private val aimLine = AimLineView(activity)
 
+    /** Choosing an offline area: the finger draws a loop over the map (shown only while it does). */
+    private val lasso = LassoView(activity).apply { visibility = View.GONE }
+
     /** The map and its views (aim line, lasso), as the Compose screen shows them. */
     val container = MapContainerView(activity).apply {
         val fill = ViewGroup.LayoutParams.MATCH_PARENT
         addView(mapView, FrameLayout.LayoutParams(fill, fill))
         addView(aimLine, FrameLayout.LayoutParams(fill, fill))
-        // M4: the lasso (GONE unless drawing an area).
+        addView(lasso, FrameLayout.LayoutParams(fill, fill))
     }
 
     private val _bearing = MutableStateFlow(0.0)
@@ -134,6 +139,10 @@ class MapController(
     private var markerLayer: MeasureMarkerLayer? = null
     private var measureLine: MeasureLineLayer? = null
     private var selectedLayer: SelectedPointLayer? = null
+    private var draft: DraftAreaLayer? = null
+
+    /** The zoom test, when the launch setting asks for it. */
+    private var zoomScript: ZoomScript.Run? = null
 
     /** Pressed and held, the tapped spot's pin or a measuring point is moved precisely; taps right after are the
      *  finger being lifted, not taps. */
@@ -215,6 +224,7 @@ class MapController(
         container.touches = touches
         container.labels = { mapLabels() }
         container.onLabelClicked = { label -> tapped(label.spot) }
+        lasso.onFinish = { pts -> lassoFinished(pts) }
         mapView.onCreate(savedState)
         mapView.getMapAsync(::mapReady)
         activity.lifecycle.addObserver(this)
@@ -249,14 +259,14 @@ class MapController(
         track = TrackLayer(m, style, activity).also { it.reset(model.track) }
         drawnTrackCount = model.track.size
         blocks = BlockLayers(m, style, activity).also { it.onChanged = { container.labelsChanged() } }
-        aviation = AviationLayer(m, style, activity) // M5: isOn = model.terrainMode.value.showsAviation
+        aviation = AviationLayer(m, style, activity).also { it.isOn = model.terrainMode.value.showsAviation }
         markerLayer = MeasureMarkerLayer(m, style, activity)
         measureLine = MeasureLineLayer(m, style, activity)
         selectedLayer = SelectedPointLayer(m, style, activity)
         adjuster = PointAdjuster(activity, mapView, m).also {
             it.onMove = { which, p, done -> adjusted(which, p, done) }
         }
-        // M4: DraftAreaLayer.
+        draft = DraftAreaLayer(m, style, activity)
         mapView.doOnLayout { start(m) }
     }
 
@@ -281,7 +291,7 @@ class MapController(
         for (move in waiting) move(m)
         visibleRegionChanged()
         bind()
-        ZoomScript.runIfAsked(mapView, m, model)
+        zoomScript = ZoomScript.runIfAsked(container, mapView, m, model)
         model.recorder.location.value?.let { locationUpdated(it) }
     }
 
@@ -293,7 +303,7 @@ class MapController(
                 if (mode == builtTerrain) return@collect
                 builtTerrain = mode
                 imagery?.terrainChanged(mode)
-                // M5: aviation.isOn = mode.showsAviation.
+                aviation?.isOn = mode.showsAviation
             }
         }
         scope.launch { model.measure.collect { measureChanged(it) } }
@@ -306,8 +316,16 @@ class MapController(
             combine(model.kml.files, model.kml.useFileColours) { files, colours -> files to colours }
                 .collect { (files, colours) -> blocks?.update(files, colours) }
         }
+        // Drone mode's distances: from you and from the tapped spot.
+        scope.launch { model.selectedPoint.collect { aviationDistances(it) } }
+        scope.launch {
+            combine(model.isDrawingArea, model.lassoActive, model.draftArea.map { it != null }) { drawing, lassoActive, hasDraft ->
+                drawing && lassoActive && !hasDraft
+            }.collect { shows -> lasso.visibility = if (shows) View.VISIBLE else View.GONE }
+        }
+        scope.launch { model.isDrawingArea.collect { lasso.reset() } }
+        scope.launch { model.draftArea.collect { draftChanged(it) } }
         scope.launch { model.recorder.power.collect { powerChanged() } }
-        // M4: the lasso's visibility and reset, draftArea → draftChanged. M5: selectedPoint → aviationDistances.
     }
 
     /** Tiles may be had again (`AppModel.requestReload`): a new layer asks again for those shown with a stand-in. */
@@ -423,12 +441,18 @@ class MapController(
         container.labelsChanged()
     }
 
+    /** Drone mode's labels: how far each place is from you and from the tapped spot. */
+    private fun aviationDistances(pin: GeoPoint?) {
+        aviation?.distancesChanged(model.recorder.location.value?.point, pin)
+    }
+
     /** Every camera frame (iOS mapViewDidChangeVisibleRegion). Your compass arrow and the runway rings are turned
-     *  against the map's north, so MapLibre turns them with the map: nothing to redo here as the map turns. */
+     *  against the map's north, so MapLibre turns them with the map; the rings follow the cards it shows. */
     private fun visibleRegionChanged() {
         val m = map ?: return
         updateAim()
         updateScale()
+        aviation?.headingChanged()
         imagery?.visibleRegionChanged()
         _bearing.value = m.cameraPosition.bearing
     }
@@ -488,7 +512,7 @@ class MapController(
         }
         updateMeasureLine()
         updateAim()
-        // M5: aviationDistances(model.selectedPoint.value).
+        aviationDistances(model.selectedPoint.value)
     }
 
     /** Your dot is grey while the GPS sleeps. */
@@ -760,6 +784,29 @@ class MapController(
         measureLine?.set(line, closed)
     }
 
+    // Lasso (choose an offline area)
+
+    private fun lassoFinished(pts: List<PointF>) {
+        val m = map
+        val simplified = if (m != null && started) lassoRing(pts, density) else null
+        if (m == null || simplified == null) {
+            // A tap or a straight stroke isn't an area: clear it and let the user draw a loop.
+            lasso.reset()
+            model.finishDrawing(emptyList())
+            return
+        }
+        model.finishDrawing(simplified.map { coordinate(m, it) })
+    }
+
+    private fun draftChanged(ring: List<GeoPoint>?) {
+        if (ring == null || ring.size < 3) {
+            draft?.update(null)
+            return
+        }
+        lasso.reset()
+        draft?.update(ring)
+    }
+
     // The names on the map, for accessibility
 
     /** A name MapLibre has placed: what it says, its box and the spot a tap on it selects (the map view's pixels). */
@@ -783,18 +830,16 @@ class MapController(
             val s = m.projection.toScreenLocation(LatLng(p.latitude(), p.longitude()))
             val w = (f.getNumberProperty("w")?.toFloat() ?: 0f) * d
             val h = (f.getNumberProperty("h")?.toFloat() ?: 0f) * d
-            // A point's image has its dot on top, 5 dp above the point; a name is centred on it (half a dp lower, for
-            // the shadow).
-            val top = if (f.getStringProperty("kind") == "point") s.y - 5 * d else s.y + d / 2 - h / 2
-            Placed(name, RectF(s.x - w / 2, top, s.x + w / 2, top + h), s)
+            Placed(name, labelBox(f.getStringProperty("kind"), s, w, h, d), s)
         }.distinctBy { Triple(it.name, it.spot.x, it.spot.y) } // (a symbol across tile edges is found twice)
     }
 
-    /** The names on the map that accessibility services read: the KML points shown (M5: the aviation cards, as
-     *  "<kind> <label>"), top to bottom. */
+    /** The names on the map that accessibility services read: the KML points shown and, in drone mode, the cards
+     *  shown ("Airstrip FASH Stellenbosch", iOS's accessibility label), top to bottom. */
     private fun mapLabels(): List<MapContainerView.Label> {
-        val b = blocks ?: return emptyList()
-        return placed(b.pointLayerIds)
+        val aviationLayers = if (aviation?.isOn == true) listOf(MapIds.AVIATION) else emptyList()
+        val layers = blocks?.pointLayerIds.orEmpty().toList() + aviationLayers
+        return placed(layers.toTypedArray())
             .sortedWith(compareBy({ it.box.top }, { it.box.left }))
             .map { MapContainerView.Label(it.name, it.box, it.spot) }
     }
@@ -886,10 +931,15 @@ class MapController(
         track = null
         blocks?.stop()
         blocks = null
+        aviation?.stop()
         aviation = null
         markerLayer = null
         measureLine = null
         selectedLayer = null
+        draft = null
+        zoomScript?.stop()
+        zoomScript = null
+        lasso.onFinish = null
         adjuster?.stop()
         adjuster = null
         imagery?.destroy()
@@ -986,6 +1036,27 @@ class MapController(
             return AimLine(start, centre, phase)
         }
 
+        /** The drawn loop (pixels, `density` per dp) simplified as iOS does it, Douglas–Peucker with a tolerance of
+         *  4 dp; null when it isn't an area (fewer than 3 points, before or after). */
+        fun lassoRing(pts: List<PointF>, density: Float): List<PointF>? {
+            val d = density.toDouble()
+            val simplified = Simplify.douglasPeucker(pts.map { XY(it.x / d, it.y / d) }, tolerance = 4.0)
+            if (pts.size < 3 || simplified.size < 3) return null
+            return simplified.map { PointF((it.x * d).toFloat(), (it.y * d).toFloat()) }
+        }
+
+        /** A placed label's box (pixels, `d` per dp) from its point `s` on the screen and its image's size in pixels:
+         *  a KML point's image has its dot on top, 5 dp above the point; an aviation card has its symbol's middle on
+         *  the place, 11 dp below its top; a name is centred on it (half a dp lower, for the shadow). */
+        fun labelBox(kind: String?, s: PointF, w: Float, h: Float, d: Float): RectF {
+            val top = when (kind) {
+                "point" -> s.y - 5 * d
+                AviationLayer.KIND -> s.y - AviationCard.symbolSize / 2 * d
+                else -> s.y + d / 2 - h / 2
+            }
+            return RectF(s.x - w / 2, top, s.x + w / 2, top + h)
+        }
+
         /** Where the line from `a` to `b` (inside `r`) comes into `r`; `a` itself when it is inside. */
         fun entry(a: PointF, b: PointF, r: RectF): PointF {
             var t = 0f
@@ -1000,11 +1071,6 @@ class MapController(
     /** The aim line: from `start` to `end` (the crosshair), its dashes `phase` pixels into their pattern. */
     data class AimLine(val start: PointF, val end: PointF, val phase: Float)
 }
-
-/** Until `DrawnImagery` has its own `destroy()` (its handlers stop with the map): a member always wins over this
- *  extension, which can then go. */
-@Suppress("unused")
-private fun DrawnImagery.destroy() {}
 
 /** The region's edges as MapLibre bounds. */
 private fun MapController.Region.latLngBounds(): LatLngBounds {
