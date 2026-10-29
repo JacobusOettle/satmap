@@ -1,10 +1,15 @@
 package com.jacobusoettle.satmap.map
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PointF
+import android.graphics.RectF
 import android.os.Looper
 import android.text.Spanned
+import android.text.TextPaint
 import android.text.style.ForegroundColorSpan
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -28,6 +33,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /** Drone mode: the places chosen for a view (the kinds shown at its width, the view and 15 % around it, at most 140 by
@@ -328,6 +334,65 @@ class AviationLayerTest {
         val small = rings.getValue(AviationCard.RING_6_5)
         assertEquals(Color.WHITE, small.getPixel(24 + 13, 24))
         assertEquals(Color.WHITE, small.getPixel(24, 24 - 19))
+    }
+
+    /** An icon drawn at 2 px per dp from (4, 40) px, and what of it is at a point (dp from its start and the baseline). */
+    private class DrawnIcon(symbol: AviationCard.Icon.Symbol) {
+        val bitmap: Bitmap = Bitmap.createBitmap(60, 60, Bitmap.Config.ARGB_8888)
+
+        init {
+            AviationCard.Icon(symbol, Color.RED, 2f).draw(Canvas(bitmap), "￼", 0, 1, 4f, 0, 40, 60, Paint())
+        }
+
+        fun alpha(x: Float, y: Float): Int = Color.alpha(bitmap.getPixel(floor(4 + 2 * x).toInt(), floor(40 + 2 * y).toInt()))
+
+        /** The pixels at least half covered, as a box in dp from the start and the baseline. */
+        fun ink(): RectF {
+            val box = RectF(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE)
+            for (py in 0 until bitmap.height) {
+                for (px in 0 until bitmap.width) {
+                    if (Color.alpha(bitmap.getPixel(px, py)) < 128) continue
+                    box.union(RectF((px - 4) / 2f, (py - 40) / 2f, (px - 3) / 2f, (py - 39) / 2f))
+                }
+            }
+            return box
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun theDistancesIconsAreTheIPhonesSymbolsAtItsSize() {
+        // The arrow (location.fill): 15.8 dp across and tall, from 13.9 above the baseline to 1.9 below, its tips
+        // rounded and its notch sharp.
+        val arrow = DrawnIcon(AviationCard.Icon.Symbol.location)
+        val a = arrow.ink()
+        assertEquals(1.2f, a.left, 0.5f)
+        assertEquals(17.0f, a.right, 0.5f)
+        assertEquals(-13.9f, a.top, 0.5f)
+        assertEquals(1.9f, a.bottom, 0.5f)
+        assertEquals(255, arrow.alpha(16.0f, -12.9f)) // the tip
+        assertEquals(0, arrow.alpha(17.8f, -14.7f)) // where a sharp tip would end
+        assertEquals(255, arrow.alpha(3.5f, -7.0f)) // the wings
+        assertEquals(255, arrow.alpha(10.1f, -0.4f))
+        assertEquals(255, arrow.alpha(9.4f, -6.3f)) // before the notch, and behind it
+        assertEquals(0, arrow.alpha(7.4f, -4.3f))
+        // The pin (mappin): a ball of radius 3.1 with a hole in its upper left, on a needle to 2.5 dp below the
+        // baseline.
+        val pin = DrawnIcon(AviationCard.Icon.Symbol.mappin)
+        val p = pin.ink()
+        assertEquals(5.0f, p.left, 0.5f)
+        assertEquals(11.2f, p.right, 0.5f)
+        assertEquals(-14.85f, p.top, 0.5f)
+        assertEquals(2.5f, p.bottom, 0.5f)
+        assertEquals(0, pin.alpha(7.2f, -12.65f)) // the hole
+        assertEquals(255, pin.alpha(9.6f, -11.0f)) // the ball
+        assertEquals(255, pin.alpha(8.1f, -10.9f)) // the needle, inside the ball and below it
+        assertEquals(255, pin.alpha(8.1f, 1.5f))
+        assertEquals(0, pin.alpha(9.4f, -5f))
+        // The advances at a 2.625 phone's density (whole pixels): the distances start where the iPhone has them.
+        val paint = TextPaint().apply { textSize = 17 * 2.625f }
+        assertEquals(54, AviationCard.Icon(AviationCard.Icon.Symbol.location, Color.RED, 2.625f).getSize(paint, "￼", 0, 1, null))
+        assertEquals(45, AviationCard.Icon(AviationCard.Icon.Symbol.mappin, Color.RED, 2.625f).getSize(paint, "￼", 0, 1, null))
     }
 
     @Test

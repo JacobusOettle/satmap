@@ -429,9 +429,10 @@ Rules:
 - `ForegroundColorSpan` for the colours.
 - `AbsoluteSizeSpan(dp, true)` for the sizes.
 - a `MetricAffectingSpan` that sets the typeface, plus `"tnum"` on the distances.
-- an `ImageSpan` (`ALIGN_BASELINE`) for the two icons. Each is a small `Drawable` painting a 10 dp path:
-  - location arrow: polygon (9.5, 0.5) → (0.5, 4.5) → (4.5, 5.5) → (5.5, 9.5).
-  - pin: a filled circle centred (5, 2.8), r 2.6, plus a stem 1.2 wide from y 5 to 10.
+- an `AviationCard.Icon` (`ReplacementSpan`) for the two icons. iOS draws the SF Symbols at the label's 17 point font, so each is filled at the size the iPhone's screenshot shows (25-drone-mode), in dp from the icon's start and the baseline; the line keeps the 17 point font's height.
+  - location arrow (advance 20.2): the polygon tip (17.8, −14.7) → wing (−0.6, −6.4) → notch (8.4, −5.3) → wing (9.5, 3.7), its tip rounded to an arc of radius 0.8 and its wings to 0.7, the notch sharp: 15.8 dp across and tall, from 13.9 above the baseline to 1.9 below.
+  - pin (advance 17.0): a ball centred (8.1, −11.75), r 3.1, with a hole of r 1 at (7.2, −12.65), on a needle narrowing from 1.7 dp wide (inside the ball) to 1.1 at 2.5 below the baseline.
+  - The advances are rounded up to whole pixels; with them the distances start where the iPhone's do.
 
 ### 2.4 Collisions instead of MapKit display priority
 
@@ -663,6 +664,7 @@ These pure functions are kept in `companion object`s so they can be tested:
 - the 5 m clamp and the scroll step `min(20, 1.5·(m − 5))·dt`
 - `MapController.entry`
 - `AviationCard.text` (strings and colours of each run, 24-character truncation, the 0.05 NM rule)
+- `AviationCard.Icon` (drawn with native graphics: the arrow's and the pin's extents, rounded tips, the pin's hole, the advances)
 - `AviationLayer` selection (km filter, 15% padding, the cap of 140 with priority then distance)
 - `BlockLayers.shapes` (feature properties for every style case: defaults, `fill = false`, `outline = false`, width clamped to [1.5, 12], white when file colours are off)
 - the lasso's 3 dp step and Douglas–Peucker with tolerance 4
