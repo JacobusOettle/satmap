@@ -1,0 +1,108 @@
+name: Android overlay debug
+
+# Debug only (branch claude/android-overlay-debug): runs OverlayDiagnosticTest on the API 35 emulator and keeps the full
+# logcat, the style dump and the screenshots.
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/android-overlay-debug]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-overlay-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-read-only: true
+
+      - name: Build the app and its instrumented tests
+        working-directory: android
+        run: ./gradlew --console=plain :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Write the script
+        run: |
+          cat > "$RUNNER_TEMP/diagnose.sh" <<'EOF'
+          set -u
+          cd "$GITHUB_WORKSPACE"
+          PKG=com.jacobusoettle.satmap
+          ID=6F1C2D3E-4B5A-4C7D-8E9F-0A1B2C3D4E5F
+          KML=files/SatMap/KML
+          mkdir -p evidence
+
+          adb install -r -g android/app/build/outputs/apk/debug/app-debug.apk || exit 1
+          adb install -r -g android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk || exit 1
+
+          adb shell svc power stayon true || true
+          adb shell input keyevent KEYCODE_WAKEUP || true
+          adb shell wm dismiss-keyguard || true
+          adb shell cmd location set-location-enabled true || true
+          for p in ACCESS_FINE_LOCATION ACCESS_COARSE_LOCATION ACTIVITY_RECOGNITION POST_NOTIFICATIONS; do
+            adb shell pm grant $PKG android.permission.$p || true
+          done
+          adb shell appops set $PKG android:mock_location allow || exit 1
+
+          adb shell run-as $PKG mkdir -p $KML || exit 1
+          adb shell "run-as $PKG sh -c 'cat > $KML/$ID.kml'" < SatMapUITests/DemoFarm.kml || exit 1
+          printf '[{"id":"%s","name":"Demo farm","fileName":"%s.kml"}]' "$ID" "$ID" \
+            | adb shell "run-as $PKG sh -c 'cat > $KML/index.json'" || exit 1
+
+          adb shell getprop ro.build.fingerprint > evidence/device.txt
+          adb shell dumpsys SurfaceFlinger | grep -iE 'GLES|EGL' >> evidence/device.txt || true
+
+          adb logcat -c
+          adb logcat -v threadtime > evidence/logcat.txt 2>&1 &
+          LOGCAT=$!
+          adb shell am instrument -w -e class $PKG.OverlayDiagnosticTest $PKG.test/androidx.test.runner.AndroidJUnitRunner > evidence/test-output.txt 2>&1
+          sleep 2
+          kill $LOGCAT 2> /dev/null || true
+          adb logcat -d -b crash > evidence/logcat-crash.txt 2>&1 || true
+          cat evidence/test-output.txt
+
+          adb pull /sdcard/Android/data/$PKG/files/overlay-debug evidence/ || true
+          if ! ls evidence/overlay-debug/dump.txt > /dev/null 2>&1; then
+            mkdir -p evidence/overlay-debug
+            adb exec-out "run-as $PKG tar cf - -C /sdcard/Android/data/$PKG/files/overlay-debug ." | tar xf - -C evidence/overlay-debug || true
+          fi
+          ls -lR evidence
+          cat evidence/overlay-debug/dump.txt || true
+          EOF
+
+      - name: Run the diagnostic on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_7
+          ram-size: 4096M
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash "$RUNNER_TEMP/diagnose.sh"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: overlay-debug
+          path: evidence
+          if-no-files-found: warn

@@ -7,7 +7,7 @@ name: Android app
 on:
   workflow_dispatch:
   push:
-    branches: ["**"]
+    branches: ["**", "!claude/android-overlay-debug"]
     paths:
       - "android/**"
       - "SatMap/Resources/**"

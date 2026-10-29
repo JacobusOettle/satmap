@@ -2,6 +2,7 @@ name: Build
 
 on:
   push:
+    branches-ignore: [claude/android-overlay-debug]
   pull_request:
   workflow_dispatch:
 
