@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap.map
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.WebMercator
+import com.jacobusoettle.satmap.core.XY
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -13,9 +14,11 @@ import org.maplibre.android.geometry.LatLng
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
 
-/** The saved camera ("camera": the visible region as four numbers) and the camera regions `MapController` sets, on
- *  the plain JVM (MapLibre's native map can't run in unit tests). */
+/** The saved camera ("camera": the visible region as four numbers) and the camera regions and centres `MapController`
+ *  sets, on the plain JVM (MapLibre's native map can't run in unit tests). */
 class MapControllerTest {
     private val region = MapController.Region(GeoPoint(-33.921765, 18.923779), 0.012_345_678_9, 0.014_8)
 
@@ -151,6 +154,134 @@ class MapControllerTest {
         assertEquals(30.0, c.bearing, 0.0)
         assertEquals(0.0, c.tilt, 0.0)
         assertTrue(doubleArrayOf(0.0, 0.0, 0.0, 0.0).contentEquals(c.padding))
+    }
+
+    @Test
+    fun theSafeAreasMiddleIsBelowTheViewsUnderTheStatusBar() {
+        // iPhone 16 Pro: 62 pt at the top, 34 at the bottom; the screenshots show you 14 pt below the crosshair.
+        assertEquals(XY(0.0, 14.0), MapController.safeOffset(0f, 186f, 0f, 102f, 3f))
+        // The Pixel 7 emulator: 52 dp at the top, 24 at the bottom, the same 14.
+        assertEquals(0.0, MapController.safeOffset(0f, 136.5f, 0f, 63f, 2.625f).x, 0.0)
+        assertEquals(14.0, MapController.safeOffset(0f, 136.5f, 0f, 63f, 2.625f).y, 1e-9)
+        // Turned: the cutout on the left, the navigation bar on the right.
+        assertEquals(XY(15.0, 0.0), MapController.safeOffset(100f, 0f, 40f, 0f, 2f))
+        assertEquals(XY(0.0, 0.0), MapController.safeOffset(0f, 0f, 0f, 0f, 2f))
+    }
+
+    @Test
+    fun theCameraShowsAPointAtTheSafeAreasMiddle() {
+        val you = GeoPoint(-33.921765, 18.923779)
+        val zoom = 16.0
+        val size = 512 * 2.0.pow(zoom) // MapLibre's world in dp
+        val w = WebMercator.world(you)
+        // North up: the view's middle (the crosshair) is 14 dp north of you.
+        val north = WebMercator.world(MapController.targetShowing(you, XY(0.0, 14.0), zoom, 0.0))
+        assertEquals(w.x, north.x, 1e-15)
+        assertEquals(14 / size, w.y - north.y, 1e-15)
+        // That is 13.9 m there (MapLibre's metres per dp: the equator's 40,075 km over its world, by cos latitude).
+        assertEquals(13.87, (w.y - north.y) * 40_075_016.686 * cos(you.lat * PI / 180), 0.01)
+        // East up (turned 90°): what is down on the screen is west, so the middle is 14 dp east of you.
+        val east = WebMercator.world(MapController.targetShowing(you, XY(0.0, 14.0), zoom, 90.0))
+        assertEquals(14 / size, east.x - w.x, 1e-15)
+        assertEquals(w.y, east.y, 1e-15)
+        // South up: the middle is south of you.
+        val south = WebMercator.world(MapController.targetShowing(you, XY(0.0, 14.0), zoom, 180.0))
+        assertEquals(-14 / size, w.y - south.y, 1e-15)
+        // Any turn and offset: you are that far right of and below the middle on the screen.
+        for (bearing in listOf(0.0, 30.0, 135.0, 300.0)) {
+            val t = WebMercator.world(MapController.targetShowing(you, XY(5.0, 14.0), zoom, bearing))
+            val b = bearing * PI / 180
+            val dx = (w.x - t.x) * size
+            val dy = (w.y - t.y) * size
+            assertEquals(5.0, dx * cos(b) + dy * sin(b), 1e-6)
+            assertEquals(14.0, -dx * sin(b) + dy * cos(b), 1e-6)
+        }
+        // A step of a whole zoom level halves the offset on the ground.
+        val closer = WebMercator.world(MapController.targetShowing(you, XY(0.0, 14.0), zoom + 1, 0.0))
+        assertEquals((w.y - north.y) / 2, w.y - closer.y, 1e-15)
+        // No offset: the point itself.
+        assertEquals(you, MapController.targetShowing(you, XY(0.0, 0.0), zoom, 30.0))
+    }
+
+    @Test
+    fun aRegionIsCentredInTheSafeAreaWithoutPadding() {
+        // MapLibre fitted the region within the safe area and returns that padding with the camera.
+        val fitted = CameraPosition.Builder()
+            .target(LatLng(-33.95, 18.9))
+            .zoom(13.2)
+            .bearing(30.0)
+            .tilt(0.0)
+            .padding(0.0, 186.0, 0.0, 102.0)
+            .build()
+        val centre = GeoPoint(-33.92, 18.92)
+        val c = MapController.centred(fitted, centre, XY(0.0, 14.0))
+        val t = MapController.targetShowing(centre, XY(0.0, 14.0), 13.2, 30.0)
+        assertEquals(t.lat, c.target!!.latitude, 0.0)
+        assertEquals(t.lon, c.target!!.longitude, 0.0)
+        assertEquals(13.2, c.zoom, 0.0)
+        assertEquals(30.0, c.bearing, 0.0)
+        // The camera's target stays the view's middle (the crosshair, the scale): no padding left on the camera.
+        assertTrue(doubleArrayOf(0.0, 0.0, 0.0, 0.0).contentEquals(c.padding))
+    }
+
+    /** Where `p` is on the screen, dp right of and below the view's middle, with the camera's target `target` at `zoom`
+     *  and the map turned to `bearing`: the world (x east, y south) turned onto the screen. */
+    private fun onScreen(p: GeoPoint, target: GeoPoint, zoom: Double, bearing: Double): XY {
+        val size = 512 * 2.0.pow(zoom)
+        val a = WebMercator.world(p)
+        val t = WebMercator.world(target)
+        val dx = (a.x - t.x) * size
+        val dy = (a.y - t.y) * size
+        val b = bearing * PI / 180
+        return XY(dx * cos(b) + dy * sin(b), -dx * sin(b) + dy * cos(b))
+    }
+
+    private fun assertAt(expected: XY, actual: XY) {
+        assertEquals(expected.x, actual.x, 1e-6)
+        assertEquals(expected.y, actual.y, 1e-6)
+    }
+
+    @Test
+    fun theCompassTurnsTheMapAboutTheSafeAreasMiddle() {
+        val target = GeoPoint(-33.921765, 18.923779)
+        val zoom = 16.0
+        for (offset in listOf(XY(0.0, 14.0), XY(26.0, 0.0), XY(5.0, 14.0))) {
+            for (bearing in listOf(30.0, 90.0, 180.0, 250.0)) {
+                // The point at the safe area's middle before the turn (you, while following)...
+                val c = MapController.pointAt(target, offset, zoom, bearing)
+                assertAt(offset, onScreen(c, target, zoom, bearing))
+                // ...is there after it, north up.
+                val north = MapController.northUp(target, offset, zoom, bearing)
+                assertAt(offset, onScreen(c, north, zoom, 0.0))
+            }
+        }
+        // MapLibre's resetNorth keeps its target, the view's middle: with south up you would end 28 dp off the safe
+        // area's middle, 14 dp above the crosshair instead of below it.
+        val you = MapController.pointAt(target, XY(0.0, 14.0), zoom, 180.0)
+        assertAt(XY(0.0, -14.0), onScreen(you, target, zoom, 0.0))
+        // North up already: nothing moves.
+        val still = MapController.northUp(target, XY(0.0, 14.0), zoom, 0.0)
+        assertEquals(target.lat, still.lat, 1e-12)
+        assertEquals(target.lon, still.lon, 1e-12)
+    }
+
+    @Test
+    fun whenTheSafeAreaChangesThePointAtItsMiddleStaysThere() {
+        val target = GeoPoint(-33.921765, 18.923779)
+        val zoom = 15.5
+        // Portrait to landscape on the Pixel 7 (the cutout on the left), and a turn to the other landscape.
+        val changes = listOf(XY(0.0, 14.0) to XY(26.0, 0.0), XY(26.0, 0.0) to XY(-26.0, 0.0), XY(-26.0, 0.0) to XY(0.0, 14.0))
+        for ((from, to) in changes) {
+            for (bearing in listOf(0.0, 45.0, 200.0)) {
+                val c = MapController.pointAt(target, from, zoom, bearing)
+                val kept = MapController.kept(target, from, to, zoom, bearing)
+                assertAt(to, onScreen(c, kept, zoom, bearing))
+                // The same as moving the target by the change alone (back by the old middle, on by the new).
+                val moved = MapController.targetShowing(target, XY(to.x - from.x, to.y - from.y), zoom, bearing)
+                assertEquals(moved.lat, kept.lat, 1e-12)
+                assertEquals(moved.lon, kept.lon, 1e-12)
+            }
+        }
     }
 
     @Test

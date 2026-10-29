@@ -722,15 +722,19 @@ Android specifics:
 
 | iOS | Android |
 | --- | --- |
-| Saved camera `"camera"` | SharedPreferences string `"lat,lon,dLat,dLon"` (`Locale.ROOT`). Saved on camera idle and in `onStop`. Restored once the container has a size (`doOnLayout`), without animation, with `newLatLngBounds(bounds, 0)`. With nothing saved: (−28.5, 24.7), 14° × 14°. |
-| First fix (nothing saved) | 1500 m × 1500 m around you, once: `moveCamera(newLatLngBounds)`. |
-| Following | Each used fix eases the centre onto you, unless `keepCameraUntil` (now + 1 s) hasn't passed. A gesture (`REASON_API_GESTURE`) sets `following = false`. |
-| `zoom(onto:metersAcross: 300)` | Ground metres per dp across 100 dp at the centre → `newCameraPosition(…target(c).zoom(zoom + log2(across/300)))`, keeping the bearing. |
-| `zoom(to: GeoBounds)` | span = max(0.002°, 1.25 × the bounds' span), then `easeCamera(newLatLngBounds(b, 0))`, `following = false`. |
-| `centerCoordinate` | `fromScreenLocation(view centre)`. Never call `setPadding` on the phone map. |
+| Saved camera `"camera"` | SharedPreferences string `"lat,lon,dLat,dLon"` (`Locale.ROOT`): the region the safe area shows, the coordinate at its middle and the span of its corners, so that restoring it gives the same camera (iOS saves `mapView.region` and restores it with `setRegion`). Saved on camera idle and in `onStop`. Restored once the container has a size (`doOnLayout`), without animation, as a region (below). With nothing saved: (−28.5, 24.7), 14° × 14°. |
+| First fix (nothing saved) | 1500 m × 1500 m around you, once, without animation, as a region. |
+| Safe area | MapKit centres its camera in the safe area: `setCenter`, a camera's centre and `setRegion`, which also fits the region in it. Here the insets of `ViewCompat.getRootWindowInsets(mapView)` for `systemBars() or displayCutout()` (never the IME); the map fills the window. Its middle is ((L − R)/2, (T − B)/2) dp from the view's: 14 dp lower on the Pixel 7, as 14 pt on the iPhone 16 Pro. No camera padding: the target is moved instead (`targetShowing`: that offset turned by the bearing, at the zoom the camera will have, MapLibre's world being 512·2^zoom dp), so `cameraPosition.target` stays the view's middle for `PointAdjuster`, `ZoomScript` and `DrawnImagery`. |
+| Following, `center(on:)` | Each used fix eases you to the safe area's middle, `newLatLng(targetShowing(you))`, unless `keepCameraUntil` (now + 1 s) hasn't passed. A gesture (`REASON_API_GESTURE`) sets `following = false`. |
+| `zoom(onto:metersAcross: 300)` | Ground metres per dp across 100 dp at the view's middle → `newCameraPosition(…zoom(zoom + log2(across/300)).target(targetShowing(c) at that zoom))`, keeping the bearing. |
+| A region (`setRegion`) | `getCameraForLatLngBounds(bounds, safe-area insets)` for the zoom that fits it in the safe area, keeping the bearing; then `centred`: the region's centre at the safe area's middle (not the middle of its Mercator edges, which lies nearer the pole), padding back to 0. |
+| `zoom(to: GeoBounds)` | span = max(0.002°, 1.25 × the bounds' span), `following = false`, then `easeCamera` to the region. |
+| The safe area changes (MapKit keeps its camera's centre) | The screen turned, or the cutout went to the other side: `keepSafeAreaMiddle` moves the point at the old safe area's middle to the new one without animation (`kept`, keeping zoom and bearing), as MapLibre alone keeps the view's middle. It runs on every layout of the container, before the camera hooks, and of the window (a turn between the landscapes changes no size), once started, against the offset the camera was last centred with. |
+| `MKCompassButton` | `resetNorth()`: `easeCamera` to bearing 0 with the target from `northUp`, so the safe area's middle stays put (MapLibre's `resetNorth` turns about the view's middle), 500 ms as MapLibre's. |
+| `centerCoordinate` | `fromScreenLocation(view centre)`: the crosshair (the aim line and the scale use the view's middle too). Never call `setPadding` on the phone map. |
 | metres per point | `fromScreenLocation(centre ± 50 dp)`, `Geo.distance / 100` → `model.scale.update`. |
 | Every camera frame | aim (`model.aim.set(centre)` while aiming), scale, the `DrawnImagery` hooks, `bearing.value = cameraPosition.bearing`. |
-| Camera idle | save, aim, scale, `imagery.regionDidChange()`, `aviation.regionChanged()`. |
+| Camera idle | save, aim, scale, `imagery.regionDidChange()`, `aviation.regionChanged()`. The save and drone mode share the region (`MapController.region`, the safe area's). |
 | ZoomScript zoom `z` | MapLibre zoom `z − 1`. |
 
 ### 3.13 Drone mode
@@ -738,7 +742,8 @@ Android specifics:
 - **`AviationStore`** reads `assets.open("Aviation.tsv")` once on `Dispatchers.IO` and calls back on the main thread. `AppModel.updateDroneReport` uses it as in Swift.
 - **`AviationLayer.regionChanged()`:**
   - needs a view wider than 100 dp;
-  - keeps the places whose `kind.shownWithinKm ≥` the km across the screen, within the region ± 65 %, at most 140 (by priority, then distance);
+  - keeps the places whose `kind.shownWithinKm ≥` the km across the screen, within the region ± 65 %, at most 140 (by priority, then distance from the region's centre);
+  - the region (iOS `mapView.region`) is the map's own, passed in: the phone's safe area's, as saved (§3.12), and the car's visible area's, where its padded camera centres. The km stay measured across the view's middle, as in Swift;
   - draws the card bitmaps on `Dispatchers.Default`, then on the main thread runs `addImages` → `setGeoJson` → removes the generation before last.
 - **Cards:** the 22×22 symbol slot is at the top of the card image, so the whole frame collides, as on iOS.
 - **Runway kinds** (large, medium and small airports, seaplane bases): their ring and runway are a separate map-aligned symbol (`aviation-rings`, `iconRotate(get("rwy"))`), so MapLibre turns it with the map.

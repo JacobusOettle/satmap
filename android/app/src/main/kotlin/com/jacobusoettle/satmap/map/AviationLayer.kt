@@ -112,9 +112,16 @@ class AviationStore internal constructor(private val read: (Context) -> String =
  *  the map zooms in, each labelled with how far it is from you and from the tapped spot. One point per place in the
  *  `aviation` source, its card an app-drawn image (the style has no glyphs) with the chart symbol at its top, so the
  *  whole card collides as on iOS; the ring and runway of an aerodrome are a separate map-aligned symbol
- *  (`aviation-rings`), shown only under the cards MapLibre shows, which MapLibre turns with the map. Main thread only;
- *  the places for a view and the card images are found on `Dispatchers.Default`. */
-class AviationLayer(private val map: MapLibreMap, private val style: Style, private val context: Context) {
+ *  (`aviation-rings`), shown only under the cards MapLibre shows, which MapLibre turns with the map. `shownRegion` is
+ *  the map's region (iOS `mapView.region`), which each map gives (`MapController.region`): around the middle of its
+ *  safe area, where its camera centres. Main thread only; the places for a view and the card images are found on
+ *  `Dispatchers.Default`. */
+class AviationLayer(
+    private val map: MapLibreMap,
+    private val style: Style,
+    private val context: Context,
+    private val shownRegion: () -> MapController.Region?,
+) {
     /** A place's card on the map: its image, the text drawn in it (so an update that changes nothing keeps it), and its
      *  frame in dp. */
     class Shown(val image: String, val text: String, val width: Float, val height: Float)
@@ -180,11 +187,8 @@ class AviationLayer(private val map: MapLibreMap, private val style: Style, priv
         val a = p.fromScreenLocation(PointF(w / 2 - 50 * density, h / 2))
         val c = p.fromScreenLocation(PointF(w / 2 + 50 * density, h / 2))
         val km = Geo.distance(GeoPoint(a.latitude, a.longitude), GeoPoint(c.latitude, c.longitude)) / 100 * (w / density) / 1000
-        val v = p.visibleRegion
-        val corners = listOf(v.farLeft, v.farRight, v.nearLeft, v.nearRight)
-        if (corners.any { it == null }) return
-        val middle = p.fromScreenLocation(PointF(w / 2, h / 2)).wrap()
-        val r = MapController.Region.of(GeoPoint(middle.latitude, middle.longitude), corners.map { GeoPoint(it!!.latitude, it.longitude) })
+        // The query box and the centre the places are kept nearest to: the region's.
+        val r = shownRegion() ?: return
         region = Query(r.center, r.latDelta, r.lonDelta, km)
         refreshVisible()
         redraw(index)

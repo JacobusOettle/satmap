@@ -18,7 +18,7 @@
 | `MovablePoint`, `PointAdjuster`, `LoupeFrame`, `LoupeGlass`, `LoupeView` | `PointAdjuster.kt` | `MovablePoint` (a sealed interface with `Selected` and `Measure(i)`), `PointAdjuster`, `LoupeFrame`, `LoupeView` |
 | `ZoomScript`, `Watchdog` | `ZoomScript.kt` | `ZoomScript`, `Watchdog` |
 
-`BlockLayers`, `AviationLayer`, `TrackLayer` and `UserDotLayer` take a `(MapLibreMap, Style, Context)`, not the `MapController`. The Android Auto map then reuses them, as CarPlay reuses the Swift classes.
+`BlockLayers`, `AviationLayer`, `TrackLayer` and `UserDotLayer` take a `(MapLibreMap, Style, Context)`, not the `MapController` (`AviationLayer` also takes the map's region, iOS `mapView.region`, from its controller). The Android Auto map then reuses them, as CarPlay reuses the Swift classes.
 
 **Units:**
 - iOS "points" become **dp** everywhere. Every distance threshold below is in dp; convert from `MotionEvent` and `Projection` pixels with `resources.displayMetrics.density`.
@@ -137,22 +137,25 @@
 
 ### 1.3 Camera
 
-- **Saved camera.** Key `"camera"` stores (centre lat, centre lon, latitude span, longitude span) of the visible region.
+- **Safe area.** As MapKit does, the camera centres on the middle of the map's safe area (the view less the system bars and the display cutout, never the keyboard), not on the view's middle: you while following, a point zoomed onto, a region's centre. A region is also fitted within the safe area. On the Pixel 7 that middle is 14 dp below the view's, as it is 14 pt on the iPhone 16 Pro, so while following you are that far below the crosshair.
+- **Safe area changes.** When the safe area changes (the screen turns, or turns from one landscape to the other and the cutout goes to the other side), the point at its old middle is moved to its new middle, without animation, keeping the zoom and the heading, as MapKit keeps its camera's centre. (MapLibre on its own keeps the view's middle: on the Pixel 7 a centred point would end up about 30 dp off the safe area's middle in landscape.) Checked on every layout of the map's container and of the window, before the camera hooks run.
+- **Compass.** North up about the safe area's middle, which stays put (you stay put while following), as `MKCompassButton` keeps the camera's centre.
+- **Saved camera.** Key `"camera"` stores (centre lat, centre lon, latitude span, longitude span) of the region the safe area shows.
   - Saved when the camera goes idle and when the app goes to the background.
-  - Restored without animation: the region is fitted to the view.
+  - Restored without animation: the region is fitted to the safe area.
   - With nothing saved: centre (−28.5, 24.7), span 14° × 14°.
 - **First launch** (nothing saved). The first fix while following sets the region to 1500 m × 1500 m around you, without animation. This happens once.
-- **Following.** While `following`, each fix animates the centre onto you, unless `keepCameraUntil` (now + **1 s**, set by "zoom onto") hasn't passed. Any camera move started by the user's gesture sets `following = false`.
+- **Following.** While `following`, each fix animates the safe area's middle onto you, unless `keepCameraUntil` (now + **1 s**, set by "zoom onto") hasn't passed. Any camera move started by the user's gesture sets `following = false`.
 - **My location** (`AppModel.centerOnUser`).
   - If already following and the position is known: zoom onto you so the screen is **300 m** across. A quick second tap does this too.
     - Measure ground metres per dp across 100 dp at the screen centre.
     - `across = perDp · widthDp`.
-    - Keep the heading, centre on you, scale the camera so `across` becomes 300, animate, and set `keepCameraUntil`.
-  - Otherwise: `following = true` and animate the centre onto you.
+    - Keep the heading, centre on you (in the safe area), scale the camera so `across` becomes 300, animate, and set `keepCameraUntil`.
+  - Otherwise: `following = true` and animate the safe area's middle onto you.
 - **Zoom to bounds** (`zoom(to: GeoBounds)`).
-  - Span = max(0.002°, 1.25 × the bounds span) in each axis, centred on `b.center`.
+  - Span = max(0.002°, 1.25 × the bounds span) in each axis, centred on `b.center` (in the safe area).
   - `following = false`, then animate.
-- **`centerCoordinate`** is the coordinate at the middle of the map view, where the crosshair is.
+- **`centerCoordinate`** is the coordinate at the middle of the map view, where the crosshair is (not the safe area's middle).
 - **`pointsApart(a, b)`** is the screen distance in dp.
 - **Every camera frame:** update the aim, update the scale (`model.scale.update(metersPerPoint)`), and run the imagery hooks.
 - **Camera idle:** save the camera, update the aim and scale, then `imagery.regionDidChange()` and `aviation.regionChanged()`.
@@ -242,6 +245,7 @@ Shown only while `measure == off` and `selectedPoint != null`.
 - **Loading.** On with `terrainMode.showsAviation`. `AviationStore` reads `Aviation.tsv` once, in the background, the first time it is needed. Every waiting caller is called back on the main thread.
 - **Which places** (`regionChanged`, when the camera goes idle; needs a view wider than 100 dp):
   - `km` = ground metres per dp across 100 dp at the centre × view width / 1000.
+  - The region is the map's `mapView.region`, as saved (§1.3): the coordinate at the safe area's middle and the span of the safe area's corners. The car map gives the part of its surface the host leaves to the map, where its camera centres.
   - The query box is the region's centre ± span × (0.5 + **0.15**). Latitude is clamped to ±90; longitude is not clamped (it may run past ±180).
   - Keep places with `kind.shownWithinKm ≥ km`:
 
@@ -253,7 +257,7 @@ Shown only while `measure == off` and `selectedPoint != null`.
     | Small airport | 200 |
     | NDB, DME | 120 |
     | Helipad, seaplane base | 60 |
-  - If more than **140**: sort by priority (descending), then by distance to the centre, and keep 140.
+  - If more than **140**: sort by priority (descending), then by distance to the region's centre, and keep 140.
   - Places already shown are kept as they are.
 - **Distances.** A label is redrawn when you or the pin (tapped spot or selected place) has moved ≥ **20 m**, or one of them appeared or disappeared.
 - **Symbol.** 22 × 22 dp, centred on the place. Stroke white 2 with round cap. Underneath it, the same path as a halo: stroke black 65% at width 4.5, closed shapes filled black 35%.
@@ -349,7 +353,7 @@ MapContainerView : FrameLayout      // dispatchTouchEvent watches every touch
 
 In `getMapAsync` it sets these `UiSettings`:
 - `isTiltGesturesEnabled = false`
-- `isCompassEnabled = false`: the UI's own compass button calls `map.resetNorth()` and shows while `cameraPosition.bearing != 0`.
+- `isCompassEnabled = false`: the UI's own compass button calls `MapController.resetNorth()` and shows while `cameraPosition.bearing != 0`. That eases to bearing 0 about the safe area's middle (§2.7), not with `MapLibreMap.resetNorth()`, which turns about the view's middle and is only the fallback before the map has started.
 - `isLogoEnabled = false`
 - `isAttributionEnabled = false`: the credits are on the Offline screen, as on iOS.
 - rotate, zoom, scroll, double-tap and quick zoom stay on.
@@ -549,12 +553,15 @@ override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
 
 | iOS | MapLibre (`org.maplibre.android`) |
 | --- | --- |
-| `setRegion(center, span)` | `LatLngBounds.from(north, east, south, west)` → `moveCamera`/`easeCamera(CameraUpdateFactory.newLatLngBounds(bounds, 0))`. On launch, wait until the view has a size (`container.doOnLayout`). |
-| `mapView.region` (for saving) | `projection.visibleRegion`: the four corners `farLeft`/`farRight`/`nearLeft`/`nearRight`, longitudes unwrapped around the centre, then min and max. The same helper serves `AviationLayer`. Stored as the string `"lat,lon,dLat,dLon"` under SharedPreferences `"camera"`. |
-| 1500 m region on the first fix | bounds of ± 750 m (`dLat = 750/111_320`, `dLon = dLat/cos lat`) → `moveCamera(newLatLngBounds)` |
-| `setCenter(c, animated)` | `easeCamera(CameraUpdateFactory.newLatLng(c))` / `moveCamera` |
-| `zoom(onto:metersAcross:)` | `easeCamera(newCameraPosition(CameraPosition.Builder(map.cameraPosition).target(c).zoom(zoom + log2(across/300)).build()))` |
-| `zoom(to: GeoBounds)` | expanded bounds → `easeCamera(newLatLngBounds(b, 0))` |
+| safe area (MapKit centres its camera there) | the insets of `ViewCompat.getRootWindowInsets(mapView)` for `systemBars() or displayCutout()`; its middle is `MapController.safeOffset` = ((L − R)/2, (T − B)/2) dp from the view's. No camera padding: `MapController.targetShowing(c, offset, zoom, bearing)` gives the target (the view's middle) that leaves `c` there, the offset turned by the bearing into the world (512·2^zoom dp wide). |
+| `setRegion(center, span)` | `LatLngBounds.from(north, east, south, west)` → `getCameraForLatLngBounds(bounds, intArrayOf(L, T, R, B))` (fitted in the safe area) → `MapController.centred(fitted, center, offset)` (the target from `targetShowing`, padding back to 0) → `moveCamera`/`easeCamera(newCameraPosition)`. On launch, wait until the view has a size (`container.doOnLayout`). |
+| `mapView.region` (for saving, and drone mode) | `MapController.region(map, area)`: the safe area's four corners and middle through `projection.fromScreenLocation`, longitudes unwrapped around the middle, then min and max. Stored as the string `"lat,lon,dLat,dLon"` under SharedPreferences `"camera"`; restored as a region, it gives the same camera. The same helper serves `AviationLayer`: each map passes its own region (the phone's safe area; the car's visible area, where its padded camera centres). |
+| safe area changes (MapKit keeps `camera.centerCoordinate`) | `MapController.keepSafeAreaMiddle`, from the container's `onLayout` (before the camera hooks) and a `ViewTreeObserver.OnGlobalLayoutListener` (a turn between the landscapes changes the insets but not the size): when `safeOffset` differs from the one the camera was last centred with, `moveCamera(newLatLng(MapController.kept(target, old, new, zoom, bearing)))`, the point at the old middle moved to the new one. MapLibre keeps the target (`MapView.onSizeChanged` only calls `NativeMap.resizeView`). |
+| `MKCompassButton` (heading 0, keeping `camera.centerCoordinate`) | `easeCamera(newCameraPosition(Builder(cameraPosition).bearing(0.0).target(MapController.northUp(target, offset, zoom, bearing))), 500)`; before the map has started, `resetNorth()`. |
+| 1500 m region on the first fix | bounds of ± 750 m (`dLat = 750/111_320`, `dLon = dLat/cos lat`) → as `setRegion`, with `moveCamera` |
+| `setCenter(c, animated)` | `easeCamera(CameraUpdateFactory.newLatLng(targetShowing(c)))` / `moveCamera` |
+| `zoom(onto:metersAcross:)` | `easeCamera(newCameraPosition(CameraPosition.Builder(map.cameraPosition).target(targetShowing(c) at the new zoom).zoom(zoom + log2(across/300)).build()))` |
+| `zoom(to: GeoBounds)` | expanded bounds → as `setRegion`, with `easeCamera` |
 | `centerCoordinate` | `projection.fromScreenLocation(PointF(mapView.width/2f, mapView.height/2f))` |
 | `camera.heading` | `map.cameraPosition.bearing` |
 | map points per point | `metersPerPoint`: `fromScreenLocation(centre ± 50 dp)`, `Geo.distance/100` |
