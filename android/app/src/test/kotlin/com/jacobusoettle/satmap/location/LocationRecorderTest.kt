@@ -755,6 +755,25 @@ class LocationRecorderTest {
     }
 
     @Test
+    fun screenTestsCanSetThePositionAndThePermissionState() {
+        val r = recorder()
+        val fix = GpsFix(home.lat, home.lon, 5.0, 612.0, 3.0, 1_700_000_000.0, SystemClock.elapsedRealtime() / 1000.0)
+        r.setForTests(fix, LocationRecorder.Authorization.authorized, reducedAccuracy = true)
+        assertEquals(fix, r.location.value)
+        assertEquals(LocationRecorder.Authorization.authorized, r.authorization.value)
+        assertTrue(r.reducedAccuracy.value)
+        // Passed on as a fix used, but not recorded, and nothing is asked of the location manager.
+        assertEquals(listOf(fix), fixes)
+        assertEquals(emptyList<TrackPoint>(), points)
+        assertTrue(shadowOf(lm).getLocationUpdateListeners(LocationManager.GPS_PROVIDER).isEmpty())
+        r.setForTests(null, LocationRecorder.Authorization.servicesOff)
+        assertNull(r.location.value)
+        assertEquals(LocationRecorder.Authorization.servicesOff, r.authorization.value)
+        assertFalse(r.reducedAccuracy.value)
+        assertEquals(1, fixes.size)
+    }
+
+    @Test
     fun theTestPositionsAreWhereTheTestsSayTheyAre() {
         assertEquals(25.0, Geo.distance(home, at(25.0)), 0.2)
         assertEquals(350.0, Geo.distance(home, at(350.0)), 1.5)

@@ -7,6 +7,7 @@ import com.jacobusoettle.satmap.core.Aviation
 import com.jacobusoettle.satmap.core.AviationPoint
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DistanceUnit
+import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
@@ -656,49 +657,144 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         if (loc != null) map?.center(on = loc.point, animated = true)
     }
 
-    // Measuring (M3)
+    // Measuring
 
-    /** A tap on a point in a KML file (a launch point …): selected at its own position, with its name. */
-    fun pointTapped(p: GeoPoint, name: String?) {
-        // M3: selectedPoint = p, then selectedName = name (null when empty).
+    /** The measure button: shows the crosshair, then places a point at it each time (A, B, C …); after a shape is
+     *  closed it clears. */
+    fun measureButtonTapped() {
+        when (_measure.value) {
+            MeasureMode.Off -> setMeasure(MeasureMode.Aiming)
+            MeasureMode.Aiming, is MeasureMode.Placed, is MeasureMode.Path -> addPointAtCrosshair()
+            is MeasureMode.Closed -> clearMeasure()
+        }
     }
 
     /** A tap on the map: shows the spot's coordinates; while measuring, places a point at the crosshair wherever the
      *  tap was (a finger covers the spot it taps). */
     fun mapTapped(p: GeoPoint) {
-        // M3: off → selectedPoint = p; otherwise addPointAtCrosshair().
+        if (_measure.value == MeasureMode.Off) {
+            setSelectedPoint(p)
+        } else {
+            addPointAtCrosshair()
+        }
     }
 
-    /** A point being moved precisely (pressed and held): the tapped spot, or a measuring point. Heights are looked up
-     *  again once it is let go (`done`). */
+    /** A tap on a point in a KML file (a launch point …): selected at its own position, with its name. */
+    fun pointTapped(p: GeoPoint, name: String?) {
+        setSelectedPoint(p)
+        _selectedName.value = if (name.isNullOrEmpty()) null else name
+    }
+
+    /** A point being moved precisely (pressed and held): the tapped spot, or a measuring point (its distances and area
+     *  follow; its coordinates and height show at the bottom). Heights are looked up again once it is let go
+     *  (`done`). */
     fun movePoint(which: MovablePoint, p: GeoPoint, done: Boolean) {
-        // M3: the Swift movePoint (selected or measure(i)), with pointMoving and the elevation resets when done.
+        when (which) {
+            MovablePoint.Selected -> {
+                pointMoving = !done
+                setSelectedPoint(p)
+                if (done) lookUpSelectedHeight()
+            }
+            is MovablePoint.Measure -> {
+                val i = which.i
+                val count = _measure.value.points.size
+                if (i >= count) return
+                pointMoving = !done
+                _measure.value = _measure.value.moving(i, p)
+                setSelectedPoint(p)
+                if (!done) return
+                lookUpSelectedHeight()
+                if (i == 0) _markerElevation.value = null
+                if (count >= 2 && i == count - 1) _lastElevation.value = null
+                refreshPointElevations()
+            }
+        }
     }
 
-    /** The measure button: shows the crosshair, then places a point at it each time (A, B, C …); after a shape is
-     *  closed it clears. */
-    fun measureButtonTapped() {
-        // M3: off → aiming; aiming, placed, path → addPointAtCrosshair(); closed → clearMeasure().
+    private fun addPointAtCrosshair() {
+        val c = map?.centerCoordinate ?: return
+        addMeasurePoint(c)
+    }
+
+    private fun addMeasurePoint(p: GeoPoint) {
+        val m = _measure.value
+        // With the crosshair on A (three or more points): the shape closes.
+        if (m is MeasureMode.Path && m.pts.size >= 3) {
+            val apart = map?.pointsApart(p, m.pts[0])
+            if (apart != null && apart < 20) return closeMeasureShape()
+        }
+        // The crosshair still on the last point (another tap without moving the map): no leg of 0 m.
+        if (m is MeasureMode.Placed || m is MeasureMode.Path) {
+            val last = m.points.lastOrNull()
+            val apart = last?.let { map?.pointsApart(p, it) }
+            if (apart != null && apart < 6) return
+        }
+        setSelectedPoint(p)
+        when (m) {
+            is MeasureMode.Placed -> setMeasure(MeasureMode.Path(listOf(m.a, p)))
+            is MeasureMode.Path -> setMeasure(MeasureMode.Path(m.pts + p))
+            // The first point, or a new start after a closed shape.
+            else -> setMeasure(MeasureMode.Placed(p))
+        }
     }
 
     /** Joins the last point back to the first (tap on A, or "Close shape"): the area. */
     fun closeMeasureShape() {
-        // M3: path with 3 or more points → closed.
+        val m = _measure.value
+        if (m !is MeasureMode.Path || m.pts.size < 3) return
+        setMeasure(MeasureMode.Closed(m.pts))
     }
 
     /** Removes the last point (or reopens a closed shape). */
     fun undoMeasurePoint() {
-        // M3: the Swift undo table, then selectedPoint = measure.points.last.
+        when (val m = _measure.value) {
+            is MeasureMode.Closed -> setMeasure(MeasureMode.Path(m.pts))
+            is MeasureMode.Path -> if (m.pts.size > 2) {
+                setMeasure(MeasureMode.Path(m.pts.dropLast(1)))
+            } else {
+                setMeasure(MeasureMode.Placed(m.pts[0]))
+            }
+            is MeasureMode.Placed -> setMeasure(MeasureMode.Aiming)
+            MeasureMode.Off, MeasureMode.Aiming -> return
+        }
+        setSelectedPoint(_measure.value.points.lastOrNull())
     }
 
+    private fun setMeasure(m: MeasureMode) {
+        val old = _measure.value.points
+        _measure.value = m
+        // Faster GPS checks while asleep only matter when the distance is from you.
+        recorder.measuring = measureIsFromYou
+        if (m != MeasureMode.Aiming) aim.set(null)
+        val new = m.points
+        if (new.firstOrNull() != old.firstOrNull()) _markerElevation.value = null
+        if (new.size < 2 || new.lastOrNull() != old.lastOrNull() || old.size < 2) _lastElevation.value = null
+        refreshPointElevations()
+        val loc = recorder.location.value
+        if (measureIsFromYou && loc != null) refreshUserElevation(loc)
+    }
+
+    /** Aiming (to the crosshair) or one point: the distance and height are from you. */
+    private val measureIsFromYou: Boolean
+        get() = when (_measure.value) {
+            MeasureMode.Aiming, is MeasureMode.Placed -> true
+            MeasureMode.Off, is MeasureMode.Path, is MeasureMode.Closed -> false
+        }
+
     /** Distance from you to the point, or the total length of the line through the points (around the shape when
-     *  it is closed). */
+     *  it is closed). `Geo.distance` where the Swift uses `CLLocation`'s distance (Apple's algorithm is unspecified;
+     *  they differ by under 0.5 %). */
     val markerDistance: Double?
-        get() = null // M3: as Swift (Geo.distance / Geo.pathLength).
+        get() = when (val m = _measure.value) {
+            is MeasureMode.Placed -> recorder.location.value?.let { Geo.distance(it.point, m.a) }
+            is MeasureMode.Path -> Geo.pathLength(m.pts)
+            is MeasureMode.Closed -> Geo.pathLength(m.pts + m.pts[0])
+            MeasureMode.Off, MeasureMode.Aiming -> null
+        }
 
     /** The closed shape's area in square metres. */
     val measuredArea: Double?
-        get() = null // M3: Geo.ringArea for closed.
+        get() = (_measure.value as? MeasureMode.Closed)?.let { Geo.ringArea(it.pts) }
 
     /** Looks up the elevations of the first and last measuring points that aren't known yet (not for a closed
      *  shape). A failed lookup (no signal) is tried again a few times, 15 s apart, while the point stays and the app
@@ -732,12 +828,26 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     /** A position typed or pasted in: measuring starts from it (point A, with the live distance from you), and the map
      *  shows it, with you too if you are within 50 km. */
     fun measure(from: GeoPoint) {
-        // M3: sheet = null; following = false; setMeasure(placed(p)); selectedPoint = p; zoom or centre.
+        val p = from
+        setSheet(null)
+        setFollowing(false)
+        setMeasure(MeasureMode.Placed(p))
+        setSelectedPoint(p)
+        recorder.location.value?.let { loc ->
+            val me = loc.point
+            val b = GeoBounds(points = listOf(me, p))
+            if (Geo.distance(me, p) < 50_000 && b != null) {
+                map?.zoom(to = b)
+                return
+            }
+        }
+        map?.center(on = p, animated = true)
     }
 
     /** The ✕ on the measuring panel. */
     fun clearMeasure() {
-        // M3: setMeasure(off); selectedPoint = null.
+        setMeasure(MeasureMode.Off)
+        setSelectedPoint(null)
     }
 
     private fun refreshUserElevation(loc: GpsFix) {

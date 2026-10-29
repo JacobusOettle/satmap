@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.PathSensitivity
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -58,6 +59,13 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // The Swift tests' fixtures (KML files, the iPhone's and Android's backups), read in place. A folder outside
+        // android/ is declared as an input, or Gradle would reuse an earlier result when only the fixtures change.
+        unitTests.all {
+            val fixtures = rootProject.file("../Tests/SatMapCoreTests/Fixtures")
+            it.systemProperty("satmap.fixtures", fixtures.absolutePath)
+            it.inputs.dir(fixtures).withPropertyName("satmapFixtures").withPathSensitivity(PathSensitivity.RELATIVE)
+        }
     }
 
     packaging {
@@ -109,6 +117,8 @@ dependencies {
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.uiautomator)
+    // On the compile path too (the Compose rule brings it at run time): the walkthrough's idle timeouts.
+    androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(libs.compose.ui.test.junit4)
     debugImplementation(libs.compose.ui.test.manifest)
 }

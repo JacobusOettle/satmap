@@ -852,6 +852,7 @@ WhatsApp and Gmail pass on the sender's type, which for KML/KMZ is often `applic
   - `ACTION_SEND_MULTIPLE`: `IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)`.
 - For each URI: `model.kml.importFile(uri) { f -> f?.document?.bounds?.let { model.map?.zoom(it) } ?: run { model.sheet.value = ActiveSheet.Blocks } }`.
 - Afterwards `setIntent(Intent(intent).setAction(null))`, so a recreation doesn't import again.
+- An intent carrying `Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY` (`MainActivity.isReplay`) is ignored. `setIntent` only changes the activity object, not the task's base intent: on API 26–30 Back finishes the root activity but leaves the task in Recents, and reopening it from there starts `MainActivity` again with the original `ACTION_VIEW`/`ACTION_SEND` intent (and `savedInstanceState == null`). Without the check the file would be imported again (a duplicate in Blocks), or fail with "Couldn't read …" once the URI grant is gone. iOS hands each opened file over once. The same holds for `ACTION_SAVE_TO_FOLDER`.
 
 **Persistence.**
 - `useFileColours` is `MutableStateFlow(prefs.getBoolean("kmlFileColours", true))` and is written on change.

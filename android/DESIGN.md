@@ -300,6 +300,7 @@ class LocationRecorder(context: Context) : AppLifecycle.Observer {
     var onTrackPoint: ((TrackPoint) -> Unit)?; var onFix: ((GpsFix) -> Unit)?; var onHeading: ((Double?) -> Unit)?
     var headingWanted: Boolean; var screenRotation: Int; var measuring: Boolean
     fun seed(lastRecorded: TrackPoint?); fun start(); fun authorizationChanged(); fun startMotion(); fun stop()
+    @VisibleForTesting fun setForTests(fix: GpsFix?, authorization: Authorization = Authorization.authorized, reducedAccuracy: Boolean = false)
 }
 
 // map/MapController.kt (what the UI and MainActivity use)
@@ -983,16 +984,18 @@ data class GpsFix(val lat: Double, val lon: Double, val horizontalAccuracy: Doub
 | active | – | yes | 2000 ms, HIGH_ACCURACY | 5 s, BALANCED, only while no GPS fix in the last 30 s | – |
 | active | – | no, acquiring | 1000 ms, HIGH | the same rule | – |
 | active | – | no, resting | none | – | – |
-| sleeping | no | any | none | 60 s (min 30 s), LOW_POWER | 0 (min 10 s) |
+| sleeping | no | any | none | 60 s (min 30 s), LOW_POWER | interval 10 s |
 | sleeping | yes | any | 1000 ms, HIGH | – | – |
 
   - API: `LocationManagerCompat.requestLocationUpdates` with `LocationRequestCompat`, one listener per provider, the main executor, and no batching.
+  - **Passive:** a passive request's interval asks for nothing, and `LocationRequest` folds a smaller minimum into the interval, so the interval itself is the 10 s minimum.
+  - **Network while searching:** the network row is registered while the GPS has had no fix for 30 s. A `WakeTimer` (`"searching"`), set for 30 s after the GPS's last fix, registers it again.
   - **Approximate only:** the GPS row uses `FUSED_PROVIDER` (or network) at LOW_POWER.
   - **Routing:**
     - GPS fixes go to `didUpdateLocations`;
     - network fixes go to `handleWhileSleeping` when sleeping, else to `didUpdateLocations`;
     - passive fixes are used only while sleeping and not peeking.
-- **Timers:** every recorder timer (stationary 15 s, duty `lastUsedAt + 7 s`, peek, peek end, the 6 s motion debounce) is a `WakeTimer`: `AlarmManager.setExact(ELAPSED_REALTIME_WAKEUP, …, OnAlarmListener, mainHandler)`. On `SecurityException` it falls back to `set`. Do not declare `SCHEDULE_EXACT_ALARM`.
+- **Timers:** every recorder timer (stationary 15 s, duty `lastUsedAt + 7 s`, peek, peek end, the 6 s motion debounce, searching 30 s) is a `WakeTimer`: `AlarmManager.setExact(ELAPSED_REALTIME_WAKEUP, …, OnAlarmListener, mainHandler)`. On `SecurityException` it falls back to `set`. Do not declare `SCHEDULE_EXACT_ALARM`.
 - **Motion:**
   - `TYPE_SIGNIFICANT_MOTION` (a trigger sensor, re-armed in `onTrigger`) means high confidence: wake now.
   - `TYPE_STEP_DETECTOR` (with `ACTIVITY_RECOGNITION`):
@@ -1014,6 +1017,8 @@ data class GpsFix(val lat: Double, val lon: Double, val horizontalAccuracy: Doub
 
   It is re-read on `start()`, on foreground and active, on a permission result, on provider enable/disable, and on a `MODE_CHANGED_ACTION` receiver.
 - **`beginUpdates()`:** guard `!started && AppLifecycle.isForeground && authorized`. Then `LocationService.start(context)` (catch `ForegroundServiceStartNotAllowedException` and `SecurityException`, and carry on), `applyRequests()`, `startMotion()`, and the stationary timer.
+- **What came when:** sleep, the peeks, the coarse-jump wake, significant motion and the compass landed in M1, with the request table above. Only the step detector is left for M5 (§7.2 lists the rest there too).
+- **`setForTests(fix, authorization, reducedAccuracy)`** (`@VisibleForTesting`): for screen tests, where no fix arrives. It sets the three flows, and passes a fix on through `onFix` without recording it.
 
 **`LocationService`** is a foreground service of type `location`, started only from the foreground (it keeps
 while-in-use access in the background, so `ACCESS_BACKGROUND_LOCATION` is never requested).
@@ -1208,7 +1213,8 @@ class Connectivity private constructor(context: Context) {
 - **KML in:** the three `MainActivity` intent filters (offline spec §2.9). `MainActivity.handleIncoming(intent)` runs from `onCreate` (when `savedInstanceState == null`) and `onNewIntent`:
   - it takes the URIs from `data` or `EXTRA_STREAM`;
   - for each: `model.kml.importFile(uri) { f -> f?.document?.bounds?.let { model.map?.zoom(it) } ?: model.setSheet(ActiveSheet.blocks) }`;
-  - then it clears the intent action.
+  - then it clears the intent action;
+  - it does nothing for an intent replayed from Recents (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, `MainActivity.isReplay`): clearing the action doesn't change the task's base intent, which Recents relaunches with on API 26–30 after Back finished the activity.
 - **Export:**
   1. `OfflineManager.export(ids)` holds downloads and pauses an exported area that is downloading.
   2. `OfflineBackup.prepareExport` (core) writes the metadata and checkpoints.
