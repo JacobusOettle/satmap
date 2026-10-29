@@ -137,22 +137,23 @@
 
 ### 1.3 Camera
 
-- **Saved camera.** Key `"camera"` stores (centre lat, centre lon, latitude span, longitude span) of the visible region.
+- **Safe area.** As MapKit does, the camera centres on the middle of the map's safe area (the view less the system bars and the display cutout, never the keyboard), not on the view's middle: you while following, a point zoomed onto, a region's centre. A region is also fitted within the safe area. On the Pixel 7 that middle is 14 dp below the view's, as it is 14 pt on the iPhone 16 Pro, so while following you are that far below the crosshair.
+- **Saved camera.** Key `"camera"` stores (centre lat, centre lon, latitude span, longitude span) of the region the safe area shows.
   - Saved when the camera goes idle and when the app goes to the background.
-  - Restored without animation: the region is fitted to the view.
+  - Restored without animation: the region is fitted to the safe area.
   - With nothing saved: centre (−28.5, 24.7), span 14° × 14°.
 - **First launch** (nothing saved). The first fix while following sets the region to 1500 m × 1500 m around you, without animation. This happens once.
-- **Following.** While `following`, each fix animates the centre onto you, unless `keepCameraUntil` (now + **1 s**, set by "zoom onto") hasn't passed. Any camera move started by the user's gesture sets `following = false`.
+- **Following.** While `following`, each fix animates the safe area's middle onto you, unless `keepCameraUntil` (now + **1 s**, set by "zoom onto") hasn't passed. Any camera move started by the user's gesture sets `following = false`.
 - **My location** (`AppModel.centerOnUser`).
   - If already following and the position is known: zoom onto you so the screen is **300 m** across. A quick second tap does this too.
     - Measure ground metres per dp across 100 dp at the screen centre.
     - `across = perDp · widthDp`.
-    - Keep the heading, centre on you, scale the camera so `across` becomes 300, animate, and set `keepCameraUntil`.
-  - Otherwise: `following = true` and animate the centre onto you.
+    - Keep the heading, centre on you (in the safe area), scale the camera so `across` becomes 300, animate, and set `keepCameraUntil`.
+  - Otherwise: `following = true` and animate the safe area's middle onto you.
 - **Zoom to bounds** (`zoom(to: GeoBounds)`).
-  - Span = max(0.002°, 1.25 × the bounds span) in each axis, centred on `b.center`.
+  - Span = max(0.002°, 1.25 × the bounds span) in each axis, centred on `b.center` (in the safe area).
   - `following = false`, then animate.
-- **`centerCoordinate`** is the coordinate at the middle of the map view, where the crosshair is.
+- **`centerCoordinate`** is the coordinate at the middle of the map view, where the crosshair is (not the safe area's middle).
 - **`pointsApart(a, b)`** is the screen distance in dp.
 - **Every camera frame:** update the aim, update the scale (`model.scale.update(metersPerPoint)`), and run the imagery hooks.
 - **Camera idle:** save the camera, update the aim and scale, then `imagery.regionDidChange()` and `aviation.regionChanged()`.
@@ -548,12 +549,13 @@ override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
 
 | iOS | MapLibre (`org.maplibre.android`) |
 | --- | --- |
-| `setRegion(center, span)` | `LatLngBounds.from(north, east, south, west)` → `moveCamera`/`easeCamera(CameraUpdateFactory.newLatLngBounds(bounds, 0))`. On launch, wait until the view has a size (`container.doOnLayout`). |
-| `mapView.region` (for saving) | `projection.visibleRegion`: the four corners `farLeft`/`farRight`/`nearLeft`/`nearRight`, longitudes unwrapped around the centre, then min and max. The same helper serves `AviationLayer`. Stored as the string `"lat,lon,dLat,dLon"` under SharedPreferences `"camera"`. |
-| 1500 m region on the first fix | bounds of ± 750 m (`dLat = 750/111_320`, `dLon = dLat/cos lat`) → `moveCamera(newLatLngBounds)` |
-| `setCenter(c, animated)` | `easeCamera(CameraUpdateFactory.newLatLng(c))` / `moveCamera` |
-| `zoom(onto:metersAcross:)` | `easeCamera(newCameraPosition(CameraPosition.Builder(map.cameraPosition).target(c).zoom(zoom + log2(across/300)).build()))` |
-| `zoom(to: GeoBounds)` | expanded bounds → `easeCamera(newLatLngBounds(b, 0))` |
+| safe area (MapKit centres its camera there) | the insets of `ViewCompat.getRootWindowInsets(mapView)` for `systemBars() or displayCutout()`; its middle is `MapController.safeOffset` = ((L − R)/2, (T − B)/2) dp from the view's. No camera padding: `MapController.targetShowing(c, offset, zoom, bearing)` gives the target (the view's middle) that leaves `c` there, the offset turned by the bearing into the world (512·2^zoom dp wide). |
+| `setRegion(center, span)` | `LatLngBounds.from(north, east, south, west)` → `getCameraForLatLngBounds(bounds, intArrayOf(L, T, R, B))` (fitted in the safe area) → `MapController.centred(fitted, center, offset)` (the target from `targetShowing`, padding back to 0) → `moveCamera`/`easeCamera(newCameraPosition)`. On launch, wait until the view has a size (`container.doOnLayout`). |
+| `mapView.region` (for saving) | the safe area's four corners and middle through `projection.fromScreenLocation`, longitudes unwrapped around the middle, then min and max. Stored as the string `"lat,lon,dLat,dLon"` under SharedPreferences `"camera"`; restored as a region, it gives the same camera. |
+| 1500 m region on the first fix | bounds of ± 750 m (`dLat = 750/111_320`, `dLon = dLat/cos lat`) → as `setRegion`, with `moveCamera` |
+| `setCenter(c, animated)` | `easeCamera(CameraUpdateFactory.newLatLng(targetShowing(c)))` / `moveCamera` |
+| `zoom(onto:metersAcross:)` | `easeCamera(newCameraPosition(CameraPosition.Builder(map.cameraPosition).target(targetShowing(c) at the new zoom).zoom(zoom + log2(across/300)).build()))` |
+| `zoom(to: GeoBounds)` | expanded bounds → as `setRegion`, with `easeCamera` |
 | `centerCoordinate` | `projection.fromScreenLocation(PointF(mapView.width/2f, mapView.height/2f))` |
 | `camera.heading` | `map.cameraPosition.bearing` |
 | map points per point | `metersPerPoint`: `fromScreenLocation(centre ± 50 dp)`, `Geo.distance/100` |

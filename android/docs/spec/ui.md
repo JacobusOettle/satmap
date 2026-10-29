@@ -1047,10 +1047,10 @@ Checked with `javap` on `android-sdk-13.7.1.aar`.
 - **Scale bar and crosshair** (`org.maplibre.android.maps.Projection`, via `MapLibreMap.getProjection()`):
   - `fromScreenLocation(PointF)` at the view centre ± 50 dp gives metres per dp, as Swift does. `getMetersPerPixelAtLatitude(double)` returns metres per *logical* pixel (dp at the default `MapView.getPixelRatio()`); it is an alternative.
   - `toScreenLocation(LatLng)` gives `pointsApart`.
-  - The crosshair is the view centre, so never call `MapLibreMap.setPadding(...)`.
-- **Zooming:**
-  - `MapController.zoom(to: GeoBounds)` uses `CameraUpdateFactory.newLatLngBounds(LatLngBounds, padding)` with `animateCamera`.
-  - `center(on:)` uses `CameraUpdateFactory.newLatLng`.
+  - The crosshair is the view centre, so never call `MapLibreMap.setPadding(...)`: camera padding is camera state (`CameraPosition.padding`, copied by `CameraPosition.Builder(camera)`), and `cameraPosition.target` would become the padded middle.
+- **Centring and zooming:** as MapKit, the camera centres on the safe area's middle (14 dp below the view's on the Pixel 7, as 14 pt on the iPhone 16 Pro), so you are below the crosshair while following. The target is moved instead of padding the camera (interaction spec §2.7).
+  - `MapController.zoom(to: GeoBounds)` uses `getCameraForLatLngBounds(LatLngBounds, int[] padding)` with the safe area's insets (MapLibre returns that padding in the `CameraPosition`; `MapController.centred` sets it back to 0) and `easeCamera(newCameraPosition)`.
+  - `center(on:)` uses `CameraUpdateFactory.newLatLng` with the moved target.
 - **Touches:** the Compose overlay only takes touches where it has pointer input. Everything else reaches the `MapView` (`AndroidView`) underneath, and from there `MapLibreMap.addOnMapClickListener` / `addOnMapLongClickListener` (map subsystem).
 
 ---

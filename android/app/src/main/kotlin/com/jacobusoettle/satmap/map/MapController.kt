@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.doOnLayout
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -71,7 +74,9 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.log2
 import kotlin.math.max
+import kotlin.math.pow
 import kotlin.math.round
+import kotlin.math.sin
 
 /** Owns the MapLibre `MapView`: the satellite imagery with contour lines and elevation colours, the recorded track, the
  *  measuring line, imported blocks, your position with the compass and the lasso used to choose offline areas. One per
@@ -338,8 +343,8 @@ class MapController(
         map?.resetNorth()
     }
 
-    /** The coordinate under the crosshair (the middle of the view). Before the map is laid out: the middle of the
-     *  camera it will restore. */
+    /** The coordinate under the crosshair (the middle of the view, not the safe area's middle, where the camera centres
+     *  as MapKit's does). Before the map is laid out: the centre of the region it will restore. */
     override val centerCoordinate: GeoPoint
         get() {
             val m = map
@@ -358,9 +363,30 @@ class MapController(
 
     // Camera
 
+    /** The safe area's insets (iOS `safeAreaInsets`): the system bars and the display cutout, never the keyboard, in
+     *  pixels; the map fills the window, so they are the window's. MapKit centres its camera in the safe area (you, a
+     *  point zoomed onto, a region, which it also fits in it); the crosshair stays on the view's middle. */
+    private fun safeInsets(): Insets =
+        ViewCompat.getRootWindowInsets(mapView)
+            ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            ?: Insets.NONE
+
+    /** How far the safe area's middle is right of and below the view's, in dp. */
+    private fun safeOffset(): XY {
+        val i = safeInsets()
+        return safeOffset(i.left.toFloat(), i.top.toFloat(), i.right.toFloat(), i.bottom.toFloat(), density)
+    }
+
+    /** The camera's target (the view's middle) that shows `c` at the safe area's middle at `zoom`, as MapKit's camera
+     *  centre (iOS `setCenter`, `camera.centerCoordinate`). */
+    private fun targetShowing(m: MapLibreMap, c: GeoPoint, zoom: Double): LatLng {
+        val t = targetShowing(c, safeOffset(), zoom, m.cameraPosition.bearing)
+        return LatLng(t.lat, t.lon)
+    }
+
     override fun center(on: GeoPoint, animated: Boolean) {
         afterStart { m ->
-            val update = CameraUpdateFactory.newLatLng(LatLng(on.lat, on.lon))
+            val update = CameraUpdateFactory.newLatLng(targetShowing(m, on, m.cameraPosition.zoom))
             if (animated) m.easeCamera(update) else m.moveCamera(update)
         }
     }
@@ -374,9 +400,10 @@ class MapController(
         val perPoint = metersPerPoint ?: return
         val across = perPoint * mapView.width / density
         val camera = m.cameraPosition
+        val zoom = zoomOnto(camera.zoom, across, metersAcross)
         val target = CameraPosition.Builder(camera)
-            .target(LatLng(onto.lat, onto.lon))
-            .zoom(zoomOnto(camera.zoom, across, metersAcross))
+            .target(targetShowing(m, onto, zoom))
+            .zoom(zoom)
             .build()
         m.easeCamera(CameraUpdateFactory.newCameraPosition(target))
     }
@@ -396,19 +423,20 @@ class MapController(
     /** The saved camera, or South Africa until the first GPS fix arrives (first launch). */
     private fun savedRegion(): Region = Region.parse(Defaults.string(CAMERA_KEY)) ?: Region.southAfrica
 
-    /** Without animation, the saved region fitted to the view. */
+    /** Without animation, the saved region fitted to the safe area. */
     private fun restoreCamera(m: MapLibreMap) {
         val c = camera(m, savedRegion()) ?: return
         m.moveCamera(CameraUpdateFactory.newCameraPosition(c))
     }
 
-    /** The camera iOS's `setRegion` gives: the zoom that fits the region in the view, keeping the heading, centred on
-     *  the region's centre. (MapLibre would centre a fit on the middle of its edges as drawn, which in Mercator lies
-     *  nearer the pole: 26 km south for South Africa on first launch, and a saved camera would creep poleward at each
-     *  launch.) Null before the map has a size. */
+    /** The camera iOS's `setRegion` gives: the zoom that fits the region in the safe area, keeping the heading, centred
+     *  on the region's centre in the safe area. (MapLibre would centre a fit on the middle of its edges as drawn, which
+     *  in Mercator lies nearer the pole: 26 km south for South Africa on first launch, and a saved camera would creep
+     *  poleward at each launch.) Null before the map has a size. */
     private fun camera(m: MapLibreMap, region: Region): CameraPosition? {
-        val fitted = m.getCameraForLatLngBounds(region.latLngBounds(), intArrayOf(0, 0, 0, 0)) ?: return null
-        return centred(fitted, region.center)
+        val i = safeInsets()
+        val fitted = m.getCameraForLatLngBounds(region.latLngBounds(), intArrayOf(i.left, i.top, i.right, i.bottom)) ?: return null
+        return centred(fitted, region.center, safeOffset())
     }
 
     private fun saveCamera() {
@@ -418,12 +446,15 @@ class MapController(
         Defaults.putString(CAMERA_KEY, r.saved())
     }
 
-    /** The region the view shows: the centre and the span of its four corners (iOS `mapView.region`). */
+    /** The region the safe area shows (iOS `mapView.region`, restored with `setRegion`): the coordinate at its middle
+     *  and the span of its four corners, as `camera` sets it. (Saving the view's middle and whole span, the restored map
+     *  would come out further north by the safe area's offset, and zoomed out, at each launch.) */
     private fun visibleRegion(m: MapLibreMap): Region? {
-        val v = m.projection.visibleRegion
-        val corners = listOf(v.farLeft, v.farRight, v.nearLeft, v.nearRight)
-        if (corners.any { it == null }) return null
-        return Region.of(centerCoordinate, corners.map { GeoPoint(it!!.latitude, it.longitude) })
+        val i = safeInsets()
+        val s = RectF(i.left.toFloat(), i.top.toFloat(), (mapView.width - i.right).toFloat(), (mapView.height - i.bottom).toFloat())
+        if (s.width() <= 0 || s.height() <= 0) return null
+        val corners = listOf(PointF(s.left, s.top), PointF(s.right, s.top), PointF(s.left, s.bottom), PointF(s.right, s.bottom))
+        return Region.of(coordinate(m, PointF(s.centerX(), s.centerY())), corners.map { coordinate(m, it) })
     }
 
     /** A camera move starts: one the user's finger started stops following you (iOS: the finger on the map). */
@@ -506,7 +537,7 @@ class MapController(
                 val c = camera(m, Region.around(fix.point, 1500.0))
                 if (c != null) m.moveCamera(CameraUpdateFactory.newCameraPosition(c))
             } else if (SystemClock.uptimeMillis() >= keepCameraUntil) {
-                m.easeCamera(CameraUpdateFactory.newLatLng(LatLng(fix.lat, fix.lon)))
+                m.easeCamera(CameraUpdateFactory.newLatLng(targetShowing(m, fix.point, m.cameraPosition.zoom)))
             }
             hasCentredOnFirstFix = true
         }
@@ -1018,9 +1049,31 @@ class MapController(
         fun zoomOnto(zoom: Double, across: Double, metersAcross: Double): Double = zoom + log2(across / metersAcross)
 
         /** The camera MapLibre fitted to a region (its zoom, heading and tilt), centred on the region's centre instead,
-         *  as MapKit keeps a region's centre in the middle of the map. */
-        fun centred(fitted: CameraPosition, center: GeoPoint): CameraPosition =
-            CameraPosition.Builder(fitted).target(LatLng(center.lat, center.lon)).build()
+         *  as MapKit keeps a region's centre in the middle of the map's safe area, `offset` dp right of and below the
+         *  view's middle. Without the padding the fit was given (MapLibre returns it with the camera), so the camera's
+         *  target stays the view's middle. */
+        fun centred(fitted: CameraPosition, center: GeoPoint, offset: XY = XY(0.0, 0.0)): CameraPosition {
+            val t = targetShowing(center, offset, fitted.zoom, fitted.bearing)
+            return CameraPosition.Builder(fitted).target(LatLng(t.lat, t.lon)).padding(0.0, 0.0, 0.0, 0.0).build()
+        }
+
+        /** How far the safe area's middle is right of and below the view's, in dp, from the insets around it (pixels,
+         *  `density` per dp): on an iPhone 16 Pro (62 pt at the top, 34 at the bottom) 14 pt lower. */
+        fun safeOffset(left: Float, top: Float, right: Float, bottom: Float, density: Float): XY =
+            XY((left - right) / 2.0 / density, (top - bottom) / 2.0 / density)
+
+        /** The camera's target (the view's middle) that shows `c` `offset` dp right of and below the view's middle, at
+         *  MapLibre's `zoom` (its world 512·2^zoom dp wide) with the map turned to `bearing` degrees: `offset` turned
+         *  into the world (x east, y south) and taken off `c`. */
+        fun targetShowing(c: GeoPoint, offset: XY, zoom: Double, bearing: Double): GeoPoint {
+            if (offset.x == 0.0 && offset.y == 0.0) return c
+            val w = WebMercator.world(c)
+            val size = 512 * 2.0.pow(zoom)
+            val b = bearing * PI / 180
+            val dx = (offset.x * cos(b) - offset.y * sin(b)) / size
+            val dy = (offset.x * sin(b) + offset.y * cos(b)) / size
+            return WebMercator.geo(w.x - dx, w.y - dy)
+        }
 
         /** The aim line from you (`me`) to the crosshair (`centre`) in a view of `bounds`, in pixels (`density` per dp):
          *  from 11 dp off your dot's centre, only when that leaves more than 4 dp of line. With you off the screen it
