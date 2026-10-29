@@ -883,13 +883,13 @@ WhatsApp and Gmail pass on the sender's type, which for KML/KMZ is often `applic
 | pause.circle | `Icons.Outlined.PauseCircle` |
 | arrow.clockwise.circle | `Icons.Outlined.Replay` |
 | checkmark.circle.fill | `Icons.Filled.CheckCircle` in green |
-| arrow.down.circle(.fill) | `Icons.Outlined/Filled.ArrowCircleDown` |
+| arrow.down.circle / .fill | `Icons.Outlined.ArrowCircleDown` / custom `ArrowDownCircleFill` (the arrow cut out of a disc; Material's `Filled.ArrowCircleDown` is a ring) |
 | map | `Icons.Outlined.Map` |
 
 - **Row actions**:
   - long-press: `Modifier.combinedClickable(onClick, onLongClick)` with a `DropdownMenu`;
   - swipe to delete: `SwipeToDismissBox` (end to start, red background with a delete icon). The area or file is deleted in `confirmValueChange`.
-- **Controls**: switches are `Switch`; the colours checkbox is `Checkbox`; zoom rows are `ListItem`s with a trailing check `Icon` (alpha 0 when not chosen); `DrawingBar` uses `SingleChoiceSegmentedButtonRow`.
+- **Controls**: switches are `Switch`; the colours checkbox is `Checkbox`; zoom rows are `ListItem`s with a trailing check `Icon` (alpha 0 when not chosen); `DrawingBar` uses a `SegmentedControl` of our own, drawn as iOS's (UI spec §2.3.1).
 - **Android text changes** (everything else is word for word):
   - "iPhone" becomes "phone" in the low-space problem and the free-space line;
   - `NewAreaView` mobile data footer: `"Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, with its progress in a notification. If Android stops it, it continues when you open SatMap again."`;

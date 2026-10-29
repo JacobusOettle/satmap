@@ -114,9 +114,11 @@ An SF Symbol drawn at text size *X* pt becomes a Material icon of about **1.2·X
 | body 17 | 20 dp |
 | title3 20 | 24 dp |
 | title2 22 | 26 dp |
-| map buttons (20 pt semibold) | 24 dp |
+| map buttons (20 pt semibold) | 24 dp (Landscape 38, GpsFixed and NearMe 26, Close 27: §2.4.4) |
 
 **Except in a list `Label`:** there the symbols are drawn larger than their text size (21–26 pt in screenshot 06), so the rule underestimates them. A list row's icon is **28 dp** (`ListIconSize`), and `arrow.down.circle.fill` on the Download buttons (custom `ArrowDownCircleFill`, §6.3) 26.5 dp (its disc 22 dp, as on iOS). See §1.5.
+
+**Except where a Material glyph fills less of its box than the SF symbol does of its frame:** the rule then draws it smaller than iOS, so the icon is sized to draw it as big as iOS's measured symbol. Over the map these are the map buttons' Landscape, GpsFixed, Close and NearMe (§2.4.4), the height pill's Landscape (22 dp, §2.3.8), the coordinate pills' `ContentCopy` (16 dp, §2.3.7) and the download banner's Pause (23 dp, §2.3.2).
 
 ### 1.4 Shared overlay styles (map screen)
 
@@ -199,9 +201,10 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 - **Container:** `fillMaxWidth`, padding 12, `Black@0.75`, radius 12, content White, `Column(spacedBy 8, CenterHorizontally)`, `blocksMap()`.
 - **While `draftArea == null`:**
   1. Segmented control bound to `lassoActive`, items `Move map` (false) and `Draw` (true), full width:
-     - `SingleChoiceSegmentedButtonRow` with two `SegmentedButton`s, `icon = {}` (no check mark), label Footnote SemiBold.
-     - Colours: active container `#636366`, inactive container `Color(0x3D767680)`, content White both, borders transparent.
-     - Height 32 dp, shapes from `SegmentedButtonDefaults.itemShape(i, 2)`.
+     - A `SegmentedControl` of our own, drawn as iOS's `UISegmentedControl` (screenshot 10): M3's segmented buttons are outlined capsule halves.
+     - The track: 32 dp tall, `Color(0x3D767680)`, radius 9, 2 dp padding; one `selectable` segment per item (`Role.Tab`, in a `selectableGroup`), each `weight(1f)`.
+     - The chosen segment: `White@0.27` with radius 7, over the track. It is see-through, as iOS's: the map shows through it as through the track, only lighter (grey 99 over the bar in screenshot 10).
+     - The titles: Footnote White, **SemiBold for the chosen one and Regular for the other**, as UISegmentedControl's.
   2. Footnote: `Draw a loop around the area with one finger.` when `lassoActive`, else `Pan and zoom to the area, then switch to Draw.`
   3. `Row { TextButton("Cancel") ; Spacer(weight) }`. The button text is Body White and calls `model.cancelDrawing()`.
 - **When a loop is drawn (`draftArea != null`):**
@@ -210,7 +213,7 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 
 #### 2.3.2 `DownloadBanner(area, progress, onPause)`
 
-- **Container:** `Row(spacedBy 10, verticalAlignment = CenterVertically)`, `fillMaxWidth`, padding h12 v8, `Black@0.7`, radius 12, White, `blocksMap()`.
+- **Container:** `Row(spacedBy 10, verticalAlignment = CenterVertically)`, `fillMaxWidth`, padding h12 v8, `Black@0.7`, radius 12, White, `blocksMap()`. In it: the left column, `Spacer(width 8)` (Swift's `Spacer()`, which stays at its 8 pt least since the column takes the rest of the width), and the pause button. The column and its bar therefore end 10 + 8 + 10 = 28 dp before the pause button, 71 dp from the banner's right edge (iOS 70.8 pt).
 - **Left column** (`weight(1f)`, `spacedBy 3`):
   - `Downloading <area.name>` in Subheadline SemiBold, 1 line, ellipsis.
   - The detail line: Caption, `tnum`, alpha 0.85, **1 line, ellipsis** (screenshot 08 truncates it).
@@ -218,7 +221,7 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
     - Otherwise: `"${p.layer} · zoom ${p.zoom} of up to ${p.maxZoom}: ${count(p.levelDone)}/${count(p.levelTotal)} · ${count(p.fetched)} tiles, ${Format.bytes(p.bytes)} saved"`
   - `LinearProgressIndicator(progress = { fraction }, color = SystemYellow, trackColor = White@0.2, height 4 dp, gapSize = 0.dp, drawStopIndicator = {})`.
   - `fraction = if (p != null && p.levelTotal > 0) levelDone / levelTotal else 0`.
-- **Right:** a pause button, `Icons.Filled.Pause` 20 dp in a 36 dp touch box (padding 8), `contentDescription = "Pause"`, calling `onPause` (= `offline.pause(id)`).
+- **Right:** a pause button, `Icons.Filled.Pause` **23 dp** with padding h4 v8 (31 × 39 dp), `contentDescription = "Pause"`, calling `onPause` (= `offline.pause(id)`). iOS's `pause.fill.padding(8)` is 31 pt wide with a glyph 13.4 pt tall, its centre 27.7 pt from the banner's edge (screenshot 08): Pause at 23 dp is as tall (an exception to §1.3's body size, 20 dp), and its frame is wider than SF's, so 4 dp at its sides keeps the button 31 dp wide.
 
 #### 2.3.3 `AimPanel` (measure = aiming)
 
@@ -288,9 +291,9 @@ A custom `Layout`:
 
 - **Container:** pill (padding h12 v8, `Black@0.65`, `CircleShape`), `Row(spacedBy 8)`, White, `blocksMap()`.
 - **Copy button:** `Row(spacedBy 6, CenterVertically)` holding:
-  - The icon at 18 dp.
+  - The icon 20 dp tall (a narrow one, the pin, keeps its narrow frame), laid out in a slot as tall as SF's frame for that symbol at body size: `Modifier.height(iconSlot).requiredHeight(20.dp)`. `iconSlot` is 18.7 dp for `location(.fill)` (`NearMe`), 19.7 for `mappin` and 19.1 for `mappin.circle.fill`. With the text line (about 17.7 dp) it sets the pill's height, as on iOS: 34.7, 35.7 and 35.1 dp (screenshots 01, 15, 24).
   - Text in Subheadline SemiBold `tnum`, 1 line, `autoSize = TextAutoSize.StepBased(minFontSize = 10.5.sp, maxFontSize = 15.sp, stepSize = 0.25.sp)` (Swift `minimumScaleFactor(0.7)`). It shows `Copied` while `copied`, else `text`.
-  - Unless copied: `Icons.Outlined.ContentCopy` at 14 dp, alpha 0.8.
+  - Unless copied: `Icons.Outlined.ContentCopy` at **16 dp**, alpha 0.8: `doc.on.doc` at caption size is 12 × 14.7 pt (screenshot 01), and ContentCopy fills 19 × 22 of its 24.
 - **On tap:**
   1. `ClipboardManager.setPrimaryClip(ClipData.newPlainText("Coordinates", text))`.
   2. `LocalHapticFeedback.current.performHapticFeedback(HapticFeedbackType.Confirm)` (Swift success notification).
@@ -302,7 +305,7 @@ A custom `Layout`:
 
 - **Container:** pill with padding h10 v8, `Row(spacedBy 5, CenterVertically)`, wraps its content (`fixedSize`), White.
 - **Content:**
-  - `Icons.Filled.Landscape` at 14 dp.
+  - `Icons.Filled.Landscape` drawn at **22 dp** and laid out 22 × 12 dp (`Modifier.size(22.dp, 12.dp).requiredSize(22.dp)`): `mountain.2.fill` at caption size is 20 × 10.5 pt (screenshots 01, 15, 24), and Landscape fills 22 × 12 of its 24. Laid out only as tall as its drawing, it leaves the text line to set the pill's height (34 dp, as iOS's).
   - Text in Subheadline SemiBold `tnum`, 1 line:
     - `Format.height(h, unit)` where `h = elevation ?: gpsAltitude`.
     - Otherwise `… ${unit.symbol}` when online, else `– ${unit.symbol}`.
@@ -379,14 +382,18 @@ Every element gets a black shadow with radius 1.5 dp. Draw with `drawIntoCanvas 
 #### 2.4.3 `ColourKeyView` (shown iff `legend.key.colours != null`)
 
 - **Layout:** `Column(spacedBy 3)`.
-  - Bar 110 × 8 dp, `RoundedCornerShape(2.dp)`, filled with `Brush.horizontalGradient(colorStops)` and bordered `1.dp White@0.85`.
+  - Bar 110 × 8 dp, `RoundedCornerShape(2.dp)`, filled with `Brush.horizontalGradient(colorStops)`, with a 1 dp `White@0.85` line **centred on its edge**, as SwiftUI's `stroke` draws it: `drawWithContent { drawContent(); drawRoundRect(…, cornerRadius = 2 dp, style = Stroke(1 dp)) }`. Half of the line is outside the bar, so the key is 111 × 9 dp over all with 7 dp of colours inside the line (screenshot 23). Not `Modifier.border`, which keeps all of it inside.
   - A `Row` of width 110: `Format.height(r.low)` `Spacer(weight, min 6)` `Format.height(r.high)`. Caption SemiBold `tnum`, White, text shadow.
 - **Semantics:** `clearAndSetSemantics { contentDescription = "Elevation colours"; stateDescription = "blue ${height(low)} to red ${height(high)}"; testTag = "colourKey" }`. No touches.
 
 #### 2.4.4 `MapButton(icon, label, active = false, dimmed = false, heightColours = false, onClick, onLongClick? = null)`
 
 - **Shape:** 50 dp circle. Background `SystemYellow` when active, else `Black@0.6`. Border `1.dp White@0.3`. `Modifier.shadow(4.dp, CircleShape, ambientColor = Black@0.35, spotColor = Black@0.35)`.
-- **Icon:** 24 dp.
+- **Icon:** 24 dp (`mapButtonIconSize(icon)`), except for the glyphs that fill less of their box than the SF symbols do of their frames, so that they draw as big as iOS's (screenshots 01, 02, 19):
+  - `Landscape` (filled and outlined) 38 dp: it fills 22 × 12 of its 24 and draws 34 × 18.5 (`mountain.2` 35 × 17.5 pt; Landscape is wider for its height than mountain.2, so no size matches both).
+  - `GpsFixed` 26 dp: it fills 22 of its 24 (`scope` 23.5 pt).
+  - `Close` 27 dp: it fills 14 of its 24 (`xmark` 15.5 pt).
+  - `NearMe` (filled and outlined) 26 dp: it fills 18 of its 24 (`location(.fill)` 18.8 pt).
   - Tint is Black when active, otherwise White with alpha 0.45 when dimmed, else 1.
   - **heightColours** draws the icon in the elevation ramp, blue at the bottom to red at the top: `Modifier.graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen).drawWithContent { drawContent(); drawRect(Brush.verticalGradient(stops mapped to y = 1 − f), blendMode = BlendMode.SrcIn) }`.
 - **Interaction:** `combinedClickable(onClick, onLongClick, onLongClickLabel)` with a ripple.
@@ -399,7 +406,7 @@ Every element gets a black shadow with radius 1.5 dp. Draw with `drawIntoCanvas 
 | 0 | **Compass slot** (always 44 × 44 dp, even when the compass is hidden) | `CompassButton` (§2.4.6) | `Compass` | `model.map?.resetNorth()` | none | `compassButton` |
 | 1 | Terrain | contours or contoursAndColours: `Icons.Filled.Landscape`; colours: `Icons.Filled.Palette`; drone: `Icons.Filled.Flight` rotated 90° (points right like SF `airplane`); off: `Icons.Outlined.Landscape`. `dimmed = mode == off`; `heightColours = mode.showsColours` | `Contour lines`, **`stateDescription = terrainMode.title`** | `nextTerrainMode()` | none | `terrainButton` |
 | 2 | Blocks | `SquareDashed` (custom) | `Blocks` | `model.sheet = blocks` | DropdownMenu (below), only when `kml.files` is not empty; `onLongClickLabel = "Show or hide files"` | `blocksButton` |
-| 3 | Offline maps | `Icons.Outlined.ArrowCircleDown`, or `Icons.Filled.ArrowCircleDown` while downloading; `active = offline.activeID != null` | `Offline maps` | `model.sheet = offline` | none | `offlineButton` |
+| 3 | Offline maps | `Icons.Outlined.ArrowCircleDown`, or custom `ArrowDownCircleFill` while downloading (a black disc 20 dp across with the arrow cut out of it in the button's yellow, as `arrow.down.circle.fill` in screenshot 08; Material's `Filled.ArrowCircleDown` is the ring); `active = offline.activeID != null` | `Offline maps` | `model.sheet = offline` | none | `offlineButton` |
 | 4 | Go to coordinates | `LocationMagnifyingGlass` (custom) | `Go to coordinates` | `model.sheet = coordinates` | none | `goToButton` |
 | 5 | Measure | off: `Icons.Outlined.Straighten`; aiming/placed/path: `Icons.Filled.GpsFixed`; closed: `Icons.Filled.Close`. `active = measure != off` | `Measure` | `model.measureButtonTapped()` | none | `measureButton` |
 | 6 | My location | `Icons.Filled.NearMe` when `following`, else `Icons.Outlined.NearMe` | `My location` | `model.centerOnUser()` | DropdownMenu with one item: `Clear recorded track`, `Icons.Outlined.Delete`, text and icon `SystemRed`. Its click sets `confirmClearTrack = true`. `onLongClickLabel = "Clear recorded track"` | `myLocationButton` |
@@ -765,7 +772,7 @@ ModalBottomSheet(
    - The value (secondary `tnum`): `Downloaded` (complete) or `In this download` when z ≤ maxZoom, else `extraSize(z, maxZoom)`.
    - `Icons.Filled.Check`: `Accent` when chosen, else `LabelSecondary`. Alpha 1 when chosen, or when `z ≤ maxZoom && complete`, else 0.
    - Footer: `Choose a deeper level to add it: what is saved is kept and only the new levels are downloaded.`, plus ` While it downloads, choose a lower level to stop there instead.` unless complete, plus `" Esri's imagery here stops at zoom $d, so deeper levels will add little or nothing."` when complete and `savedDepth < maxZoom`.
-4. Action row: `Icons.Filled.ArrowCircleDown` plus `buttonTitle` in Headline. Disabled when `chosenZoom == null`. Calls `offline.changeMaxZoom(areaID, z)` then sets `chosenZoom = null`.
+4. Action row: `SatIcons.ArrowDownCircleFill` (26.5 dp, so its disc is 22 dp, as in screenshot 18) plus `buttonTitle` in Headline. Disabled when `chosenZoom == null`. Calls `offline.changeMaxZoom(areaID, z)` then sets `chosenZoom = null`.
 
 **Labels:**
 - `buttonTitle`:
@@ -937,7 +944,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
 | `.navigationTitle` (inline) + `.toolbar` | `CenterAlignedTopAppBar(expandedHeight = 56.dp, windowInsets = WindowInsets(0))` |
 | `List` / `Form` (inset grouped), `Section` header/footer | `LazyColumn` + `FormSection` / `FormRow` (§1.5) |
 | `Toggle` | `IosSwitch` (drawn: 51 × 31 track, 27 dp knob) in a `toggleable` row (§1.5) |
-| `Picker(.segmented)` | `SingleChoiceSegmentedButtonRow` + `SegmentedButton(icon = {})` |
+| `Picker(.segmented)` | `SegmentedControl` of our own (§2.3.1) |
 | `TextField` (in a form) | `BasicTextField` + placeholder decoration |
 | `PasteButton` | a pressable `Row` on PasteFill (§3.10) reading `ClipboardManager` |
 | `ProgressView()` / `ProgressView(value:)` / `ProgressView("…")` | `CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)` / `LinearProgressIndicator(progress = {…})` / spinner over a secondary label |
