@@ -1,5 +1,10 @@
 package com.jacobusoettle.satmap.ui
 
+import android.graphics.Bitmap
+import android.graphics.BlurMaskFilter
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
@@ -10,16 +15,22 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 // Android only: SwiftUI gives iOS its colours, text styles and the dark appearance for free. The app is always dark
 // (iOS `.preferredColorScheme(.dark)`); pt become dp and SwiftUI font sizes sp.
@@ -99,6 +110,49 @@ val ShadowBlur: Dp = 3.dp
 val mapTextShadow: Shadow
     @Composable @ReadOnlyComposable
     get() = Shadow(Color.Black, Offset.Zero, with(LocalDensity.current) { ShadowBlur.toPx() })
+
+/** The same shadow on lines and shapes over the map (the crosshair, the scale bar): what `draw` paints on a canvas the
+ *  node's size (px), with the black shadow of the whole of it under it. Drawn in software into a bitmap, again only
+ *  when the size changes: a hardware canvas draws a shadow layer under text only before Android 9, so on 8.0 and 8.1
+ *  the lines would have no dark edge on bright imagery. The shadow of the whole, as SwiftUI's on a group, also keeps
+ *  one piece's shadow off another (the red dot's off the white cross). */
+fun Modifier.drawShadowed(draw: Density.(android.graphics.Canvas, Size) -> Unit): Modifier = drawWithCache {
+    val blur = ShadowBlur.toPx()
+    val room = shadowRoom(blur).toFloat()
+    val image = shadowedBitmap(size, blur) { draw(this, it, size) }.asImageBitmap()
+    onDrawBehind { drawImage(image, Offset(-room, -room)) }
+}
+
+/** What `draw` paints on a `size` canvas (px), with the black shadow of the whole of it (a shadow layer of `blur` px)
+ *  under it: a software bitmap with `shadowRoom(blur)` px round the canvas for the blur. */
+internal fun shadowedBitmap(size: Size, blur: Float, draw: (android.graphics.Canvas) -> Unit): Bitmap {
+    val room = shadowRoom(blur)
+    val bitmap = Bitmap.createBitmap(
+        size.width.roundToInt() + 2 * room,
+        size.height.roundToInt() + 2 * room,
+        Bitmap.Config.ARGB_8888,
+    )
+    val canvas = android.graphics.Canvas(bitmap)
+    canvas.save()
+    canvas.translate(room.toFloat(), room.toFloat())
+    draw(canvas)
+    canvas.restore()
+    // The alpha of all of it, blurred as a shadow layer is, drawn black under what is there.
+    val offset = IntArray(2)
+    val blurred = Paint().apply { maskFilter = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL) }
+    val shadow = bitmap.extractAlpha(blurred, offset)
+    val under = Paint().apply {
+        color = android.graphics.Color.BLACK
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OVER)
+    }
+    canvas.drawBitmap(shadow, offset[0].toFloat(), offset[1].toFloat(), under)
+    shadow.recycle()
+    return bitmap
+}
+
+/** How far the blur of a shadow layer of `blur` px reaches past what casts it: three of Skia's sigmas
+ *  (0.57735 × radius + 0.5 px). */
+internal fun shadowRoom(blur: Float): Int = ceil(3 * (0.57735f * blur + 0.5f)).toInt()
 
 /** Panels and pills over the map take every touch, so a tap on them never reaches the map (it would place a
  *  measuring point); their own clickable children handle their taps first. Being hit is enough: Compose then offers

@@ -83,6 +83,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.center
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -112,6 +114,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -711,24 +714,23 @@ private fun Modifier.heightColours(glyph: ClosedFloatingPointRange<Float>): Modi
 /** Centred on the whole window (the map's centre); takes no touches. */
 @Composable
 fun Crosshair(modifier: Modifier = Modifier) {
-    val paint = remember { android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG) }
-    Canvas(modifier.size(56.dp).clearAndSetSemantics {}) {
-        val c = center
-        paint.setShadowLayer(ShadowBlur.toPx(), 0f, 0f, android.graphics.Color.BLACK)
-        drawIntoCanvas { canvas ->
-            val n = canvas.nativeCanvas
-            paint.color = android.graphics.Color.WHITE
-            paint.style = android.graphics.Paint.Style.STROKE
-            paint.strokeWidth = 2.dp.toPx()
-            n.drawCircle(c.x, c.y, 18.dp.toPx(), paint)
-            paint.style = android.graphics.Paint.Style.FILL
-            val w = 1.dp.toPx()
-            n.drawRect(c.x - w, 0f, c.x + w, size.height, paint)
-            n.drawRect(0f, c.y - w, size.width, c.y + w, paint)
-            paint.color = SystemRed.toArgb()
-            n.drawCircle(c.x, c.y, 3.dp.toPx(), paint)
-        }
-    }
+    Spacer(modifier.size(56.dp).clearAndSetSemantics {}.drawShadowed { n, size -> drawCrosshair(n, size) })
+}
+
+/** The crosshair's ring, arms and red dot on a `size` canvas (px), without their shadow. */
+internal fun Density.drawCrosshair(n: android.graphics.Canvas, size: Size) {
+    val c = size.center
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    paint.color = android.graphics.Color.WHITE
+    paint.style = android.graphics.Paint.Style.STROKE
+    paint.strokeWidth = 2.dp.toPx()
+    n.drawCircle(c.x, c.y, 18.dp.toPx(), paint)
+    paint.style = android.graphics.Paint.Style.FILL
+    val w = 1.dp.toPx()
+    n.drawRect(c.x - w, 0f, c.x + w, size.height, paint)
+    n.drawRect(0f, c.y - w, size.width, c.y + w, paint)
+    paint.color = SystemRed.toArgb()
+    n.drawCircle(c.x, c.y, 3.dp.toPx(), paint)
 }
 
 /** A short iOS-style hint over the map. `onClose` shows a ✕ ("Stop measuring") after the text; `onTap` (Android
@@ -818,24 +820,23 @@ fun ColourKeyView(legend: MapLegend) {
 /** The scale bar's ⊔: a line with a tick up at each end, `width` dp wide. Takes no touches. */
 @Composable
 fun ScaleBarShape(width: Double) {
-    val paint = remember {
-        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeCap = android.graphics.Paint.Cap.SQUARE
-            color = android.graphics.Color.WHITE
-        }
+    Spacer(Modifier.size(width.dp, 6.dp).drawShadowed { n, size -> drawScaleBar(n, size) })
+}
+
+/** The ⊔ across a `size` canvas (px), without its shadow. */
+internal fun Density.drawScaleBar(n: android.graphics.Canvas, size: Size) {
+    val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeCap = android.graphics.Paint.Cap.SQUARE
+        color = android.graphics.Color.WHITE
+        strokeWidth = 2.dp.toPx()
     }
-    val path = remember { android.graphics.Path() }
-    Canvas(Modifier.size(width.dp, 6.dp)) {
-        paint.strokeWidth = 2.dp.toPx()
-        paint.setShadowLayer(ShadowBlur.toPx(), 0f, 0f, android.graphics.Color.BLACK)
-        path.rewind()
-        path.moveTo(0f, 0f)
-        path.lineTo(0f, size.height)
-        path.lineTo(size.width, size.height)
-        path.lineTo(size.width, 0f)
-        drawIntoCanvas { it.nativeCanvas.drawPath(path, paint) }
-    }
+    val path = android.graphics.Path()
+    path.moveTo(0f, 0f)
+    path.lineTo(0f, size.height)
+    path.lineTo(size.width, size.height)
+    path.lineTo(size.width, 0f)
+    n.drawPath(path, paint)
 }
 
 @Composable

@@ -2,13 +2,25 @@ package com.jacobusoettle.satmap.ui
 
 import android.app.Application
 import android.content.ClipboardManager
+import android.graphics.Bitmap
+import android.graphics.Color.WHITE
+import android.view.View
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -23,6 +35,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -37,7 +50,8 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /** The map screen's pieces on their own (UI spec §2.3–2.4; DESIGN.md §8.1): the height pill's spoken value and units,
- *  the coordinates' "Copied", side by side or stacked, the scale bar, the compass and the hint. */
+ *  the coordinates' "Copied", side by side or stacked, the scale bar, the crosshair's and the bar's shadow, the compass
+ *  and the hint. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "w402dp-h874dp") // the iPhone of the screenshots, in points
 class MapScreenPiecesTest {
@@ -200,6 +214,93 @@ class MapScreenPiecesTest {
             )
             .performClick()
         assertEquals(1, taps)
+    }
+
+    // Real pixels. The shadow is in the bitmap itself, drawn in software, so it shows on every canvas the bitmap is
+    // drawn on (a hardware one before Android 9 draws no shadow layer under lines).
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun theCrosshairHasABlackEdgeAndNoShadowOnItself() {
+        val density = Density(3f)
+        val blur = with(density) { ShadowBlur.toPx() }
+        val room = shadowRoom(blur)
+        val size = Size(168f, 168f) // 56 dp
+        val bitmap = shadowedBitmap(size, blur) { with(density) { drawCrosshair(it, size) } }
+        assertEquals(168 + 2 * room, bitmap.width)
+        assertEquals(168 + 2 * room, bitmap.height)
+        fun at(x: Int, y: Int) = bitmap.getPixel(room + x, room + y)
+
+        assertEquals(SystemRed.toArgb(), at(84, 84))
+        // The ring 18 dp out, between the arms.
+        assertEquals(WHITE, at(122, 46))
+        // 1 dp outside the ring: its black edge.
+        assertShadow(at(126, 41))
+        // The arm just above the red dot: the dot's shadow doesn't fall on it (the shadow of the whole, as on iOS).
+        assertEquals(WHITE, at(84, 73))
+        // Room for all of the blur: nothing at the bitmap's edges.
+        val last = bitmap.width - 1
+        val edges = (0..last).flatMap { i -> listOf(0 to i, last to i, i to 0, i to last) }
+        assertTrue(edges.all { (x, y) -> alpha(bitmap.getPixel(x, y)) <= 1 })
+    }
+
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun theScaleBarHasABlackEdge() {
+        val density = Density(3f)
+        val blur = with(density) { ShadowBlur.toPx() }
+        val room = shadowRoom(blur)
+        val size = Size(160f, 18f) // 53.4 × 6 dp
+        val bitmap = shadowedBitmap(size, blur) { with(density) { drawScaleBar(it, size) } }
+        fun at(x: Int, y: Int) = bitmap.getPixel(room + x, room + y)
+
+        assertEquals(WHITE, at(80, 18))
+        assertEquals(WHITE, at(0, 9))
+        assertEquals(WHITE, at(160, 9))
+        // Below the line and outside the ticks.
+        assertShadow(at(80, 25))
+        assertShadow(at(-7, 9))
+        assertShadow(at(167, 9))
+    }
+
+    // The pieces as drawn on the screen, over white (bright imagery): in place, with their black edge round them.
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "+xxhdpi")
+    @Test
+    fun theCrosshairAndTheScaleBarHaveTheirBlackEdgeOnBrightImagery() {
+        var view: View? = null
+        compose.setContent {
+            view = LocalView.current
+            Column(Modifier.background(Color.White).padding(10.dp)) {
+                Box(Modifier.size(80.dp), contentAlignment = Alignment.Center) { Crosshair() }
+                ScaleBarShape(53.4)
+            }
+        }
+        compose.waitForIdle()
+        val screen = Bitmap.createBitmap(view!!.width, view!!.height, Bitmap.Config.ARGB_8888)
+        view!!.draw(android.graphics.Canvas(screen))
+
+        // The crosshair's centre at (150, 150) px: 10 dp in, then 12 dp to the 56 dp square, then 28.
+        assertEquals(SystemRed.toArgb(), screen.getPixel(150, 150))
+        assertGrey(screen.getPixel(192, 108)) // 1 dp outside the ring
+        // The scale bar's ⊔ from (30, 270) px, 160 × 18.
+        assertGrey(screen.getPixel(110, 295)) // under the line
+        assertGrey(screen.getPixel(23, 279)) // left of the left tick
+        assertEquals(WHITE, screen.getPixel(280, 300)) // nothing far from both
+    }
+
+    /** Darker than the white under it: the shadow. */
+    private fun assertGrey(argb: Int) {
+        val r = android.graphics.Color.red(argb)
+        val grey = r == android.graphics.Color.green(argb) && r == android.graphics.Color.blue(argb)
+        assertTrue("grey: ${Integer.toHexString(argb)}", grey && r < 0xE8)
+    }
+
+    private fun alpha(argb: Int) = android.graphics.Color.alpha(argb)
+
+    /** Black, partly transparent. */
+    private fun assertShadow(argb: Int) {
+        assertEquals("black", 0, argb and 0xFFFFFF)
+        assertTrue("partly transparent: ${alpha(argb)}", alpha(argb) in 20..230)
     }
 
     @Test
