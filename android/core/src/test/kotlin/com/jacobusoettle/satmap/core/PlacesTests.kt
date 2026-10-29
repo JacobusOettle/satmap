@@ -95,4 +95,38 @@ class PlacesTests {
         val merged = Places.merged(listOf(listOf(reserve("W1", 170.0), town, reserve("W2", 431.0)), listOf(reserve("R3", 1_032.0), reserve("W1", 170.0))))
         assertEquals(listOf("R3", "W2", "W1", "N9"), merged.map { it.id })
     }
+
+    @Test
+    fun testPhotonResultsAndRingsRefuseWhatJSONSerializationRefuses() {
+        fun doc(name: String = "\"A\"", id: String = "1", coordinates: String = "1,2", extra: String = "") =
+            """{"features":[{"properties":{"name":$name,"osm_key":"place","osm_value":"town","osm_type":"N","osm_id":$id},""" +
+                """"geometry":{"coordinates":[$coordinates]}}]$extra}"""
+        val places = Places.photonResults(doc().toByteArray())
+        assertEquals(listOf("N1"), places.map { it.id })
+        assertEquals(GeoPoint(lat = 2.0, lon = 1.0), places[0].centre)
+        // Numbers JSON doesn't write, bare words, a lone surrogate, a raw control character, a byte that isn't UTF-8.
+        val (before, after) = doc(name = "\"A#\"").split("#")
+        val refused = listOf(
+            doc(coordinates = "NaN,2"), doc(coordinates = "Infinity,2"), doc(id = "NaN"), doc(id = "01"), doc(extra = ",\"x\":abc"),
+            doc(extra = ",\"x\":1d"), doc(name = "\"A\\ud800\""), doc(name = "\"A\u0001\""),
+        ).map { it.toByteArray() } + listOf(before.toByteArray() + byteArrayOf(0xFF.toByte()) + after.toByteArray())
+        for (json in refused) assertEquals(json.toString(Charsets.UTF_8), emptyList<FoundPlace>(), Places.photonResults(json))
+
+        val polygon = """{"type":"Polygon","coordinates":[[[0,0],[1,0],[1,1],[0,0]]]"""
+        assertEquals(1, Places.outerRings("$polygon}".toByteArray()).size)
+        assertEquals(0, Places.outerRings("$polygon,\"x\":NaN}".toByteArray()).size)
+        assertEquals(0, Places.outerRings("$polygon,\"x\":\"\\udc00\"}".toByteArray()).size)
+    }
+
+    @Test
+    fun testSingularWorksOnWholeCharacters() {
+        // A space followed by a combining mark is a character of a word, not a space between words.
+        assertNull(Places.singular("Sabi Sands \u0301x"))
+        assertEquals("a\u0130 \u0301 \u0130c s", Places.singular("a\u0130 \u0301s \u0130c s "))
+        assertEquals("c  \u0301sa", Places.singular("c  \u0301sas"))
+        assertEquals("Lion Den", Places.singular("Lions  Den"))
+        // An Arabic number sign makes one character with the letter after it: "\u0600s" isn't an "s".
+        assertNull(Places.singular("abc\u0600s"))
+        assertEquals("abc\u0600s", Places.singular("abc\u0600ss"))
+    }
 }

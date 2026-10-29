@@ -1,5 +1,6 @@
 package com.jacobusoettle.satmap.core
 
+import kotlinx.serialization.SerializationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -35,5 +36,26 @@ class PolylineTests {
         assertThrows(Exception::class.java) {
             RoadPreset(json = """{"name":"P","note":"","boundary":[],"roads":[]}""".toByteArray())
         }
+    }
+
+    @Test
+    fun testPresetStringsMustBeValidUnicodeWhereTheyAreRead() {
+        fun json(before: String, after: String) =
+            before.toByteArray() + byteArrayOf(0xFF.toByte()) + after.toByteArray()
+        val tail = ""","note":"OSM","boundary":["??"],"roads":[]}"""
+        // Lone surrogates and bytes that aren't UTF-8, in a string Swift reads.
+        for (bad in listOf(
+            """{"name":"P","note":"OSM","boundary":["\ud800\ud800"],"roads":[]}""".toByteArray(),
+            """{"name":"P\ud800"$tail""".toByteArray(),
+            json("""{"name":"P""", "\"$tail"),
+        )) {
+            assertThrows(SerializationException::class.java) { RoadPreset(json = bad) }
+        }
+        // Elsewhere they don't matter.
+        assertEquals(
+            RoadPreset(name = "P", note = "OSM", boundary = listOf(listOf(GeoPoint(lat = 0.0, lon = 0.0))), roads = emptyList()),
+            RoadPreset(json = json("""{"name":"P","x":"""", "\"$tail")),
+        )
+        assertEquals("P\uD83D\uDE00", RoadPreset(json = """{"name":"P\ud83d\ude00"$tail""".toByteArray()).name)
     }
 }

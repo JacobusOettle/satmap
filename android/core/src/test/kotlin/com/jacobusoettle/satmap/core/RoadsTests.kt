@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.core
 
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.SerializationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -62,6 +63,58 @@ class RoadsTests {
         val partial = """{"elements":[],"remark":"runtime error: Query timed out in \"query\" at line 1 after 121 seconds."}"""
         assertThrows(Exception::class.java) { Roads.parse(partial.toByteArray()) }
         assertThrows(Exception::class.java) { Roads.parse("<html>Too many requests</html>".toByteArray()) }
+    }
+
+    @Test
+    fun testParseReadsJsonAsSwiftsJSONDecoderDoes() {
+        val way = """{"type":"way","geometry":[{"lat":1,"lon":2},{"lat":3,"lon":4}]}"""
+        val road = listOf(listOf(GeoPoint(lat = 1.0, lon = 2.0), GeoPoint(lat = 3.0, lon = 4.0)))
+        val none = emptyList<List<GeoPoint>>()
+        fun parse(json: String) = Roads.parse(json.toByteArray())
+        // Numbers only as JSON writes them and a Double holds them; true, false and null spelled out.
+        for (lat in listOf("NaN", "Infinity", "-Infinity", "1e400", "1e-400", "01", "+1", ".5", "1.", "1d", "abc", "tru", "True", "nul", "-", "1e", "0x1")) {
+            assertThrows(lat, SerializationException::class.java) {
+                parse("""{"elements":[{"type":"way","geometry":[{"lat":$lat,"lon":2},{"lat":3,"lon":4}]}]}""")
+            }
+        }
+        for (value in listOf("abc", "tru", "True", "nul", "1d")) {
+            assertThrows(value, SerializationException::class.java) { parse("""{"elements":[$way],"x":$value}""") }
+        }
+        assertEquals(
+            listOf(listOf(GeoPoint(lat = -0.0, lon = 0.0025), GeoPoint(lat = 30.0, lon = 4.0))),
+            parse("""{"elements":[{"type":"way","geometry":[{"lat":-0,"lon":2.5e-3},{"lat":3E+1,"lon":4}]}]}"""),
+        )
+        // One trailing comma, a byte order mark, UTF-16.
+        assertEquals(none, parse("""{"elements":[],}"""))
+        assertEquals(road, parse("""{"elements":[$way,],}"""))
+        for (json in listOf("""{"elements":[,]}""", """{"elements":[$way,,]}""", "{,}")) {
+            assertThrows(json, SerializationException::class.java) { parse(json) }
+        }
+        assertEquals(none, Roads.parse(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) + """{"elements":[]}""".toByteArray()))
+        assertEquals(none, Roads.parse("""{"elements":[]}""".toByteArray(Charsets.UTF_16LE)))
+        assertEquals(road, Roads.parse("""{"elements":[$way]}""".toByteArray(Charsets.UTF_16))) // big-endian, with a byte order mark
+        // The first of repeated keys counts.
+        assertEquals(road, parse("""{"elements":[$way],"elements":[]}"""))
+        assertEquals(road, parse("""{"elements":[{"type":"way","type":"node","geometry":[{"lat":1,"lon":2},{"lat":3,"lon":4}]}]}"""))
+        // A string is checked only when it is read.
+        assertEquals(road, parse("""{"elements":[$way],"x":"\x"}"""))
+        assertEquals(none, Roads.parse("{\"elements\":[],\"x\":\"".toByteArray() + byteArrayOf(0xFF.toByte()) + "\"}".toByteArray()))
+        assertThrows(SerializationException::class.java) { parse("""{"elements":[{"type":"wa\x","geometry":[]}]}""") }
+        assertThrows(SerializationException::class.java) { parse("{\"elements\":[{\"type\":\"wa\u0001y\",\"geometry\":[]}]}") }
+    }
+
+    @Test
+    fun testErrorInRemarkIsFoundAsFoundationsContainsFindsIt() {
+        val way = """{"type":"way","geometry":[{"lat":1,"lon":2},{"lat":3,"lon":4}]}"""
+        val road = listOf(listOf(GeoPoint(lat = 1.0, lon = 2.0), GeoPoint(lat = 3.0, lon = 4.0)))
+        fun parse(remark: String) = Roads.parse("""{"elements":[$way],"remark":"$remark"}""".toByteArray())
+        // Not the word when a mark that belongs to its "r" follows (a combining accent, a skin tone, a zero-width
+        // non-joiner): the roads are kept.
+        for (remark in listOf("ERROR\\u0301", "error\uD83C\uDFFB", "error\u200C")) assertEquals(remark, road, parse(remark))
+        // Anything else before or after it doesn't matter.
+        for (remark in listOf("runtime error: Query timed out", "\u0600error", "error\u200D", "error\u0903")) {
+            assertThrows(remark, Roads.ServerError::class.java) { parse(remark) }
+        }
     }
 
     @Test

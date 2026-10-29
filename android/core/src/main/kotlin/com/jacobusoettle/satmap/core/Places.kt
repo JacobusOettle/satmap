@@ -6,6 +6,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.text.BreakIterator
 import kotlin.math.max
 import kotlin.math.min
@@ -108,11 +111,54 @@ object Places {
         return out
     }
 
-    /** The JSON in the data if it is an object (Swift's `JSONSerialization` … `as? [String: Any]`), else null. */
+    /** The JSON in the data if it is an object (Swift's `JSONSerialization` … `as? [String: Any]`), else null. As strict
+     *  as JSONSerialization: UTF-8 only, no NaN, Infinity or other bare words, no control characters or lone surrogates
+     *  in strings. */
     private fun jsonObject(data: ByteArray): JsonObject? = try {
-        Json.parseToJsonElement(data.toString(Charsets.UTF_8)) as? JsonObject
+        val text = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(data)).toString()
+        if (rawControlInString(text)) null else (Json.parseToJsonElement(text) as? JsonObject)?.takeIf(::strictJson)
     } catch (e: IllegalArgumentException) {
         null
+    } catch (e: CharacterCodingException) {
+        null
+    }
+
+    private val jsonNumber = Regex("-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?")
+
+    /** Whether every value is one JSONSerialization reads (kotlinx takes any bare word as a value). */
+    private fun strictJson(json: JsonElement): Boolean = when (json) {
+        is JsonObject -> json.all { (k, v) -> wholeUtf16(k) && strictJson(v) }
+        is JsonArray -> json.all(::strictJson)
+        is JsonNull -> true
+        is JsonPrimitive ->
+            if (json.isString) wholeUtf16(json.content) else json.content == "true" || json.content == "false" || jsonNumber.matches(json.content)
+    }
+
+    /** No lone surrogates ("\\ud800"), which JSONSerialization refuses. */
+    private fun wholeUtf16(s: String): Boolean {
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c.isHighSurrogate() && i + 1 < s.length && s[i + 1].isLowSurrogate()) i += 2
+            else if (c.isSurrogate()) return false
+            else i++
+        }
+        return true
+    }
+
+    /** A control character written as is inside a string, which JSONSerialization refuses (kotlinx takes it). */
+    private fun rawControlInString(text: String): Boolean {
+        var inString = false
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (inString && c == '\\') i++
+            else if (c == '"') inString = !inString
+            else if (inString && c < ' ') return true
+            i++
+        }
+        return false
     }
 
     /** An array of objects only (Swift's `as? [[String: Any]]`), else null. */
@@ -219,9 +265,13 @@ object Places {
     /** The search again without a plural's "s" ("Sabi Sands" → "Sabi Sand"), as names are often written both ways; null
      *  when there is none. */
     fun singular(text: String): String? {
-        val words = text.split(' ').filter { it.isNotEmpty() }
+        // Whole characters (grapheme clusters), as Swift splits, counts, compares and drops them: a space followed by a
+        // combining mark is part of a word, and "abc\u0600s" ends in the character "\u0600s", not "s".
+        val words = splitAtSpaces(text)
         val changed = words.map { w ->
-            if (characterCount(w) > 3 && w.lowercase().endsWith("s") && !w.lowercase().endsWith("ss")) w.dropLast(1) else w
+            val chars = characters(w)
+            val lower = characters(w.lowercase())
+            if (chars.size > 3 && lower.lastOrNull() == "s" && lower.getOrNull(lower.size - 2) != "s") chars.dropLast(1).joinToString("") else w
         }
         return if (changed == words) null else changed.joinToString(" ")
     }
@@ -232,12 +282,35 @@ object Places {
         return max(0.0001, max(e.maxLat - e.minLat, e.maxLon - e.minLon) / 1500)
     }
 
-    /** Swift's `String.count`: characters as the user sees them (grapheme clusters), not UTF-16 units. */
-    private fun characterCount(text: String): Int {
+    /** Swift's characters of a text: as the user sees them (grapheme clusters), not UTF-16 units. */
+    private fun characters(text: String): List<String> {
         val b = BreakIterator.getCharacterInstance()
         b.setText(text)
-        var n = 0
-        while (b.next() != BreakIterator.DONE) n++
-        return n
+        val out = ArrayList<String>()
+        var from = 0
+        var to = b.next()
+        while (to != BreakIterator.DONE) {
+            out.add(text.substring(from, to))
+            from = to
+            to = b.next()
+        }
+        return out
+    }
+
+    /** Swift's `split(separator: " ")`: cuts only at spaces that are characters of their own (a space followed by a
+     *  combining mark is one character, part of a word), leaving out empty words. */
+    private fun splitAtSpaces(text: String): List<String> {
+        val words = ArrayList<String>()
+        val word = StringBuilder()
+        for (c in characters(text)) {
+            if (c != " ") {
+                word.append(c)
+            } else if (word.isNotEmpty()) {
+                words.add(word.toString())
+                word.clear()
+            }
+        }
+        if (word.isNotEmpty()) words.add(word.toString())
+        return words
     }
 }

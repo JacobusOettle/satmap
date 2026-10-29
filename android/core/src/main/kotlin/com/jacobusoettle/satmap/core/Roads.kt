@@ -1,12 +1,6 @@
 package com.jacobusoettle.satmap.core
 
 import kotlinx.serialization.SerializationException
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -66,20 +60,20 @@ object Roads {
     fun parse(data: ByteArray): List<List<GeoPoint>> {
         // Read as Swift's `JSONDecoder` reads {"elements": [{"type", "geometry": [{"lat", "lon"} or null]?}],
         // "remark"?}: a missing or mistyped value throws.
-        val root = decodeObject(Json.parseToJsonElement(data.toString(Charsets.UTF_8)))
+        val root = decodeObject(SwiftJson.parse(data))
         val elements = decodeArray(root["elements"]).map { element ->
             val e = decodeObject(element)
             val type = decodeString(e["type"])
-            val geometry = e["geometry"].let { if (it == null || it is JsonNull) emptyList() else decodeArray(it) }
+            val geometry = e["geometry"].let { if (it == null || it is SwiftJson.Null) emptyList() else decodeArray(it) }
             type to geometry.map { node ->
-                if (node is JsonNull) null else decodeObject(node).let {
+                if (node is SwiftJson.Null) null else decodeObject(node).let {
                     GeoPoint(lat = decodeNumber(it["lat"]), lon = decodeNumber(it["lon"]))
                 }
             }
         }
         // Set when the server stopped early (timeout, out of memory); the elements are then incomplete.
-        val remark = root["remark"].let { if (it == null || it is JsonNull) null else decodeString(it) }
-        if (remark != null && remark.lowercase().contains("error")) {
+        val remark = root["remark"].let { if (it == null || it is SwiftJson.Null) null else decodeString(it) }
+        if (remark != null && foundationContains(remark.lowercase(), "error")) {
             throw ServerError(message = remark)
         }
         val lines = mutableListOf<List<GeoPoint>>()
@@ -99,23 +93,47 @@ object Roads {
         return lines
     }
 
-    private fun decodeObject(json: JsonElement?): JsonObject =
-        json as? JsonObject ?: throw SerializationException("Expected an object, found $json")
+    private fun decodeObject(json: SwiftJson?): SwiftJson.Obj =
+        json as? SwiftJson.Obj ?: throw SerializationException("Expected an object, found $json")
 
-    private fun decodeArray(json: JsonElement?): JsonArray =
-        json as? JsonArray ?: throw SerializationException("Expected an array, found $json")
+    private fun decodeArray(json: SwiftJson?): List<SwiftJson> =
+        (json as? SwiftJson.Arr)?.items ?: throw SerializationException("Expected an array, found $json")
 
-    private fun decodeString(json: JsonElement?): String {
-        val p = json as? JsonPrimitive
-        if (p == null || !p.isString) throw SerializationException("Expected a string, found $json")
-        return p.content
+    private fun decodeString(json: SwiftJson?): String =
+        (json as? SwiftJson.Str)?.string() ?: throw SerializationException("Expected a string, found $json")
+
+    private fun decodeNumber(json: SwiftJson?): Double =
+        (json as? SwiftJson.Num)?.double() ?: throw SerializationException("Expected a number, found $json")
+
+    /** Swift's `contains(_:)` with Foundation (NSString's `range(of:)`) for an ASCII word: a match may start anywhere,
+     *  but not end inside a character, before a mark that belongs to its last letter ("erroŕ", with a combining
+     *  accent, doesn't contain "error"; with a zero-width joiner or a spacing mark after it, it does). */
+    private fun foundationContains(text: String, word: String): Boolean {
+        var i = text.indexOf(word)
+        while (i >= 0) {
+            val end = i + word.length
+            if (end == text.length || !extendsCharacter(text.codePointAt(end))) return true
+            i = text.indexOf(word, i + 1)
+        }
+        return false
     }
 
-    private fun decodeNumber(json: JsonElement?): Double {
-        val p = json as? JsonPrimitive
-        val n = if (p == null || p.isString || p is JsonNull) null else p.content.toDoubleOrNull()
-        return n ?: throw SerializationException("Expected a number, found $json")
+    /** Unicode's grapheme cluster break Extend: a mark (Mn, Me), one of the other grapheme extenders, or an emoji skin
+     *  tone. */
+    private fun extendsCharacter(c: Int): Boolean {
+        val type = Character.getType(c)
+        return type == Character.NON_SPACING_MARK.toInt() || type == Character.ENCLOSING_MARK.toInt() ||
+            otherExtenders.any { c in it }
     }
+
+    /** Other_Grapheme_Extend (Unicode 15) and the emoji modifiers. */
+    private val otherExtenders = listOf(
+        0x09BE..0x09BE, 0x09D7..0x09D7, 0x0B3E..0x0B3E, 0x0B57..0x0B57, 0x0BBE..0x0BBE, 0x0BD7..0x0BD7,
+        0x0CC2..0x0CC2, 0x0CD5..0x0CD6, 0x0D3E..0x0D3E, 0x0D57..0x0D57, 0x0DCF..0x0DCF, 0x0DDF..0x0DDF,
+        0x1B35..0x1B35, 0x200C..0x200C, 0x302E..0x302F, 0xFF9E..0xFF9F, 0x1133E..0x1133E, 0x11357..0x11357,
+        0x114B0..0x114B0, 0x114BD..0x114BD, 0x115AF..0x115AF, 0x11930..0x11930, 0x1D165..0x1D165,
+        0x1D16E..0x1D172, 0x1F3FB..0x1F3FF, 0xE0020..0xE007F,
+    )
 
     /** The parts of the roads inside the area: each road is checked every 10 m or less against the area's
      *  tiles at zoom 21 (about 15 m), and the result is simplified to within 1 m. */
@@ -338,8 +356,7 @@ data class RoadPreset(
         /** Reads the JSON file (Swift's `init(json:)`); throws `Invalid` when a polyline doesn't decode or there is no
          *  boundary, and `SerializationException` when the file isn't one. */
         operator fun invoke(json: ByteArray): RoadPreset {
-            val f = Json.parseToJsonElement(json.toString(Charsets.UTF_8)) as? JsonObject
-                ?: throw SerializationException("Expected an object")
+            val f = SwiftJson.parse(json) as? SwiftJson.Obj ?: throw SerializationException("Expected an object")
             val name = string(f["name"])
             val note = string(f["note"])
             val fileBoundary = strings(f["boundary"])
@@ -350,13 +367,10 @@ data class RoadPreset(
             return RoadPreset(name = name, note = note, boundary = boundary, roads = roads)
         }
 
-        private fun string(json: JsonElement?): String {
-            val p = json as? JsonPrimitive
-            if (p == null || !p.isString) throw SerializationException("Expected a string, found $json")
-            return p.content
-        }
+        private fun string(json: SwiftJson?): String =
+            (json as? SwiftJson.Str)?.string() ?: throw SerializationException("Expected a string, found $json")
 
-        private fun strings(json: JsonElement?): List<String> =
-            (json as? JsonArray ?: throw SerializationException("Expected an array, found $json")).map(::string)
+        private fun strings(json: SwiftJson?): List<String> =
+            ((json as? SwiftJson.Arr)?.items ?: throw SerializationException("Expected an array, found $json")).map(::string)
     }
 }
