@@ -807,8 +807,8 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 - **`SheetTopBar`:** `CenterAlignedTopAppBar(expandedHeight = 56.dp, windowInsets = WindowInsets(0))`.
   - The title is Headline, tagged `screenTitle`, marked as a heading.
   - The leading slot is "Done", "Cancel", or a back button (`ArrowBackIos` with the previous title, tagged `back`).
-  - A 0.5 dp separator shows once the list has scrolled.
-- **Insets inside a sheet:** `LazyColumn(Modifier.imePadding(), contentPadding = top 16, bottom navigationBars + 24)`.
+  - Once the list has scrolled under it, the bar turns `SheetBarScrolled` (`#2D2D2E`, iOS's grey bar material) with a 0.5 dp separator under it.
+- **Insets inside a sheet:** `LazyColumn(Modifier.imePadding(), contentPadding = top 16, bottom navigationBars + 15)`, sections `spacedBy(29.5.dp)` (UI spec §1.5).
 - **Focus on open:**
   - Go to coordinates: once the sheet is expanded.
   - Find a place: when it has no results yet.
@@ -823,10 +823,12 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 | `.headline` | 17 / 22, SemiBold | `Headline` (= `titleMedium`) |
 | `.body` | 17 / 22 | `Body` (= `bodyLarge`) |
 | `.subheadline` | 15 / 20 | `Subheadline` (= `bodyMedium`) |
-| `.footnote` | 13 / 18 | `Footnote` (= `bodySmall`) |
+| `.footnote` | 13 / 16 | `Footnote` (= `bodySmall`) |
 | `.caption` | 12 / 16 | `Caption` |
 | `.caption2` | 11 / 13 | `Caption2` (= `labelSmall`) |
 | `.system(30, .bold)` | 30 / 36, Bold | `BigNumber` |
+
+  `.footnote`'s 16 is measured from the iPhone screenshots (wrapped footers are 16 pt a line), not Apple's 18.
 
 - **Text effects:**
   - `.monospacedDigit()` → `fontFeatureSettings = "tnum"`;
@@ -842,11 +844,13 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 | SystemOrange | `#FF9F0A` |
 | SystemRed | `#FF453A` |
 | SheetBackground | `#1C1C1E` |
+| SheetBarScrolled | `#2D2D2E` |
 | CellBackground | `#2C2C2E` |
 | CellPressed | `#3A3A3C` |
 | Separator | `#38383A` |
 | LabelSecondary | `#99EBEBF5` |
 | LabelTertiary | `#4DEBEBF5` |
+| SecondaryFill | `#52787880` |
 | PasteFill | `#BD8B1A` |
 | YouColour | `#59DBFF` |
 | PinColour | `#FFB833` |
@@ -859,14 +863,16 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 - **Form** (UI spec §1.5, D9):
   - Sections: headers upper-case Footnote, secondary colour, 32 dp from the edge.
   - Cards: 16 dp margin, 10 dp corners, `#2C2C2E`.
-  - Rows: at least 44 dp; icon rows have 28 dp icon boxes and text starting 60 dp from the card edge.
+  - Sections 29.5 dp apart, and 5.5 dp more under a section without a footer: 35 dp after a card, 33 dp after a footer's last baseline, as iOS's.
+  - Rows: at least 44 dp, inset 11 dp (11.33 for rows of several lines); icon rows have 28 dp icons in a box 28 dp wide and a line (22 dp) tall, which they overflow, and text starting 60 dp from the card edge.
   - Dividers: 0.5 dp, inset to the text.
-  - Row kinds: link rows (chevron), action rows (accent), green switches, and `SwipeToDismissBox` delete rows (with a "Delete" custom accessibility action).
+  - Row kinds: link rows (chevron), action rows (accent), iOS switches (`IosSwitch`, drawn: M3's thumb sizes are fixed), and `SwipeToDismissBox` delete rows (with a "Delete" custom accessibility action).
 
 ### 4.4 Icons (SF Symbol → Material)
 
 From `material-icons-extended` 1.7.8; the custom vectors are in `Icons.kt`, with the paths in UI spec §6.3. Size
-rule: an SF Symbol at text size X becomes an icon of about 1.2·X dp. Map buttons use 24 dp icons.
+rule: an SF Symbol at text size X becomes an icon of about 1.2·X dp. Map buttons use 24 dp icons. The exception is a list
+`Label`, whose symbols are drawn larger than their text: its icons are 28 dp (`ListIconSize`; UI spec §1.3).
 
 | SF Symbol | Android |
 | --- | --- |

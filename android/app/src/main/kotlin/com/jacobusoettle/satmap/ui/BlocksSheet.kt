@@ -6,12 +6,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredSize
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
@@ -21,14 +18,13 @@ import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -116,21 +112,23 @@ fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
  *  name's button, where TalkBack lands. */
 @Composable
 private fun FileRow(f: KMLLibrary.File, deleteAction: Modifier, onShow: () -> Unit, onShownChange: (Boolean) -> Unit) {
-    // The switch keeps its 48 dp touch area within the 56 dp row; the texts' button fills the row's height.
-    FormRow(verticalPadding = 0.dp) {
+    // The texts' button fills the row's height (58 dp, as iOS's); the switch has a 48 dp tall touch area and ends
+    // 14 dp in from the card's edge, as iOS's does.
+    FormRow(verticalPadding = 0.dp, endPadding = 14.dp) {
         Column(
-            Modifier.weight(1f).then(deleteAction).pressable(onClick = onShow).padding(vertical = 8.dp),
+            Modifier.weight(1f).then(deleteAction).pressable(onClick = onShow).padding(vertical = MultiLineRowPadding),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(f.name, style = Body, color = LabelPrimary)
             Text("${f.document.features.size} shapes · tap to show on map", style = Caption, color = LabelSecondary)
         }
         Spacer(Modifier.width(12.dp))
-        Switch(
+        IosSwitch(
             f.isShown,
-            onCheckedChange = onShownChange,
-            modifier = Modifier.semantics { contentDescription = "Show ${f.name} on the map" },
-            colors = FormSwitchColors(),
+            Modifier
+                .minimumInteractiveComponentSize()
+                .toggleable(f.isShown, interactionSource = null, indication = null, role = Role.Switch, onValueChange = onShownChange)
+                .semantics { contentDescription = "Show ${f.name} on the map" },
         )
     }
 }
@@ -149,15 +147,9 @@ private fun ColoursRow(on: Boolean, onChange: (Boolean) -> Unit) {
             .semantics { stateDescription = if (on) "On" else "Off" }
             .testTag("useFileColours"),
     ) {
-        // checkmark.square.fill at title3 is a 23 dp square (screenshot 04): Material's is 3/4 of the icon.
-        Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
-            Icon(
-                if (on) Icons.Filled.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
-                contentDescription = null,
-                tint = Accent,
-                modifier = Modifier.requiredSize(30.dp),
-            )
-        }
+        // checkmark.square.fill at title3 is a 23 dp square (screenshot 04): Material's is 3/4 of the icon. It
+        // overflows its line-tall box, so the row is 44 dp.
+        LabelIcon(if (on) Icons.Filled.CheckBox else Icons.Outlined.CheckBoxOutlineBlank, Accent, size = 30.dp)
         Spacer(Modifier.width(16.dp))
         Text("Use the colours in the files", style = Body, color = LabelPrimary)
     }

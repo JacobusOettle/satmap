@@ -48,12 +48,14 @@ val SystemGreen = Color(0xFF30D158)
 val SystemOrange = Color(0xFFFF9F0A)
 val SystemRed = Color(0xFFFF453A)
 val SheetBackground = Color(0xFF1C1C1E)
+val SheetBarScrolled = Color(0xFF2D2D2E) // a sheet's bar once its list scrolls under it: iOS's bar material (41–50)
 val CellBackground = Color(0xFF2C2C2E)
 val CellPressed = Color(0xFF3A3A3C)
 val Separator = Color(0xFF38383A)
 val LabelPrimary = Color.White
 val LabelSecondary = Color(0x99EBEBF5)
 val LabelTertiary = Color(0x4DEBEBF5)
+val SecondaryFill = Color(0x52787880) // iOS secondarySystemFill (dark): #787880 at 32 %, the switch's track when off
 val PasteFill = Color(0xFFBD8B1A)
 val YouColour = Color(0xFF59DBFF) // AviationView.youColour
 val PinColour = Color(0xFFFFB833) // AviationView.pinColour
@@ -69,8 +71,9 @@ val Body = TextStyle(fontSize = 17.sp, lineHeight = 22.sp)
 /** `.subheadline` */
 val Subheadline = TextStyle(fontSize = 15.sp, lineHeight = 20.sp)
 
-/** `.footnote` */
-val Footnote = TextStyle(fontSize = 13.sp, lineHeight = 18.sp)
+/** `.footnote`. Its lines are 16 pt apart in the iPhone screenshots (footers in 06, 07, 12, 21), not the 18 of
+ *  Apple's type table. */
+val Footnote = TextStyle(fontSize = 13.sp, lineHeight = 16.sp)
 
 /** `.caption` */
 val Caption = TextStyle(fontSize = 12.sp, lineHeight = 16.sp)
