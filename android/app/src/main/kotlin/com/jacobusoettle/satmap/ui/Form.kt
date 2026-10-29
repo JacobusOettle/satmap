@@ -1,7 +1,7 @@
 package com.jacobusoettle.satmap.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -22,6 +23,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -142,14 +144,55 @@ private fun FormCard(content: @Composable () -> Unit) {
     }
 }
 
-/** A row's pressed look: iOS's grey cell highlight in place of a ripple. */
+/** A row's pressed look: iOS's grey cell highlight in place of a ripple. `onLongClick`: a long press (a row's menu). */
 @Composable
-private fun Modifier.formClickable(enabled: Boolean = true, role: Role = Role.Button, onClick: () -> Unit): Modifier {
+private fun Modifier.formClickable(
+    enabled: Boolean = true,
+    role: Role = Role.Button,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
+    onClick: () -> Unit,
+): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     return this
         .background(if (pressed && enabled) CellPressed else Color.Transparent)
-        .clickable(interaction, indication = null, enabled = enabled, role = role, onClick = onClick)
+        .combinedClickable(
+            interaction,
+            indication = null,
+            enabled = enabled,
+            role = role,
+            onLongClickLabel = onLongClickLabel,
+            onLongClick = onLongClick,
+            onClick = onClick,
+        )
+}
+
+/** A row in a list of choices (a zoom level): a tap chooses it, and TalkBack reads it as selected when it is. */
+@Composable
+fun FormChoiceRow(
+    selected: Boolean,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    verticalPadding: Dp = 11.dp,
+    onClick: () -> Unit,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    FormRow(
+        modifier
+            .background(if (pressed && enabled) CellPressed else Color.Transparent)
+            .selectable(selected, interaction, indication = null, enabled = enabled, onClick = onClick),
+        verticalPadding = verticalPadding,
+        content = content,
+    )
+}
+
+/** iOS's `ProgressView()` in a list: a small grey spinner. */
+@Composable
+fun FormSpinner(modifier: Modifier = Modifier) {
+    CircularProgressIndicator(modifier.size(20.dp), color = LabelSecondary, strokeWidth = 2.dp)
 }
 
 /** A plain row (at least 44 dp, padding 16 / 11; two-line rows 16 / 8). */
@@ -183,16 +226,43 @@ fun FormLinkRow(title: String, icon: ImageVector? = null, modifier: Modifier = M
     FormRow(modifier.dividerInset(if (icon != null) 60.dp else 16.dp).formClickable(onClick = onClick)) {
         LabelContent(title, icon, Accent, LabelPrimary)
         Spacer(Modifier.weight(1f))
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = LabelTertiary,
-        )
+        Chevron()
     }
 }
 
-/** A button in the list: text and icon in the accent colour (tertiary, and not tappable, when disabled). */
+/** A row that opens another screen, showing `content` (several lines: `verticalPadding` 9 makes iOS's height for
+ *  them), with a chevron. `onLongClick`: a long press opens the row's menu. */
+@Composable
+fun FormLinkRow(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    verticalPadding: Dp = 9.dp,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
+    FormRow(
+        modifier.formClickable(onLongClick = onLongClick, onLongClickLabel = onLongClickLabel, onClick = onClick),
+        verticalPadding = verticalPadding,
+    ) {
+        content()
+        Chevron()
+    }
+}
+
+/** The disclosure chevron at the end of a link row. */
+@Composable
+private fun Chevron() {
+    Icon(
+        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+        contentDescription = null,
+        modifier = Modifier.size(20.dp),
+        tint = LabelTertiary,
+    )
+}
+
+/** A button in the list: text and icon in the accent colour. Disabled, it isn't tappable and its text loses the
+ *  accent (white, as "Export all offline maps" with no areas in screenshot 06); its icon keeps it. */
 @Composable
 fun FormActionRow(
     title: String,
@@ -203,15 +273,14 @@ fun FormActionRow(
     style: TextStyle = Body,
     onClick: () -> Unit,
 ) {
-    val colour = if (enabled) Accent else LabelTertiary
     FormRow(modifier.dividerInset(if (icon != null) 60.dp else 16.dp).formClickable(enabled, onClick = onClick)) {
         if (icon != null) {
             Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
-                Icon(icon, contentDescription = null, modifier = Modifier.size(iconSize), tint = colour)
+                Icon(icon, contentDescription = null, modifier = Modifier.size(iconSize), tint = Accent)
             }
             Spacer(Modifier.width(16.dp))
         }
-        Text(title, style = style, color = colour)
+        Text(title, style = style, color = if (enabled) Accent else LabelPrimary)
     }
 }
 
@@ -254,7 +323,8 @@ fun FormSwitchColors() = SwitchDefaults.colors(
     uncheckedBorderColor = Color.Transparent,
 )
 
-/** A text field with no underline or outline, and a placeholder. */
+/** A text field with no underline or outline, and a placeholder. `trailing`: what follows the field in its row (the
+ *  place search's Search button). */
 @Composable
 fun FormTextFieldRow(
     value: String,
@@ -266,6 +336,7 @@ fun FormTextFieldRow(
     maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
+    trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
     FormRow {
         BasicTextField(
@@ -286,6 +357,7 @@ fun FormTextFieldRow(
                 }
             },
         )
+        trailing?.invoke(this)
     }
 }
 

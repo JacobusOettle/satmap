@@ -2,10 +2,13 @@ package com.jacobusoettle.satmap.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,6 +41,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -48,7 +52,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -65,15 +71,17 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 // Android only: every iOS sheet is a ModalBottomSheet (always fully expanded, the map dimmed above it), with an
 // in-sheet stack of routes in place of a NavigationStack (DESIGN.md §4.2).
 
-/** What a screen in a sheet shows in the bar: its title, the leading button and an optional trailing one. */
+/** What a screen in a sheet shows in the bar: its title, the leading button (none: null) and an optional trailing
+ *  one. */
 class ScreenChrome(
     val title: String,
-    val leading: Leading,
+    val leading: Leading?,
     val trailing: (@Composable () -> Unit)? = null,
 ) {
     sealed interface Leading {
@@ -195,6 +203,7 @@ fun SheetTopBar(chrome: ScreenChrome, scrolled: Boolean) {
                     is ScreenChrome.Leading.Done -> BarTextButton("Done", leading.onClick)
                     is ScreenChrome.Leading.Cancel -> BarTextButton("Cancel", leading.onClick)
                     is ScreenChrome.Leading.Back -> BackButton(leading.previousTitle, leading.onClick)
+                    null -> {}
                 }
             },
             actions = { chrome.trailing?.invoke() },
@@ -261,6 +270,32 @@ fun SheetScreen(
     }
 }
 
+/** A screen in a sheet that isn't a list: its bar, then `content` in the rest of the sheet (a spinner, a message), as
+ *  SwiftUI centres a lone view under its navigation bar. */
+@Composable
+fun SheetPlainScreen(chrome: ScreenChrome, content: @Composable BoxScope.() -> Unit) {
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    Column(Modifier.fillMaxSize()) {
+        SheetTopBar(chrome, scrolled = false)
+        Box(
+            Modifier.fillMaxWidth().weight(1f).padding(bottom = bottom),
+            contentAlignment = Alignment.Center,
+            content = content,
+        )
+    }
+}
+
+/** The slide of the screen shown in a `SheetStack`, for a screen that waits until it is fully in (the place search
+ *  focuses its field then). Null outside a stack. */
+val LocalScreenTransition = staticCompositionLocalOf<AnimatedVisibilityScope?> { null }
+
+/** Waits until the screen is fully in: at once outside a stack or for the screen shown first, else once its push has
+ *  slid it in. */
+suspend fun AnimatedVisibilityScope?.awaitShown() {
+    val scope = this ?: return
+    snapshotFlow { scope.transition.currentState == EnterExitState.Visible }.first { it }
+}
+
 /** Shows the stack's top screen, sliding in from the right when pushed and back when popped (iOS
  *  `NavigationStack`). System back pops it; at the root it closes the sheet. A screen under another keeps what its
  *  route holds and what it remembers with `rememberSaveable` (its list's scroll position). `screen` gets the route
@@ -285,7 +320,9 @@ fun <R : Any> SheetStack(stack: RouteStack<R>, screen: @Composable (route: R, be
     ) { entry ->
         // What is under a screen never changes while it is on the stack (only the top is pushed or popped).
         val below = remember(entry) { stack.below(entry.route) }
-        saved.SaveableStateProvider(entry.key) { screen(entry.route, below) }
+        CompositionLocalProvider(LocalScreenTransition provides this) {
+            saved.SaveableStateProvider(entry.key) { screen(entry.route, below) }
+        }
     }
     // A popped screen's remembered state goes with it.
     val known = remember { HashSet<Int>() }
