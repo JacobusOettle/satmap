@@ -7,6 +7,13 @@ import org.xml.sax.helpers.DefaultHandler
 import java.io.ByteArrayInputStream
 import java.io.IOException
 import java.io.StringReader
+import java.nio.ByteBuffer
+import java.nio.CharBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
+import java.text.BreakIterator
+import java.text.Normalizer
+import java.util.Locale
 import javax.xml.parsers.SAXParserFactory
 
 sealed interface KMLGeometry {
@@ -108,10 +115,21 @@ object KMLParser {
             data[3] == 0x04.toByte()
         ) {
             val archive = ZipArchive(data = data)
-            val kmlEntries = archive.entries.filter { it.name.lowercase().endsWith(".kml") }
+            // By Swift Characters (".kml" after a character joining its dot is no suffix; a "/" with a mark is no
+            // separator).
+            val kmlEntries = archive.entries.filter {
+                swiftCharacters(it.name.lowercase()).takeLast(4) == listOf(".", "k", "m", "l")
+            }
             // Google Earth writes the main document as doc.kml at the root.
             val entry = kmlEntries.firstOrNull { it.name.lowercase() == "doc.kml" }
-                ?: kmlEntries.minByOrNull { e -> e.name.split('/').count { it.isNotEmpty() } }
+                ?: kmlEntries.minByOrNull { e ->
+                    var n = 0
+                    var inPiece = false
+                    for (c in swiftCharacters(e.name)) {
+                        if (c == "/") inPiece = false else if (!inPiece) { n++; inPiece = true }
+                    }
+                    n
+                }
                 ?: throw KMLError.NoKMLInArchive()
             kmlData = archive.extract(entry)
         }
@@ -120,9 +138,27 @@ object KMLParser {
         // ("gx:CascadingStyle", "kml:id").
         val factory = SAXParserFactory.newInstance()
         factory.isNamespaceAware = false
+        // XMLParser (libxml2) decodes in the encoding the XML declaration names; Android's SAX parser (Expat) reads
+        // any byte stream as UTF-8 whatever it says. So another declared encoding is decoded here, up to the first
+        // byte it can't decode (where libxml2 stops), and parsed as text.
+        val declared = declaredCharset(kmlData)
+        // A file whose DTD declares entities: as XMLParser reports them (see XMLParserEntities).
+        val expanded = XMLParserEntities.expand(kmlData, declared)
+        var decodedAll = true
+        val source = when {
+            expanded != null -> InputSource(StringReader(keepingCDATACarriageReturns(expanded)))
+            declared == null -> InputSource(ByteArrayInputStream(keepingCDATACarriageReturns(kmlData)))
+            else -> {
+                val decoder = declared.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+                val out = CharBuffer.allocate((kmlData.size * decoder.maxCharsPerByte().toDouble()).toInt() + 16)
+                decodedAll = !decoder.decode(ByteBuffer.wrap(kmlData), out, true).isError && !decoder.flush(out).isError
+                InputSource(StringReader(keepingCDATACarriageReturns(out.flip().toString())))
+            }
+        }
         val parsed = try {
-            factory.newSAXParser().parse(ByteArrayInputStream(kmlData), delegate)
-            true
+            factory.newSAXParser().parse(source, delegate)
+            decodedAll
         } catch (e: SAXException) {
             false
         } catch (e: IOException) {
@@ -133,6 +169,21 @@ object KMLParser {
         if (delegate.features.isEmpty()) throw KMLError.NoGeometry()
         return KMLDocument(name = delegate.documentName, features = delegate.styledFeatures())
     }
+
+    /** The charset an XML declaration at the very start names, when it isn't UTF-8 or UTF-16 (null: none, or one
+     *  of those, which the byte stream is read as). A name no charset has is unreadable, as with libxml2. */
+    private fun declaredCharset(data: ByteArray): Charset? {
+        val head = String(data, 0, minOf(data.size, 1024), Charsets.ISO_8859_1)
+        val name = xmlDeclEncoding.find(head)?.groupValues?.get(2) ?: return null
+        val charset = try {
+            Charset.forName(name)
+        } catch (e: IllegalArgumentException) {
+            throw KMLError.Unreadable()
+        }
+        return if (charset == Charsets.UTF_8 || charset.name().startsWith("UTF-16")) null else charset
+    }
+
+    private val xmlDeclEncoding = Regex("^<\\?xml\\s[^>]*?\\sencoding\\s*=\\s*([\"'])([A-Za-z][A-Za-z0-9._-]*)\\1")
 
     /** Parses a KML `<coordinates>` string: whitespace-separated "lon,lat[,alt]" tuples. */
     fun coordinates(text: String): List<GeoPoint> {
@@ -201,11 +252,15 @@ private class KMLParserDelegate : DefaultHandler() {
     /** The id a styleUrl points to: "#id", or "file.kml#id" (only styles in this file are known). */
     private fun styleID(url: String): String? {
         val u = swiftTrimmed(url)
-        val hash = u.lastIndexOf('#')
-        if (hash < 0) return if (u.isEmpty()) null else u
-        val id = u.substring(hash + 1)
-        return if (id.isEmpty()) null else id
+        val chars = swiftCharacters(u) // a '#' with a mark after it is no '#'
+        val hash = chars.lastIndexOf("#")
+        if (hash < 0) return if (u.isEmpty()) null else key(u)
+        val id = chars.drop(hash + 1).joinToString("")
+        return if (id.isEmpty()) null else key(id)
     }
+
+    /** Swift's [String: ...] matches canonically equivalent ids ("café" composed or decomposed): key by NFC. */
+    private fun key(id: String): String = Normalizer.normalize(id, Normalizer.Form.NFC)
 
     private fun flag(text: String): Boolean? =
         when (swiftTrimmed(text).lowercase()) {
@@ -289,7 +344,7 @@ private class KMLParserDelegate : DefaultHandler() {
                 } else if (parent == "Placemark" && inPlacemark) {
                     placemarkStyle = s
                 } else if (id != null) {
-                    styles[id] = s
+                    styles[key(id)] = s
                 }
                 styleID = null
             }
@@ -306,7 +361,7 @@ private class KMLParserDelegate : DefaultHandler() {
                 val p = pair
                 val id = styleMapID
                 if (p != null && id != null && (p.key == null || p.key == "normal")) {
-                    styleMaps[id] = StyleMapEntry(url = p.url, style = p.style)
+                    styleMaps[key(id)] = StyleMapEntry(url = p.url, style = p.style)
                 }
                 pair = null
             }
@@ -355,13 +410,81 @@ private class KMLParserDelegate : DefaultHandler() {
     }
 }
 
+/** XMLParser (libxml2 reading the file in pieces) hands a CDATA section over as written, carriage returns and all, so
+ *  "\r\n" in one stays "\r\n" (one Character: no separator between coordinates). Java's parsers make every line end
+ *  "\n", so each carriage return in a CDATA section goes in as a character reference (which they leave as it is):
+ *  "]]>&#13;<![CDATA[". Comments and processing instructions are passed over; the file's code units are bytes
+ *  (UTF-8 and other ASCII-based encodings) or UTF-16 ones (by its byte order mark or "<?"). */
+private fun keepingCDATACarriageReturns(data: ByteArray): ByteArray {
+    if (!data.contains(0x0D)) return data
+    val b = { i: Int -> if (i < data.size) data[i].toInt() and 0xff else -1 }
+    val bigEndian = b(0) == 0xFE && b(1) == 0xFF || b(0) == 0 && b(1) == 0x3C && b(2) == 0 && b(3) == 0x3F
+    val littleEndian = b(0) == 0xFF && b(1) == 0xFE || b(0) == 0x3C && b(1) == 0 && b(2) == 0x3F && b(3) == 0
+    val width = if (bigEndian || littleEndian) 2 else 1
+    val (high, low) = if (littleEndian) 1 to 0 else 0 to 1 // a UTF-16 code unit's bytes
+    // The code units as chars, rewritten, and back.
+    val text = String(CharArray(data.size / width) { i ->
+        (if (width == 1) b(i) else b(2 * i + high) shl 8 or b(2 * i + low)).toChar()
+    })
+    val kept = keepingCDATACarriageReturns(text)
+    if (kept.length == text.length) return data
+    val out = ByteArray(kept.length * width + data.size % width)
+    for (i in kept.indices) {
+        val c = kept[i].code
+        if (width == 1) {
+            out[i] = c.toByte()
+        } else {
+            out[2 * i + high] = (c shr 8).toByte()
+            out[2 * i + low] = c.toByte()
+        }
+    }
+    if (data.size % width != 0) out[out.size - 1] = data[data.size - 1]
+    return out
+}
+
+/** The same for text (a file decoded here). */
+private fun keepingCDATACarriageReturns(text: String): String {
+    if (!text.contains('\r')) return text
+    val out = StringBuilder(text.length + 64)
+    var i = 0
+    while (i < text.length) {
+        val lt = text.indexOf('<', i)
+        if (lt < 0) {
+            out.append(text, i, text.length)
+            break
+        }
+        out.append(text, i, lt)
+        i = lt
+        val end = when {
+            text.startsWith("<![CDATA[", i) -> "]]>"
+            text.startsWith("<!--", i) -> "-->"
+            text.startsWith("<?", i) -> "?>"
+            else -> null
+        }
+        if (end == null) {
+            out.append('<')
+            i++
+            continue
+        }
+        val close = text.indexOf(end, i).let { if (it < 0) text.length else it + end.length }
+        if (end == "]]>") {
+            for (j in i until close) if (text[j] == '\r') out.append("]]>&#13;<![CDATA[") else out.append(text[j])
+        } else {
+            out.append(text, i, close)
+        }
+        i = close
+    }
+    return out.toString()
+}
+
 // Swift's String handling where Kotlin's differs, so a file reads exactly as on iOS.
 
-/** Swift's `trimmingCharacters(in: .whitespacesAndNewlines)`: Unicode spaces (Zs), line and paragraph separators,
- *  tab, line feed to carriage return, and NEL. Kotlin's `trim()` also takes U+001C–U+001F and leaves NEL. */
+/** Swift's `trimmingCharacters(in: .whitespacesAndNewlines)`: Unicode spaces (Zs) and U+200B ZERO WIDTH SPACE (as
+ *  Core Foundation's whitespace set has U+2000–U+200B), line and paragraph separators, tab, line feed to carriage
+ *  return, and NEL. Kotlin's `trim()` also takes U+001C–U+001F and leaves NEL and U+200B. */
 private fun swiftTrimmed(s: String): String =
     s.trim { c ->
-        c == '\t' || c in '\n'..'\r' || c == '\u0085' || Character.getType(c).toByte().let {
+        c == '\t' || c in '\n'..'\r' || c == '\u0085' || c == '\u200B' || Character.getType(c).toByte().let {
             it == Character.SPACE_SEPARATOR || it == Character.LINE_SEPARATOR || it == Character.PARAGRAPH_SEPARATOR
         }
     }
@@ -416,6 +539,22 @@ private fun splitCharacters(text: String, isSeparator: (Char) -> Boolean): List<
         start = i + 1
     }
     if (text.length > start) out.add(text.substring(start))
+    return out
+}
+
+/** Swift's Characters of a String: its grapheme clusters (a '/', '#' or '.' joined to a mark after it, or to a
+ *  Prepend character before it, is not that character). */
+private fun swiftCharacters(s: String): List<String> {
+    val b = BreakIterator.getCharacterInstance(Locale.ROOT)
+    b.setText(s)
+    val out = ArrayList<String>()
+    var start = b.first()
+    var end = b.next()
+    while (end != BreakIterator.DONE) {
+        out.add(s.substring(start, end))
+        start = end
+        end = b.next()
+    }
     return out
 }
 
