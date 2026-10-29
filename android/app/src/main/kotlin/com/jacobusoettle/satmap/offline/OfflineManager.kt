@@ -57,7 +57,7 @@ class OfflineManager(
     private val context: Context,
     /** The network: whether an area may download now (`canDownloadNow`), and the changes that start waiting ones. */
     private val network: StateFlow<Connectivity.State> = Connectivity.shared.state,
-    /** The space free for the app's files, or null when it can't be told. */
+    /** The space free for the app's files, or null when it can't be told. Asked on `io` only (see `freeSpace`). */
     private val freeDiskSpace: () -> Long? = { AppPaths.freeDiskSpace() },
     /** The fetcher of one layer's tiles: their URLs, and whether the run may only use Wi-Fi. */
     private val fetcher: (url: (TileID) -> String, wifiOnly: Boolean) -> TileFetching = ::downloadFetcher,
@@ -142,6 +142,16 @@ class OfflineManager(
 
     private var lowSpaceStop: UUID? = null
 
+    /** The free space last measured (null until then, or when it can't be told), for `startNextIfIdle`. The Swift asks
+     *  there, on the main thread, as iOS answers at once; Android's answer (`getAllocatableBytes`, DESIGN.md D16) is a
+     *  call into the system's storage service, which mustn't hold up the main thread. So it is measured on `io`: at
+     *  start, by each run (every 10 s, and as it ends), when SatMap comes to the front, after a delete, and after a
+     *  stop for low space. A value that is too high only lets a run start, which then stops at its first check; one
+     *  that is too low (space freed by another app while SatMap stayed in front) refuses one ↻ and measures again, so
+     *  the next ↻ starts. */
+    @Volatile
+    private var freeSpace: Long? = null
+
     init {
         val data = try {
             AtomicFile(indexFile).readFully()
@@ -174,6 +184,7 @@ class OfflineManager(
         AppLifecycle.addObserver(this)
         background.onExpire = { backgroundTimeEnded() }
         background.onStatusChange = { _backgroundStatus.value = it }
+        measureFreeSpace() // before anything starts
         // On the main thread after the change, as the Swift's hop to the main queue (DESIGN.md §2.4 rule 2). A
         // StateFlow gives each new state once, and the current one first.
         scope.launch(Dispatchers.Main) { network.collect { networkChanged() } }
@@ -320,14 +331,17 @@ class OfflineManager(
         publishToMap()
         readers.closeArea(id)
         val dir = File(AppPaths.offline, id.toString().uppercase())
+        // The space it held is free now (see `freeSpace`).
         if (wasActive && running != null) {
             running.cancel()
             scope.launch {
                 running.join()
                 dir.deleteRecursively()
+                measureFreeSpace()
             }
         } else {
             dir.deleteRecursively()
+            measureFreeSpace()
         }
     }
 
@@ -423,6 +437,7 @@ class OfflineManager(
         inForeground = true
         signalWait = null
         background.enteredForeground()
+        measureFreeSpace() // space may have been freed meanwhile (see `freeSpace`)
         networkChanged()
     }
 
@@ -461,7 +476,8 @@ class OfflineManager(
             return
         }
         // (The Swift's `updateIdleTimer()` calls are left out: MapScreen keeps the screen on while `activeID` is set.)
-        val free = freeDiskSpace()
+        // The space last measured, not asked here (see `freeSpace`).
+        val free = freeSpace
         if (free != null && free < minimumFreeSpace) {
             for (a in _areas.value) {
                 if (a.status == OfflineArea.Status.queued) {
@@ -471,6 +487,7 @@ class OfflineManager(
                     }
                 }
             }
+            measureFreeSpace() // again, for ↻ after space is freed
             background.end(success = false)
             return
         }
@@ -579,6 +596,7 @@ class OfflineManager(
                         if (now - lastSpaceCheck > 10) {
                             lastSpaceCheck = now
                             val free = freeDiskSpace()
+                            freeSpace = free
                             if (free != null && free < minimumFreeSpace) post { stopForLowSpace(id) }
                         }
                     }
@@ -590,6 +608,7 @@ class OfflineManager(
                 val size = withContext(io) {
                     imagery.close()
                     terrain.close()
+                    freeSpace = freeDiskSpace() // for the next area (see `freeSpace`)
                     AppPaths.size(dir)
                 }
                 finished(id, outcome, size)
@@ -662,6 +681,11 @@ class OfflineManager(
     }
 
     // Helpers
+
+    /** Measures the free space on `io`, for the next `startNextIfIdle` (see `freeSpace`). */
+    private fun measureFreeSpace() {
+        scope.launch(io) { freeSpace = freeDiskSpace() }
+    }
 
     /** Swift's `DispatchQueue.main.async`: `body` runs on the main thread after what is running now. */
     private fun post(body: () -> Unit) {

@@ -24,8 +24,10 @@ import com.jacobusoettle.satmap.core.TileID
 import com.jacobusoettle.satmap.core.WebMercator
 import com.jacobusoettle.satmap.map.TileRepository
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
@@ -43,7 +45,9 @@ import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
 import java.io.File
 import java.time.Duration
+import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.Executors
 
 /** `OfflineManager`'s list and queue (offline spec §1.1–1.5, §2.14): the runs are real (`TileDownloadJob` into
  *  MBTiles files through `AndroidSqlDriver`) with fake tile servers, and run on the main looper, whose clock the tests
@@ -106,13 +110,21 @@ class OfflineManagerTest {
         AppPaths.offline.mkdirs()
     }
 
-    private fun makeManager(): OfflineManager {
+    /** The threads the free space was measured on. */
+    private val measuredOn = Collections.synchronizedList(mutableListOf<Thread>())
+
+    /** `io` is the main looper too unless a test passes its own. */
+    private fun makeManager(io: CoroutineDispatcher = Dispatchers.Main): OfflineManager {
         manager = OfflineManager(
-            app, network = net, freeDiskSpace = { free },
+            app, network = net,
+            freeDiskSpace = {
+                measuredOn += Thread.currentThread()
+                free
+            },
             fetcher = { url, wifiOnly ->
                 Fetcher(terrain = url(TileID(0, 0, 0)).contains("terrarium"), wifiOnly = wifiOnly).also { fetchers += it }
             },
-            io = Dispatchers.Main,
+            io = io,
             readers = object : OfflineManager.AreaReaders {
                 override fun setAreas(refs: List<TileRepository.AreaRef>) {
                     published.add(refs)
@@ -129,6 +141,17 @@ class OfflineManagerTest {
     private fun idle() = shadowOf(Looper.getMainLooper()).idle()
 
     private fun wait(seconds: Double) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis((seconds * 1000).toLong()))
+
+    /** Runs the main looper until `done`, while a test's own `io` thread works. */
+    private fun idleUntil(done: () -> Boolean) {
+        val end = System.currentTimeMillis() + 30_000
+        while (!done()) {
+            if (System.currentTimeMillis() > end) throw AssertionError("timed out")
+            idle()
+            Thread.sleep(5)
+        }
+        idle()
+    }
 
     private fun add(m: OfflineManager, name: String, maxZoom: Int = 16, allowCellular: Boolean = false, preset: String? = null) =
         m.add(name = name, shape = farm, roads = null, preset = preset, maxZoom = maxZoom, allowCellular = allowCellular).id
@@ -345,17 +368,26 @@ class OfflineManagerTest {
 
     @Test
     fun lessThan500MBFreeStopsDownloads() {
+        // Before a run starts (with the space measured at start).
+        free = 400L shl 20
         val m = makeManager()
         idle()
-        // Before a run starts.
-        free = 400L shl 20
         val a = add(m, "A")
         assertEquals(Status.incomplete, area(a).status)
         assertEquals("Less than 500 MB free on the phone. Free up space, then tap ↻.", area(a).problem)
         assertTrue(fetchers.isEmpty())
 
-        // During a run (checked at once, then every 10 s).
+        // Space freed in another app: measured again as SatMap comes back, so ↻ starts it.
         free = 20L shl 30
+        process.currentState = Lifecycle.State.CREATED
+        process.currentState = Lifecycle.State.RESUMED
+        idle()
+        m.resume(a)
+        idle()
+        assertEquals(Status.complete, area(a).status)
+        assertNull(area(a).problem)
+
+        // During a run (checked at once, then every 10 s).
         val b = add(m, "B")
         val c = add(m, "C")
         assertEquals(b, m.activeID.value)
@@ -367,12 +399,70 @@ class OfflineManagerTest {
         assertEquals(Status.incomplete, area(c).status) // and nothing else starts
         assertNull(m.activeID.value)
 
-        // ↻ with room again.
+        // ↻ with room again, made by deleting an area: measured after the delete.
         free = 20L shl 30
+        m.delete(a)
+        idle()
         m.resume(b)
         idle()
         assertEquals(Status.complete, area(b).status)
         assertNull(area(b).problem)
+
+        // Space freed with SatMap open (and nothing deleted in it): the first ↻ measures again, the next one starts it.
+        free = 100L shl 20
+        val d = add(m, "D")
+        idle()
+        assertEquals(Status.incomplete, area(d).status)
+        free = 20L shl 30
+        m.resume(d)
+        assertEquals(Status.incomplete, area(d).status)
+        idle()
+        m.resume(d)
+        idle()
+        assertEquals(Status.complete, area(d).status)
+    }
+
+    @Test(timeout = 60_000)
+    fun theFreeSpaceIsNeverMeasuredOnTheMainThread() {
+        // The phone's answer is a call into the system's storage service (DESIGN.md D16), which mustn't hold up the
+        // main thread: the queue goes by the last measure, made on `io` (here a thread of its own, as on the phone).
+        val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "test io") }
+        val io = executor.asCoroutineDispatcher()
+        // Waits for what was started on `io` so far.
+        val settle = {
+            executor.submit {}.get()
+            idle()
+        }
+        try {
+            val m = makeManager(io)
+            settle()
+            assertEquals(1, measuredOn.size) // at start
+            val a = add(m, "A")
+            idleUntil { area(a).status == Status.complete } // by the run (at once), and as it ends
+            free = 100L shl 20
+            val b = add(m, "B")
+            idleUntil { area(b).status == Status.incomplete && m.activeID.value == null } // the low-space stop
+            settle()
+            val c = add(m, "C")
+            assertEquals(Status.incomplete, area(c).status) // refused at once, by the last measure
+            free = 20L shl 30
+            settle() // (measured again after the refusal)
+            val n = measuredOn.size
+            process.currentState = Lifecycle.State.CREATED
+            process.currentState = Lifecycle.State.RESUMED
+            settle()
+            assertEquals(n + 1, measuredOn.size) // back in front
+            m.delete(a)
+            settle()
+            assertEquals(n + 2, measuredOn.size) // after a delete
+            m.resume(c)
+            idleUntil { area(c).status == Status.complete }
+            settle()
+            val main = Looper.getMainLooper().thread
+            assertTrue(measuredOn.toString(), measuredOn.none { it === main })
+        } finally {
+            io.close()
+        }
     }
 
     @Test

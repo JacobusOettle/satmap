@@ -1,11 +1,15 @@
 package com.jacobusoettle.satmap.offline
 
 import android.app.Application
+import android.database.sqlite.SQLiteConstraintException
 import android.database.sqlite.SQLiteDatabase.CREATE_IF_NECESSARY
 import android.database.sqlite.SQLiteDatabase.ENABLE_WRITE_AHEAD_LOGGING
 import android.database.sqlite.SQLiteDatabase.NO_LOCALIZED_COLLATORS
 import android.database.sqlite.SQLiteDatabase.OPEN_READONLY
 import android.database.sqlite.SQLiteDatabase.OPEN_READWRITE
+import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteFullException
+import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.core.CoverageShape
@@ -29,6 +33,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.util.ReflectionHelpers
 import java.io.File
 import java.util.UUID
 import kotlin.concurrent.thread
@@ -242,6 +247,97 @@ class AndroidSqlDriverTest {
     }
 
     @Test
+    fun beforeAndroid13TheWriterGetsTheBusyTimeoutAndTheStoreWorks() {
+        // Android 11 to 12L can't run the pragma on every connection (busyTimeout's comment): there it goes through
+        // rawQuery. Robolectric runs Android 15 only, so only the version the driver reads is changed.
+        for (level in listOf(Build.VERSION_CODES.R, Build.VERSION_CODES.S_V2)) {
+            val db = asOn(level) {
+                AndroidSqlDriver().open(File(dir, "$level.mbtiles").path, create = true).apply { busyTimeout(10_000) }
+            }
+            try {
+                assertEquals(SqlResult.OK, db.begin()) // the transaction holds the writing connection
+                assertEquals("$level", listOf("10000"), rows(db, "PRAGMA busy_timeout"))
+                assertEquals(SqlResult.OK, db.rollback())
+            } finally {
+                db.close()
+            }
+
+            // A download's store, opened there, saves and reads its tiles.
+            val file = File(dir, "imagery-$level.mbtiles")
+            val tiles = (0 until 300).map { TileID(z = 18, x = 1000 + it, y = 2000) }
+            val store = asOn(level) { MBTiles(file, create = true) }
+            for (t in tiles) assertTrue(store.put(t, data = "$t".toByteArray()))
+            assertTrue(store.flush())
+            store.close()
+            val again = asOn(level) { MBTiles(file, create = false) }
+            assertEquals(300L, again.tileCount())
+            assertArrayEquals("${tiles[7]}".toByteArray(), again.tile(tiles[7]))
+            again.close()
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun aWriterWaitsForAnotherLongerThanAndroidsOwnTimeout() {
+        // Android gives a connection 2.5 s; the store waits 10 s, as in C, on every version.
+        for (level in listOf(Build.VERSION_CODES.R, Build.VERSION.SDK_INT)) {
+            val path = File(dir, "w$level.mbtiles").path
+            val first = AndroidSqlDriver().open(path, create = true)
+            val second = asOn(level) { AndroidSqlDriver().open(path, create = true).apply { busyTimeout(10_000) } }
+            try {
+                assertEquals(SqlResult.OK, first.exec("CREATE TABLE t (x INTEGER)"))
+                assertEquals(SqlResult.OK, first.begin())
+                assertEquals(SqlResult.OK, first.exec("INSERT INTO t (x) VALUES (1)"))
+                val release = thread {
+                    Thread.sleep(3_500)
+                    first.commit()
+                }
+                val start = System.nanoTime()
+                assertEquals("$level", SqlResult.OK, second.begin()) // waits for the first to commit
+                assertTrue("$level", System.nanoTime() - start > 3_000_000_000L)
+                assertEquals(SqlResult.OK, second.exec("INSERT INTO t (x) VALUES (2)"))
+                assertEquals(SqlResult.OK, second.commit())
+                release.join()
+                assertEquals(listOf("2"), rows(second, "SELECT COUNT(*) FROM t"))
+            } finally {
+                second.close()
+                first.close()
+            }
+        }
+    }
+
+    @Test
+    fun aFailureOfAndroidsOwnIsNeverSuccess() {
+        // What Android 11 to 12L threw for the busy timeout run per connection, and any version throws for a statement
+        // with rows it is asked to execute: code 0, which isn't SQLite's.
+        val refused = SQLiteException(
+            "unknown error (code 0 SQLITE_OK): Queries can be performed using SQLiteDatabase query or rawQuery methods only."
+        )
+        assertEquals(SqlResult.ERROR, AndroidSqlDriver.resultCode(refused))
+        assertEquals("Queries can be performed using SQLiteDatabase query or rawQuery methods only.",
+                     AndroidSqlDriver.message(refused))
+        assertEquals(SqlResult.FULL, AndroidSqlDriver.resultCode(SQLiteFullException("unknown error (code 0 SQLITE_OK)")))
+        assertEquals("unknown error", AndroidSqlDriver.message(SQLiteFullException("unknown error (code 0 SQLITE_OK)")))
+        // SQLite's own keep their primary code and SQLite's message.
+        val full = SQLiteFullException("database or disk is full (code 13 SQLITE_FULL)")
+        assertEquals(SqlResult.FULL, AndroidSqlDriver.resultCode(full))
+        assertEquals("database or disk is full", AndroidSqlDriver.message(full))
+        val unique = SQLiteConstraintException(
+            "UNIQUE constraint failed: metadata.name (code 2067 SQLITE_CONSTRAINT_UNIQUE[2067])"
+        )
+        assertEquals(19, AndroidSqlDriver.resultCode(unique))
+        assertEquals("UNIQUE constraint failed: metadata.name", AndroidSqlDriver.message(unique))
+
+        // Through a database: a statement Android refuses to execute (core never runs one) fails, with Android's reason.
+        val db = AndroidSqlDriver().open(File(dir, "a.mbtiles").path, create = true)
+        try {
+            assertEquals(SqlResult.ERROR, db.exec("VALUES (1)"))
+            assertEquals("Queries can be performed using SQLiteDatabase query or rawQuery methods only.", db.errorMessage)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
     fun aMissingFileDoesntOpenUnlessCreated() {
         val e = assertFailsWith<SqlException> { AndroidSqlDriver().open(File(dir, "none.mbtiles").path, create = false) }
         assertEquals(SqlResult.CANTOPEN, e.code)
@@ -281,6 +377,17 @@ class AndroidSqlDriverTest {
             assertEquals(listOf("2"), rows(db, "SELECT COUNT(*) FROM tiles"))
         } finally {
             db.close()
+        }
+    }
+
+    /** Runs `body` with the driver reading `level` as the Android version (Robolectric runs Android 15 only). */
+    private fun <T> asOn(level: Int, body: () -> T): T {
+        val real = Build.VERSION.SDK_INT
+        ReflectionHelpers.setStaticField(Build.VERSION::class.java, "SDK_INT", level)
+        try {
+            return body()
+        } finally {
+            ReflectionHelpers.setStaticField(Build.VERSION::class.java, "SDK_INT", real)
         }
     }
 

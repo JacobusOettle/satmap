@@ -98,9 +98,17 @@ class AndroidSqlDriver(private val readOnly: Boolean = false) : SqlDriver {
         /** Android's message ends with " (code 13 SQLITE_FULL)" and what it was doing. */
         private val codeInMessage = Regex("""\(code (\d+)""")
 
-        /** SQLite's primary result code for a failure: from Android's message, else from the exception's class. */
+        /** The primary result code in Android's message, if there is one. */
+        private fun codeIn(e: Exception): Int? =
+            e.message?.let { m -> codeInMessage.find(m)?.groupValues?.get(1)?.toIntOrNull()?.let { it and 0xFF } }
+
+        /** SQLite's primary result code for a failure: from Android's message, else from the exception's class. Code 0
+         *  ("unknown error (code 0 SQLITE_OK): …") is a failure of Android's own, not SQLite's, such as a statement it
+         *  refuses to execute: it goes by the class too (`SqlResult.ERROR` for a plain `SQLiteException`), so it can
+         *  never read as success. */
         fun resultCode(e: Exception): Int {
-            e.message?.let { m -> codeInMessage.find(m)?.groupValues?.get(1)?.toIntOrNull()?.let { return it and 0xFF } }
+            val code = codeIn(e)
+            if (code != null && code != SqlResult.OK) return code
             return when (e) {
                 is SQLiteFullException -> SqlResult.FULL
                 is SQLiteDatabaseLockedException -> SqlResult.BUSY
@@ -121,9 +129,15 @@ class AndroidSqlDriver(private val readOnly: Boolean = false) : SqlDriver {
             }
         }
 
-        /** SQLite's own message (`sqlite3_errmsg`), without what Android adds. */
-        fun message(e: Exception): String =
-            e.message?.substringBefore(" (code ")?.trim()?.ifEmpty { null } ?: "unknown error"
+        /** SQLite's own message (`sqlite3_errmsg`), without what Android adds. A failure of Android's own (code 0) has
+         *  none ("unknown error"): then Android's message, which follows the code. */
+        fun message(e: Exception): String {
+            val m = e.message ?: return "unknown error"
+            if (codeIn(e) == SqlResult.OK) {
+                m.substringAfter("): ", "").trim().ifEmpty { null }?.let { return it }
+            }
+            return m.substringBefore(" (code ").trim().ifEmpty { null } ?: "unknown error"
+        }
 
         /** Statements whose rows are read with a cursor; the others are executed. PRAGMAs go this way whether they
          *  return a row or not (Android refuses to execute one that does). */
@@ -201,11 +215,16 @@ private class AndroidDatabase(private val db: SQLiteDatabase, private val thread
 
     fun <T> onThread(body: () -> T): T = thread.call(body)
 
-    /** Android gives each of its connections a 2.5 s timeout as it opens them; this sets every connection's, from
-     *  API 30. Before, it reaches the connection the pragma runs on. */
+    /** Android gives each of its connections a 2.5 s timeout as it opens them. From API 33 this sets every
+     *  connection's, those opened later too. Before, `execPerConnectionSQL` can't take a pragma that returns a row, as
+     *  this one does: Android 11 to 12L refuse to execute it ("Queries can be performed using SQLiteDatabase query or
+     *  rawQuery methods only."), keep it in the configuration all the same and then fail to open any connection, so
+     *  nothing on the file would work again. There it goes through `rawQuery`: SQLite sets the timeout as it prepares
+     *  the pragma, which Android does on the writing connection, so the writer waits its 10 s, as in C (a reader may
+     *  keep Android's 2.5 s; in WAL mode readers don't wait for the writer). */
     override fun busyTimeout(milliseconds: Int) {
         call {
-            if (Build.VERSION.SDK_INT >= 30) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 db.execPerConnectionSQL("PRAGMA busy_timeout=$milliseconds", null)
             } else {
                 db.rawQuery("PRAGMA busy_timeout=$milliseconds", null).use { it.moveToFirst() }
