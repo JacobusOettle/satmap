@@ -2,16 +2,43 @@ package com.jacobusoettle.satmap.kml
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
+import android.util.AtomicFile
+import com.jacobusoettle.satmap.app.AppPaths
+import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.core.KMLDocument
+import com.jacobusoettle.satmap.core.KMLParser
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.io.IOException
 import java.util.UUID
 
-/** The imported KML/KMZ files (the farm blocks): `KML/index.json` plus `KML/<UUID>.kml|.kmz`, each parsed into a
- *  `KMLDocument` and shown or hidden on the map. Main thread only. (`File` here is the library's entry; files on
- *  disk are written `java.io.File` in full.) */
-class KMLLibrary(private val context: Context) {
+/** Imported KML/KMZ files (farm blocks etc.), stored in the app and shown on the map (each can be switched off):
+ *  `KML/index.json` plus `KML/<UUID>.kml|.kmz`, as on the iPhone. Main thread only. (`File` here is the library's
+ *  entry; files on disk are written `java.io.File` in full.) */
+class KMLLibrary(
+    private val context: Context,
+    /** Where files are read and parsed (a test passes its own). */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+) {
     /** One record of `index.json`, as Swift encodes it: `{"id":"<UPPER-UUID>","name":…,"fileName":…}`, plus
      *  `"hidden":true` when switched off (offline spec §2.9). */
     data class Entry(
@@ -20,21 +47,43 @@ class KMLLibrary(private val context: Context) {
         val fileName: String,
         /** Switched off: not on the map. (Optional so the index of an earlier version still reads.) */
         val hidden: Boolean? = null,
-    )
+    ) {
+        /** Swift's `JSONEncoder` form: `hidden` left out when not set. */
+        fun toJson(): JsonObject = buildJsonObject {
+            put("id", id.toString().uppercase())
+            put("name", name)
+            put("fileName", fileName)
+            hidden?.let { put("hidden", it) }
+        }
+
+        companion object {
+            /** Reads `toJson()`'s form, in any key order, the id in either case, and null for `hidden` not set. Throws
+             *  if it isn't one. */
+            fun fromJson(json: JsonElement): Entry {
+                val o = json.jsonObject
+                fun string(key: String): String {
+                    val p = o[key]?.jsonPrimitive ?: throw IllegalArgumentException("No $key")
+                    require(p.isString) { "Not a string: $p" }
+                    return p.content
+                }
+                val id = string("id")
+                require(Regex("[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}").matches(id)) { "Not a UUID: $id" }
+                return Entry(
+                    id = UUID.fromString(id),
+                    name = string("name"),
+                    fileName = string("fileName"),
+                    hidden = o["hidden"]?.takeIf { it !is JsonNull }?.jsonPrimitive?.boolean,
+                )
+            }
+        }
+    }
 
     data class File(val id: UUID, val name: String, val fileName: String, val document: KMLDocument, val isShown: Boolean)
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     private val _files = MutableStateFlow<List<File>>(emptyList())
     val files: StateFlow<List<File>> = _files.asStateFlow()
-
-    /** The preference `kmlFileColours`, true when never set. */
-    private val _useFileColours = MutableStateFlow(true)
-    val useFileColours: StateFlow<Boolean> = _useFileColours.asStateFlow()
-
-    fun setUseFileColours(v: Boolean) {
-        _useFileColours.value = v
-        // M3: written to kmlFileColours.
-    }
 
     private val _importError = MutableStateFlow<String?>(null)
     val importError: StateFlow<String?> = _importError.asStateFlow()
@@ -43,18 +92,150 @@ class KMLLibrary(private val context: Context) {
         _importError.value = null
     }
 
-    /** Reads (at once, as the URI grant lives with the receiving activity) and parses off the main thread, stores the
-     *  file and calls back with it, or sets `importError` and calls back with null. */
-    fun importFile(uri: Uri, completion: ((File?) -> Unit)? = null) {
-        // M3: offline spec §1.14 and §2.9.
-        completion?.invoke(null)
+    /** Blocks in their files' own colours (on unless switched off); else all in the app's white. */
+    private val _useFileColours = MutableStateFlow(Defaults.bool("kmlFileColours") ?: true)
+    val useFileColours: StateFlow<Boolean> = _useFileColours.asStateFlow()
+
+    fun setUseFileColours(v: Boolean) {
+        _useFileColours.value = v
+        Defaults.putBoolean("kmlFileColours", v)
     }
 
+    private val indexFile = java.io.File(AppPaths.kml, "index.json")
+
+    /** Every imported file, in order. Loaded at once at startup so an import arriving early ("Open with SatMap"
+     *  launching the app) can't overwrite it; the documents are parsed in the background. */
+    private var entries: List<Entry> = emptyList()
+
+    init {
+        readIndex()?.let { entries = it }
+        val toLoad = entries
+        scope.launch {
+            val loaded = withContext(io) {
+                toLoad.mapNotNull { e ->
+                    try {
+                        file(e, KMLParser.parse(java.io.File(AppPaths.kml, e.fileName).readBytes()))
+                    } catch (x: Exception) {
+                        null
+                    }
+                }
+            }
+            // Keep anything imported meanwhile, skip files deleted meanwhile, and take any change made meanwhile.
+            val current = entries.associateBy { it.id }
+            _files.value = loaded.mapNotNull { f -> current[f.id]?.let { file(it, f.document) } } +
+                _files.value.filter { f -> loaded.none { it.id == f.id } }
+        }
+    }
+
+    /** What reading an imported file came to, off the main thread. */
+    private sealed interface Import {
+        class Done(val entry: Entry, val file: File) : Import
+        class Failed(val message: String) : Import
+    }
+
+    /** Imports a .kml/.kmz picked in the app or shared to it ("Open with SatMap"). It is read at once, off the main
+     *  thread, as the permission to read it lives with the activity that received it. */
+    fun importFile(uri: Uri, completion: ((File?) -> Unit)? = null) {
+        scope.launch {
+            when (val result = withContext(io) { read(uri) }) {
+                is Import.Done -> {
+                    entries = entries + result.entry
+                    _files.value = _files.value + result.file
+                    saveIndex()
+                    completion?.invoke(result.file)
+                }
+                is Import.Failed -> {
+                    _importError.value = result.message
+                    completion?.invoke(null)
+                }
+            }
+        }
+    }
+
+    /** Reads, parses and stores the file (no copy to clean up afterwards, unlike iOS's inbox: a content URI is
+     *  read in place). */
+    private fun read(uri: Uri): Import {
+        val fileName = fileName(uri)
+        val displayName = fileName.lastIndexOf('.').let { if (it > 0) fileName.substring(0, it) else fileName }
+        val data = try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return Import.Failed("Couldn't read $fileName: unknown error")
+        } catch (e: Exception) {
+            return Import.Failed("Couldn't read $fileName: ${e.localizedMessage ?: "unknown error"}")
+        }
+        return try {
+            val doc = KMLParser.parse(data)
+            val id = UUID.randomUUID()
+            val isZip = data.size >= 2 && data[0] == 0x50.toByte() && data[1] == 0x4B.toByte()
+            val entry = Entry(id = id, name = displayName,
+                              fileName = "${id.toString().uppercase()}.${if (isZip) "kmz" else "kml"}")
+            write(java.io.File(AppPaths.kml, entry.fileName), data)
+            Import.Done(entry, file(entry, doc))
+        } catch (e: Exception) {
+            Import.Failed("$fileName: ${e.localizedMessage ?: e.toString()}")
+        }
+    }
+
+    /** The name the providing app gives the file ("Farm.kml"), else the last part of its address. */
+    private fun fileName(uri: Uri): String {
+        val shown = try {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst() && !c.isNull(0)) c.getString(0) else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+        return shown?.takeIf { it.isNotEmpty() } ?: uri.lastPathSegment ?: uri.toString()
+    }
+
+    /** Shows a file's blocks on the map, or takes them off. */
     fun setShown(id: UUID, shown: Boolean) {
-        // M3: updates the entry and its File, saves the index.
+        val i = entries.indexOfFirst { it.id == id }
+        if (i < 0 || (entries[i].hidden != true) == shown) return
+        val entry = entries[i].copy(hidden = if (shown) null else true)
+        entries = entries.toMutableList().also { it[i] = entry }
+        val j = _files.value.indexOfFirst { it.id == id }
+        if (j >= 0) _files.value = _files.value.toMutableList().also { it[j] = file(entry, it[j].document) }
+        saveIndex()
     }
 
     fun delete(id: UUID) {
-        // M3: removes the entry, the File and the stored file, saves the index.
+        val e = entries.firstOrNull { it.id == id } ?: return
+        entries = entries.filter { it.id != id }
+        _files.value = _files.value.filter { it.id != id }
+        java.io.File(AppPaths.kml, e.fileName).delete()
+        saveIndex()
+    }
+
+    private fun file(e: Entry, document: KMLDocument) =
+        File(id = e.id, name = e.name, fileName = e.fileName, document = document, isShown = e.hidden != true)
+
+    /** The saved index, or null if there is none or it can't be read (it is then written afresh on the next change,
+     *  as on iOS). */
+    private fun readIndex(): List<Entry>? = try {
+        Json.parseToJsonElement(AtomicFile(indexFile).readFully().toString(Charsets.UTF_8)).jsonArray.map(Entry::fromJson)
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun saveIndex() {
+        try {
+            write(indexFile, JsonArray(entries.map { it.toJson() }).toString().toByteArray(Charsets.UTF_8))
+        } catch (e: IOException) {
+            // As Swift's `try?`: the index stays as it was.
+        }
+    }
+
+    /** Writes the whole file or nothing (Swift's `.atomic`). */
+    private fun write(file: java.io.File, data: ByteArray) {
+        val atomic = AtomicFile(file)
+        val out = atomic.startWrite()
+        try {
+            out.write(data)
+            atomic.finishWrite(out)
+        } catch (e: IOException) {
+            atomic.failWrite(out)
+            throw e
+        }
     }
 }
