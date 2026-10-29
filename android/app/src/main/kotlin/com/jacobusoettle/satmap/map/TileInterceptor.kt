@@ -6,7 +6,10 @@ import com.jacobusoettle.satmap.app.TileSources
 import com.jacobusoettle.satmap.core.ContourPolicy
 import com.jacobusoettle.satmap.core.ElevationRange
 import com.jacobusoettle.satmap.core.TileID
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Cache
 import okhttp3.Call
 import okhttp3.ConnectionPool
@@ -21,6 +24,7 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import java.io.File
 import java.io.IOException
+import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -64,15 +68,46 @@ object TileUrls {
     fun colours(gen: Int, range: ElevationRange?): String =
         "https://$HOST/${TileKind.colours.id}/$gen/${range?.let { "${it.low}_${it.high}" } ?: "none"}/{z}/{x}/{y}"
 
-    /** The route a tile URL names, or null when it is malformed. */
-    fun parse(url: HttpUrl): TileRoute? = null // M1: the inverse of the templates above.
+    /** The route a tile URL names, or null when it is malformed (another host, an unknown kind, a missing or
+     *  extra segment, a number that isn't one, a tile outside its level, or a level beyond the imagery's). */
+    fun parse(url: HttpUrl): TileRoute? {
+        if (url.host != HOST) return null
+        val s = url.pathSegments
+        val kind = TileKind.entries.firstOrNull { it.id == s.firstOrNull() } ?: return null
+        val count = if (kind == TileKind.imagery) 5 else 6
+        if (s.size != count) return null
+        val gen = s[1].toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val z = s[count - 3].toIntOrNull() ?: return null
+        val x = s[count - 2].toIntOrNull() ?: return null
+        val y = s[count - 1].toIntOrNull() ?: return null
+        if (z !in 0..TileSources.imageryMaxZoom || x !in 0 until (1 shl z) || y !in 0 until (1 shl z)) return null
+        val tile = TileID(z = z, x = x, y = y)
+        return when (kind) {
+            TileKind.imagery -> TileRoute.Imagery(gen, tile)
+            TileKind.contours -> s[2].toIntOrNull()?.takeIf { it > 0 }?.let { TileRoute.Contours(gen, tile, it / 100.0) }
+            TileKind.colours -> if (s[2] == "none") TileRoute.Colours(gen, tile, null) else range(s[2])?.let { TileRoute.Colours(gen, tile, it) }
+        }
+    }
+
+    /** "{low}_{high}" (each `Double.toString`, so possibly negative or with an exponent). */
+    private fun range(s: String): ElevationRange? {
+        val parts = s.split('_')
+        if (parts.size != 2) return null
+        val low = parts[0].toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null
+        val high = parts[1].toDoubleOrNull()?.takeIf { it.isFinite() } ?: return null
+        return ElevationRange(low, high)
+    }
 }
 
-/** What one tile request asks for. */
-sealed class TileRoute(val gen: Int, val tile: TileID) {
-    class Imagery(gen: Int, tile: TileID) : TileRoute(gen, tile)
-    class Contours(gen: Int, tile: TileID, val scale: Double) : TileRoute(gen, tile)
-    class Colours(gen: Int, tile: TileID, val range: ElevationRange?) : TileRoute(gen, tile)
+/** What one tile request asks for: the source's generation and the tile, and for contours the drawing scale, for
+ *  colours the range (null: none chosen yet). */
+sealed class TileRoute {
+    abstract val gen: Int
+    abstract val tile: TileID
+
+    data class Imagery(override val gen: Int, override val tile: TileID) : TileRoute()
+    data class Contours(override val gen: Int, override val tile: TileID, val scale: Double) : TileRoute()
+    data class Colours(override val gen: Int, override val tile: TileID, val range: ElevationRange?) : TileRoute()
 }
 
 /** The answer to MapLibre: a 200 with the tile, or a 204 (no content: MapLibre draws a loaded parent or the
@@ -108,8 +143,15 @@ class TileAnswer(val code: Int, val body: ByteArray, val type: String?, val maxA
 }
 
 /** One raster source of one map (its generation): which tiles MapLibre has had answered, and which of them lack their
- *  own content (for `DrawnImagery`'s replacement and `reload`). */
-class TileLayer(val gen: Int, val kind: TileKind, val map: DrawnMap) {
+ *  own content (for `DrawnImagery`'s replacement and `reload`). A source belongs to its map view and goes with it, as
+ *  iOS's overlays and their renderers go with the `MKMapView`: the map is held weakly, so a map view destroyed with its
+ *  sources still registered (the activity finished, a car screen gone) isn't kept by them. */
+class TileLayer(val gen: Int, val kind: TileKind, map: DrawnMap) {
+    private val mapRef = WeakReference(map)
+
+    /** The map's side of the imagery (its `DrawnImagery` holds it); null once that map has gone. */
+    val map: DrawnMap? get() = mapRef.get()
+
     val answered: MutableSet<TileID> = ConcurrentHashMap.newKeySet()
     val lacking = ConcurrentHashMap<TileID, Boolean>()
 
@@ -125,7 +167,9 @@ object TileLayers {
 
     operator fun get(gen: Int): TileLayer? = layers[gen]
 
+    /** Registers a source, and forgets those whose map has gone (and their bookkeeping with them). */
     fun add(layer: TileLayer) {
+        layers.values.removeAll { it.map == null }
         layers[layer.gen] = layer
     }
 
@@ -212,7 +256,15 @@ class TileInterceptor(
 
 /** Waits for the answer, checking every 50 ms whether MapLibre cancelled the call (then null). Loads into memory go on
  *  in `TileRepository.scope` regardless, as iOS's detached loads do. */
-suspend fun <T> awaitUnlessCanceled(call: Call, block: suspend () -> T): T? {
-    if (call.isCanceled()) return null
-    return block() // M1: polls call.isCanceled() every 50 ms while block runs.
+suspend fun <T> awaitUnlessCanceled(call: Call, block: suspend () -> T): T? = coroutineScope {
+    if (call.isCanceled()) return@coroutineScope null
+    val answer = async { block() }
+    while (!answer.isCompleted) {
+        withTimeoutOrNull(50) { answer.join() }
+        if (!answer.isCompleted && call.isCanceled()) {
+            answer.cancel()
+            return@coroutineScope null
+        }
+    }
+    answer.await()
 }
