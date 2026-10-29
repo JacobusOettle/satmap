@@ -59,6 +59,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -297,10 +302,10 @@ suspend fun AnimatedVisibilityScope?.awaitShown() {
 }
 
 /** Shows the stack's top screen, sliding in from the right when pushed and back when popped (iOS
- *  `NavigationStack`). System back pops it; at the root it closes the sheet. A screen under another keeps what its
- *  route holds and what it remembers with `rememberSaveable` (its list's scroll position). `screen` gets the route
- *  and the one under it (null for the root), whose title labels its back button: kept while a popped screen slides
- *  away. */
+ *  `NavigationStack`). No screen takes a touch while they slide, so a second tap on a link opens nothing more. System
+ *  back pops it; at the root it closes the sheet. A screen under another keeps what its route holds and what it
+ *  remembers with `rememberSaveable` (its list's scroll position). `screen` gets the route and the one under it (null
+ *  for the root), whose title labels its back button: kept while a popped screen slides away. */
 @Composable
 fun <R : Any> SheetStack(stack: RouteStack<R>, screen: @Composable (route: R, below: R?) -> Unit) {
     val saved = rememberSaveableStateHolder()
@@ -318,10 +323,25 @@ fun <R : Any> SheetStack(stack: RouteStack<R>, screen: @Composable (route: R, be
         contentKey = { it.key },
         label = "sheet screens",
     ) { entry ->
-        // What is under a screen never changes while it is on the stack (only the top is pushed or popped).
-        val below = remember(entry) { stack.below(entry.route) }
-        CompositionLocalProvider(LocalScreenTransition provides this) {
-            saved.SaveableStateProvider(entry.key) { screen(entry.route, below) }
+        // What is under a screen never changes while it is on the stack (only the top is pushed or popped). Found by
+        // its entry, as a route can be a shared object (KMLPicker).
+        val below = remember(entry) {
+            val i = stack.entries.indexOf(entry)
+            if (i > 0) stack.entries[i - 1].route else null
+        }
+        val slide = this
+        // UIKit ignores touches while a push or pop slides, so a link opens its screen once: a screen takes no touch
+        // until it is fully in, nor once it is going (pushed over or popped), even before its slide has started.
+        Box(
+            Modifier.ignoringTouches(entry) {
+                entry !== stack.entries.last() ||
+                    slide.transition.currentState != EnterExitState.Visible ||
+                    slide.transition.targetState != EnterExitState.Visible
+            },
+        ) {
+            CompositionLocalProvider(LocalScreenTransition provides slide) {
+                saved.SaveableStateProvider(entry.key) { screen(entry.route, below) }
+            }
         }
     }
     // A popped screen's remembered state goes with it.
@@ -331,5 +351,22 @@ fun <R : Any> SheetStack(stack: RouteStack<R>, screen: @Composable (route: R, be
         for (k in known - keys) saved.removeState(k)
         known.clear()
         known.addAll(keys)
+    }
+}
+
+/** Keeps every touch from what it wraps while `ignoring()` holds, and a touch that went down then until it is lifted. */
+private fun Modifier.ignoringTouches(key: Any, ignoring: () -> Boolean): Modifier = pointerInput(key) {
+    val ignored = HashSet<PointerId>()
+    awaitPointerEventScope {
+        while (true) {
+            // First, before what it wraps sees it: consumed, a tap or a drag doesn't start.
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val now = ignoring()
+            for (change in event.changes) {
+                if (now && change.changedToDownIgnoreConsumed()) ignored += change.id
+                if (now || change.id in ignored) change.consume()
+                if (change.changedToUpIgnoreConsumed()) ignored -= change.id
+            }
+        }
     }
 }

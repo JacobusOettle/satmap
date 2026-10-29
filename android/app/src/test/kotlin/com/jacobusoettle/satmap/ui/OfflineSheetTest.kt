@@ -18,6 +18,7 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
@@ -190,6 +191,43 @@ class OfflineSheetTest {
         button("Find a park, reserve or town").performClick()
         compose.waitForIdle()
         assertEquals("", (stack.top as OfflineRoute.PlaceSearch).state.text)
+    }
+
+    @Test
+    fun aSecondTapOnALinkWhileItsScreenSlidesInOpensItOnce() {
+        val stack = RouteStack<OfflineRoute>(OfflineRoute.Root)
+        compose.setContent { SatMapTheme { OfflineSheet(model, model.offline, model.kml, close = {}, stack = stack) } }
+        /** Taps `link`, then again 100 ms later while its screen slides in: iOS ignores the second tap. (Not the
+         *  name field of the screen coming in.) */
+        fun tapTwice(link: String) {
+            val row = compose.onNode(hasText(link) and hasClickAction() and !hasSetTextAction())
+            compose.mainClock.autoAdvance = false
+            row.performClick()
+            compose.mainClock.advanceTimeBy(100)
+            row.performClick()
+            compose.mainClock.autoAdvance = true
+            compose.waitForIdle()
+        }
+        for (link in listOf(
+            "Use the blocks in a KML file",
+            "Kruger National Park roads",
+            "Where I've been",
+            "Find a park, reserve or town",
+        )) {
+            tapTwice(link)
+            assertEquals(link, 2, stack.size)
+            assertTrue(link, stack.below(stack.top) === OfflineRoute.Root)
+            if (link == "Find a park, reserve or town") break
+            compose.onNodeWithTag("back").performClick()
+            compose.waitForIdle()
+            assertEquals(1, stack.size)
+        }
+        // A place opens its area once (and looks up its boundary once).
+        val search = stack.top as OfflineRoute.PlaceSearch
+        compose.runOnIdle { search.state.results = listOf(place) }
+        tapTwice("Village · Mpumalanga, South Africa · 2 km around it")
+        assertEquals(3, stack.size)
+        assertTrue(stack.below(stack.top) === search)
     }
 
     @Test
