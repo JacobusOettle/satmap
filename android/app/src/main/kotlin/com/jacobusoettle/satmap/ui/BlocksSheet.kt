@@ -1,11 +1,174 @@
 package com.jacobusoettle.satmap.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CheckBox
+import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.kml.KMLLibrary
 
-/** "Blocks": the imported KML files, shown or hidden, the colours setting, and Import KML. */
+/** The types the import offers: iOS's kml, kmz, xml and zip, plus octet-stream, which many providers report for
+ *  `.kml` and `.kmz` (offline spec §2.9, DESIGN.md D13). */
+private val kmlTypes = arrayOf(
+    "application/vnd.google-earth.kml+xml",
+    "application/vnd.google-earth.kmz",
+    "application/xml",
+    "text/xml",
+    "application/zip",
+    "application/octet-stream",
+)
+
+/** Imported KML/KMZ files: each one's blocks switched on or off the map, and whether they keep the files' colours. */
 @Composable
 fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
-    // M3: UI spec §3.1.
+    val files by library.files.collectAsStateWithLifecycle()
+    val useFileColours by library.useFileColours.collectAsStateWithLifecycle()
+    val importError by library.importError.collectAsStateWithLifecycle()
+    val importer = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        uris.forEach { library.importFile(it) }
+    }
+    SheetScreen(
+        ScreenChrome(
+            "Blocks",
+            ScreenChrome.Leading.Done(close),
+            trailing = {
+                IconButton(onClick = { importer.launch(kmlTypes) }, modifier = Modifier.testTag("importKml")) {
+                    Icon(Icons.Filled.Add, contentDescription = "Import KML", tint = Accent)
+                }
+            },
+        ),
+    ) {
+        if (files.isEmpty()) {
+            item {
+                FormSection(first = true) {
+                    FormRow {
+                        Text("Import a .kml or .kmz file to show your blocks on the map.", style = Body, color = LabelSecondary)
+                    }
+                }
+            }
+        } else {
+            item {
+                FormSection(footer = "Switch a file off to take its blocks off the map.", first = true) {
+                    for (f in files) {
+                        FormSwipeToDeleteRow(onDelete = { library.delete(f.id) }) {
+                            FileRow(
+                                f,
+                                onShow = {
+                                    library.setShown(f.id, true)
+                                    f.document.bounds?.let { model.map?.zoom(to = it) }
+                                    close()
+                                },
+                                onShownChange = { library.setShown(f.id, it) },
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                FormSection(footer = "Off: every block is drawn in white.") {
+                    ColoursRow(useFileColours, onChange = library::setUseFileColours)
+                }
+            }
+        }
+    }
+    importError?.let { ImportErrorAlert(it, onDismiss = library::clearImportError) }
+}
+
+/** A file: its name and how many shapes (a tap shows it and zooms to it), and its switch. */
+@Composable
+private fun FileRow(f: KMLLibrary.File, onShow: () -> Unit, onShownChange: (Boolean) -> Unit) {
+    // The switch keeps its 48 dp touch area within the 56 dp row; the texts' button fills the row's height.
+    FormRow(verticalPadding = 0.dp) {
+        Column(
+            Modifier.weight(1f).pressable(onClick = onShow).padding(vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(f.name, style = Body, color = LabelPrimary)
+            Text("${f.document.features.size} shapes · tap to show on map", style = Caption, color = LabelSecondary)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(
+            f.isShown,
+            onCheckedChange = onShownChange,
+            modifier = Modifier.semantics { contentDescription = "Show ${f.name} on the map" },
+            colors = FormSwitchColors(),
+        )
+    }
+}
+
+/** "Use the colours in the files": a checkbox (a filled square with a check, or an empty one); the whole row toggles
+ *  it, greyed while pressed as an iOS list button. */
+@Composable
+private fun ColoursRow(on: Boolean, onChange: (Boolean) -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    FormRow(
+        Modifier
+            .dividerInset(60.dp)
+            .background(if (pressed) CellPressed else Color.Transparent)
+            .toggleable(on, interaction, indication = null, role = Role.Checkbox, onValueChange = onChange)
+            .semantics { stateDescription = if (on) "On" else "Off" }
+            .testTag("useFileColours"),
+    ) {
+        // checkmark.square.fill at title3 is a 23 dp square (screenshot 04): Material's is 3/4 of the icon.
+        Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+            Icon(
+                if (on) Icons.Filled.CheckBox else Icons.Outlined.CheckBoxOutlineBlank,
+                contentDescription = null,
+                tint = Accent,
+                modifier = Modifier.requiredSize(30.dp),
+            )
+        }
+        Spacer(Modifier.width(16.dp))
+        Text("Use the colours in the files", style = Body, color = LabelPrimary)
+    }
+}
+
+/** "Couldn't import" with what went wrong. */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun ImportErrorAlert(message: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.semantics { testTagsAsResourceId = true },
+        containerColor = CellBackground,
+        title = { Text("Couldn't import", style = Headline) },
+        text = { Text(message, style = Footnote) },
+        confirmButton = { TextButton(onDismiss) { Text("OK", style = Body) } },
+    )
 }

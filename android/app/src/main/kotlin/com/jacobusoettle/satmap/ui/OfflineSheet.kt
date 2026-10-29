@@ -53,7 +53,8 @@ class AreaDetailState {
 /** "Offline maps": where areas come from, the areas, backup, free space and the credits. Owns its back stack. */
 @Composable
 fun OfflineSheet(model: AppModel, offline: OfflineManager, library: KMLLibrary, close: () -> Unit) {
-    // M4: UI spec §3.2.
+    // M4: UI spec §3.2 (the root's list and the routes). Until then the root's bar, so the sheet closes with Done.
+    SheetScreen(ScreenChrome("Offline maps", ScreenChrome.Leading.Done(close))) {}
 }
 
 @Composable
