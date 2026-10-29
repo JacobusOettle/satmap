@@ -25,17 +25,35 @@ import kotlin.math.cos
 object AppPaths {
     private lateinit var context: Context
 
+    // Read on any thread; working one out twice is harmless.
+    @Volatile
+    private var rootDir: File? = null
+
+    @Volatile
+    private var offlineDir: File? = null
+
+    @Volatile
+    private var kmlDir: File? = null
+
+    /** The folders are worked out (and made) when first asked for, from the context given here; an `init` starts
+     *  over (a test's own app has its own `filesDir`). */
     fun init(context: Context) {
         this.context = context.applicationContext
+        rootDir = null
+        offlineDir = null
+        kmlDir = null
     }
 
     /** filesDir/SatMap */
-    val root: File by lazy { File(context.filesDir, "SatMap").apply { mkdirs() } }
+    val root: File
+        get() = rootDir ?: File(context.filesDir, "SatMap").apply { mkdirs() }.also { rootDir = it }
 
     /** Offline areas (many GB): excluded from backup. */
-    val offline: File by lazy { File(root, "Offline").apply { mkdirs() } }
+    val offline: File
+        get() = offlineDir ?: File(root, "Offline").apply { mkdirs() }.also { offlineDir = it }
 
-    val kml: File by lazy { File(root, "KML").apply { mkdirs() } }
+    val kml: File
+        get() = kmlDir ?: File(root, "KML").apply { mkdirs() }.also { kmlDir = it }
 
     val track: File get() = File(root, "track.bin")
 

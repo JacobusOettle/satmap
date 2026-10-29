@@ -43,10 +43,12 @@ object Defaults {
         }
     }
 
+    /** A string given at launch (`--es showContours NO`) reads as iOS's `bool(forKey:)` reads one: true when it
+     *  starts with Y, y, T, t or a digit 1–9 (after spaces, a sign and zeros), else false. */
     fun bool(key: String): Boolean? {
         when (val a = argument(key)) {
             is Boolean -> return a
-            is String -> a.toBooleanStrictOrNull()?.let { return it }
+            is String -> return boolValue(a)
         }
         if (!prefs.contains(key)) return null
         return try {
@@ -67,6 +69,15 @@ object Defaults {
         } catch (e: ClassCastException) {
             null
         }
+    }
+
+    /** NSString's `boolValue`. */
+    private fun boolValue(s: String): Boolean {
+        var t = s.trimStart()
+        if (t.startsWith("+") || t.startsWith("-")) t = t.substring(1)
+        t = t.trimStart('0')
+        val c = t.firstOrNull() ?: return false
+        return c in "YyTt" || c in '1'..'9'
     }
 
     fun putString(key: String, v: String) = prefs.edit().putString(key, v).apply()
