@@ -217,7 +217,7 @@ private fun RowScope.LabelContent(title: String, icon: ImageVector?, iconTint: C
         }
         Spacer(Modifier.width(16.dp))
     }
-    Text(title, style = Body, color = textColor, modifier = Modifier.weight(1f, fill = false))
+    Text(title, style = Body, color = textColor, modifier = Modifier.weight(1f)) // the row's whole width, up to the chevron
 }
 
 /** A row that opens another screen: title (and icon), with a chevron. */
@@ -225,7 +225,6 @@ private fun RowScope.LabelContent(title: String, icon: ImageVector?, iconTint: C
 fun FormLinkRow(title: String, icon: ImageVector? = null, modifier: Modifier = Modifier, onClick: () -> Unit) {
     FormRow(modifier.dividerInset(if (icon != null) 60.dp else 16.dp).formClickable(onClick = onClick)) {
         LabelContent(title, icon, Accent, LabelPrimary)
-        Spacer(Modifier.weight(1f))
         Chevron()
     }
 }
