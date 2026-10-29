@@ -22,6 +22,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.Surface
 import androidx.annotation.RequiresApi
+import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationCompat
 import androidx.core.location.LocationListenerCompat
@@ -834,6 +835,19 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
 
     private fun unreliable(accuracy: Int) =
         accuracy == SensorManager.SENSOR_STATUS_UNRELIABLE || accuracy == SensorManager.SENSOR_STATUS_NO_CONTACT
+
+    // Tests
+
+    /** For screen tests, where no location arrives: the position, the permission state and precise location as the
+     *  screens show them. A fix is passed on as one used (`onFix`: the maps, the drone report), but not recorded in
+     *  the track. A later re-read of the permissions (`start`, coming to the foreground) replaces the authorization. */
+    @VisibleForTesting
+    fun setForTests(fix: GpsFix?, authorization: Authorization = Authorization.authorized, reducedAccuracy: Boolean = false) {
+        _authorization.value = authorization
+        _reducedAccuracy.value = reducedAccuracy
+        _location.value = fix
+        if (fix != null) onFix?.invoke(fix)
+    }
 
     // App state
 
