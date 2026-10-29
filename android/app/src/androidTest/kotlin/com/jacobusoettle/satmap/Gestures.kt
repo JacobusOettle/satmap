@@ -10,18 +10,22 @@ import androidx.test.platform.app.InstrumentationRegistry
 object Gestures {
     /** iOS's `press(forDuration:thenDragTo:)`: down at `from`, held for `holdMs`, moved to `to` in 20 steps, then up.
      *  Points are screen pixels. */
-    fun pressAndDrag(from: PointF, to: PointF, holdMs: Long) {
-        val down = SystemClock.uptimeMillis()
-        inject(down, down, MotionEvent.ACTION_DOWN, from)
-        SystemClock.sleep(holdMs)
-        val steps = 20
-        for (i in 1..steps) {
-            val f = i / steps.toFloat()
-            val at = PointF(from.x + (to.x - from.x) * f, from.y + (to.y - from.y) * f)
-            inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_MOVE, at)
-            SystemClock.sleep(16)
+    fun pressAndDrag(from: PointF, to: PointF, holdMs: Long) = perform(Touches.pressAndDrag(from, to, holdMs))
+
+    /** iOS's `press(forDuration:thenDragTo:withVelocity:thenHoldForDuration:)` on the map: the map moves from `from` to
+     *  `to` and stays there (`Touches.mapDrag`). Points are screen pixels. */
+    fun dragMap(from: PointF, to: PointF, holdMs: Long, thenHoldMs: Long, density: Float) =
+        perform(Touches.mapDrag(from, to, holdMs, thenHoldMs, density))
+
+    /** The touches one after the other, each its `afterMs` after the one before. */
+    fun perform(touches: List<Touch>) {
+        var down = 0L
+        for (t in touches) {
+            if (t.afterMs > 0) SystemClock.sleep(t.afterMs)
+            val now = SystemClock.uptimeMillis()
+            if (t.action == MotionEvent.ACTION_DOWN) down = now
+            inject(down, now, t.action, t.at)
         }
-        inject(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, to)
     }
 
     /** One finger event (pointer 0, a finger on the touch screen, as UiAutomator makes them). */

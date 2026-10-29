@@ -702,8 +702,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             break
         }
         if dragLineShown { line = [] } // drawn over the map meanwhile (`updateDragLine`)
+        let hadLine = !measureLine.path.vertices.isEmpty
+        let dirty = measureLine.set(line, closed: closed)
+        if hadLine && measureLine.path.vertices.isEmpty {
+            // Gone: MapKit can go on showing the tiles drawn before, however they are invalidated (seconds after
+            // measuring was switched off). Taken off the map and put back where it was, above the track (blocks go
+            // below it, a drawn area above), the line loses them and gets a new renderer.
+            mapView.removeOverlay(measureLine)
+            measureRenderer = nil
+            mapView.insertOverlay(measureLine, above: track)
+            return
+        }
         let margin = 8 * mapPointsPerPoint
-        for rect in measureLine.set(line, closed: closed) {
+        for rect in dirty {
             measureRenderer?.setNeedsDisplay(rect.insetBy(dx: -margin, dy: -margin))
         }
     }
