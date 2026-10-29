@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
@@ -65,7 +66,8 @@ fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
             ScreenChrome.Leading.Done(close),
             trailing = {
                 IconButton(onClick = { importer.launch(kmlTypes) }, modifier = Modifier.testTag("importKml")) {
-                    Icon(Icons.Filled.Add, contentDescription = "Import KML", tint = Accent)
+                    // Material's cross is 14/24 of its icon: 30 dp makes it 17.5 dp, iOS's plus (screenshot 04).
+                    Icon(Icons.Filled.Add, contentDescription = "Import KML", tint = Accent, modifier = Modifier.size(30.dp))
                 }
             },
         ),

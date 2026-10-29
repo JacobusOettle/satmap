@@ -1,7 +1,6 @@
 package com.jacobusoettle.satmap.ui
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowCircleDown
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -9,6 +8,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jacobusoettle.satmap.app.AppModel
@@ -57,6 +61,30 @@ class AreaDetailState {
         }
         return s
     }
+}
+
+/** `arrow.down.circle.fill`: a filled disc with the arrow cut out, so the cell shows through it as through the SF
+ *  Symbol's (Material's "filled" `ArrowCircleDown` is only a ring). The disc has Material's radius, 10 on the 24 × 24
+ *  viewport, so the two swap at the same size. The arrow is SF's (screenshot 18): a shaft and a chevron head 1.9
+ *  units wide with round ends, 10.7 units tall. */
+private val ArrowDownCircleFill: ImageVector by lazy {
+    ImageVector.Builder(
+        "ArrowDownCircleFill",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    )
+        .addPath(
+            pathData = addPathNodes(
+                "M12,2a10,10 0 1 1 0,20a10,10 0 1 1 0,-20z " +
+                    "M11.33,16.82A0.95,0.95 0 0 0 12.67,16.82L15.67,13.82A0.95,0.95 0 0 0 14.33,12.48L12.95,13.86V7.35" +
+                    "A0.95,0.95 0 0 0 11.05,7.35V13.86L9.67,12.48A0.95,0.95 0 0 0 8.33,13.82z",
+            ),
+            pathFillType = PathFillType.EvenOdd,
+            fill = SolidColor(Color.Black),
+        )
+        .build()
 }
 
 /** One offline area: show it on the map, see how deep its imagery goes, and download it to a deeper zoom level (only
@@ -134,9 +162,9 @@ fun AreaDetailView(
             FormSection {
                 FormActionRow(
                     state.buttonTitle(area),
-                    Icons.Filled.ArrowCircleDown,
+                    ArrowDownCircleFill,
                     enabled = state.chosenZoom != null,
-                    iconSize = 26.5.dp, // the circle 22 dp, as arrow.down.circle.fill's (screenshot 18)
+                    iconSize = 26.5.dp, // the disc 22 dp, as arrow.down.circle.fill's (screenshot 18)
                     style = Headline,
                 ) {
                     askNotifications()
