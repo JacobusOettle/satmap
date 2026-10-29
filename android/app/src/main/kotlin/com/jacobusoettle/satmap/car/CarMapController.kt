@@ -25,6 +25,7 @@ import com.jacobusoettle.satmap.map.DrawnImagery
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.MapImages
 import com.jacobusoettle.satmap.map.MapStyle
+import com.jacobusoettle.satmap.map.TileLevels
 import com.jacobusoettle.satmap.map.TrackLayer
 import com.jacobusoettle.satmap.map.UserDotLayer
 import kotlinx.coroutines.CoroutineScope
@@ -289,7 +290,7 @@ class CarMapController(private val carContext: CarContext, private val model: Ap
         m.setMaxZoomPreference(MAX_ZOOM)
         // Imagery with contours and colours, then the overlays: blocks (below the track), track, aviation, your dot.
         builtTerrain = model.terrainMode.value
-        val drawn = DrawnImagery(view, m, { isShown }, { model.terrainMode.value })
+        val drawn = DrawnImagery(view, m, { isShown }, { model.terrainMode.value }, TileLevels.contourScale(view.pixelRatio))
         imagery = drawn
         m.setStyle(MapStyle.builder(drawn)) { style -> styleLoaded(view, m, style) }
     }

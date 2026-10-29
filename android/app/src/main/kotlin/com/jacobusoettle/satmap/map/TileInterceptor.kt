@@ -192,7 +192,12 @@ object TileLevels {
         return (if (v >= 0) floor(v + 0.5) else ceil(v - 0.5)).toInt().coerceIn(0, TileSources.imageryMaxZoom)
     }
 
-    /** Contour drawing scale, quantised as in the URL (2.625 → 2.63). */
+    /** The phone map's contour drawing scale: the iPhone's (its `contentScaleFactor`, 3), whatever the phone's density,
+     *  so the lines, labels and intervals are the iPhone's in dp (the tiles are 128 to 256 dp across on both). An Android
+     *  difference: iOS draws at its own screen's scale. */
+    const val PHONE_CONTOUR_SCALE = 3.0
+
+    /** A screen's contour drawing scale (the car's), quantised as in the URL (2.625 → 2.63). */
     fun contourScale(pixelRatio: Float): Double = (min(max(1.0, pixelRatio.toDouble()), 3.0) * 100).roundToInt() / 100.0
 
     /** The first level with a contour interval at this scale (12 at s = 2, 13 at 2.63 and 3). */
