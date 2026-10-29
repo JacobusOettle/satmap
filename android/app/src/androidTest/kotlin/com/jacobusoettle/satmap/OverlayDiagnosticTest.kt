@@ -86,7 +86,7 @@ class OverlayDiagnosticTest {
             val scenario = ActivityScenario.launch(MainActivity::class.java)
             try {
                 val m = waitForStyle(90)
-                line("style loaded: ${m != null}")
+                line("style loaded: ${m != null}, rendering engine: ${renderingEngine()}")
                 // A few fixes, for a track, ending at the farm.
                 TestLocations.walk(
                     listOf(
@@ -402,6 +402,13 @@ class OverlayDiagnosticTest {
             Thread.sleep(500)
         }
         return null
+    }
+
+    /** MapLibre's renderer (Vulkan or OpenGL; only the multi-backend build has `RenderingEngine`). */
+    private fun renderingEngine(): String = try {
+        Class.forName("org.maplibre.android.RenderingEngine").getMethod("getCurrentType").invoke(null).toString()
+    } catch (e: ReflectiveOperationException) {
+        "OpenGL (single-backend build)"
     }
 
     private fun isModelReady(): Boolean = try {
