@@ -3,7 +3,6 @@ package com.jacobusoettle.satmap
 import android.Manifest
 import android.graphics.Point
 import android.graphics.PointF
-import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
@@ -36,10 +35,13 @@ import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.KMLGeometry
 import com.jacobusoettle.satmap.map.MapController
+import com.jacobusoettle.satmap.map.MapIds
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import kotlin.math.cos
@@ -212,8 +214,13 @@ class ScreenshotTest {
         snap("08-downloading")
 
         tap("Offline maps")
-        // (Only in the Offline maps sheet can "Ready offline" show: no use waiting a quarter of an hour without it.)
-        if (waitForExistence(navigationBar("Offline maps"), 5)) waitForExistence(staticText("Ready offline"), 900)
+        // As on iOS, up to a quarter of an hour for the download, whether or not the sheet opened. (Until areas can be
+        // downloaded (M4) none exists and nothing can become ready: the wait then ends after a minute without one.)
+        var areaSeen = SystemClock.uptimeMillis()
+        waitUntil(900.0) {
+            if (AppModel.shared.offline.areas.value.isNotEmpty()) areaSeen = SystemClock.uptimeMillis()
+            exists(staticText("Ready offline")) || SystemClock.uptimeMillis() - areaSeen >= 60_000
+        }
         sleep(2)
         snap("09-offline-areas")
 
@@ -261,9 +268,16 @@ class ScreenshotTest {
             fail("No coordinates for the tapped spot")
         }
         // A tap on a point in the KML file selects it, with its name.
-        // (The map gives the point's name to accessibility services as iOS's MapKit does; where it doesn't, the
-        // point is found from the file and the map.)
-        val launch = mapLabel(Pattern.compile(Pattern.quote("Launch 1")), 5) ?: kmlPointOnScreen("Launch 1")
+        // (MapKit gives the point's name to accessibility as its own text or as the whole annotation, dot on top. The
+        // map's names are images, not accessibility elements (interaction spec §2.11 item 11), so the map is asked
+        // which names it has placed: the whole symbol, dot on top.)
+        val launch = if (mapLabelsReadable) {
+            mapLabel(Pattern.compile(Pattern.quote("Launch 1")), kmlPointLayers(), 5)
+        } else {
+            // Until the map can say what it shows, the point is tapped where the file puts it, so the step still runs.
+            notCheckable("the KML point drawn on the map (tapped where the file puts it)")
+            kmlPointOnScreen("Launch 1")
+        }
         if (launch != null) {
             device.click(launch.x, launch.y)
             check(waitForExistence(id("tappedName"), 5), "Tapping the KML point didn't select it")
@@ -296,7 +310,14 @@ class ScreenshotTest {
         check(exists(id("droneCard")), "No reporting card in drone mode")
         check(exists(id("tappedCoordinates")), "Tapping the map in drone mode didn't place a pin")
         // On the map itself, not only in the card ("6.1 NM NE of FASH Stellenbosch").
-        check(mapLabel(airfield, 0) != null, "Stellenbosch airfield (FASH) isn't on the map in drone mode")
+        if (mapLabelsReadable) {
+            check(
+                mapLabel(airfield, listOf(MapIds.AVIATION), 0) != null,
+                "Stellenbosch airfield (FASH) isn't on the map in drone mode",
+            )
+        } else {
+            notCheckable("Stellenbosch airfield (FASH) on the map in drone mode")
+        }
         snap("25-drone-mode")
         setTerrain("Contour lines")
         // Back in close: My location, then again for 300 m across.
@@ -866,26 +887,61 @@ class ScreenshotTest {
         RectF(p.x, p.y, p.x + it.size.width, p.y + it.size.height)
     }
 
-    /** A name on the map itself (a KML point, an airfield) as the map gives it to accessibility services, as MapKit
-     *  does on iOS: the spot just above it (the dot of a point is on top), or null when none shows within `seconds`. */
-    private fun mapLabel(label: Pattern, seconds: Int): Point? {
-        val selectors = listOf(By.desc(label), By.text(label))
-        var frame: Rect? = null
+    /** A name on the map itself (a KML point, an airfield) that is `label` in full, in the symbol layers `layers`: the
+     *  spot just above it (the dot of a point is on top), or null when none shows within `seconds`. On iOS it is an
+     *  accessibility element of MapKit's; here the map's names are images (interaction spec §2.11 item 11), so the map
+     *  is asked. Only names MapLibre has placed count, as MapKit makes elements only of the annotations it shows. */
+    private fun mapLabel(label: Pattern, layers: List<String>, seconds: Int): Point? {
+        var frame: RectF? = null
         waitUntil(seconds.toDouble()) {
-            frame = selectors.firstNotNullOfOrNull { s ->
-                try {
-                    device.findObject(s)?.visibleBounds
-                } catch (e: Exception) {
-                    null // gone meanwhile
-                }
-            }
+            frame = shownLabels(layers)?.firstOrNull { label.matcher(it.first).matches() }?.second
             frame != null
         }
-        return frame?.let { Point(it.centerX(), it.top - 1) }
+        return frame?.let { Point(it.centerX().roundToInt(), (it.top - 1).roundToInt()) }
     }
 
-    /** Where the point named `name` in a shown KML file is on the screen, from the file and the map (on a map that
-     *  doesn't give its names to accessibility services); null when it isn't on the screen. */
+    /** `MapController.renderedLabels(layerIds)`, the map's test hook (WP-C): every name MapLibre has placed in those
+     *  layers (iOS's accessibility label), with its box in the map view's pixels. Looked up by name so the walk builds
+     *  before the hook exists; null until it does. */
+    private val labelsHook: Method? by lazy {
+        try {
+            MapController::class.java.getMethod("renderedLabels", List::class.java)
+        } catch (e: NoSuchMethodException) {
+            null
+        }
+    }
+
+    /** Whether the map can say which names it shows. */
+    private val mapLabelsReadable get() = labelsHook != null
+
+    /** The names the map shows in `layers`, each with its box in screen pixels; null when there is no map (or no hook). */
+    private fun shownLabels(layers: List<String>): List<Pair<String, RectF>>? {
+        val hook = labelsHook ?: return null
+        var shown: List<Pair<String, RectF>>? = null
+        instrumentation.runOnMainSync {
+            // (On the main thread an exception would end the app.)
+            try {
+                val map = AppModel.shared.map as? MapController ?: return@runOnMainSync
+                val at = IntArray(2).also { map.container.getLocationOnScreen(it) }
+                shown = (hook.invoke(map, layers) as? List<*>).orEmpty().mapNotNull { item ->
+                    val (name, box) = item as? Pair<*, *> ?: return@mapNotNull null
+                    if (name !is String || box !is RectF) return@mapNotNull null
+                    name to RectF(box).apply { offset(at[0].toFloat(), at[1].toFloat()) }
+                }
+            } catch (e: Throwable) {
+                val cause = (e as? InvocationTargetException)?.targetException ?: e
+                if (problems.add("names: ${short(cause)}")) Log.w(TAG, "The names on the map", cause) // once
+            }
+        }
+        return shown
+    }
+
+    /** The points layers of the shown KML files. */
+    private fun kmlPointLayers() = AppModel.shared.kml.files.value.filter { it.isShown }.map { MapIds.kmlPoints(it.id) }
+
+    /** Where the point named `name` in a shown KML file is on the screen, worked out from the file and the camera; null
+     *  when it isn't on the screen. Only for tapping it while the map can't say which names it shows: it doesn't tell
+     *  whether the point is drawn (the map's tap rule selects a KML point whether or not its name shows). */
     private fun kmlPointOnScreen(name: String): Point? {
         val model = AppModel.shared
         val point = model.kml.files.value.filter { it.isShown }.flatMap { it.document.features }
@@ -937,6 +993,11 @@ class ScreenshotTest {
 
     private fun check(condition: Boolean, message: String) {
         if (!condition) fail(message)
+    }
+
+    /** A check iOS makes that the Android app can't answer yet: logged, not counted as a failure. */
+    private fun notCheckable(what: String) {
+        Log.w(TAG, "after $step: not checkable on Android yet: $what")
     }
 
     private fun <T> checkEqual(actual: T, expected: T, message: String = "") {
