@@ -143,7 +143,8 @@ class MapController(
     }
 
     init {
-        container.controller = this
+        // Laid out again when the screen turns: the compass follows its top, and the camera hooks see the new shape.
+        container.onLaidOut = { changed -> containerLaidOut(changed) }
         mapView.onCreate(savedState)
         mapView.getMapAsync(::mapReady)
         activity.lifecycle.addObserver(this)
@@ -272,7 +273,7 @@ class MapController(
     override fun zoom(to: GeoBounds) {
         val r = Region.fitting(to)
         model.setFollowing(false)
-        afterStart { m -> m.easeCamera(CameraUpdateFactory.newLatLngBounds(r.latLngBounds(), 0)) }
+        afterStart { m -> camera(m, r)?.let { m.easeCamera(CameraUpdateFactory.newCameraPosition(it)) } }
     }
 
     /** Runs a camera move now, or once the map is laid out and its camera restored. */
@@ -286,7 +287,17 @@ class MapController(
 
     /** Without animation, the saved region fitted to the view. */
     private fun restoreCamera(m: MapLibreMap) {
-        m.moveCamera(CameraUpdateFactory.newLatLngBounds(savedRegion().latLngBounds(), 0))
+        val c = camera(m, savedRegion()) ?: return
+        m.moveCamera(CameraUpdateFactory.newCameraPosition(c))
+    }
+
+    /** The camera iOS's `setRegion` gives: the zoom that fits the region in the view, keeping the heading, centred on
+     *  the region's centre. (MapLibre would centre a fit on the middle of its edges as drawn, which in Mercator lies
+     *  nearer the pole: 26 km south for South Africa on first launch, and a saved camera would creep poleward at each
+     *  launch.) Null before the map has a size. */
+    private fun camera(m: MapLibreMap, region: Region): CameraPosition? {
+        val fitted = m.getCameraForLatLngBounds(region.latLngBounds(), intArrayOf(0, 0, 0, 0)) ?: return null
+        return centred(fitted, region.center)
     }
 
     private fun saveCamera() {
@@ -366,7 +377,8 @@ class MapController(
         showUser()
         if (model.following.value) {
             if (firstLaunch && !hasCentredOnFirstFix) {
-                m.moveCamera(CameraUpdateFactory.newLatLngBounds(Region.around(fix.point, 1500.0).latLngBounds(), 0))
+                val c = camera(m, Region.around(fix.point, 1500.0))
+                if (c != null) m.moveCamera(CameraUpdateFactory.newCameraPosition(c))
             } else if (SystemClock.uptimeMillis() >= keepCameraUntil) {
                 m.easeCamera(CameraUpdateFactory.newLatLng(LatLng(fix.lat, fix.lon)))
             }
@@ -429,9 +441,16 @@ class MapController(
         saveCamera()
     }
 
-    /** The container was laid out (as when the screen turns): the compass follows the screen's top. */
-    internal fun containerLaidOut() {
+    /** The container was laid out (as when the screen turns): the compass follows the screen's top. When its size
+     *  changed (turned, or another window beside it) MapLibre has resized the map but sends no camera callbacks, so
+     *  the camera hooks run here as MapKit sends them when its bounds change: the imagery's focus and prefetch, the
+     *  saved camera, the aim and the scale follow the new shape. */
+    private fun containerLaidOut(changed: Boolean) {
         rotationChanged()
+        if (!changed || !started) return
+        imagery?.regionWillChange()
+        visibleRegionChanged()
+        regionDidChange()
     }
 
     private fun rotationChanged() {
@@ -476,7 +495,7 @@ class MapController(
         map = null
         started = false
         whenStarted.clear()
-        container.controller = null
+        container.onLaidOut = null
         mapView.onDestroy()
     }
 
@@ -542,6 +561,11 @@ class MapController(
         /** The zoom that makes the screen `metersAcross` wide, from `zoom` where it is `across` metres wide (each zoom
          *  level halves the ground the screen shows). */
         fun zoomOnto(zoom: Double, across: Double, metersAcross: Double): Double = zoom + log2(across / metersAcross)
+
+        /** The camera MapLibre fitted to a region (its zoom, heading and tilt), centred on the region's centre instead,
+         *  as MapKit keeps a region's centre in the middle of the map. */
+        fun centred(fitted: CameraPosition, center: GeoPoint): CameraPosition =
+            CameraPosition.Builder(fitted).target(LatLng(center.lat, center.lon)).build()
     }
 }
 
@@ -554,11 +578,13 @@ private fun MapController.Region.latLngBounds(): LatLngBounds {
 /** The map and the views over it, which says when it is laid out (as when the screen turns). Its
  *  `dispatchTouchEvent` will see every touch before the `MapView` (taps, press and hold to move a point). */
 class MapContainerView(context: Context) : FrameLayout(context) {
-    var controller: MapController? = null
+    /** After each layout, with the views already laid out: `changed` when the container's frame changed (its size, as
+     *  when the screen turns). */
+    var onLaidOut: ((changed: Boolean) -> Unit)? = null
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        controller?.containerLaidOut()
+        onLaidOut?.invoke(changed)
     }
 
     // M3: touch routing and the press detector (DESIGN.md §3.10).

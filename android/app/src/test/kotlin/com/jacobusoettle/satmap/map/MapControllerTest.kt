@@ -8,6 +8,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.geometry.LatLng
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
@@ -126,6 +128,29 @@ class MapControllerTest {
         assertEquals(0.3, west.lonDelta, 1e-9)
         assertTrue(west.bounds.minLon < -180)
         assertFalse(west.bounds.maxLon > 180)
+    }
+
+    @Test
+    fun aRegionIsShownAroundItsCentreAsMapKitShowsIt() {
+        // MapLibre centres a fit of South Africa's edges on their middle in Mercator, 26 km south of the centre.
+        val b = MapController.Region.southAfrica.bounds
+        val middle = (WebMercator.world(GeoPoint(b.minLat, 24.7)).y + WebMercator.world(GeoPoint(b.maxLat, 24.7)).y) / 2
+        assertEquals(-28.734, WebMercator.geo(0.5, middle).lat, 0.001)
+        val fitted = CameraPosition.Builder()
+            .target(LatLng(WebMercator.geo(0.5, middle).lat, 24.7))
+            .zoom(4.6)
+            .bearing(30.0)
+            .tilt(0.0)
+            .padding(0.0, 0.0, 0.0, 0.0)
+            .build()
+        // The camera keeps the fitted zoom and heading, centred where iOS centres it.
+        val c = MapController.centred(fitted, MapController.Region.southAfrica.center)
+        assertEquals(-28.5, c.target!!.latitude, 0.0)
+        assertEquals(24.7, c.target!!.longitude, 0.0)
+        assertEquals(4.6, c.zoom, 0.0)
+        assertEquals(30.0, c.bearing, 0.0)
+        assertEquals(0.0, c.tilt, 0.0)
+        assertTrue(doubleArrayOf(0.0, 0.0, 0.0, 0.0).contentEquals(c.padding))
     }
 
     @Test

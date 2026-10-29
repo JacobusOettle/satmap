@@ -45,8 +45,9 @@ class TrackChunks {
     }
 
     /** The finished part (every chunk but the last), each segment one line again: a chunk that goes on from the one
-     *  before is joined to it, so its dots stay evenly spaced (iOS kept them so with each chunk's start distance). A
-     *  lone point draws nothing, as iOS skips chunks of fewer than two points. */
+     *  before is joined to it, so the dot pattern doesn't restart at every chunk (iOS went on with it from each chunk's
+     *  start distance; MapLibre still restarts it at tile edges, see `TrackLayer`). A lone point draws nothing, as iOS
+     *  skips chunks of fewer than two points. */
     fun finishedLines(): List<List<GeoPoint>> {
         val lines = ArrayList<MutableList<GeoPoint>>()
         for (i in 0 until list.size - 1) {
@@ -77,8 +78,11 @@ class TrackChunks {
  *  dashes with round caps) and simplifies the line itself (its GeoJSON tolerance, in place of iOS's 1.5 point skip).
  *
  *  Android difference: MapLibre starts the dot pattern afresh on each line, so where the live part joins the finished
- *  part (one place, moving on every 512 points) the spacing between two dots may be off once. iOS kept the dots evenly
- *  spaced across its chunks. */
+ *  part (one place, moving on every 512 points) the spacing between two dots may be off once. It also starts it afresh
+ *  in every tile the line crosses (each tile measures the dashes from where the line enters it, a little outside the
+ *  tile), so the spacing may be off at tile edges too, where the edge can cut a dot in half. iOS kept the dots evenly
+ *  spaced across its chunks and tiles (each chunk's start distance sets the dash phase); short of drawing the dots
+ *  another way, MapLibre can't. */
 class TrackLayer(private val map: MapLibreMap, private val style: Style, private val context: Context) {
     private val chunks = TrackChunks()
 
