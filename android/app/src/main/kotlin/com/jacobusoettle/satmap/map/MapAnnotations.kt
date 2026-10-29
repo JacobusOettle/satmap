@@ -222,7 +222,8 @@ object MapImages {
     }
 }
 
-/** The map's colours, exact conversions of the Swift values (dark system colours). */
+/** The map's colours, exact conversions of the Swift values (the system colours dark, as iOS 26 gives them: the
+ *  iPhone screenshots show its blue #0091FF, not iOS 18's #0A84FF; the crosshair's red is the theme's `SystemRed`). */
 object MapColours {
     const val measurePink = 0xFFFF2E66.toInt()
     const val measurePink25 = 0x40FF2E66
@@ -230,9 +231,8 @@ object MapColours {
     const val trackCyan = 0xFF00E6FF.toInt()
     const val aviationYou = 0xFF59DBFF.toInt()
     const val aviationPin = 0xFFFFB833.toInt()
-    const val systemBlue = 0xFF0A84FF.toInt()
+    const val systemBlue = 0xFF0091FF.toInt()
     const val systemGray = 0xFF8E8E93.toInt()
-    const val crosshairRed = 0xFFFF453A.toInt()
     const val blockStroke = 0xF2FFFFFF.toInt()
     const val blockFill = 0x12FFFFFF
     const val labelShadow = 0xE6000000.toInt()

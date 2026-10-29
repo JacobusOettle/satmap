@@ -47,10 +47,10 @@ Sources: `SatMap/UI/*.swift`, the parts of `AppModel`, `OfflineManager`, `KMLLib
 | Token | Value | Used for |
 | --- | --- | --- |
 | `Accent` | `#FFBD29` (AccentColor asset 1.0/0.74/0.16) | Sheet buttons, toolbar texts, icons in list rows, checkmarks, back button, text cursor |
-| `SystemYellow` | `#FFD60A` | Active map button background, download banner progress bar, DrawingBar tint |
-| `SystemGreen` | `#30D158` | "Ready offline", complete check, switch track when on |
-| `SystemOrange` | `#FF9F0A` | Warnings ("Not a position yet.", failures, "This may not fit…") |
-| `SystemRed` | `#FF453A` | Crosshair dot, compass north needle, destructive menu item and dialog button, swipe-to-delete background |
+| `SystemYellow` | `#FFD600` (iOS 26 dark; iOS 18 was `#FFD60A`) | Active map button background, download banner progress bar, DrawingBar tint |
+| `SystemGreen` | `#30D158` (iOS 26 dark, as iOS 18) | "Ready offline", complete check, switch track when on |
+| `SystemOrange` | `#FF9230` (iOS 26 dark; iOS 18 was `#FF9F0A`; no screenshot shows it) | Warnings ("Not a position yet.", failures, "This may not fit…") |
+| `SystemRed` | `#FF4245` (iOS 26 dark; iOS 18 was `#FF453A`) | Crosshair dot, compass north needle, destructive menu item and dialog button, swipe-to-delete background |
 | `SheetBackground` | `#1C1C1E` | Sheet container and list background |
 | `SheetBarScrolled` | `#2D2D2E` | A sheet's bar once its list has scrolled under it: iOS's bar material, 41–50 in screenshots 12, 17, 18, 20 |
 | `CellBackground` | `#2C2C2E` | Form cards, alert and menu containers |

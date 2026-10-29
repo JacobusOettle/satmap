@@ -1,6 +1,12 @@
 package com.jacobusoettle.satmap.map
 
 import android.content.Context
+import android.graphics.Canvas
+import android.graphics.DashPathEffect
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PointF
+import android.view.View
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.TrackPoint
 import org.maplibre.android.maps.MapLibreMap
@@ -126,8 +132,7 @@ class TrackLayer(private val map: MapLibreMap, private val style: Style, private
 /** The measuring line, dashed pink (placed: A to you; path: A → B → …; closed: back to A, filled pink 15 %). MapLibre
  *  lays out the dashes itself along the whole line (iOS's `MeasureLineRenderer` clipped each segment to the tile and
  *  kept the dash phase from the line's start; MapLibre restarts it in each tile the line crosses, see `TrackLayer`).
- *  While a measuring point is moved the line is sent again at every move: MapLibre swaps a sent GeoJSON source's
- *  tiles without emptying them first, so it doesn't blink, and iOS's drag line over the map isn't needed. */
+ *  While a measuring point is moved the line is drawn over the map instead (`DragLineView`), as on iOS. */
 class MeasureLineLayer(private val map: MapLibreMap, private val style: Style, private val context: Context) {
     private var shown: Pair<List<GeoPoint>, Boolean>? = null
 
@@ -152,5 +157,60 @@ class MeasureLineLayer(private val map: MapLibreMap, private val style: Style, p
             if (ring) features += Feature.fromGeometry(Polygon.fromLngLats(listOf(path)))
             return FeatureCollection.fromFeatures(features)
         }
+    }
+}
+
+/** While a measuring point is moved: the measuring line over the map rather than in it (iOS's `dragLine` in
+ *  `MapController`), through the markers as they are now: from you for a single point, back to A and filled pink 15 %
+ *  for a closed shape. Pink, 3 dp, dashes 10 and 7 dp from its start, butt caps and mitred corners: drawn on the screen,
+ *  so the same at every zoom, where the map's own line has MapKit's tile scale (`MapStyle.zoomScaled`). Takes no
+ *  touches. */
+class DragLineView(context: Context) : View(context) {
+    /** The line in the view's pixels, and whether it is joined back to its start (and filled). */
+    data class Line(val points: List<PointF>, val closed: Boolean)
+
+    private val density = resources.displayMetrics.density
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        color = MapColours.measurePink
+        strokeWidth = 3 * density
+        strokeCap = Paint.Cap.BUTT
+        strokeMiter = 10f // Core Animation's miter limit
+        pathEffect = DashPathEffect(floatArrayOf(10 * density, 7 * density), 0f)
+    }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = MapColours.measurePink15 }
+    private val path = Path()
+    private var line: Line? = null
+
+    init {
+        isClickable = false
+        isFocusable = false
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+
+    /** Shows the line (null, or fewer than two points: none). */
+    fun show(line: Line?) {
+        val new = line?.takeIf { it.points.size >= 2 }
+        if (new == this.line) return
+        this.line = new
+        invalidate()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val l = line ?: return
+        path.reset()
+        path.moveTo(l.points[0].x, l.points[0].y)
+        for (p in l.points.drop(1)) path.lineTo(p.x, p.y)
+        if (l.closed) {
+            path.close()
+            canvas.drawPath(path, fill)
+        }
+        canvas.drawPath(path, stroke)
+    }
+
+    companion object {
+        /** The points the line goes through: the markers, from you when there is only one. */
+        fun points(markers: List<GeoPoint>, me: GeoPoint?): List<GeoPoint> =
+            if (markers.size == 1 && me != null) listOf(me) + markers else markers
     }
 }

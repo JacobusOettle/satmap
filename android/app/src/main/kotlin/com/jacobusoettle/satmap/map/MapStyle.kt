@@ -5,11 +5,15 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.expressions.Expression.all
 import org.maplibre.android.style.expressions.Expression.eq
+import org.maplibre.android.style.expressions.Expression.exponential
 import org.maplibre.android.style.expressions.Expression.geometryType
 import org.maplibre.android.style.expressions.Expression.get
 import org.maplibre.android.style.expressions.Expression.has
+import org.maplibre.android.style.expressions.Expression.interpolate
 import org.maplibre.android.style.expressions.Expression.literal
+import org.maplibre.android.style.expressions.Expression.stop
 import org.maplibre.android.style.expressions.Expression.toColor
+import org.maplibre.android.style.expressions.Expression.zoom
 import org.maplibre.android.style.layers.BackgroundLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.Layer
@@ -40,6 +44,7 @@ import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import java.util.UUID
+import kotlin.math.pow
 
 // Android only: the MapLibre style SatMap builds in code (no style, glyph or sprite URL exists), DESIGN.md §3.8.
 
@@ -135,10 +140,10 @@ object MapStyle {
     /** The fixed overlay layers in stack order, each made only when it is added. The per-file KML layers go in
      *  between: fills and lines below `track`, names below `aviation-rings`, points below `selected`. */
     private val overlayLayers: List<Pair<String, () -> Layer>> = listOf(
-        // The dotted track: zero-length dashes with round caps draw 4 dp dots 9 dp apart (2.25 line widths).
+        // The dotted track: zero-length dashes with round caps draw dots 2.25 line widths apart.
         MapIds.TRACK to { trackLine(MapIds.TRACK) },
         MapIds.TRACK_LIVE to { trackLine(MapIds.TRACK_LIVE) },
-        // The measuring line (pink, 3 wide, dashes 10 and 7 dp) and the closed shape's light fill.
+        // The measuring line (pink, 3 wide, dashes 10 and 7, at MapKit's tile scale) and the closed shape's light fill.
         MapIds.MEASURE_FILL to {
             FillLayer(MapIds.MEASURE_FILL, MapIds.MEASURE)
                 .withFilter(eq(geometryType(), "Polygon"))
@@ -149,7 +154,7 @@ object MapStyle {
                 .withFilter(eq(geometryType(), "LineString"))
                 .withProperties(
                     lineColor(MapColours.measurePink),
-                    lineWidth(3f),
+                    lineWidth(zoomScaled(3f)),
                     lineDasharray(arrayOf(10f / 3, 7f / 3)),
                     lineCap(Property.LINE_CAP_BUTT),
                 )
@@ -202,13 +207,13 @@ object MapStyle {
                 iconPadding(0f),
             )
         },
-        // The measuring points always show and hide labels under them; their letters hide nothing.
+        // The measuring points always show and hide labels under them and round them; their letters hide nothing.
         MapIds.MEASURE_MARKERS to {
             SymbolLayer(MapIds.MEASURE_MARKERS, MapIds.MEASURE_POINTS).withProperties(
                 iconImage(MapImages.MEASURE_MARKER),
                 iconAllowOverlap(true),
                 iconIgnorePlacement(false),
-                iconPadding(0f),
+                iconPadding(LABEL_PADDING),
             )
         },
         MapIds.MEASURE_LETTERS to {
@@ -223,7 +228,8 @@ object MapStyle {
                 )
         },
         // You, on top of everything: the compass arrow (turned against the map's north, so MapLibre turns it with the
-        // map), and the dot, which always shows and hides labels under it.
+        // map), and the dot, which always shows and hides labels under it and round it (its image has 3 dp round the
+        // 22 dp dot for the shadow, so 3 dp less room).
         MapIds.USER_ARROW to {
             SymbolLayer(MapIds.USER_ARROW, MapIds.USER)
                 .withFilter(has("heading"))
@@ -241,19 +247,39 @@ object MapStyle {
                 iconImage(get("dot")),
                 iconAllowOverlap(true),
                 iconIgnorePlacement(false),
-                iconPadding(0f),
+                iconPadding(LABEL_PADDING - 3),
             )
         },
     )
 
-    /** The track's cyan dots (iOS `TrackRenderer`: 4 points wide, zero-length dashes 9 points apart, round). */
+    /** The track's cyan dots (iOS `TrackRenderer`: 4 points wide, zero-length dashes 9 points apart, round), at
+     *  MapKit's tile scale. */
     private fun trackLine(id: String): Layer = LineLayer(id, id).withProperties(
         lineColor(MapColours.trackCyan),
-        lineWidth(4f),
+        lineWidth(zoomScaled(4f)),
         lineDasharray(arrayOf(0f, 2.25f)),
         lineCap(Property.LINE_CAP_ROUND),
         lineJoin(Property.LINE_JOIN_ROUND),
     )
+
+    /** A line `points` wide as iOS's own renderers draw it (`TrackRenderer`, `MeasureLineRenderer`, their dashes in
+     *  points too). MapKit draws them into its tiles one whole zoom further in and shows those shrunk by
+     *  k = 2^(z − ⌈z⌉), ½ to 1, so the line and its dashes are k times their size on screen. MapLibre lays out dashes
+     *  in widths at the whole zoom below (`floorwidth`) and grows them with the map, by 2^(z − ⌊z⌋): half the width at
+     *  each whole zoom, growing with the map until the next, gives iOS's width and dashes at every zoom in between (at
+     *  a whole zoom itself iOS shows them twice as big). Up to zoom 26, past MapLibre's 25.5. */
+    fun zoomScaled(points: Float): Expression {
+        val grown = 2.0.pow(0.999).toFloat()
+        val stops = (0..25).flatMap { n -> listOf(stop(n.toFloat(), points / 2), stop(n + 0.999f, points / 2 * grown)) }
+        return interpolate(exponential(2f), zoom(), *stops.toTypedArray())
+    }
+
+    /** The room MapKit keeps round a KML label's frame (and the measuring points' and yours): two collide once their
+     *  frames, each grown by about 5 points on every side, overlap (fitted to the iPhone screenshots, which 4.9 to 5.8
+     *  fit). Android's name and point images are 1 dp taller than the frames, for the shadow; 5 fits them too. MapLibre
+     *  answers `queryRenderedFeatures` with these grown boxes. The aviation cards keep none: no screenshot shows two
+     *  near each other, and their tap test (`AviationLayer.place`) goes by their boxes. */
+    const val LABEL_PADDING = 5f
 
     /** The runway rings of the places whose cards MapLibre shows (`AviationLayer` keeps the ids up to date). */
     fun aviationRingsFilter(visibleIds: Collection<Int>): Expression =
@@ -265,7 +291,10 @@ object MapStyle {
     /** A KML file's blocks in their colours and widths (`BlockLayers.shapes` gives each shape its `fill`, `stroke` and
      *  `width`; round joins and caps, as MapKit's path renderers), then its labels: the blocks' names, which give way to
      *  everything else (iOS display priority 250), and the points with their names (750, above the aviation cards).
-     *  Every label is an app-drawn image, its frame what collides, with no padding (MapKit adds none). */
+     *  Every label is an app-drawn image, its frame and MapKit's room round it what collides. Of two labels of a layer
+     *  that collide, the lower on the screen shows, as MapKit places equal priorities from the bottom up: MapLibre
+     *  places them by their sort key, the label's latitude (south first; on a turned map only near the screen's
+     *  order). */
     fun kmlLayers(file: UUID): KmlLayers = KmlLayers(
         fill = FillLayer(MapIds.kmlFill(file), MapIds.kml(file))
             .withFilter(eq(geometryType(), "Polygon"))
@@ -284,7 +313,8 @@ object MapStyle {
                 iconOffset(arrayOf(0f, 0.5f)),
                 iconAllowOverlap(false),
                 iconIgnorePlacement(false),
-                iconPadding(0f),
+                iconPadding(LABEL_PADDING),
+                symbolSortKey(get("lat")),
             ),
         // A point's image has the dot at its top, the name under it: the dot's centre (5 dp down) on the point.
         points = SymbolLayer(MapIds.kmlPoints(file), MapIds.kmlLabels(file))
@@ -295,7 +325,8 @@ object MapStyle {
                 iconOffset(arrayOf(0f, -5f)),
                 iconAllowOverlap(false),
                 iconIgnorePlacement(false),
-                iconPadding(0f),
+                iconPadding(LABEL_PADDING),
+                symbolSortKey(get("lat")),
             ),
     )
 }
