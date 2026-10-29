@@ -116,7 +116,7 @@ An SF Symbol drawn at text size *X* pt becomes a Material icon of about **1.2·X
 | title2 22 | 26 dp |
 | map buttons (20 pt semibold) | 24 dp |
 
-**Except in a list `Label`:** there the symbols are drawn larger than their text size (21–26 pt in screenshot 06), so the rule underestimates them. A list row's icon is **28 dp** (`ListIconSize`), and `arrow.down.circle.fill` on the Download buttons 26.5 dp (its circle 22 dp, as on iOS). See §1.5.
+**Except in a list `Label`:** there the symbols are drawn larger than their text size (21–26 pt in screenshot 06), so the rule underestimates them. A list row's icon is **28 dp** (`ListIconSize`), and `arrow.down.circle.fill` on the Download buttons (custom `ArrowDownCircleFill`, §6.3) 26.5 dp (its disc 22 dp, as on iOS). See §1.5.
 
 ### 1.4 Shared overlay styles (map screen)
 
@@ -701,7 +701,7 @@ ModalBottomSheet(
    - Else if `alongRoads` and roads failed: `Needs the roads first.` in `LabelSecondary`.
    - Otherwise: `Row(spacedBy 8) { spinner 20 dp; "Calculating…" (secondary) }`.
 
-6. **Download.** One action row: `Icons.Filled.ArrowCircleDown` (24 dp, Accent) plus `Download` in Headline Accent.
+6. **Download.** One action row: `SatIcons.ArrowDownCircleFill` (26.5 dp, so its disc is 22 dp; Accent, the arrow cut out of it) plus `Download` in Headline Accent.
    - Disabled (tertiary) when `name.trim().isEmpty()`, or `alongRoads && roadLines.isNullOrEmpty()`, or `chosenEstimate == null`.
    - Action:
      - With a track: `model.startTrackDownload(trimmed, track.lines, chosenZoom, allowCellular)`.
@@ -969,7 +969,7 @@ All are from `material-icons-extended` 1.7.8; every name below exists in the cac
 | `paintpalette.fill` | `Icons.Filled.Palette` | Terrain: colours |
 | `airplane` | `Icons.Filled.Flight` + `Modifier.rotate(90f)` | Terrain: drone |
 | `square.dashed` | **custom `SquareDashed`**, stroke 2, round caps: `M4,8V6a2,2 0 0 1 2,-2h2 M16,4h2a2,2 0 0 1 2,2v2 M20,16v2a2,2 0 0 1 -2,2h-2 M8,20H6a2,2 0 0 1 -2,-2v-2 M11,4h2 M20,11v2 M11,20h2 M4,11v2` | Blocks button, "Use the blocks in a KML file" |
-| `arrow.down.circle` / `.fill` | `Icons.Outlined.ArrowCircleDown` / `Icons.Filled.ArrowCircleDown` | Offline button; Download buttons |
+| `arrow.down.circle` / `.fill` | `Icons.Outlined.ArrowCircleDown` / **custom `ArrowDownCircleFill`** (Material's `Filled.ArrowCircleDown` is the same ring as the outlined one), fill, `PathFillType.EvenOdd`, the disc and the arrow as one outline that doesn't cross itself (SF's stem and chevron, 1.8 wide, round ends): `M12,2a10,10 0 1 1 0,20a10,10 0 1 1 0,-20z M11.1,8.15A0.9,0.9 0 0 1 12.9,8.15L12.9,14.57L14.9,12.81A0.9,0.9 0 0 1 16.08,14.17L12.59,17.24A0.9,0.9 0 0 1 11.41,17.24L7.92,14.17A0.9,0.9 0 0 1 9.1,12.81L11.1,14.57Z` | Offline button; Download buttons |
 | `location.magnifyingglass` | **custom `LocationMagnifyingGlass`**: lens stroke 2 `M10.5,4a6.5,6.5 0 1 0 0.001,0z`, handle stroke 2.6 round `M15.3,15.3L20.5,20.5`, arrow fill `M13.4,7.6L7.4,10.1L10.2,10.8L10.9,13.6Z` | Go to coordinates |
 | `ruler` | `Icons.Outlined.Straighten` | Measure (off), "Show and measure from here" |
 | `scope` | `Icons.Filled.GpsFixed` | Measure (aiming / placed / path) |

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowCircleDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -335,9 +334,9 @@ fun NewAreaView(
                 // Not before the sizes are known: the level may yet be lowered to fit.
                 FormActionRow(
                     "Download",
-                    Icons.Filled.ArrowCircleDown,
+                    SatIcons.ArrowDownCircleFill,
                     enabled = state.canDownload,
-                    iconSize = 26.5.dp, // the circle 22 dp, as arrow.down.circle.fill's (screenshot 12)
+                    iconSize = 26.5.dp, // the disc 22 dp, as arrow.down.circle.fill's (screenshot 12)
                     style = Headline,
                 ) {
                     askNotifications()

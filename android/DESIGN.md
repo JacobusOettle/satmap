@@ -881,7 +881,7 @@ rule: an SF Symbol at text size X becomes an icon of about 1.2·X dp. Map button
 | `paintpalette.fill` | `Icons.Filled.Palette` |
 | `airplane` | `Icons.Filled.Flight`, rotated 90° |
 | `square.dashed` | custom `SquareDashed` |
-| `arrow.down.circle(.fill)` | `Icons.Outlined/Filled.ArrowCircleDown` |
+| `arrow.down.circle` / `.fill` | `Icons.Outlined.ArrowCircleDown` / custom `ArrowDownCircleFill` (the arrow cut out of a disc) |
 | `location.magnifyingglass` | custom `LocationMagnifyingGlass` |
 | `ruler` | `Icons.Outlined.Straighten` |
 | `scope` | `Icons.Filled.GpsFixed` |

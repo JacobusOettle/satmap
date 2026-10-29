@@ -57,6 +57,21 @@ object SatIcons {
         }
     }
 
+    /** `arrow.down.circle.fill`: a disc with the arrow cut out, so the row's own background (pressed or not) shows
+     *  through it, as on iOS. The arrow is SF's: a stem and a chevron 1.8 wide with round ends, one outline that never
+     *  crosses itself (the even-odd rule would fill an overlap again), fitted to screenshot 12. Material's
+     *  `ArrowCircleDown` is a ring in both styles. Drawn at 26.5 dp, the disc is iOS's 22 dp. */
+    val ArrowDownCircleFill: ImageVector by lazy {
+        icon("ArrowDownCircleFill") {
+            fill(
+                "M12,2a10,10 0 1 1 0,20a10,10 0 1 1 0,-20z " +
+                    "M11.1,8.15A0.9,0.9 0 0 1 12.9,8.15L12.9,14.57L14.9,12.81A0.9,0.9 0 0 1 16.08,14.17L12.59,17.24" +
+                    "A0.9,0.9 0 0 1 11.41,17.24L7.92,14.17A0.9,0.9 0 0 1 9.1,12.81L11.1,14.57Z",
+                PathFillType.EvenOdd,
+            )
+        }
+    }
+
     /** `lasso` */
     val Lasso: ImageVector by lazy {
         icon("Lasso") {
