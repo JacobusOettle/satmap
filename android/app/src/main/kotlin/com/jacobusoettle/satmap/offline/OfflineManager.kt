@@ -2,34 +2,92 @@ package com.jacobusoettle.satmap.offline
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
+import android.util.AtomicFile
 import com.jacobusoettle.satmap.app.AppLifecycle
 import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Connectivity
+import com.jacobusoettle.satmap.app.TileSources
 import com.jacobusoettle.satmap.core.CoverageShape
+import com.jacobusoettle.satmap.core.DownloadLayer
+import com.jacobusoettle.satmap.core.DownloadOutcome
 import com.jacobusoettle.satmap.core.DownloadProgress
 import com.jacobusoettle.satmap.core.GeoPoint
+import com.jacobusoettle.satmap.core.MBTiles
 import com.jacobusoettle.satmap.core.OfflineArea
+import com.jacobusoettle.satmap.core.Roads
 import com.jacobusoettle.satmap.core.SqlException
 import com.jacobusoettle.satmap.core.SqlResult
+import com.jacobusoettle.satmap.core.Terrarium
+import com.jacobusoettle.satmap.core.TileDownloadJob
+import com.jacobusoettle.satmap.core.TileFetching
+import com.jacobusoettle.satmap.core.TileID
+import com.jacobusoettle.satmap.core.WebMercator
+import com.jacobusoettle.satmap.map.HTTPTileFetcher
 import com.jacobusoettle.satmap.map.TileRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonArray
 import java.io.File
+import java.io.IOException
 import java.util.UUID
+import kotlin.math.min
 
-/** The offline areas: the list (`Offline/areas.json`), the download queue and its runs, backup export and restore.
- *  Main thread only, as the Swift. */
-class OfflineManager(private val context: Context) : AppLifecycle.Observer {
+/** Offline areas: each is a shape (lasso or KML) downloaded as satellite imagery up to `maxZoom` plus elevation tiles
+ *  for contours and height differences. Downloads run one at a time, resume where they stopped, wait for the network
+ *  (or Wi-Fi) and continue after the app restarts. Also backup export and restore. Used on the main thread only.
+ *
+ *  The parameters after `context` are what the manager uses of the phone and the rest of the app; tests pass their
+ *  own. */
+class OfflineManager(
+    private val context: Context,
+    /** The network: whether an area may download now (`canDownloadNow`), and the changes that start waiting ones. */
+    private val network: StateFlow<Connectivity.State> = Connectivity.shared.state,
+    /** The space free for the app's files, or null when it can't be told. */
+    private val freeDiskSpace: () -> Long? = { AppPaths.freeDiskSpace() },
+    /** The fetcher of one layer's tiles: their URLs, and whether the run may only use Wi-Fi. */
+    private val fetcher: (url: (TileID) -> String, wifiOnly: Boolean) -> TileFetching = ::downloadFetcher,
+    /** Where a run downloads and the files are measured, off the main thread. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** The map's readers of the areas' files. */
+    private val readers: AreaReaders = TileRepositoryReaders,
+) : AppLifecycle.Observer {
+    /** The map's readers of the areas' files (`TileRepository`): told of the areas, and of one deleted. */
+    interface AreaReaders {
+        fun setAreas(refs: List<TileRepository.AreaRef>)
+        fun closeArea(id: UUID)
+    }
+
     companion object {
         /** Downloads stop with less than this free (500 MiB). */
         const val minimumFreeSpace: Long = 500L shl 20
-    }
 
-    /** Keeps downloads going in the background (the foreground service and its notification). */
-    val background = BackgroundDownload(context)
+        /** Swift's text, with "iPhone" changed to "phone". */
+        const val lowSpaceProblem = "Less than 500 MB free on the phone. Free up space, then tap ↻."
+
+        /** A folder named as Swift's `UUID(uuidString:)` reads one (in either case). */
+        private val uuidName = Regex("[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")
+
+        /** The download's progress in a few words, for the system's progress bar (the notification). */
+        fun progressText(p: DownloadProgress): String {
+            val percent = if (p.overallTotal > 0) (p.overallDone.toDouble() / p.overallTotal.toDouble() * 100).toInt() else 0
+            return "${p.layer} · zoom ${p.zoom} of ${p.maxZoom} · $percent%"
+        }
+    }
 
     private val _areas = MutableStateFlow<List<OfflineArea>>(emptyList())
     val areas: StateFlow<List<OfflineArea>> = _areas.asStateFlow()
@@ -38,28 +96,92 @@ class OfflineManager(private val context: Context) : AppLifecycle.Observer {
     private val _activeID = MutableStateFlow<UUID?>(null)
     val activeID: StateFlow<UUID?> = _activeID.asStateFlow()
 
-    /** +1 after each run that stored tiles, and after a restore: the map reloads its tiles. */
+    /** Bumped whenever a download run ends, so the map can reload tiles that weren't available before. */
     private val _completedRevision = MutableStateFlow(0)
     val completedRevision: StateFlow<Int> = _completedRevision.asStateFlow()
+    private var inForeground = AppLifecycle.isForeground
 
-    /** What happens to downloads in the background (the footer of "Offline areas"); null until the first download. */
+    /** Lets a download carry on in the background (the foreground service, with its progress in a notification). */
+    val background = BackgroundDownload(context)
+
+    /** What happens to downloads in the background, for the Offline maps screen (null until the first download). */
     private val _backgroundStatus = MutableStateFlow<String?>(null)
     val backgroundStatus: StateFlow<String?> = _backgroundStatus.asStateFlow()
 
+    /** Whether the last run downloaded its whole area, for the system's progress bar as it closes. */
+    private var lastRunComplete = false
+
+    private var task: Job? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val indexFile = File(AppPaths.offline, "areas.json")
+
+    /** What a backup task is doing ("Preparing export…"), or null. One runs at a time. */
     private val _backupStatus = MutableStateFlow<String?>(null)
     val backupStatus: StateFlow<String?> = _backupStatus.asStateFlow()
+
+    /** How far it has got (0…1), when it can tell: copying the files of a restore. */
     private val _backupProgress = MutableStateFlow<Double?>(null)
     val backupProgress: StateFlow<Double?> = _backupProgress.asStateFlow()
+
+    /** The outcome of the last backup task, for an alert; cleared by `clearBackupMessage`. */
     private val _backupMessage = MutableStateFlow<String?>(null)
     val backupMessage: StateFlow<String?> = _backupMessage.asStateFlow()
 
+    /** From an export starting until its share sheet closes no download starts: an exported area's files must not
+     *  change while they are prepared or copied. */
+    private var holdDownloads = false
+
+    /** The download paused for an export, resumed by `finishExport`. */
+    private var pausedForExport: UUID? = null
+
+    private var networkRetryDelay = 15.0
+
+    /** Set while SatMap, in the background, waits for the signal to come back before giving up its background time:
+     *  a few seconds without signal (a dip, a dead spot) shouldn't stop the download until SatMap is opened. */
+    private var signalWait: UUID? = null
+
+    private var lowSpaceStop: UUID? = null
+
     init {
+        val data = try {
+            AtomicFile(indexFile).readFully()
+        } catch (e: IOException) {
+            null
+        }
+        if (data != null) {
+            val saved = try {
+                Json.parseToJsonElement(String(data, Charsets.UTF_8)).jsonArray.map(OfflineArea::fromJson)
+            } catch (e: Exception) {
+                null
+            }
+            if (saved != null) {
+                // A download that was running when the app was closed continues.
+                _areas.value = saved.map { a ->
+                    if (a.status == OfflineArea.Status.downloading) a.copy(status = OfflineArea.Status.queued) else a
+                }
+                removeOrphanedDirectories()
+                // Left over from a restore interrupted by the app closing (can be GBs). (iOS also removes its Export
+                // folder; Android shares the areas' own files and has none.)
+                AppPaths.restoreFolder.deleteRecursively()
+            } else {
+                // Never overwrite an index we can't read (that would orphan every downloaded area).
+                indexFile.renameTo(File(indexFile.path + ".unreadable-${System.currentTimeMillis() / 1000}"))
+            }
+        }
+        publishToMap()
         // Registered here, as the Swift does in its init: AppModel creates the recorder, then this, before itself, so
         // the three are told in that order (DESIGN.md §2.3).
         AppLifecycle.addObserver(this)
+        background.onExpire = { backgroundTimeEnded() }
+        background.onStatusChange = { _backgroundStatus.value = it }
+        // On the main thread after the change, as the Swift's hop to the main queue (DESIGN.md §2.4 rule 2). A
+        // StateFlow gives each new state once, and the current one first.
+        scope.launch(Dispatchers.Main) { network.collect { networkChanged() } }
+        post { startNextIfIdle() }
     }
 
-    /** A new area, appended to the list as queued. */
+    // Public actions
+
     fun add(
         name: String,
         shape: CoverageShape,
@@ -68,50 +190,89 @@ class OfflineManager(private val context: Context) : AppLifecycle.Observer {
         maxZoom: Int,
         allowCellular: Boolean,
     ): OfflineArea {
-        // M4: appended, saved, published to the map, and the queue started.
-        return OfflineArea(
+        val area = OfflineArea(
             id = UUID.randomUUID(), name = name, created = System.currentTimeMillis() / 1000.0, shape = shape,
             roads = roads, preset = preset, maxZoom = maxZoom, allowCellular = allowCellular,
-            status = OfflineArea.Status.queued, failedTiles = 0, bytesOnDisk = 0,
+            status = OfflineArea.Status.queued, failedTiles = 0, bytesOnDisk = 0, problem = null,
         )
+        _areas.value = _areas.value + area
+        save()
+        publishToMap()
+        startNextIfIdle()
+        return area
     }
 
+    /** Downloads imagery along your recorded track (with `Roads.corridorMeters` each side) and elevation under it,
+     *  into one area that is updated each time: the new parts of the track are added and what is saved is skipped. */
     fun updateTrackArea(name: String, lines: List<List<GeoPoint>>, maxZoom: Int, allowCellular: Boolean) {
-        // M4: offline spec §1.9 item 5.
+        val shape = Roads.corridor(lines)
+        val existing = _areas.value.firstOrNull { it.isTrack == true }
+        if (existing == null) {
+            val area = add(name = name, shape = shape, roads = lines, preset = null, maxZoom = maxZoom,
+                           allowCellular = allowCellular)
+            update(area.id) { it.isTrack = true }
+            return
+        }
+        update(existing.id) {
+            it.name = name
+            it.shape = shape
+            it.roads = lines
+            it.maxZoom = maxZoom
+            it.allowCellular = allowCellular
+            it.status = OfflineArea.Status.queued
+            it.failedTiles = 0
+            it.problem = null
+        }
+        publishToMap()
+        if (_activeID.value == existing.id) {
+            task?.cancel() // the run ends as cancelled; the area stays queued and starts again with the new track
+        } else {
+            startNextIfIdle()
+        }
     }
 
-    fun pause(id: UUID) {
-        // M4: paused at once; a running download is cancelled.
-    }
-
-    fun resume(id: UUID) {
-        // M4: queued, failures cleared, the queue started.
-    }
-
-    fun delete(id: UUID) {
-        // M4: removed, the map's readers closed, the folder deleted (after its run ends).
-    }
-
-    fun changeMaxZoom(id: UUID, zoom: Int) {
-        // M4: offline spec §1.2.
-    }
-
+    /** Lets an area download over mobile data, or makes it wait for Wi-Fi again. A download under way starts again on
+     *  the new terms (what is saved is kept); one waiting for Wi-Fi goes on over mobile data. */
     fun setAllowCellular(id: UUID, allowed: Boolean) {
-        // M4: offline spec §1.2.
+        if (_areas.value.none { it.id == id && it.allowCellular != allowed }) return
+        update(id) {
+            it.allowCellular = allowed
+            if (it.status == OfflineArea.Status.waitingForNetwork) it.status = OfflineArea.Status.queued
+        }
+        if (_activeID.value == id) {
+            // The run's connection was chosen for the old setting.
+            update(id) { if (it.status == OfflineArea.Status.downloading) it.status = OfflineArea.Status.queued }
+            task?.cancel()
+        } else {
+            startNextIfIdle()
+        }
     }
 
-    /** Measures each area's folder off the main thread, then saves once. */
-    fun refreshSizes() {
-        // M4: AppPaths.size per area.
+    /** Downloads an area to a different (deeper) zoom level. Tiles already saved are kept and skipped, so only the new
+     *  levels are fetched. */
+    fun changeMaxZoom(id: UUID, zoom: Int) {
+        if (_areas.value.none { it.id == id && it.maxZoom != zoom }) return
+        update(id) {
+            it.maxZoom = zoom
+            it.status = OfflineArea.Status.queued
+            it.failedTiles = 0
+            it.problem = null
+        }
+        if (_activeID.value == id) {
+            task?.cancel() // the run ends as cancelled; the area stays queued and starts again with the new level
+        } else {
+            startNextIfIdle()
+        }
     }
 
-    /** The deepest imagery zoom stored for the area, off the main thread. A one-off reader: the file is opened
-     *  read-only (`AndroidSqlDriver(readOnly = true)`, DESIGN.md D17), not through `MBTiles`, whose one driver opens
-     *  for writing. The query is `MBTiles.maxStoredZoom`'s. */
+    /** The deepest zoom level with satellite imagery saved for an area (null if none yet). Esri's imagery stops at
+     *  different levels in different places, so this can be less than the level asked for. A one-off reader: the file
+     *  is opened read-only (`AndroidSqlDriver(readOnly = true)`, DESIGN.md D17), not through `MBTiles`, whose one
+     *  driver opens for writing. The query is `MBTiles.maxStoredZoom`'s. */
     suspend fun savedImageryDepth(id: UUID): Int? {
         val area = _areas.value.firstOrNull { it.id == id } ?: return null
-        val file = File(AppPaths.offlineArea(area.id), TileRepository.Layer.imagery.fileName)
-        return withContext(Dispatchers.IO) {
+        val file = File(area.directory, TileRepository.Layer.imagery.fileName)
+        return withContext(io) {
             if (!file.exists()) return@withContext null
             val db = try {
                 AndroidSqlDriver(readOnly = true).open(file.path, create = false)
@@ -132,49 +293,450 @@ class OfflineManager(private val context: Context) : AppLifecycle.Observer {
         }
     }
 
-    /** The network allows this area's download now. */
-    fun canDownloadNow(a: OfflineArea): Boolean {
-        val net = Connectivity.shared.state.value
-        return net.isOnline && (a.allowCellular || !net.isExpensive)
+    fun pause(id: UUID) {
+        if (_activeID.value == id) {
+            task?.cancel() // the run loop marks it paused when the job stops
+        }
+        update(id) { it.status = OfflineArea.Status.paused }
     }
 
-    fun export(ids: List<UUID>) {
-        // M4: offline spec §1.13 and §2.8 (zero-copy share through BackupFileProvider).
+    fun resume(id: UUID) {
+        update(id) {
+            it.status = OfflineArea.Status.queued
+            it.failedTiles = 0
+            it.problem = null
+        }
+        startNextIfIdle()
     }
 
-    fun restore(uris: List<Uri>) {
-        // M4: offline spec §1.13 and §2.8.
+    fun delete(id: UUID) {
+        // Another app may be reading the area's files (an export): forget the shared files, as iOS removes its
+        // exported copies, which share the area's storage.
+        ExportShares.clear()
+        val wasActive = _activeID.value == id
+        val running = task
+        _areas.value = _areas.value.filter { it.id != id }
+        save()
+        publishToMap()
+        readers.closeArea(id)
+        val dir = File(AppPaths.offline, id.toString().uppercase())
+        if (wasActive && running != null) {
+            running.cancel()
+            scope.launch {
+                running.join()
+                dir.deleteRecursively()
+            }
+        } else {
+            dir.deleteRecursively()
+        }
     }
+
+    /** Measures each area's folder off the main thread, then saves once. */
+    fun refreshSizes() {
+        val snapshot = _areas.value
+        scope.launch {
+            val sizes = withContext(io) { snapshot.associate { it.id to AppPaths.size(it.directory) } }
+            for ((id, size) in sizes) update(id, persist = false) { it.bytesOnDisk = size }
+            save()
+        }
+    }
+
+    // Backup
 
     fun clearBackupMessage() {
         _backupMessage.value = null
     }
 
-    /** The share flow returned: downloads go on (an area paused for the export resumes). */
+    /** Exports areas: pauses a download running in one of them, writes each area's settings into its files and shares
+     *  them read-only with the app the user picks. */
+    fun export(ids: List<UUID>) {
+        // M4: offline spec §1.13 and §2.8 (zero-copy share through BackupFileProvider), with holdDownloads and
+        // pausedForExport as the Swift.
+    }
+
+    /** Adds the areas in exported files (normally both files of each area; the satellite file alone also works, and ↻
+     *  then downloads the elevation). The summary for the user ends up in `backupMessage`. */
+    fun restore(uris: List<Uri>) {
+        // M4: offline spec §1.13 and §2.8.
+    }
+
+    /** The share flow returned: downloads may run again, including one paused for the export. */
     fun finishExport() {
-        // M4: holdDownloads = false, resume or startNextIfIdle.
+        holdDownloads = false
+        val id = pausedForExport
+        pausedForExport = null
+        if (id != null && _areas.value.any { it.id == id && it.status == OfflineArea.Status.paused }) {
+            resume(id)
+        } else {
+            startNextIfIdle()
+        }
     }
 
-    /** The notification's Stop: pauses the active area in the foreground, else as backgroundTimeEnded. */
-    fun stopFromNotification() {
-        // M4: offline spec §2.5.
+    /** Deletes area folders that no longer belong to an area (e.g. the app was closed while deleting one). */
+    private fun removeOrphanedDirectories() {
+        val known = _areas.value.map { it.id.toString().uppercase() }.toSet()
+        for (f in AppPaths.offline.listFiles() ?: emptyArray()) {
+            if (f.isDirectory && uuidName.matches(f.name) && f.name !in known) f.deleteRecursively()
+        }
     }
 
-    /** The background time is used up (or Stop in the background): the area goes back to queued and continues when
-     *  SatMap is opened. */
-    fun backgroundTimeEnded() {
-        // M4: offline spec §1.6.
+    // Running downloads
+
+    /** The phone may report "online" while requests fail (router up, internet down), and no network change will be
+     *  announced when it recovers, so waiting areas are retried periodically with growing gaps. */
+    private fun scheduleNetworkRetry() {
+        val wait = networkRetryDelay
+        networkRetryDelay = min(networkRetryDelay * 2, 600.0)
+        scope.launch {
+            delay((wait * 1000).toLong())
+            if (_areas.value.none { it.status == OfflineArea.Status.waitingForNetwork }) return@launch
+            if (task != null) {
+                scheduleNetworkRetry() // another area is downloading; check again later
+            } else {
+                networkChanged()
+            }
+        }
     }
 
-    override fun willEnterForeground() {
-        // M4: ends the signal wait and the extra background time, networkChanged().
+    /** Whether an area may download on the current network. */
+    fun canDownloadNow(a: OfflineArea): Boolean {
+        val net = network.value
+        return net.isOnline && (a.allowCellular || !net.isExpensive)
     }
 
-    override fun didBecomeActive() {
-        // M4: background time for a run already going on.
+    private fun networkChanged() {
+        for (a in _areas.value) {
+            if (a.status == OfflineArea.Status.waitingForNetwork && canDownloadNow(a)) {
+                update(a.id) { it.status = OfflineArea.Status.queued }
+            }
+        }
+        startNextIfIdle()
     }
 
     override fun didEnterBackground() {
-        // M4: background.enteredBackground().
+        inForeground = false
+        // A running download carries on, in the foreground service.
+        if (_activeID.value != null) background.enteredBackground()
+    }
+
+    override fun willEnterForeground() {
+        inForeground = true
+        signalWait = null
+        background.enteredForeground()
+        networkChanged()
+    }
+
+    /** A download that started or went on while SatMap wasn't fully open gets its background time now. */
+    override fun didBecomeActive() {
+        val id = _activeID.value ?: return
+        val a = _areas.value.firstOrNull { it.id == id } ?: return
+        background.begin(title = a.name, subtitle = _progress.value?.let(::progressText) ?: "Starting…")
+    }
+
+    /** The background time ended (dataSync's time is used up, or the start of the service was refused), or the
+     *  download was stopped from the notification with SatMap in the background: it stops and continues from where
+     *  it was when SatMap is opened again. */
+    fun backgroundTimeEnded() {
+        if (inForeground) return
+        val id = _activeID.value ?: return
+        update(id) { if (it.status == OfflineArea.Status.downloading) it.status = OfflineArea.Status.queued }
+        task?.cancel()
+    }
+
+    /** The notification's Stop. Android shows the notification with SatMap open too: there it pauses the area, as the
+     *  row's pause button does; in the background it is iOS's Lock Screen stop. */
+    fun stopFromNotification() {
+        // M4: the service's `stopping` comes first, so `allowsBackgroundWork` is false and nothing starts again.
+        if (inForeground) {
+            _activeID.value?.let { pause(it) }
+        } else {
+            backgroundTimeEnded()
+        }
+    }
+
+    private fun startNextIfIdle() {
+        if (task != null) return
+        if (!(inForeground || background.allowsBackgroundWork) || holdDownloads) {
+            background.end(success = lastRunComplete)
+            return
+        }
+        // (The Swift's `updateIdleTimer()` calls are left out: MapScreen keeps the screen on while `activeID` is set.)
+        val free = freeDiskSpace()
+        if (free != null && free < minimumFreeSpace) {
+            for (a in _areas.value) {
+                if (a.status == OfflineArea.Status.queued) {
+                    update(a.id) {
+                        it.status = OfflineArea.Status.incomplete
+                        it.problem = lowSpaceProblem
+                    }
+                }
+            }
+            background.end(success = false)
+            return
+        }
+        // Areas that can't use the current network wait; the first one that can, runs. On Android not one whose files
+        // another app is reading (an export), as they mustn't change meanwhile.
+        for (a in _areas.value) {
+            if (a.status == OfflineArea.Status.queued && !canDownloadNow(a)) {
+                update(a.id) { it.status = OfflineArea.Status.waitingForNetwork }
+            }
+        }
+        val next = _areas.value.firstOrNull {
+            it.status == OfflineArea.Status.queued && ExportShares.readers(it.id) == 0
+        }
+        if (next != null) {
+            run(next)
+        } else if (!inForeground && background.allowsBackgroundWork &&
+            _areas.value.any { it.status == OfflineArea.Status.waitingForNetwork }
+        ) {
+            waitForSignalInBackground()
+        } else {
+            background.end(success = lastRunComplete)
+        }
+    }
+
+    private fun waitForSignalInBackground() {
+        if (signalWait != null) return
+        val token = UUID.randomUUID()
+        signalWait = token
+        // Under the half minute after which iOS ends a background task that shows no progress.
+        scope.launch {
+            delay(20_000)
+            if (signalWait != token) return@launch
+            signalWait = null
+            if (task == null) background.end(success = false)
+        }
+    }
+
+    private fun run(area: OfflineArea) {
+        // Never fall back to the whole area (for a national park, terabytes) if a shipped road list is missing.
+        if (area.preset != null && area.roadLines == null) {
+            update(area.id) {
+                it.status = OfflineArea.Status.incomplete
+                it.problem = "This version of SatMap doesn't have the road list for this area."
+            }
+            post { startNextIfIdle() }
+            return
+        }
+        val dir = area.directory
+        val imagery: MBTiles
+        val terrain: MBTiles
+        var opened: MBTiles? = null
+        try {
+            imagery = MBTiles(File(dir, TileRepository.Layer.imagery.fileName), create = true)
+            opened = imagery
+            terrain = MBTiles(File(dir, TileRepository.Layer.terrain.fileName), create = true)
+        } catch (e: Exception) {
+            opened?.close() // (Swift's is closed when its last reference goes)
+            update(area.id) {
+                it.status = OfflineArea.Status.incomplete
+                it.problem = (e as? MBTiles.StoreError)?.errorDescription ?: "Couldn't open the tile database."
+            }
+            post { startNextIfIdle() }
+            return
+        }
+        imagery.setMetadata(mapOf(
+            "name" to area.name, "format" to "jpg", "type" to "baselayer", "minzoom" to "0",
+            "maxzoom" to area.maxZoom.toString(), "attribution" to TileSources.attribution,
+        ))
+        terrain.setMetadata(mapOf(
+            "name" to area.name + " terrain", "format" to "png", "encoding" to "terrarium",
+            "minzoom" to "0", "maxzoom" to Terrarium.maxZoom.toString(),
+        ))
+
+        val wifiOnly = !area.allowCellular
+        val job = TileDownloadJob(shape = area.shape, layers = listOf(
+            DownloadLayer(name = "Elevation", store = terrain, fetcher = fetcher(TileSources::terrainURL, wifiOnly),
+                          zooms = 0..Terrarium.maxZoom, pruneByParent = false),
+            DownloadLayer(name = "Satellite", store = imagery, fetcher = fetcher(TileSources::imageryURL, wifiOnly),
+                          zooms = 0..area.maxZoom, pruneByParent = true, shape = area.roadLines?.let(Roads::corridor)),
+        ), concurrency = 32)
+
+        val id = area.id
+        val name = area.name
+        signalWait = null
+        _activeID.value = id
+        _progress.value = DownloadProgress()
+        update(id) { it.status = OfflineArea.Status.downloading }
+        background.begin(title = name, subtitle = "Starting…")
+
+        // Set before it starts, so `finished` always finds it.
+        val run = scope.launch(start = CoroutineStart.LAZY) {
+            var lastSpaceCheck = Double.NEGATIVE_INFINITY
+            var outcome: DownloadOutcome = DownloadOutcome.Cancelled
+            try {
+                withContext(io) {
+                    outcome = job.run { p ->
+                        post {
+                            if (_activeID.value == id) {
+                                _progress.value = p
+                                background.update(area = id, title = name, subtitle = progressText(p), done = p.overallDone,
+                                                  total = p.overallTotal)
+                            }
+                        }
+                        // Never fill the phone completely: the track log and the rest of the phone need room too.
+                        val now = SystemClock.elapsedRealtime() / 1000.0
+                        if (now - lastSpaceCheck > 10) {
+                            lastSpaceCheck = now
+                            val free = freeDiskSpace()
+                            if (free != null && free < minimumFreeSpace) post { stopForLowSpace(id) }
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                // The run was cancelled: `outcome` is what it ended with (`Cancelled`, unless it had just finished).
+            }
+            withContext(NonCancellable) {
+                val size = withContext(io) {
+                    imagery.close()
+                    terrain.close()
+                    AppPaths.size(dir)
+                }
+                finished(id, outcome, size)
+            }
+        }
+        task = run
+        run.start()
+    }
+
+    private fun stopForLowSpace(id: UUID) {
+        if (_activeID.value != id || lowSpaceStop != null) return
+        lowSpaceStop = id
+        task?.cancel()
+    }
+
+    private fun finished(id: UUID, outcome: DownloadOutcome, size: Long) {
+        val storedSomething = (_progress.value?.fetched ?: 0) > 0
+        if (lowSpaceStop == id) {
+            lowSpaceStop = null
+            update(id) {
+                it.bytesOnDisk = size
+                it.status = OfflineArea.Status.incomplete
+                it.problem = lowSpaceProblem
+            }
+            task = null
+            _activeID.value = null
+            _progress.value = null
+            lastRunComplete = false
+            if (storedSomething) _completedRevision.value += 1
+            startNextIfIdle()
+            return
+        }
+        task = null
+        _activeID.value = null
+        _progress.value = null
+        lastRunComplete = outcome is DownloadOutcome.Completed && outcome.failed == 0
+        var retry = false
+        update(id) { a ->
+            a.bytesOnDisk = size
+            // A pause by the user wins over however the run happened to end.
+            if (a.status == OfflineArea.Status.paused &&
+                (outcome == DownloadOutcome.Cancelled || outcome == DownloadOutcome.Offline)
+            ) {
+                return@update
+            }
+            // Queued again during the run (a new zoom level, or the app went to the background): run it again.
+            if (a.status == OfflineArea.Status.queued) return@update
+            when (outcome) {
+                is DownloadOutcome.Completed -> {
+                    a.failedTiles = outcome.failed
+                    a.status = if (outcome.failed == 0) OfflineArea.Status.complete else OfflineArea.Status.incomplete
+                    networkRetryDelay = 15.0
+                }
+                DownloadOutcome.Offline -> {
+                    a.status = OfflineArea.Status.waitingForNetwork
+                    retry = true
+                }
+                DownloadOutcome.Cancelled -> {
+                    if (a.status == OfflineArea.Status.downloading) a.status = OfflineArea.Status.paused
+                }
+                is DownloadOutcome.StorageError -> {
+                    a.status = OfflineArea.Status.incomplete
+                    a.problem = outcome.message
+                }
+            }
+        }
+        if (storedSomething) _completedRevision.value += 1
+        if (retry) scheduleNetworkRetry()
+        startNextIfIdle()
+    }
+
+    // Helpers
+
+    /** Swift's `DispatchQueue.main.async`: `body` runs on the main thread after what is running now. */
+    private fun post(body: () -> Unit) {
+        scope.launch(Dispatchers.Main) { body() }
+    }
+
+    /** Changes an area. A changed copy replaces it, so the list's collectors see the change. */
+    private fun update(id: UUID, persist: Boolean = true, change: (OfflineArea) -> Unit) {
+        val list = _areas.value
+        val i = list.indexOfFirst { it.id == id }
+        if (i < 0) return
+        val a = list[i].copy()
+        change(a)
+        _areas.value = list.toMutableList().also { it[i] = a }
+        if (persist) save()
+    }
+
+    /** The list in the iPhone's format (`OfflineArea` JSON), written whole or not at all. */
+    private fun save() {
+        val atomic = AtomicFile(indexFile)
+        val out = try {
+            atomic.startWrite()
+        } catch (e: IOException) {
+            return
+        }
+        try {
+            out.write(JsonArray(_areas.value.map { it.toJson() }).toString().toByteArray(Charsets.UTF_8))
+            atomic.finishWrite(out)
+        } catch (e: IOException) {
+            atomic.failWrite(out)
+        }
+    }
+
+    private fun publishToMap() {
+        readers.setAreas(_areas.value.mapNotNull { a ->
+            val b = a.shape.bounds ?: return@mapNotNull null
+            val nw = WebMercator.world(GeoPoint(lat = b.maxLat, lon = b.minLon))
+            val se = WebMercator.world(GeoPoint(lat = b.minLat, lon = b.maxLon))
+            TileRepository.AreaRef(id = a.id, directory = a.directory, minX = nw.x, minY = nw.y, maxX = se.x, maxY = se.y)
+        })
+    }
+}
+
+val OfflineArea.directory: File get() = AppPaths.offlineArea(id)
+
+/** The roads imagery is downloaded along, or null for the whole area. */
+val OfflineArea.roadLines: List<List<GeoPoint>>?
+    get() = roads ?: preset?.let { RoadPresets.load(it) }?.roads
+
+/** A download's fetcher: over any network, or, Wi-Fi only, bound to the network the run starts on (so its requests
+ *  fail when Wi-Fi goes, instead of moving to mobile data). */
+private fun downloadFetcher(url: (TileID) -> String, wifiOnly: Boolean): TileFetching {
+    val client = if (wifiOnly) {
+        Connectivity.shared.network?.let { DownloadHttp.wifiOnly(it) } ?: DownloadHttp.anyNetwork
+    } else {
+        DownloadHttp.anyNetwork
+    }
+    return HTTPTileFetcher(client, url, wifiOnly)
+}
+
+/** `TileRepository.shared`, set up before the model at startup. A test that builds the model without it has no map
+ *  to tell. */
+private object TileRepositoryReaders : OfflineManager.AreaReaders {
+    private val repository: TileRepository?
+        get() = try {
+            TileRepository.shared
+        } catch (e: UninitializedPropertyAccessException) {
+            null
+        }
+
+    override fun setAreas(refs: List<TileRepository.AreaRef>) {
+        repository?.setAreas(refs)
+    }
+
+    override fun closeArea(id: UUID) {
+        repository?.closeArea(id)
     }
 }
