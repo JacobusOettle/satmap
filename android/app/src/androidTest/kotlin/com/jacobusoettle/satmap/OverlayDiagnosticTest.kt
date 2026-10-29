@@ -8,6 +8,7 @@ import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.ViewGroup
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -25,15 +26,29 @@ import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.log.Logger
 import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapLibreMapOptions
+import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
+import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
+import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory.circleColor
 import org.maplibre.android.style.layers.PropertyFactory.circleRadius
+import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconIgnorePlacement
+import org.maplibre.android.style.layers.PropertyFactory.iconImage
 import org.maplibre.android.style.layers.PropertyFactory.lineColor
+import org.maplibre.android.style.layers.PropertyFactory.lineDasharray
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
+import org.maplibre.android.style.layers.PropertyFactory.visibility
 import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.layers.TransitionOptions
 import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.geojson.Feature
+import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.LineString
+import org.maplibre.geojson.Point
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
@@ -152,6 +167,44 @@ class OverlayDiagnosticTest {
                 }
                 Thread.sleep(4_000)
                 phase("4-probes")
+
+                // A new symbol layer (a plain square image) and a new dashed line beside a plain one, on new sources.
+                main {
+                    val style = map()?.style ?: return@main
+                    try {
+                        addTestShapes(style, LatLng(-33.9215, 18.9250), "diag2")
+                        line("new symbol/dash probes added")
+                    } catch (e: Throwable) {
+                        line("new probes threw: ${Log.getStackTraceString(e)}")
+                    }
+                }
+                Thread.sleep(4_000)
+                phase("5-new-probes")
+
+                // Without the rasters.
+                main {
+                    val style = map()?.style ?: return@main
+                    for (l in style.layers) {
+                        if (l.id.startsWith("imagery-") || l.id.startsWith("contours-") || l.id.startsWith("colours-")) {
+                            l.setProperties(visibility(Property.NONE))
+                        }
+                    }
+                }
+                Thread.sleep(3_000)
+                phase("6-no-rasters")
+
+                // With placement transitions and a fade duration again.
+                main {
+                    val style = map()?.style ?: return@main
+                    line("transition was ${style.transition.duration}/${style.transition.delay}/${style.transition.isEnablePlacementTransitions}")
+                    style.transition = TransitionOptions(300, 0, true)
+                }
+                Thread.sleep(3_000)
+                phase("7-transitions")
+
+                // A second, bare MapView: the same shapes on an empty style, as the app's map is set up and plainly.
+                bareMap(scenario, "8-bare-plain", appOptions = false, noTransition = false)
+                bareMap(scenario, "9-bare-app-options", appOptions = true, noTransition = true)
             } finally {
                 scenario.close()
             }
@@ -161,11 +214,177 @@ class OverlayDiagnosticTest {
         }
     }
 
+    /** A square symbol (red, 24 dp, a new image), a circle beside it, and a dashed line above a plain one, around
+     *  `at`, on new sources (`prefix`-…). */
+    private fun addTestShapes(style: Style, at: LatLng, prefix: String) {
+        val d = instrumentation.targetContext.resources.displayMetrics
+        val square = Bitmap.createBitmap((24 * d.density).toInt(), (24 * d.density).toInt(), Bitmap.Config.ARGB_8888)
+        square.eraseColor(Color.RED)
+        square.density = d.densityDpi
+        style.addImage("$prefix-square", square)
+        val dLon = 0.0006
+        val dLat = 0.0004
+        style.addSource(
+            GeoJsonSource(
+                "$prefix-points",
+                FeatureCollection.fromFeatures(
+                    listOf(
+                        Feature.fromGeometry(Point.fromLngLat(at.longitude - dLon, at.latitude)).apply { addStringProperty("k", "s") },
+                        Feature.fromGeometry(Point.fromLngLat(at.longitude + dLon, at.latitude)).apply { addStringProperty("k", "c") },
+                    ),
+                ),
+            ),
+        )
+        style.addSource(
+            GeoJsonSource(
+                "$prefix-lines",
+                FeatureCollection.fromFeatures(
+                    listOf(
+                        Feature.fromGeometry(
+                            LineString.fromLngLats(
+                                listOf(
+                                    Point.fromLngLat(at.longitude - 2 * dLon, at.latitude + dLat),
+                                    Point.fromLngLat(at.longitude + 2 * dLon, at.latitude + dLat),
+                                ),
+                            ),
+                        ).apply { addStringProperty("k", "dash") },
+                        Feature.fromGeometry(
+                            LineString.fromLngLats(
+                                listOf(
+                                    Point.fromLngLat(at.longitude - 2 * dLon, at.latitude - dLat),
+                                    Point.fromLngLat(at.longitude + 2 * dLon, at.latitude - dLat),
+                                ),
+                            ),
+                        ).apply { addStringProperty("k", "plain") },
+                    ),
+                ),
+            ),
+        )
+        style.addLayer(
+            SymbolLayer("$prefix-symbol", "$prefix-points")
+                .withFilter(Expression.eq(Expression.get("k"), "s"))
+                .withProperties(iconImage("$prefix-square"), iconAllowOverlap(true), iconIgnorePlacement(true)),
+        )
+        style.addLayer(
+            CircleLayer("$prefix-circle", "$prefix-points")
+                .withFilter(Expression.eq(Expression.get("k"), "c"))
+                .withProperties(circleColor(Color.RED), circleRadius(12f)),
+        )
+        style.addLayer(
+            LineLayer("$prefix-dash", "$prefix-lines")
+                .withFilter(Expression.eq(Expression.get("k"), "dash"))
+                .withProperties(lineColor(Color.MAGENTA), lineWidth(8f), lineDasharray(arrayOf(2f, 1f))),
+        )
+        style.addLayer(
+            LineLayer("$prefix-plain", "$prefix-lines")
+                .withFilter(Expression.eq(Expression.get("k"), "plain"))
+                .withProperties(lineColor(Color.MAGENTA), lineWidth(8f)),
+        )
+    }
+
+    /** A second MapView over the app's, with an empty style and `addTestShapes`; its frame is saved. */
+    private fun bareMap(scenario: ActivityScenario<MainActivity>, name: String, appOptions: Boolean, noTransition: Boolean) {
+        line("===== $name =====")
+        var view: MapView? = null
+        var bare: MapLibreMap? = null
+        val stats = arrayOfNulls<String>(1)
+        scenario.onActivity { activity ->
+            try {
+                val d = activity.resources.displayMetrics.density
+                val options = MapLibreMapOptions.createFromAttributes(activity).textureMode(false).featureInfoEnabled(true)
+                if (appOptions) {
+                    @Suppress("DEPRECATION")
+                    options.pixelRatio(d).setPrefetchesTiles(true).setPrefetchZoomDelta(3).logoEnabled(false)
+                        .attributionEnabled(false).compassEnabled(false).foregroundLoadColor(0xFF202020.toInt())
+                }
+                val v = MapView(activity, options)
+                view = v
+                val content = activity.findViewById<ViewGroup>(android.R.id.content)
+                content.addView(v, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                v.onCreate(null)
+                v.onStart()
+                v.onResume()
+                v.addOnDidFinishRenderingFrameListener(
+                    MapView.OnDidFinishRenderingFrameWithStatsListener { _, s ->
+                        stats[0] = "drawCalls=${s.numDrawCalls} textures=${s.numActiveTextures} bindings=${s.numTextureBindings} " +
+                            "updates=${s.numTextureUpdates} features=${s.renderedFeatures.entries.joinToString { "${it.key.layerID}:${it.value.size}" }}"
+                    },
+                )
+                v.getMapAsync { m ->
+                    bare = m
+                    m.moveCamera(CameraUpdateFactory.newLatLngZoom(LatLng(-33.9215, 18.9250), 15.3))
+                    var builder = Style.Builder().fromJson(
+                        """{"version":8,"sources":{},"layers":[{"id":"bg","type":"background","paint":{"background-color":"#335577"}}]}""",
+                    )
+                    if (noTransition) builder = builder.withTransition(TransitionOptions(0, 0, false))
+                    m.setStyle(builder) { style ->
+                        try {
+                            addTestShapes(style, LatLng(-33.9215, 18.9250), "bare")
+                            line("$name: shapes added")
+                        } catch (e: Throwable) {
+                            line("$name: shapes threw ${Log.getStackTraceString(e)}")
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                line("$name: ${Log.getStackTraceString(e)}")
+            }
+        }
+        Thread.sleep(6_000)
+        main {
+            val m = bare ?: return@main line("$name: no map")
+            val v = view ?: return@main
+            val screen = RectF(0f, 0f, v.width.toFloat(), v.height.toFloat())
+            for (id in listOf("bare-symbol", "bare-circle", "bare-dash", "bare-plain")) {
+                line("$name: $id rendered=${m.queryRenderedFeatures(screen, id).size}")
+            }
+            line("$name: stats ${stats[0]}")
+        }
+        val latch = CountDownLatch(1)
+        main {
+            val m = bare
+            if (m == null) {
+                latch.countDown()
+                return@main
+            }
+            m.snapshot { bitmap ->
+                save(bitmap, "$name-map.png")
+                latch.countDown()
+            }
+        }
+        if (!latch.await(10, TimeUnit.SECONDS)) line("$name: no snapshot")
+        screenshot(name)
+        scenario.onActivity {
+            view?.let { v ->
+                v.onPause()
+                v.onStop()
+                v.onDestroy()
+                (v.parent as? ViewGroup)?.removeView(v)
+            }
+        }
+    }
+
     // The dump
+
+    private val appStats = arrayOfNulls<String>(1)
+    private var statsListening = false
 
     private fun phase(name: String) {
         line("===== $name =====")
+        main {
+            if (!statsListening) {
+                val controller = AppModel.shared.map as? MapController ?: return@main
+                (controller.container.getChildAt(0) as? MapView)?.addOnDidFinishRenderingFrameListener(
+                    MapView.OnDidFinishRenderingFrameWithStatsListener { _, s ->
+                        appStats[0] = "drawCalls=${s.numDrawCalls} textures=${s.numActiveTextures} " +
+                            "bindings=${s.numTextureBindings} updates=${s.numTextureUpdates} created=${s.numCreatedTextures}"
+                    },
+                )
+                statsListening = true
+            }
+        }
         main { dump() }
+        line("app map stats (last frame): ${appStats[0]}")
         screenshot(name)
         snapshot(name)
     }
