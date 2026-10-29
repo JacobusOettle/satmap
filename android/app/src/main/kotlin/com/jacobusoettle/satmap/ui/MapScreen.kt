@@ -25,17 +25,21 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
@@ -50,6 +54,7 @@ import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.Landscape
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.outlined.ArrowCircleDown
 import androidx.compose.material.icons.outlined.CheckBoxOutlineBlank
 import androidx.compose.material.icons.outlined.Circle
@@ -65,6 +70,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
@@ -122,6 +128,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -179,7 +186,7 @@ fun MapScreen(model: AppModel, offline: OfflineManager, recorder: LocationRecord
         val pending by model.pendingArea.collectAsStateWithLifecycle()
         // Swift's onDismiss: the drawn loop goes with the sheet.
         SheetHost(pending, onDismiss = { model.setPendingArea(null); model.setDraftArea(null) }) { area ->
-            NewAreaView(model, area, showsCancel = true, close = close)
+            NewAreaView(model, remember(area.id) { NewAreaState(area) }, showsCancel = true, close = close)
         }
         if (confirmClearTrack) ClearTrackDialog(onClear = model::clearTrack, onDismiss = { confirmClearTrack = false })
         ShareHost()
@@ -1323,9 +1330,46 @@ fun Modifier.unitSwitch(onTap: () -> Unit): Modifier = clickable(
     onClick = onTap,
 )
 
+/** Drone mode's reporting lines, as a pilot says where they are: you (cyan, as the distances from you on the map) and
+ *  the tapped spot (amber, as the distances from it), each from the nearest airfield. */
 @Composable
 fun DroneCard(report: DroneReport) {
-    // M5: UI spec §2.3.10.
+    Column(
+        Modifier
+            .blocksMap()
+            .border(0.5.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+            .panel(0.72f)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .semantics(mergeDescendants = true) {}
+            .testTag("droneCard"),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        report.you?.let { DroneLine(Icons.Filled.NearMe, DpSize(17.dp, 17.dp), "You", it, YouColour) }
+        // The pin keeps its narrow frame (16 × 24).
+        report.pin?.let { DroneLine(SatIcons.MapPin, DpSize(12.dp, 18.dp), "Pin", it, PinColour) }
+    }
+}
+
+/** One party's line: its symbol (caption bold, in a 14 dp frame it overflows as SF's does), who, and where. The
+ *  symbols are as big as iOS's in screenshot 25: the arrow about 13 dp across, the pin 15 dp tall. */
+@Composable
+private fun DroneLine(icon: ImageVector, iconSize: DpSize, who: String, text: String, colour: Color) {
+    CompositionLocalProvider(LocalContentColor provides colour) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(14.dp), contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, modifier = Modifier.requiredSize(iconSize))
+            }
+            Text(who, style = Caption.copy(fontWeight = FontWeight.ExtraBold), color = colour, modifier = Modifier.alpha(0.8f))
+            Text(
+                text,
+                style = Subheadline.copy(fontWeight = FontWeight.Bold, fontFeatureSettings = TabularDigits),
+                color = colour,
+                maxLines = 1,
+                autoSize = TextAutoSize.StepBased(minFontSize = 11.25.sp, maxFontSize = 15.sp, stepSize = 0.25.sp),
+            )
+        }
+    }
 }
 
 /** Coordinates you can copy: tap to put them on the clipboard ("Copied" for 2.5 s). `id`: the copy button's test
@@ -1388,14 +1432,158 @@ fun CoordinateBar(icon: ImageVector, text: String, id: String, onClose: (() -> U
     }
 }
 
+/** The area downloading, over the map: its layer, level and tiles, a bar for the level, and Pause. `modifier`: a tap
+ *  on the banner (outside Pause) opens Offline maps. */
 @Composable
 fun DownloadBanner(area: OfflineArea, progress: DownloadProgress?, onPause: () -> Unit, modifier: Modifier = Modifier) {
-    // M4: UI spec §2.3.2.
+    val p = progress
+    val fraction = if (p != null && p.levelTotal > 0) p.levelDone.toFloat() / p.levelTotal.toFloat() else 0f
+    val detail = if (p == null || p.layer.isEmpty()) {
+        "Starting…"
+    } else {
+        "${p.layer} · zoom ${p.zoom} of up to ${p.maxZoom}: ${Format.count(p.levelDone)}/${Format.count(p.levelTotal)} · " +
+            "${Format.count(p.fetched)} tiles, ${Format.bytes(p.bytes)} saved"
+    }
+    CompositionLocalProvider(LocalContentColor provides Color.White) {
+        Row(
+            modifier
+                .fillMaxWidth()
+                .blocksMap()
+                .panel(0.7f)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    "Downloading ${area.name}",
+                    style = Subheadline.copy(fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                // One line, cut short with "…" (screenshot 08).
+                Text(
+                    detail,
+                    style = Caption.copy(fontFeatureSettings = TabularDigits),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.alpha(0.85f),
+                )
+                LinearProgressIndicator(
+                    progress = { fraction },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    color = SystemYellow,
+                    trackColor = Color.White.copy(alpha = 0.2f),
+                    gapSize = 0.dp,
+                    drawStopIndicator = {},
+                )
+            }
+            // pause.fill at body size, with 8 dp round it to tap.
+            Box(
+                Modifier
+                    .pressable(onClick = onPause)
+                    .semantics { contentDescription = "Pause" }
+                    .padding(8.dp),
+            ) {
+                Icon(Icons.Filled.Pause, contentDescription = null, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
 }
 
+/** Shown while choosing an offline area with the lasso. */
 @Composable
 fun DrawingBar(model: AppModel) {
-    // M4: UI spec §2.3.1.
+    val draft by model.draftArea.collectAsStateWithLifecycle()
+    val lassoActive by model.lassoActive.collectAsStateWithLifecycle()
+    DrawingBar(
+        drawn = draft != null,
+        lassoActive = lassoActive,
+        onLassoActive = model::setLassoActive,
+        onCancel = model::cancelDrawing,
+        onRedraw = { model.setDraftArea(null) },
+        onContinue = model::confirmDrawnArea,
+    )
+}
+
+/** `drawn`: a loop has been drawn (the model's `draftArea`). */
+@Composable
+fun DrawingBar(
+    drawn: Boolean,
+    lassoActive: Boolean,
+    onLassoActive: (Boolean) -> Unit,
+    onCancel: () -> Unit,
+    onRedraw: () -> Unit,
+    onContinue: () -> Unit,
+) {
+    CompositionLocalProvider(LocalContentColor provides Color.White) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .blocksMap()
+                .panel(0.75f)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (!drawn) {
+                SegmentedControl(listOf("Move map", "Draw"), selected = if (lassoActive) 1 else 0) { onLassoActive(it == 1) }
+                Text(
+                    if (lassoActive) "Draw a loop around the area with one finger." else "Pan and zoom to the area, then switch to Draw.",
+                    style = Footnote,
+                    textAlign = TextAlign.Center,
+                )
+                Row(Modifier.fillMaxWidth()) {
+                    BarButton("Cancel", onClick = onCancel)
+                    Spacer(Modifier.weight(1f))
+                }
+            } else {
+                Text("Download this area?", style = Headline)
+                Row(Modifier.fillMaxWidth()) {
+                    BarButton("Cancel", onClick = onCancel)
+                    Spacer(Modifier.weight(1f))
+                    BarButton("Redraw", onClick = onRedraw)
+                    Spacer(Modifier.weight(1f))
+                    BarButton("Continue", weight = FontWeight.SemiBold, onClick = onContinue)
+                }
+            }
+        }
+    }
+}
+
+/** A plain text button on a panel over the map: body text, dimmed while pressed. */
+@Composable
+private fun BarButton(title: String, weight: FontWeight = FontWeight.Normal, onClick: () -> Unit) {
+    Text(title, style = Body.copy(fontWeight = weight), modifier = Modifier.pressable(onClick = onClick))
+}
+
+/** iOS's segmented `Picker` (screenshot 10): a 32 dp track, the chosen segment a lighter rounded box 2 dp inside it.
+ *  (Material's segmented buttons are outlined capsule halves, not this.) Each segment is a choice TalkBack reads as
+ *  selected or not. */
+@Composable
+private fun SegmentedControl(titles: List<String>, selected: Int, onSelect: (Int) -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(32.dp)
+            .background(Color(0x3D767680), RoundedCornerShape(9.dp))
+            .padding(2.dp)
+            .selectableGroup(),
+    ) {
+        titles.forEachIndexed { i, title ->
+            val chosen = i == selected
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(if (chosen) Color(0xFF636366) else Color.Transparent, RoundedCornerShape(7.dp))
+                    .selectable(chosen, interactionSource = null, indication = null, role = Role.Tab) { onSelect(i) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(title, style = Footnote.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
+            }
+        }
+    }
 }
 
 /** "Clear the recorded track?", from My location's long-press menu (iOS `confirmationDialog`). */

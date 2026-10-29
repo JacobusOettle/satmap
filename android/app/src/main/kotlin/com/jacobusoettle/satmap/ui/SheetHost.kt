@@ -2,10 +2,13 @@ package com.jacobusoettle.satmap.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,6 +41,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -48,11 +52,18 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -65,15 +76,17 @@ import androidx.compose.ui.semantics.testTag
 import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 // Android only: every iOS sheet is a ModalBottomSheet (always fully expanded, the map dimmed above it), with an
 // in-sheet stack of routes in place of a NavigationStack (DESIGN.md §4.2).
 
-/** What a screen in a sheet shows in the bar: its title, the leading button and an optional trailing one. */
+/** What a screen in a sheet shows in the bar: its title, the leading button (none: null) and an optional trailing
+ *  one. */
 class ScreenChrome(
     val title: String,
-    val leading: Leading,
+    val leading: Leading?,
     val trailing: (@Composable () -> Unit)? = null,
 ) {
     sealed interface Leading {
@@ -195,6 +208,7 @@ fun SheetTopBar(chrome: ScreenChrome, scrolled: Boolean) {
                     is ScreenChrome.Leading.Done -> BarTextButton("Done", leading.onClick)
                     is ScreenChrome.Leading.Cancel -> BarTextButton("Cancel", leading.onClick)
                     is ScreenChrome.Leading.Back -> BackButton(leading.previousTitle, leading.onClick)
+                    null -> {}
                 }
             },
             actions = { chrome.trailing?.invoke() },
@@ -261,11 +275,37 @@ fun SheetScreen(
     }
 }
 
+/** A screen in a sheet that isn't a list: its bar, then `content` in the rest of the sheet (a spinner, a message), as
+ *  SwiftUI centres a lone view under its navigation bar. */
+@Composable
+fun SheetPlainScreen(chrome: ScreenChrome, content: @Composable BoxScope.() -> Unit) {
+    val bottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    Column(Modifier.fillMaxSize()) {
+        SheetTopBar(chrome, scrolled = false)
+        Box(
+            Modifier.fillMaxWidth().weight(1f).padding(bottom = bottom),
+            contentAlignment = Alignment.Center,
+            content = content,
+        )
+    }
+}
+
+/** The slide of the screen shown in a `SheetStack`, for a screen that waits until it is fully in (the place search
+ *  focuses its field then). Null outside a stack. */
+val LocalScreenTransition = staticCompositionLocalOf<AnimatedVisibilityScope?> { null }
+
+/** Waits until the screen is fully in: at once outside a stack or for the screen shown first, else once its push has
+ *  slid it in. */
+suspend fun AnimatedVisibilityScope?.awaitShown() {
+    val scope = this ?: return
+    snapshotFlow { scope.transition.currentState == EnterExitState.Visible }.first { it }
+}
+
 /** Shows the stack's top screen, sliding in from the right when pushed and back when popped (iOS
- *  `NavigationStack`). System back pops it; at the root it closes the sheet. A screen under another keeps what its
- *  route holds and what it remembers with `rememberSaveable` (its list's scroll position). `screen` gets the route
- *  and the one under it (null for the root), whose title labels its back button: kept while a popped screen slides
- *  away. */
+ *  `NavigationStack`). No screen takes a touch while they slide, so a second tap on a link opens nothing more. System
+ *  back pops it; at the root it closes the sheet. A screen under another keeps what its route holds and what it
+ *  remembers with `rememberSaveable` (its list's scroll position). `screen` gets the route and the one under it (null
+ *  for the root), whose title labels its back button: kept while a popped screen slides away. */
 @Composable
 fun <R : Any> SheetStack(stack: RouteStack<R>, screen: @Composable (route: R, below: R?) -> Unit) {
     val saved = rememberSaveableStateHolder()
@@ -283,9 +323,26 @@ fun <R : Any> SheetStack(stack: RouteStack<R>, screen: @Composable (route: R, be
         contentKey = { it.key },
         label = "sheet screens",
     ) { entry ->
-        // What is under a screen never changes while it is on the stack (only the top is pushed or popped).
-        val below = remember(entry) { stack.below(entry.route) }
-        saved.SaveableStateProvider(entry.key) { screen(entry.route, below) }
+        // What is under a screen never changes while it is on the stack (only the top is pushed or popped). Found by
+        // its entry, as a route can be a shared object (KMLPicker).
+        val below = remember(entry) {
+            val i = stack.entries.indexOf(entry)
+            if (i > 0) stack.entries[i - 1].route else null
+        }
+        val slide = this
+        // UIKit ignores touches while a push or pop slides, so a link opens its screen once: a screen takes no touch
+        // until it is fully in, nor once it is going (pushed over or popped), even before its slide has started.
+        Box(
+            Modifier.ignoringTouches(entry) {
+                entry !== stack.entries.last() ||
+                    slide.transition.currentState != EnterExitState.Visible ||
+                    slide.transition.targetState != EnterExitState.Visible
+            },
+        ) {
+            CompositionLocalProvider(LocalScreenTransition provides slide) {
+                saved.SaveableStateProvider(entry.key) { screen(entry.route, below) }
+            }
+        }
     }
     // A popped screen's remembered state goes with it.
     val known = remember { HashSet<Int>() }
@@ -294,5 +351,22 @@ fun <R : Any> SheetStack(stack: RouteStack<R>, screen: @Composable (route: R, be
         for (k in known - keys) saved.removeState(k)
         known.clear()
         known.addAll(keys)
+    }
+}
+
+/** Keeps every touch from what it wraps while `ignoring()` holds, and a touch that went down then until it is lifted. */
+private fun Modifier.ignoringTouches(key: Any, ignoring: () -> Boolean): Modifier = pointerInput(key) {
+    val ignored = HashSet<PointerId>()
+    awaitPointerEventScope {
+        while (true) {
+            // First, before what it wraps sees it: consumed, a tap or a drag doesn't start.
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val now = ignoring()
+            for (change in event.changes) {
+                if (now && change.changedToDownIgnoreConsumed()) ignored += change.id
+                if (now || change.id in ignored) change.consume()
+                if (change.changedToUpIgnoreConsumed()) ignored -= change.id
+            }
+        }
     }
 }

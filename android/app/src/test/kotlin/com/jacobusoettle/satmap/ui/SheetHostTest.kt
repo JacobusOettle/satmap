@@ -23,6 +23,9 @@ import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -208,5 +211,88 @@ class SheetHostTest {
         compose.onNodeWithTag("screenTitle").assertTextEquals("Offline maps")
         assertEquals(20, rootList.firstVisibleItemIndex)
         assertTrue(stack.routes.single() === root)
+    }
+
+    /** Two screens to go through: each has a link to the next. */
+    private fun setLinkedScreens(stack: RouteStack<Route>) {
+        compose.setContent {
+            SatMapTheme {
+                SheetStack(stack) { r, below ->
+                    val back = below?.let { ScreenChrome.Leading.Back(it.title, stack::pop) }
+                    SheetScreen(ScreenChrome(r.title, back ?: ScreenChrome.Leading.Done {})) {
+                        item {
+                            FormSection(first = true) {
+                                when (r) {
+                                    is Route.Root -> FormLinkRow("Open") { stack.push(Route.Detail("Find a place")) }
+                                    is Route.Detail -> FormLinkRow("Deeper") { stack.push(Route.Detail("Download area")) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun link(title: String) = compose.onNode(hasText(title) and hasClickAction())
+
+    @Test
+    fun aSecondTapWhileAScreenSlidesInOpensItOnce() {
+        val stack = RouteStack<Route>(Route.Root())
+        setLinkedScreens(stack)
+        compose.mainClock.autoAdvance = false
+        link("Open").performClick()
+        compose.mainClock.advanceTimeBy(100)
+        // The first screen is still sliding away: a tap on it does nothing, as iOS ignores touches during the slide.
+        link("Open").performClick()
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(2, stack.size)
+        compose.onNodeWithTag("screenTitle").assertTextEquals("Find a place")
+        assertEquals("Offline maps", stack.below(stack.top)?.title)
+
+        // Once it is in, its own link works.
+        link("Deeper").performClick()
+        compose.waitForIdle()
+        assertEquals(3, stack.size)
+        compose.onNodeWithTag("screenTitle").assertTextEquals("Download area")
+    }
+
+    @Test
+    fun aTapOnAScreenSlidingAwayDoesNothing() {
+        val stack = RouteStack<Route>(Route.Root())
+        setLinkedScreens(stack)
+        link("Open").performClick()
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("back").performClick()
+        compose.mainClock.advanceTimeBy(100)
+        link("Deeper").performClick()
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(1, stack.size)
+        compose.onNodeWithTag("screenTitle").assertTextEquals("Offline maps")
+    }
+
+    @Test
+    fun aSecondTapOnBackWhileTheScreenSlidesAwayGoesBackOnce() {
+        val stack = RouteStack<Route>(Route.Root())
+        setLinkedScreens(stack)
+        link("Open").performClick()
+        compose.waitForIdle()
+        link("Deeper").performClick()
+        compose.waitForIdle()
+        assertEquals(3, stack.size)
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithTag("back").performClick()
+        compose.mainClock.advanceTimeBy(100)
+        // Both back buttons are there while the screens slide: neither takes the tap.
+        compose.onAllNodesWithTag("back").onFirst().performClick()
+        compose.mainClock.advanceTimeBy(50)
+        compose.onAllNodesWithTag("back").onLast().performClick()
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        assertEquals(2, stack.size)
+        compose.onNodeWithTag("screenTitle").assertTextEquals("Find a place")
     }
 }
