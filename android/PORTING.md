@@ -44,7 +44,7 @@ the system properties `satmap.resources` and `satmap.fixtures`.
 | `Double`, `Int`, `Bool`, `String` | the same (Swift `Int` is 64-bit: use `Long` where values can pass 2³¹, e.g. byte counts, tile counts at deep zooms; `Int` for tile x/y/z) |
 | `Data` / `[UInt8]` | `ByteArray` |
 | `TimeInterval` (seconds) | `Double` seconds, same names |
-| `Date` | `Double` seconds since 1970 (or `Long` ms where the Swift stores ms) |
+| `Date` | `Double` seconds since 1970 (or `Long` ms where the Swift stores ms); a `Date` in the backup JSON (`OfflineArea.created`) keeps Swift's seconds since 1 January 2001, so it is written back unchanged |
 | `UUID` | `java.util.UUID` |
 | optionals | nullable types |
 | `throws` | exceptions (a Kotlin exception class per Swift `Error` type) |
@@ -83,11 +83,12 @@ writes and reads exactly what the iPhone app does:
   (`OfflineBackup.fileSafe`, " (2)" for repeated names).
 - The area JSON is Swift's `JSONEncoder` output for `OfflineArea` (`SatMap/Core/OfflineBackup.swift`): keys as the
   property names; `id` an upper-case UUID; `created` in seconds since 1 January 2001 (Unix time − 978307200);
-  whole-number fields (`maxZoom`, `failedTiles`, `bytesOnDisk`) written without a decimal point (Swift refuses
-  `18.0` for an `Int`); `status` one of queued/downloading/paused/waitingForNetwork/complete/incomplete; properties
-  that aren't set (`roads`, `preset`, `isTrack`, `problem`) left out; `shape` = {polygons, lines, points,
-  bufferMeters} with points as {lat, lon}. Reading accepts any key order, lower-case UUIDs, numbers with or without
-  decimals, and `null` for a value not set.
+  numbers as `JSONEncoder` writes them (`swiftJSONNumber`: "150", "1e-07"), whole-number fields (`maxZoom`,
+  `failedTiles`, `bytesOnDisk`) without a decimal point; `status` one of
+  queued/downloading/paused/waitingForNetwork/complete/incomplete; properties that aren't set (`roads`, `preset`,
+  `isTrack`, `problem`) left out; `shape` = {polygons, lines, points, bufferMeters} with points as {lat, lon}.
+  Reading accepts any key order, lower-case UUIDs, numbers with or without decimals, and `null` for a value not set,
+  and is otherwise as strict as Swift's `JSONDecoder`: restore reads the text with `OfflineArea.decode`.
 - Restore accepts the files from any app or folder (they may have been through Google Drive, a computer, e-mail …):
   any file name, chosen together in one pick; the files say which area and layer they are.
 - Tests on both sides read a backup made by the other app: `Tests/SatMapCoreTests/Fixtures/backup/iphone` (made by

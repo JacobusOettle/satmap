@@ -445,7 +445,7 @@ class AndroidSqlDriverTest {
         val area = OfflineArea(
             id = UUID.fromString("6F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9"),
             name = "Fixture farm",
-            created = 1_761_696_000.0,
+            created = 1_761_696_000.0 - OfflineArea.referenceDate,
             shape = CoverageShape(
                 polygons = listOf(listOf(GeoPoint(lat = -33.9245, lon = 18.9232), GeoPoint(lat = -33.9201, lon = 18.9302),
                                          GeoPoint(lat = -33.9263, lon = 18.9355), GeoPoint(lat = -33.9301, lon = 18.9268))),

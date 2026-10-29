@@ -66,4 +66,27 @@ class OfflineBackupTests {
         assertEquals("---", OfflineBackup.fileSafe("///"))
         assertEquals("Offline area", OfflineBackup.fileSafe("  "))
     }
+
+    @Test
+    fun testFileSafeKeepsAnIndicConjunctWholeAt80Characters() {
+        // Swift counts "क्षि" as one character (GB9c), so the 80 characters end after it, not inside it.
+        assertEquals("a".repeat(79) + "क्षि", OfflineBackup.fileSafe("a".repeat(79) + "क्षि"))
+        assertEquals("a".repeat(79) + "क्ष", OfflineBackup.fileSafe("a".repeat(79) + "क्षa"))
+        assertEquals("a".repeat(80), OfflineBackup.fileSafe("a".repeat(80) + "क्षि"))
+    }
+
+    @Test
+    fun testRepeatedNamesCompareAsSwiftLowerCasesThem() {
+        // Swift's lowercased() maps each letter on its own: "ΟΔΟΣ" is "οδοσ" (Java's lowercase() gives "οδος").
+        val area = tempDir()
+        MBTiles(File(area, "imagery.mbtiles"), create = true).close()
+        val out = File(tempDir(), "Export")
+        fun names(vararg names: String): List<String> {
+            val used = mutableSetOf<String>()
+            return names.map { OfflineBackup.export(areaFolder = area, layers = layers, name = it, areaJSON = "{}", into = out,
+                                                    usedNames = used).single().name }
+        }
+        assertEquals(listOf("ΟΔΟΣ - satellite.mbtiles", "οδοσ (2) - satellite.mbtiles"), names("ΟΔΟΣ", "οδοσ"))
+        assertEquals(listOf("ΑΣ - satellite.mbtiles", "ας - satellite.mbtiles"), names("ΑΣ", "ας"))
+    }
 }

@@ -202,8 +202,9 @@ class OfflineManager(
         allowCellular: Boolean,
     ): OfflineArea {
         val area = OfflineArea(
-            id = UUID.randomUUID(), name = name, created = System.currentTimeMillis() / 1000.0, shape = shape,
-            roads = roads, preset = preset, maxZoom = maxZoom, allowCellular = allowCellular,
+            id = UUID.randomUUID(), name = name,
+            created = System.currentTimeMillis() / 1000.0 - OfflineArea.referenceDate, // Swift's Date(): since 2001
+            shape = shape, roads = roads, preset = preset, maxZoom = maxZoom, allowCellular = allowCellular,
             status = OfflineArea.Status.queued, failedTiles = 0, bytesOnDisk = 0, problem = null,
         )
         _areas.value = _areas.value + area
@@ -658,7 +659,7 @@ class OfflineManager(
             if (a.status == OfflineArea.Status.queued) return@update
             when (outcome) {
                 is DownloadOutcome.Completed -> {
-                    a.failedTiles = outcome.failed
+                    a.failedTiles = outcome.failed.toLong()
                     a.status = if (outcome.failed == 0) OfflineArea.Status.complete else OfflineArea.Status.incomplete
                     networkRetryDelay = 15.0
                 }

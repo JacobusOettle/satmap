@@ -95,6 +95,19 @@ class FoundationTests {
     }
 
     @Test
+    fun testZerosWithAnExponentReadAsSwiftsJSONDecoderReadsThem() {
+        // Swift's isTrueZero looks at the last one to three characters backwards, so it takes some zeros for numbers
+        // too small for a Double (and refuses them).
+        fun lat(number: String) = GeoPoint.fromJson(Json.parseToJsonElement("""{"lat":$number,"lon":2}""")).lat
+        for (refused in listOf("0e1", "0E1", "0.00e1", "-0.00e1", "0.000e1")) {
+            assertThrows(refused, Exception::class.java) { lat(refused) }
+        }
+        assertEquals(0.0, lat("0e10"), 0.0)
+        assertEquals(0.0, lat("0.0e1"), 0.0)
+        assertEquals((-0.0).toRawBits(), lat("-0e1").toRawBits())
+    }
+
+    @Test
     fun testJSONNumbersWrittenAsSwiftsJSONEncoderWritesThem() {
         // Swift's JSONEncoder writes these numbers so (its own key order varies).
         val shape = CoverageShape(

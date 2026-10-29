@@ -52,13 +52,24 @@ internal fun jsonDouble(json: JsonElement): Double {
     val p = json.jsonPrimitive
     require(!p.isString && jsonNumber.matches(p.content)) { "Not a number: $p" }
     val d = p.content.toDouble()
-    require(d.isFinite() && (d != 0.0 || p.content.substringBefore('e').substringBefore('E').none { it in '1'..'9' })) {
-        "Number ${p.content} is not representable"
-    }
+    require(d.isFinite() && (d != 0.0 || isTrueZero(p.content))) { "Number ${p.content} is not representable" }
     return d
 }
 
-private val jsonNumber = Regex("""-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
+/** Swift's `isTrueZero`, which tells a zero as written ("0", "-0.0", "0e5") from a number too small for a `Double`:
+ *  the first digit 1-9 or exponent mark decides, looking four characters at a time from the start and then at the
+ *  last one to three characters from the end backwards, as Swift does (so it takes "0e1" as too small, but not
+ *  "0e10"). */
+private fun isTrueZero(s: String): Boolean {
+    val chunks = s.length / 4 * 4
+    for (k in (0 until chunks) + (s.length - 1 downTo chunks)) {
+        if (s[k] in '1'..'9') return false
+        if (s[k] == 'e' || s[k] == 'E') return true
+    }
+    return true
+}
+
+internal val jsonNumber = Regex("""-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?""")
 
 /** A Double as Swift's JSONEncoder writes it: its `description` without a trailing ".0"
  *  ("150", "0.000123", "1e-07", "1.2345678901234568e+17", "-0"). */

@@ -522,7 +522,7 @@ class OfflineManagerTest {
         val iphone = String(OfflineBackup.inspect(copy).areaJSON, Charsets.UTF_8)
         copy.delete()
         val stopped = OfflineArea(
-            id = UUID.randomUUID(), name = "Stopped", created = 1_761_000_000.0, shape = farm, maxZoom = 18,
+            id = UUID.randomUUID(), name = "Stopped", created = 1_761_000_000.0 - OfflineArea.referenceDate, shape = farm, maxZoom = 18,
             allowCellular = true, status = Status.downloading, failedTiles = 0, bytesOnDisk = 12_345,
         )
         File(AppPaths.offline, "areas.json").writeText("[$iphone,${stopped.toJson()}]")
@@ -627,7 +627,7 @@ class OfflineManagerTest {
     fun sizesAreMeasuredAgainAndSavedOnce() {
         // An area whose saved size is out of date (a restore, a copy from the iPhone).
         val stale = OfflineArea(
-            id = UUID.randomUUID(), name = "A", created = 1_761_000_000.0, shape = farm, maxZoom = 16,
+            id = UUID.randomUUID(), name = "A", created = 1_761_000_000.0 - OfflineArea.referenceDate, shape = farm, maxZoom = 16,
             allowCellular = false, status = Status.complete, failedTiles = 0, bytesOnDisk = 2_345_678_901,
         )
         File(AppPaths.offline, "areas.json").writeText("[${stale.toJson()}]")

@@ -59,6 +59,81 @@ class BackupCompatibilityTests {
     }
 
     @Test
+    fun testCreatedIsWrittenBackAsTheIPhoneWroteIt() {
+        // Kept as Swift's Date keeps it, in seconds since 2001, so restoring an iPhone backup and writing it again
+        // changes no digit (in seconds since 1970 it moved by 2^-23 s: 756995516.654808, 0.10000002384185791).
+        for (created in listOf("756995516.6548079", "0.1", "783388800", "1e-07", "-0")) {
+            val text = BackupFixture.area.toJson().toString().replace(""""created":783388800""", """"created":$created""")
+            val written = OfflineArea.decode(text).toJson().toString()
+            assertEquals(created, written.substringAfter(""""created":""").substringBefore(","))
+        }
+        assertEquals(783388800.0, BackupFixture.area.created, 0.0)
+    }
+
+    @Test
+    fun testAndroidFixtureIsWhatExportWrites() {
+        // Numbers as Swift's JSONEncoder writes them ("bufferMeters":150, as in the iPhone's fixture), not "150.0".
+        for (name in listOf("Fixture farm - satellite.mbtiles", "Fixture farm - elevation.mbtiles")) {
+            val copy = File(tempDir(), "copy.mbtiles")
+            File(System.getProperty("satmap.fixtures"), "backup/android/$name").copyTo(copy)
+            val json = String(OfflineBackup.inspect(copy).areaJSON, Charsets.UTF_8)
+            assertEquals(name, BackupFixture.area.toJson().toString(), json)
+            assertTrue(json, json.contains(""""bufferMeters":150}"""))
+        }
+    }
+
+    @Test
+    fun testAreaJSONTextIsReadAsTheIPhoneReadsIt() {
+        // Each result is Swift's JSONDecoder's for the same text.
+        val json = BackupFixture.area.toJson().toString()
+        fun with(old: String, new: String) = json.replace(old, new).also { assertTrue(old, it != json) }
+        fun refused(text: String) = assertThrows(text, Exception::class.java) { OfflineArea.decode(text) }
+        assertEquals(BackupFixture.area, OfflineArea.decode(json))
+        // One byte order mark, trailing commas, and of repeated keys the first.
+        assertEquals(BackupFixture.area, OfflineArea.decode("\uFEFF" + json))
+        refused("\uFEFF\uFEFF" + json)
+        assertEquals(BackupFixture.area, OfflineArea.decode(with(""""lon":18.9312}]]""", """"lon":18.9312},],]""").dropLast(1) + ",}"))
+        refused(with(""""lines":[]""", """"lines":[,]"""))
+        assertEquals(18, OfflineArea.decode(with(""""maxZoom":18""", """"maxZoom":18,"maxZoom":19""")).maxZoom)
+        refused(with(""""maxZoom":18""", """"maxZoom":"x","maxZoom":18"""))
+        // No number or boolean written as a string, nor a number a Double can't hold.
+        for ((old, new) in listOf(""""created":783388800""" to """"created":"783388800"""", """"allowCellular":false""" to """"allowCellular":"false"""",
+                                  """"bufferMeters":150""" to """"bufferMeters":"150"""", """"lat":-33.9245""" to """"lat":"-33.9245"""",
+                                  """"maxZoom":18""" to """"isTrack":"true","maxZoom":18""", """"created":783388800""" to """"created":1e400""",
+                                  """"maxZoom":18""" to """"maxZoom":018""", """"maxZoom":18""" to """"maxZoom":+18""",
+                                  """"allowCellular":false""" to """"allowCellular":FALSE""", """"name":"Fixture farm"""" to """"name":"\ud800"""")) {
+            refused(with(old, new))
+            assertThrows(new, Exception::class.java) { OfflineArea.fromJson(Json.parseToJsonElement(with(old, new))) }
+        }
+        refused(with("Fixture farm", "Fixture\tfarm")) // a raw tab (kotlinx's parser reads it as "\t")
+        // A value that isn't read is checked only as far as Swift's scan checks it: words and nesting, not strings or numbers.
+        for (value in listOf("018", "1e400", "\"a\tb\"", "\"\\ud800\"", "{\"a\tb\":1}", "[".repeat(511) + "]".repeat(511))) {
+            assertEquals(value, BackupFixture.area, OfflineArea.decode(with(""""maxZoom":18""", """"zz":$value,"maxZoom":18""")))
+        }
+        for (value in listOf("NaN", "TRUE", "tru", "+1", ".5", "\"\\u12\"", "[".repeat(512) + "]".repeat(512))) {
+            refused(with(""""maxZoom":18""", """"zz":$value,"maxZoom":18"""))
+        }
+        // Whole numbers: digits, or a Double that is whole (below 2^53), or else Foundation's Decimal.
+        fun read(old: String, new: String) = OfflineArea.decode(with(old, new))
+        assertEquals(18, read(""""maxZoom":18""", """"maxZoom":18.000000000000001""").maxZoom)
+        assertEquals(18, read(""""maxZoom":18""", """"maxZoom":1.8e1""").maxZoom)
+        assertEquals(0L, read(""""failedTiles":0""", """"failedTiles":1e-400""").failedTiles)
+        refused(with(""""maxZoom":18""", """"maxZoom":18.5"""))
+        assertEquals(9_007_199_254_740_993L, read(""""bytesOnDisk":2345678901""", """"bytesOnDisk":9007199254740993.0""").bytesOnDisk)
+        assertEquals(Long.MAX_VALUE, read(""""bytesOnDisk":2345678901""", """"bytesOnDisk":9223372036854775807""").bytesOnDisk)
+        refused(with(""""bytesOnDisk":2345678901""", """"bytesOnDisk":9223372036854775807.0"""))
+    }
+
+    @Test
+    fun testCountsBeyondAnIntAreNotWrapped() {
+        // Swift's Int is 64 bits: failedTiles 2147483648 is read as it is. A zoom past an Int is refused (the iPhone
+        // keeps it, but no zoom is that deep), not wrapped round to zoom 18.
+        val json = BackupFixture.area.toJson().toString()
+        assertEquals(2_147_483_648L, OfflineArea.decode(json.replace(""""failedTiles":0""", """"failedTiles":2147483648""")).failedTiles)
+        assertThrows(Exception::class.java) { OfflineArea.decode(json.replace(""""maxZoom":18""", """"maxZoom":4294967314""")) }
+    }
+
+    @Test
     fun testReadsBackupsMadeOnTheIPhone() {
         checkBackup(folder = "iphone")
     }
@@ -143,7 +218,7 @@ object BackupFixture {
     val area = OfflineArea(
         id = UUID.fromString("6F1E2D3C-4B5A-4978-8695-A4B3C2D1E0F9"),
         name = "Fixture farm",
-        created = 1_761_696_000.0,
+        created = 1_761_696_000.0 - OfflineArea.referenceDate, // Swift's Date(timeIntervalSince1970: 1_761_696_000)
         shape = CoverageShape(polygons = listOf(listOf(GeoPoint(lat = -33.9245, lon = 18.9232), GeoPoint(lat = -33.9201, lon = 18.9302),
                                                        GeoPoint(lat = -33.9263, lon = 18.9355), GeoPoint(lat = -33.9301, lon = 18.9268))),
                               lines = emptyList(), points = listOf(GeoPoint(lat = -33.9175, lon = 18.924)), bufferMeters = 150.0),

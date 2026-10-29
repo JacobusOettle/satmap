@@ -174,7 +174,7 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
         try {
             s.bindText(1, name)
             if (s.step() != SqlResult.ROW) return null
-            s.columnText(0)
+            s.columnText(0)?.substringBefore('\u0000') // up to a NUL, as Swift's String(cString:)
         } finally {
             s.reset()
         }

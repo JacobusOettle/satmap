@@ -38,4 +38,20 @@ class StorageTests {
         r.close()
         assertThrows(Exception::class.java) { MBTiles(File(dir, "nope.mbtiles"), create = false) }
     }
+
+    @Test
+    fun testMetadataEndsAtANul() {
+        // Swift reads a value as a C string (String(cString:)), which ends at the first NUL.
+        val url = File(tempDir(), "t.mbtiles")
+        val w = MBTiles(url, create = true)
+        w.setMetadata(mapOf("k" to "a\u0000b", OfflineBackup.layerKey to "imag\u0000ery",
+                            OfflineBackup.areaKey to "{\"a\":1}\u0000tail"))
+        w.close()
+        val r = MBTiles(url, create = false)
+        assertEquals("a", r.metadata("k"))
+        r.close()
+        val contents = OfflineBackup.inspect(url)
+        assertEquals("imag", contents.layerKey)
+        assertEquals("{\"a\":1}", String(contents.areaJSON, Charsets.UTF_8))
+    }
 }
