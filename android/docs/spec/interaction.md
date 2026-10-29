@@ -393,8 +393,8 @@ Sources are `org.maplibre.android.style.sources.GeoJsonSource`. They are created
 | `kml/<uuid>/names` | Symbol | `kml/<uuid>/labels` | filter `eq(get("kind"), "name")`; see §2.4; inserted `addLayerBelow(…, "aviation-rings")` |
 | `aviation-rings` | Symbol | `aviation` | §2.9 |
 | `aviation` | Symbol | `aviation` | §2.9 |
-| `kml/<uuid>/points` | Symbol | `kml/<uuid>/labels` | filter `eq(get("kind"), "point")`; inserted `addLayerBelow(…, "selected")` |
 | `selected` | Symbol | `selected` | `iconImage("selected")`, allow-overlap and ignore-placement true |
+| `kml/<uuid>/points` | Symbol | `kml/<uuid>/labels` | filter `eq(get("kind"), "point")`; inserted `addLayerBelow(…, "measure-markers")`, over the selection ring: a tapped point's dot covers its white centre, as on the iPhone (screenshot 24) |
 | `measure-markers` | Symbol | `measure-points` | `iconImage("measure-marker")`, `iconAllowOverlap(true)`, `iconIgnorePlacement(false)`, `iconPadding(5f)` |
 | `measure-letters` | Symbol | `measure-points` | filter `has("letter")`; `iconImage(get("letter"))`, `iconAnchor(ICON_ANCHOR_TOP_LEFT)`, `iconOffset(arrayOf(3f, -29f))`, allow-overlap and ignore-placement true |
 | `user-arrow` | Symbol | `user` | filter `has("heading")`; `iconImage(get("arrow"))`, `iconRotate(get("heading"))`, `iconRotationAlignment(ICON_ROTATION_ALIGNMENT_MAP)`, allow-overlap and ignore-placement true |

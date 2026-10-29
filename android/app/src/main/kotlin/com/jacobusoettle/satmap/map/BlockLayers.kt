@@ -131,7 +131,9 @@ class BlockLayers(private val map: MapLibreMap, private val style: Style, privat
         style.addLayerBelow(layers.fill, MapIds.TRACK)
         style.addLayerBelow(layers.line, MapIds.TRACK)
         style.addLayerBelow(layers.names, MapIds.AVIATION_RINGS)
-        style.addLayerBelow(layers.points, MapIds.SELECTED)
+        // Over the selection ring, as on the iPhone: MapKit raises a tapped point's own view to the ring's height,
+        // and draws its dot and name on top (iPhone screenshot 24).
+        style.addLayerBelow(layers.points, MapIds.MEASURE_MARKERS)
         shown[id] = Shown(d.points, d.images.keys.toList())
         published()
         onChanged?.invoke()

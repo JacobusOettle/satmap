@@ -138,7 +138,8 @@ object MapStyle {
     fun empty(): FeatureCollection = FeatureCollection.fromFeatures(emptyList<Feature>())
 
     /** The fixed overlay layers in stack order, each made only when it is added. The per-file KML layers go in
-     *  between: fills and lines below `track`, names below `aviation-rings`, points below `selected`. */
+     *  between: fills and lines below `track`, names below `aviation-rings`, points below `measure-markers` (over
+     *  `selected`). */
     private val overlayLayers: List<Pair<String, () -> Layer>> = listOf(
         // The dotted track: zero-length dashes with round caps draw dots 2.25 line widths apart.
         MapIds.TRACK to { trackLine(MapIds.TRACK) },

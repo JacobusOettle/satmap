@@ -601,7 +601,7 @@ GeoJSON; `withSynchronousUpdate(true)` for `user`, `selected`, `measure`, `measu
 with `style.addLayer` in the order below, plus the base images.
 
 The phone and the car install the same stack, and unused sources stay empty. Per-file KML layers are inserted
-against the anchors `track`, `aviation-rings` and `selected`.
+against the anchors `track`, `aviation-rings` and `measure-markers`.
 
 | # | Layer id | Type | Source | Defined by | Notes |
 | --- | --- | --- | --- | --- | --- |
@@ -617,8 +617,8 @@ against the anchors `track`, `aviation-rings` and `selected`.
 | 10 | `kml/<uuid>/names` | symbol | `kml/<uuid>/labels` | MapStyle.kmlLayers | filter `kind == "name"`; `addLayerBelow(…, "aviation-rings")` |
 | 11 | `aviation-rings` | symbol | `aviation` | MapStyle | map-aligned runway rings, filtered to visible cards (§3.13) |
 | 12 | `aviation` | symbol | `aviation` | MapStyle | the cards, `symbolSortKey(get("key"))`, `SYMBOL_Z_ORDER_SOURCE` |
-| 13 | `kml/<uuid>/points` | symbol | `kml/<uuid>/labels` | MapStyle.kmlLayers | filter `kind == "point"`; `addLayerBelow(…, "selected")` |
-| 14 | `selected` | symbol | `selected` | MapStyle | allow-overlap and ignore-placement |
+| 13 | `selected` | symbol | `selected` | MapStyle | allow-overlap and ignore-placement |
+| 14 | `kml/<uuid>/points` | symbol | `kml/<uuid>/labels` | MapStyle.kmlLayers | filter `kind == "point"`; `addLayerBelow(…, "measure-markers")`: over the selection ring, whose white centre a tapped point's dot covers (iPhone screenshot 24: MapKit raises the tapped point's own view to the ring's height) |
 | 15 | `measure-markers`, `measure-letters` | symbol | `measure-points` | MapStyle | markers: allow-overlap, not ignore-placement; letters: both |
 | 16 | `user-arrow`, `user-dot` | symbol | `user` | MapStyle | the arrow is `iconRotationAlignment(MAP)`; the dot allows overlap and still takes placement |
 
