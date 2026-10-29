@@ -2,6 +2,7 @@ package com.jacobusoettle.satmap.app
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import com.jacobusoettle.satmap.car.CarMapController
 import com.jacobusoettle.satmap.core.MBTiles
 import com.jacobusoettle.satmap.map.ContourRenderer
 import com.jacobusoettle.satmap.map.ImageryMemory
@@ -62,7 +63,8 @@ class SatMapApplication : Application() {
         TileRepository.shared.trimMemory()
         ImageryMemory.trimMemory()
         ContourRenderer.shared.clearCaches()
-        // Each live map drops its own tile cache too (the car map's from M5).
+        // Each live map drops its own tile cache too: the phone's and the car's.
         (AppModel.shared.map as? MapController)?.onLowMemory()
+        (AppModel.shared.carMap as? CarMapController)?.onLowMemory()
     }
 }

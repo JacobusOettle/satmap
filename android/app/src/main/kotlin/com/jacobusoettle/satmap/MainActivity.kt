@@ -2,20 +2,21 @@ package com.jacobusoettle.satmap
 
 import android.content.Intent
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.core.content.IntentCompat
 import com.jacobusoettle.satmap.app.ActiveSheet
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.PermissionFlow
+import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.map.MapController
+import com.jacobusoettle.satmap.offline.BackupSharing
 import com.jacobusoettle.satmap.ui.MapScreen
 import com.jacobusoettle.satmap.ui.SatMapTheme
+import com.jacobusoettle.satmap.ui.SharePresenter
 
 /** iOS's `WindowGroup` (`SatMapApp.swift`): the map screen, edge to edge and always dark, with white status bar icons
  *  over the imagery. It creates the map and the permission flow, handles the files and actions other apps send, and
@@ -72,12 +73,9 @@ class MainActivity : ComponentActivity() {
     }
 
     /** KML/KMZ opened or shared from another app (zoom to it, or the Blocks sheet with the error), and "Save to a
-     *  folder" from the backup chooser. */
+     *  folder" from the backup chooser. Once handled, a recreated activity (its intent kept) doesn't handle it again. */
     private fun handleIncoming(intent: Intent) {
-        if (isReplay(intent)) return
-        // M4: BackupSharing.ACTION_SAVE_TO_FOLDER → SharePresenter.requestFolder().
-        // Once imported, a recreated activity (its intent kept) doesn't import the files again.
-        if (openFiles(AppModel.shared, intent)) setIntent(Intent(intent).setAction(null))
+        if (handleIncoming(AppModel.shared, intent)) setIntent(Intent(intent).setAction(null))
     }
 
     companion object {
@@ -86,11 +84,24 @@ class MainActivity : ComponentActivity() {
          *  imported, or its folder chosen, when it first came, and iOS hands each opened file to the app only once. */
         fun isReplay(intent: Intent): Boolean = intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0
 
+        /** What another app sent SatMap, as it first comes: the files of an "Open with" or a share (`openFiles`), and
+         *  "Save to a folder" chosen in the backup chooser, which asks for the folder (`ShareHost` shows the picker;
+         *  `SaveToFolderActivity` has asked already, and asking again changes nothing). False when there was nothing
+         *  to do. */
+        fun handleIncoming(model: AppModel, intent: Intent): Boolean {
+            if (isReplay(intent)) return false
+            if (intent.action == BackupSharing.ACTION_SAVE_TO_FOLDER) {
+                SharePresenter.requestFolder()
+                return true
+            }
+            return openFiles(model, intent)
+        }
+
         /** iOS's `onOpenURL`: each .kml/.kmz shared into the app ("Open with SatMap" / "Share to SatMap") is imported
          *  at once (the permission to read it lives with the activity that received it); the map then zooms to it, or
          *  the Blocks sheet shows why the import failed. False when the intent brings no file. */
         fun openFiles(model: AppModel, intent: Intent): Boolean {
-            val uris = incomingFiles(intent)
+            val uris = KMLLibrary.incomingUris(intent)
             for (uri in uris) {
                 model.kml.importFile(uri) { file ->
                     val b = file?.document?.bounds
@@ -102,17 +113,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
             return uris.isNotEmpty()
-        }
-
-        /** The files an "Open with" (`ACTION_VIEW`) or a share (`ACTION_SEND`, `ACTION_SEND_MULTIPLE`) brings: the
-         *  manifest's filters let in KML, KMZ and the types other apps give them (DESIGN.md D13); parsing turns away
-         *  anything else with "Couldn't import". */
-        fun incomingFiles(intent: Intent): List<Uri> = when (intent.action) {
-            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
-            Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
-            Intent.ACTION_SEND_MULTIPLE ->
-                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java).orEmpty().filterNotNull()
-            else -> emptyList()
         }
     }
 }

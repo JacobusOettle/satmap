@@ -16,8 +16,12 @@ import com.jacobusoettle.satmap.app.ElevationSource
 import com.jacobusoettle.satmap.app.MapHost
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
+import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.location.GpsFix
 import com.jacobusoettle.satmap.offline.AndroidSqlDriverTest
+import com.jacobusoettle.satmap.offline.BackupSharing
+import com.jacobusoettle.satmap.ui.SharePresenter
+import com.jacobusoettle.satmap.ui.ShareRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -32,8 +36,9 @@ import java.io.File
 import java.util.UUID
 
 /** KML and KMZ files opened with SatMap or shared to it (iOS's `onOpenURL`): which intents bring which files, and the
- *  map zooming to an imported file or the Blocks sheet showing why it couldn't be imported. (`MainActivity` itself
- *  can't start here: its map needs MapLibre's native code.) */
+ *  map zooming to an imported file or the Blocks sheet showing why it couldn't be imported; and "Save to a folder"
+ *  from the backup chooser asking for the folder. (`MainActivity` itself can't start here: its map needs MapLibre's
+ *  native code.) */
 @RunWith(AndroidJUnit4::class)
 class MainActivityTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
@@ -72,6 +77,7 @@ class MainActivityTest {
 
     @After
     fun tearDown() {
+        SharePresenter.finished()
         incoming.deleteRecursively()
         AppPaths.kml.deleteRecursively()
         AppPaths.kml.mkdirs()
@@ -96,27 +102,27 @@ class MainActivityTest {
     fun openWithAndShareBringTheirFiles() {
         val a = Uri.parse("content://com.example.files/document/Farm.kml")
         val b = Uri.parse("content://com.example.files/document/Dam.kmz")
-        assertEquals(listOf(a), MainActivity.incomingFiles(Intent(Intent.ACTION_VIEW, a)))
+        assertEquals(listOf(a), KMLLibrary.incomingUris(Intent(Intent.ACTION_VIEW, a)))
         assertEquals(
             listOf(a),
-            MainActivity.incomingFiles(
+            KMLLibrary.incomingUris(
                 Intent(Intent.ACTION_SEND).setType("application/octet-stream").putExtra(Intent.EXTRA_STREAM, a),
             ),
         )
         assertEquals(
             listOf(a, b),
-            MainActivity.incomingFiles(
+            KMLLibrary.incomingUris(
                 Intent(Intent.ACTION_SEND_MULTIPLE).setType("application/vnd.google-earth.kml+xml")
                     .putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(a, b)),
             ),
         )
         // The launcher, a share of text only, and an intent already handled bring none.
-        assertEquals(emptyList<Uri>(), MainActivity.incomingFiles(Intent(Intent.ACTION_MAIN)))
+        assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent(Intent.ACTION_MAIN)))
         assertEquals(
             emptyList<Uri>(),
-            MainActivity.incomingFiles(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "hi")),
+            KMLLibrary.incomingUris(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "hi")),
         )
-        assertEquals(emptyList<Uri>(), MainActivity.incomingFiles(Intent(Intent.ACTION_VIEW, a).setAction(null)))
+        assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent(Intent.ACTION_VIEW, a).setAction(null)))
     }
 
     @Test
@@ -134,7 +140,7 @@ class MainActivityTest {
         assertTrue(MainActivity.isReplay(replayedView))
         assertTrue(MainActivity.isReplay(replayedSend))
         // Its file is still in it (clearing the action didn't reach the task), so handleIncoming checks this first.
-        assertEquals(listOf(a), MainActivity.incomingFiles(replayedView))
+        assertEquals(listOf(a), KMLLibrary.incomingUris(replayedView))
         // The launcher reopened from Recents too, which has no files anyway.
         assertTrue(MainActivity.isReplay(Intent(Intent.ACTION_MAIN).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)))
     }
@@ -168,5 +174,49 @@ class MainActivityTest {
         assertTrue(map.zooms.isEmpty())
         // Nothing to open: nothing happens.
         assertFalse(MainActivity.openFiles(model, Intent(Intent.ACTION_MAIN)))
+    }
+
+    @Test
+    fun anIncomingFileIsImportedAsItFirstComesOnly() {
+        val model = AppModel(app, noHeights)
+        val map = FakeMap()
+        model.map = map
+        val view = Intent(Intent.ACTION_VIEW, shared("Farm.kml", fixture("blocks.kml")))
+        // Reopened from Recents: not again.
+        assertFalse(MainActivity.handleIncoming(model, Intent(view).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)))
+        assertTrue(MainActivity.handleIncoming(model, view))
+        waitFor { model.kml.files.value.isNotEmpty() && map.zooms.isNotEmpty() }
+        assertEquals(1, model.kml.files.value.size)
+        // The launcher brings nothing.
+        assertFalse(MainActivity.handleIncoming(model, Intent(Intent.ACTION_MAIN)))
+    }
+
+    @Test
+    fun saveToAFolderAsksForTheFolder() {
+        val model = AppModel(app, noHeights)
+        val chosen = mutableListOf<Uri>()
+        var ended = 0
+        // A backup shown in the chooser (a SatMap screen is started).
+        SharePresenter.attach()
+        try {
+            SharePresenter.present(ShareRequest(listOf(Uri.parse("content://x/a")), saveToFolder = { chosen += it }) { ended += 1 })
+            assertFalse(SharePresenter.folderWanted.value)
+            val save = Intent(BackupSharing.ACTION_SAVE_TO_FOLDER)
+            // Not from Recents.
+            assertFalse(MainActivity.handleIncoming(model, Intent(save).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)))
+            assertFalse(SharePresenter.folderWanted.value)
+            assertTrue(MainActivity.handleIncoming(model, save))
+            assertTrue(SharePresenter.folderWanted.value)
+            // Asked once until the picker closes.
+            assertTrue(MainActivity.handleIncoming(model, save))
+            assertTrue(SharePresenter.folderWanted.value)
+            assertEquals(0, ended)
+            assertTrue(model.kml.files.value.isEmpty())
+        } finally {
+            SharePresenter.finished()
+            SharePresenter.detach()
+        }
+        assertEquals(1, ended)
+        assertEquals(emptyList<Uri>(), chosen)
     }
 }

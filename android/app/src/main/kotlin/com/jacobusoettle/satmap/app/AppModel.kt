@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.SystemClock
 import androidx.annotation.VisibleForTesting
 import com.jacobusoettle.satmap.core.Aviation
+import com.jacobusoettle.satmap.core.AviationIndex
 import com.jacobusoettle.satmap.core.AviationPoint
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DistanceUnit
@@ -395,6 +396,10 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     private val _droneReport = MutableStateFlow(DroneReport())
     val droneReport: StateFlow<DroneReport> = _droneReport.asStateFlow()
 
+    /** Where drone mode's places come from: `AviationStore.shared`, read when first needed. Tests give their own. */
+    @VisibleForTesting
+    internal var aviationIndex: () -> AviationIndex? = { AviationStore.shared.index }
+
     private val _measure = MutableStateFlow<MeasureMode>(MeasureMode.Off)
     val measure: StateFlow<MeasureMode> = _measure.asStateFlow()
 
@@ -603,7 +608,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
             if (_droneReport.value != DroneReport()) _droneReport.value = DroneReport()
             return
         }
-        val index = AviationStore.shared.index
+        val index = aviationIndex()
         if (index == null) {
             AviationStore.shared.load(app) { updateDroneReport() }
             return
@@ -854,36 +859,52 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         userLookup.set(loc.point)
     }
 
-    // Offline areas (M4)
+    // Offline areas
 
     fun startDrawingArea() {
-        // M4: sheet = null, draft cleared, following = false, lassoActive = true, isDrawingArea = true.
+        setSheet(null)
+        setDraftArea(null)
+        setFollowing(false)
+        setLassoActive(true)
+        _isDrawingArea.value = true
     }
 
     fun finishDrawing(ring: List<GeoPoint>) {
-        // M4: the drawn loop becomes the draft (fewer than 3 points: none).
+        setDraftArea(if (ring.size >= 3) ring else null)
     }
 
     fun cancelDrawing() {
-        // M4: isDrawingArea = false, draft cleared.
+        _isDrawingArea.value = false
+        setDraftArea(null)
     }
 
     fun confirmDrawnArea() {
-        // M4: pendingArea = PendingArea("Area <count + 1>", CoverageShape(polygons = [draft])).
+        val ring = _draftArea.value ?: return
+        _isDrawingArea.value = false
+        setPendingArea(PendingArea(name = "Area ${offline.areas.value.size + 1}", shape = CoverageShape(polygons = listOf(ring))))
+    }
+
+    /** Offline area around every block, line and point in a KML file (with a 150 m margin). */
+    fun prepareArea(from: KMLLibrary.File) {
+        setSheet(null)
+        setPendingArea(PendingArea(name = from.name, shape = from.document.coverageShape(bufferMeters = 150.0)))
     }
 
     /** `roads` or `preset`: download satellite imagery only along these roads (or a road set shipped with the app). */
-    fun startDownload(area: PendingArea, roads: List<List<GeoPoint>>?, preset: String?, maxZoom: Int, allowCellular: Boolean) {
-        // M4: offline.add(...), pendingArea and draft cleared.
+    fun startDownload(area: PendingArea, roads: List<List<GeoPoint>>?, preset: String? = null, maxZoom: Int, allowCellular: Boolean) {
+        offline.add(name = area.name, shape = area.shape, roads = roads, preset = preset, maxZoom = maxZoom, allowCellular = allowCellular)
+        setPendingArea(null)
+        setDraftArea(null)
     }
 
     /** "Where I've been": imagery along the recorded track, added to (or creating) the track area. */
     fun startTrackDownload(name: String, lines: List<List<GeoPoint>>, maxZoom: Int, allowCellular: Boolean) {
-        // M4: offline.updateTrackArea(...).
+        offline.updateTrackArea(name = name, lines = lines, maxZoom = maxZoom, allowCellular = allowCellular)
     }
 
     fun discardPendingArea() {
-        // M4: pendingArea = null, draft cleared.
+        setPendingArea(null)
+        setDraftArea(null)
     }
 
     /** Re-reads terrainMode, distanceUnit and heightUnit after `Defaults.setLaunchArguments`, without writing them

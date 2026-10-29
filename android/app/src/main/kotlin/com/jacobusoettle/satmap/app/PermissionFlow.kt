@@ -52,7 +52,11 @@ class PermissionFlow(private val activity: ComponentActivity, private val record
         }
     }
 
-    /** Without a step detector (emulators, some phones) the permission would serve nothing: the GPS checks remain. */
-    private fun stepDetectorPresent(): Boolean =
-        activity.getSystemService(SensorManager::class.java)?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) != null
+    /** Without a step detector (emulators, some phones) the permission would serve nothing: the GPS checks remain. The
+     *  wake-up one counts too, which the recorder prefers (a phone may have only that). */
+    private fun stepDetectorPresent(): Boolean {
+        val sensors = activity.getSystemService(SensorManager::class.java) ?: return false
+        return sensors.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true) != null ||
+            sensors.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR) != null
+    }
 }

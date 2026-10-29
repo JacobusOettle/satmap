@@ -99,6 +99,23 @@ class PermissionFlowTest {
     }
 
     @Test
+    fun allowingMotionStartsCountingStepsAtOnce() {
+        val sensors = app.getSystemService(SensorManager::class.java)
+        // This phone has only the wake-up kind.
+        shadowOf(sensors).addSensor(SensorBuilder.newBuilder().setType(Sensor.TYPE_STEP_DETECTOR).setWakeUpFlag(true).build())
+        shadowOf(app).grantPermissions(fine, coarse)
+        val recorder = LocationRecorder(app)
+        process.currentState = Lifecycle.State.RESUMED // recording
+        val (controller, flow) = activity(recorder)
+        flow.next()
+        val motion = shadowOf(controller.get()).lastRequestedPermission
+        assertEquals(listOf(Manifest.permission.ACTIVITY_RECOGNITION), motion.requestedPermissions.toList())
+        assertEquals(0, shadowOf(sensors).listeners.size)
+        answer(controller.get(), granted = true)
+        assertEquals(1, shadowOf(sensors).listeners.size)
+    }
+
+    @Test
     fun noMotionQuestionWithoutAStepDetector() {
         shadowOf(app).grantPermissions(fine, coarse)
         val recorder = LocationRecorder(app)

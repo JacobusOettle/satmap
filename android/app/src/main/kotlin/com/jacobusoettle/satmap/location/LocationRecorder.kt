@@ -157,13 +157,25 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     private var searchingSince = now()
     private val stationaryTimer = WakeTimer(context, "stationary") { stationaryTick() }
 
-    // Motion: significant motion (no permission needed); the step detector comes in M5 (DESIGN.md §5.1). Without the
-    // sensor the GPS peeks and coarse jumps alone notice movement, as on an iPhone without motion permission.
+    // Motion (iOS: the motion coprocessor's activity): significant motion (no permission needed) and the step detector
+    // (with ACTIVITY_RECOGNITION). Without the sensors, or without the permission, the GPS peeks and coarse jumps alone
+    // notice movement, as on an iPhone without motion permission.
     private val significantMotion: Sensor? = sensors?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
     private var significantMotionArmed = false
     private var lastSignificantMotionAt: Double? = null
     private var motionMovingSince: Double? = null
-    private val pendingMotionWake = WakeTimer(context, "motion") {}
+
+    /** The wake-up step detector where there is one (it is delivered while the CPU sleeps), else the plain one. */
+    private val stepDetector: Sensor? =
+        sensors?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR, true) ?: sensors?.getDefaultSensor(Sensor.TYPE_STEP_DETECTOR)
+    private var stepsRegistered = false
+
+    /** The steps of the last 6 s, and the last step. */
+    private val recentSteps = ArrayDeque<Double>()
+    private var lastStepAt: Double? = null
+
+    /** A few steps while asleep: wake in 6 s if the steps go on (iOS: medium confidence, waiting for a contradiction). */
+    private val pendingMotionWake = WakeTimer(context, "motion") { pendingMotionWakeFired() }
 
     private val significantMotionListener = object : TriggerEventListener() {
         override fun onTrigger(event: TriggerEvent) {
@@ -173,6 +185,16 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         }
     }
 
+    private val stepListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            // When the step was taken (`timestamp` is on the elapsedRealtimeNanos clock): the plain step detector keeps
+            // the steps made while the CPU sleeps and hands them over together when it wakes.
+            stepDetected(min(now(), event.timestamp / 1e9))
+        }
+
+        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+    }
+
     // Background duty cycle.
     private var gpsResting = false
     private var acquiringSince = now()
@@ -180,6 +202,11 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
 
     // Sleep mode.
     private var sleepAnchor: GpsFix? = null
+
+    /** The moving episode (its `motionMovingSince`) going on when it fell asleep, which the 600 s veto stopped waiting
+     *  for; null when motion said not moving. */
+    private var sleepEpisode: Double? = null
+
     private var peeking = false
     private val peekTimer = WakeTimer(context, "peek") { startPeek() }
     private val peekEndTimer = WakeTimer(context, "peekEnd") { endPeek() }
@@ -623,6 +650,7 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     private fun enterSleep() {
         _power.value = Power.sleeping
         sleepAnchor = _location.value
+        sleepEpisode = if (motionSaysMoving(now())) motionMovingSince else null
         stationaryTimer.cancel()
         dutyTimer.cancel()
         gpsResting = false
@@ -715,12 +743,13 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     // Motion
 
     /** iOS's motion activity: significant motion (wake now) and the step detector (≥ 6 steps in 6 s: wake now; else
-     *  a wake after 6 s that needs 3 steps). Idempotent; called again after the activity-recognition result.
-     *  Significant motion needs no permission and is armed here; the step detector is M5 (DESIGN.md §5.1). */
+     *  a wake after 6 s that needs 3 steps). Idempotent; called again after the activity-recognition result (iOS asks
+     *  for motion permission here; `PermissionFlow` asks for it on Android). Significant motion needs no permission;
+     *  the step detector needs ACTIVITY_RECOGNITION from API 29. */
     fun startMotion() {
         if (!started) return
         armSignificantMotion()
-        // M5: register TYPE_STEP_DETECTOR once ACTIVITY_RECOGNITION is granted.
+        registerSteps()
     }
 
     /** Once: Android refuses a second request for an armed trigger. */
@@ -731,6 +760,15 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         significantMotionArmed = s.requestTriggerSensor(significantMotionListener, sensor)
     }
 
+    /** Once, and only with the permission (iOS: `startActivityUpdates` once authorised). */
+    private fun registerSteps() {
+        val s = sensors ?: return
+        val sensor = stepDetector ?: return
+        if (stepsRegistered) return
+        if (Build.VERSION.SDK_INT >= 29 && !granted(Manifest.permission.ACTIVITY_RECOGNITION)) return
+        stepsRegistered = s.registerListener(stepListener, sensor, SensorManager.SENSOR_DELAY_NORMAL, mainHandler)
+    }
+
     private fun stopMotion() {
         val s = sensors
         val sensor = significantMotion
@@ -738,7 +776,10 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
             s.cancelTriggerSensor(significantMotionListener, sensor)
         }
         significantMotionArmed = false
-        // M5: unregister the step listener.
+        if (stepsRegistered) s?.unregisterListener(stepListener)
+        stepsRegistered = false
+        recentSteps.clear()
+        lastStepAt = null
         lastSignificantMotionAt = null
         motionMovingSince = null
     }
@@ -749,9 +790,37 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         val now = now()
         noteMoving(now)
         lastSignificantMotionAt = now
-        if (_power.value == Power.sleeping) wake()
+        if (_power.value == Power.sleeping && !sameEpisodeAsSleep()) wake()
         // It disarms itself after firing.
         armSignificantMotion()
+    }
+
+    /** iOS: walking or running. Steady walking (6 steps in 6 s) is the high-confidence case: wake now. Fewer steps are
+     *  the medium one: wait 6 s for a contradiction (the steps stopping) before waking the GPS. Timed when they were
+     *  taken (`at`), as the coprocessor judges walking from the real step times: a batch handed over at once isn't
+     *  steady walking. */
+    private fun stepDetected(at: Double) {
+        if (!started) return
+        noteMoving(at)
+        lastStepAt = at
+        recentSteps.addLast(at)
+        trimSteps(at)
+        if (_power.value != Power.sleeping || sameEpisodeAsSleep()) return
+        if (recentSteps.size >= 6) {
+            wake()
+        } else if (!pendingMotionWake.scheduled) {
+            pendingMotionWake.schedule(6.0)
+        }
+    }
+
+    /** The pending wake: still walking (3 steps in the last 6 s) wakes; otherwise the steps stopped. */
+    private fun pendingMotionWakeFired() {
+        trimSteps(now())
+        if (recentSteps.size >= 3) wake()
+    }
+
+    private fun trimSteps(now: Double) {
+        while (recentSteps.isNotEmpty() && now - recentSteps.first() >= 6) recentSteps.removeFirst()
     }
 
     /** iOS: a translating activity of medium or high confidence. */
@@ -759,10 +828,21 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         if (!motionSaysMoving(now)) motionMovingSince = now
     }
 
-    /** Motion says we're walking/driving: significant motion in the last 60 s (M5: or a step in the last 15 s). Once
-     *  it doesn't, `motionMovingSince` is cleared (iOS: a stationary activity). */
+    /** Still the moving episode we fell asleep in, which `evaluateStationary` stopped waiting for after 600 s. iOS is
+     *  told an activity only when it or its confidence changes, so it gets nothing more while that walk or drive goes
+     *  on and stays asleep (the peeks still run). A new episode, once motion has said not moving, wakes. */
+    private fun sameEpisodeAsSleep(): Boolean {
+        val since = motionMovingSince ?: return false
+        return since == sleepEpisode
+    }
+
+    /** Motion says we're walking/driving: a step in the last 15 s, or significant motion in the last 60 s. Once it
+     *  doesn't, `motionMovingSince` is cleared (iOS: a stationary activity, which also ends the pending wake; here the
+     *  pending wake checks the steps itself when it fires). */
     private fun motionSaysMoving(now: Double): Boolean {
-        val moving = lastSignificantMotionAt?.let { now - it < 60 } ?: false
+        val stepping = lastStepAt?.let { now - it < 15 } ?: false
+        val significant = lastSignificantMotionAt?.let { now - it < 60 } ?: false
+        val moving = stepping || significant
         if (!moving) motionMovingSince = null
         return moving
     }
