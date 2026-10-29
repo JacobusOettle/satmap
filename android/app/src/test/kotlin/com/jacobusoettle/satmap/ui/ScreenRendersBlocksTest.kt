@@ -3,20 +3,10 @@ package com.jacobusoettle.satmap.ui
 import android.app.Application
 import android.net.Uri
 import androidx.activity.ComponentActivity
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performSemanticsAction
-import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.AppLifecycle
@@ -76,28 +66,6 @@ class ScreenRendersBlocksTest {
         AppPaths.kml.mkdirs()
     }
 
-    /** A sheet as SheetHost shows it: below the status bar, rounded at the top, over the dimmed map (black here). The
-     *  iPhone 16 Pro's status bar is 62 pt, so its sheets start 72 pt down (the screenshots' sheet edge is at y 108 of
-     *  1304). The window here has no navigation bar, so a list scrolled to its end would end lower than on the iPhone,
-     *  above its 34 pt home indicator: the sheet's content stops 34 dp above the bottom, as a navigation bar inset of
-     *  34 dp would make it. */
-    private fun sheet(content: @Composable () -> Unit) {
-        compose.setContent {
-            SatMapTheme {
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    Box(
-                        Modifier
-                            .padding(top = 72.dp)
-                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                            .background(SheetBackground)
-                            .fillMaxSize()
-                            .padding(bottom = 34.dp),
-                    ) { content() }
-                }
-            }
-        }
-    }
-
     /** The repository's root (the fixtures are in Tests/SatMapCoreTests/Fixtures). */
     private val repo = File(System.getProperty("satmap.fixtures")!!).parentFile!!.parentFile!!.parentFile!!
 
@@ -107,7 +75,7 @@ class ScreenRendersBlocksTest {
         val library = KMLLibrary(app, Dispatchers.Unconfined)
         val file = File(app.cacheDir, "Demo farm.kml")
         File(repo, "SatMapUITests/DemoFarm.kml").copyTo(file, overwrite = true)
-        sheet { BlocksSheet(model, library, close = {}) }
+        compose.setSheet { BlocksSheet(model, library, close = {}) }
         compose.runOnUiThread { library.importFile(Uri.fromFile(file)) }
         compose.waitForIdle()
         check(library.files.value.single().document.features.size == 8)
@@ -135,7 +103,7 @@ class ScreenRendersBlocksTest {
         File(AppPaths.offline, "areas.json").writeText("[${area.toJson()}]")
         val offline = OfflineManager(app, network = MutableStateFlow(Connectivity.State(isOnline = false, isExpensive = false)))
         val state = AreaDetailState()
-        sheet {
+        compose.setSheet {
             AreaDetailView(model, offline, area.id, state, back = ScreenChrome.Leading.Back("Offline maps") {})
         }
         // Once the screen has counted the deeper levels' tiles: the iPhone's counts (+ up to 45.8 MB for zoom 21,

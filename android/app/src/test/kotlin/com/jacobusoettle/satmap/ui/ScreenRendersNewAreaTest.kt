@@ -2,19 +2,9 @@ package com.jacobusoettle.satmap.ui
 
 import android.app.Application
 import androidx.activity.ComponentActivity
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performScrollToIndex
-import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.AppLifecycle
@@ -73,24 +63,6 @@ class ScreenRendersNewAreaTest {
         AppLifecycle.resetForTests()
     }
 
-    /** A sheet as SheetHost shows it: below the status bar (54 dp on the iPhone, with the 10 dp gap), rounded at the
-     *  top, over the dimmed map (black here). */
-    private fun sheet(content: @Composable () -> Unit) {
-        compose.setContent {
-            SatMapTheme {
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    Box(
-                        Modifier
-                            .padding(top = 64.dp)
-                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                            .background(SheetBackground)
-                            .fillMaxSize(),
-                    ) { content() }
-                }
-            }
-        }
-    }
-
     /** The free space the iPhone had ("41.72 GB"). */
     private val iPhoneFreeSpace = 41_720_000_000L
 
@@ -118,7 +90,7 @@ class ScreenRendersNewAreaTest {
     @Test
     fun downloadArea() {
         val state = counted(demoFarm("Demo farm"))
-        sheet { NewAreaView(model, state, back = back("Choose KML"), close = {}) }
+        compose.setSheet { NewAreaView(model, state, back = back("Choose KML"), close = {}) }
         compose.render("07-download-area")
     }
 
@@ -148,7 +120,7 @@ class ScreenRendersNewAreaTest {
         val roads = farmRoads()
         runBlocking { state.loadRoads(fetch = { roads }) }
         counted(state)
-        sheet { NewAreaView(model, state, back = back("Choose KML"), close = {}) }
+        compose.setSheet { NewAreaView(model, state, back = back("Choose KML"), close = {}) }
         scrollToDownload()
         compose.render("12-download-along-roads")
     }
@@ -158,7 +130,7 @@ class ScreenRendersNewAreaTest {
         val state = OfflineRoute.Preset(RoadPresets.kruger).state!!
         runBlocking { state.loadRoads() }
         counted(state)
-        sheet { PresetAreaView(model, state, back = back("Offline maps"), close = {}) }
+        compose.setSheet { PresetAreaView(model, state, back = back("Offline maps"), close = {}) }
         scrollToDownload()
         compose.render("17-kruger-roads")
     }
@@ -199,7 +171,7 @@ class ScreenRendersNewAreaTest {
             newArea = state
             worked = true
         }
-        sheet { TrackAreaView(model, screen, back = back("Offline maps"), close = {}) }
+        compose.setSheet { TrackAreaView(model, screen, back = back("Offline maps"), close = {}) }
         scrollToDownload()
         compose.render("20-where-ive-been")
     }
@@ -247,7 +219,7 @@ class ScreenRendersNewAreaTest {
         val screen = PlaceAreaState()
         runBlocking { screen.load(sabiSand, area = { Places.area(it, listOf(ring)) }) }
         counted(screen.newArea!!)
-        sheet { PlaceAreaView(model, sabiSand, screen, back = back("Find a place"), close = {}) }
+        compose.setSheet { PlaceAreaView(model, sabiSand, screen, back = back("Find a place"), close = {}) }
         compose.render("27-place-area")
     }
 }

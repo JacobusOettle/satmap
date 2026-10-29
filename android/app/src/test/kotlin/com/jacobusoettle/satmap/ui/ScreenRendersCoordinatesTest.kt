@@ -5,20 +5,10 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performTextInput
-import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.AppLifecycle
@@ -67,24 +57,6 @@ class ScreenRendersCoordinatesTest {
         AppLifecycle.resetForTests()
     }
 
-    /** A sheet as SheetHost shows it: below the status bar (54 dp on the iPhone, with the 10 dp gap), rounded at the
-     *  top, over the dimmed map (black here). */
-    private fun sheet(content: @Composable () -> Unit) {
-        compose.setContent {
-            SatMapTheme {
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    Box(
-                        Modifier
-                            .padding(top = 64.dp)
-                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                            .background(SheetBackground)
-                            .fillMaxSize(),
-                    ) { content() }
-                }
-            }
-        }
-    }
-
     /** Screenshot 21: your position known (the coordinate bar at the top of the iPhone screenshot,
      *  -33.924524, 18.923242, 573 m from the typed spot), text on the clipboard (Paste enabled), and
      *  33°55'10"S 18°55'20"E typed into the focused field. */
@@ -95,7 +67,7 @@ class ScreenRendersCoordinatesTest {
         )
         val clipboard = app.getSystemService(ClipboardManager::class.java)
         clipboard.setPrimaryClip(ClipData.newPlainText("Coordinates", "-33.924524, 18.923242"))
-        sheet { CoordinateEntryView(model, close = {}) }
+        compose.setSheet { CoordinateEntryView(model, close = {}) }
         compose.onNodeWithTag("coordinateText").performTextInput("33°55'10\"S 18°55'20\"E")
         compose.render("21-go-to-coordinates")
     }

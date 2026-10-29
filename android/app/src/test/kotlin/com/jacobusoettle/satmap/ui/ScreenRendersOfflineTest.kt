@@ -4,18 +4,9 @@ import android.app.Application
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.AppLifecycle
@@ -77,25 +68,6 @@ class ScreenRendersOfflineTest {
         AppLifecycle.resetForTests()
     }
 
-    /** A sheet as SheetHost shows it: below the status bar with the 10 dp gap, rounded at the top, over the dimmed map
-     *  (black here). The iPhone 16 Pro's status bar (safe area) is 62 pt: its sheets start 72 pt down (108 px in the
-     *  screenshots), so this one does too, and the two line up row for row. */
-    private fun sheet(content: @Composable () -> Unit) {
-        compose.setContent {
-            SatMapTheme {
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
-                    Box(
-                        Modifier
-                            .padding(top = 72.dp)
-                            .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp))
-                            .background(SheetBackground)
-                            .fillMaxSize(),
-                    ) { content() }
-                }
-            }
-        }
-    }
-
     /** Runs what the manager posted to the main thread, then lets the screen catch up. */
     private fun settle() {
         compose.runOnIdle { shadowOf(Looper.getMainLooper()).idle() }
@@ -144,7 +116,7 @@ class ScreenRendersOfflineTest {
 
     @Test
     fun offlineMaps() {
-        sheet { OfflineSheet(model, model.offline, model.kml, close = {}) }
+        compose.setSheet { OfflineSheet(model, model.offline, model.kml, close = {}) }
         compose.waitUntil(10_000) {
             compose.onAllNodes(hasText("Free space on this phone: ", substring = true))
                 .fetchSemanticsNodes().isNotEmpty()
@@ -157,7 +129,7 @@ class ScreenRendersOfflineTest {
         val demo = downloaded("Demo farm", 68_400_000, maxZoom = 22)
         assertEquals("68.4 MB", Format.bytes(demo.bytesOnDisk))
         val offline = managerWith(demo)
-        sheet { OfflineSheet(model, offline, model.kml, close = {}) }
+        compose.setSheet { OfflineSheet(model, offline, model.kml, close = {}) }
         settle()
         compose.onNodeWithText("Ready offline").assertExists()
         compose.render("09-offline-areas")
@@ -170,7 +142,7 @@ class ScreenRendersOfflineTest {
         val roads = downloaded("Farm roads", 19_100_000, maxZoom = 20, roads = road)
         assertEquals("19.1 MB", Format.bytes(roads.bytesOnDisk))
         val offline = managerWith(demo, roads)
-        sheet { OfflineSheet(model, offline, model.kml, close = {}) }
+        compose.setSheet { OfflineSheet(model, offline, model.kml, close = {}) }
         settle()
         compose.onNodeWithText("19.1 MB · up to zoom 20 · along roads").assertExists()
         compose.render("13-offline-along-roads")
@@ -203,7 +175,7 @@ class ScreenRendersOfflineTest {
             reserve("W229431517", "Sabi-Sands Game Reserve", 170),
         )
         val stack = RouteStack<OfflineRoute>(OfflineRoute.Root).apply { push(search) }
-        sheet { OfflineSheet(model, model.offline, model.kml, close = {}, stack = stack) }
+        compose.setSheet { OfflineSheet(model, model.offline, model.kml, close = {}, stack = stack) }
         compose.waitForIdle()
         compose.onNodeWithText("Mpumalanga, South Africa · up to 1,032 km²", substring = true).assertExists()
         compose.render("26-find-place")
