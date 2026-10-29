@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
+import android.content.Intent
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Bundle
@@ -26,6 +27,7 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -244,6 +246,40 @@ class KMLLibraryTest {
         assertEquals("Block plan 2024", f.name)
         assertTrue(f.fileName.endsWith(".kmz"))
         assertArrayEquals(file.readBytes(), File(AppPaths.kml, f.fileName).readBytes())
+    }
+
+    @Test
+    fun theFilesOtherAppsSend() {
+        val a = Uri.parse("content://com.example.files/a.kml")
+        val b = Uri.parse("content://com.example.files/b.kmz")
+        // "Open with".
+        assertEquals(listOf(a), KMLLibrary.incomingUris(Intent(Intent.ACTION_VIEW, a)))
+        // "Share" (WhatsApp, Gmail, Drive), one or several.
+        assertEquals(listOf(b), KMLLibrary.incomingUris(Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, b)))
+        assertEquals(listOf(a, b), KMLLibrary.incomingUris(
+            Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, arrayListOf(a, b))))
+        // Nothing else.
+        assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent(Intent.ACTION_SEND)))
+        assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent(Intent.ACTION_MAIN)))
+        assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent("com.jacobusoettle.satmap.SAVE_TO_FOLDER")))
+
+        // Shared and imported as the picker's files are, with the zoom or the error.
+        Provider.file = File(incoming, "attachment-2").apply { writeBytes(fixture("blocks.kmz")) }
+        Robolectric.buildContentProvider(Provider::class.java).create("com.example.share")
+        val library = KMLLibrary(app, now)
+        val shared = KMLLibrary.incomingUris(
+            Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, Uri.parse("content://com.example.share/2")))
+        assertNotNull(import(library, shared.single())?.document?.bounds)
+    }
+
+    @Test
+    fun thePickerOffersKMLKMZXMLAndZip() {
+        // iOS's kml, kmz, xml and zip, plus octet-stream, as many providers call .kml and .kmz (DESIGN.md D13).
+        assertEquals(
+            listOf("application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/xml", "text/xml",
+                   "application/zip", "application/octet-stream"),
+            KMLLibrary.pickerTypes.toList(),
+        )
     }
 
     /** Another app's files: "Block plan 2024.kmz", whatever the address. */

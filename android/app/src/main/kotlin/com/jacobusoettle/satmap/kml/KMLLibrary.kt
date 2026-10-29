@@ -1,9 +1,11 @@
 package com.jacobusoettle.satmap.kml
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.AtomicFile
+import androidx.core.content.IntentCompat
 import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.core.KMLDocument
@@ -79,6 +81,26 @@ class KMLLibrary(
     }
 
     data class File(val id: UUID, val name: String, val fileName: String, val document: KMLDocument, val isShown: Boolean)
+
+    companion object {
+        /** The types the import picker offers (Blocks +, several files at once): iOS's kml, kmz, xml and zip, plus
+         *  octet-stream, which many providers report for .kml and .kmz (DESIGN.md D13). */
+        val pickerTypes = arrayOf(
+            "application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/xml", "text/xml",
+            "application/zip", "application/octet-stream",
+        )
+
+        /** The files another app sends SatMap (iOS `onOpenURL`): "Open with" (`ACTION_VIEW`, its data) and "Share"
+         *  (`ACTION_SEND` and `ACTION_SEND_MULTIPLE`, their streams). Each goes to `importFile`. */
+        fun incomingUris(intent: Intent): List<Uri> = when (intent.action) {
+            Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+            Intent.ACTION_SEND -> listOfNotNull(IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java))
+            Intent.ACTION_SEND_MULTIPLE ->
+                IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)?.filterNotNull()
+                    ?: emptyList()
+            else -> emptyList()
+        }
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
