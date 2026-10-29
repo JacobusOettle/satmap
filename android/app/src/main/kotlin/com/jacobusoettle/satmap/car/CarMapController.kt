@@ -445,9 +445,11 @@ class CarMapController(private val carContext: CarContext, private val model: Ap
         /** How far across the map starts (iOS: a 1500 m × 1500 m region). */
         const val START_METERS = 1500.0
 
-        /** The zoom limits, standing in for MapKit's 150 m – 4,000 km camera distance. */
-        const val MIN_ZOOM = 3.0
-        const val MAX_ZOOM = 20.0
+        /** The zoom limits, standing in for MapKit's 150 m – 4,000 km camera distance. Just inside whole zooms, as the
+         *  camera rests on them zoomed all the way in or out: at a whole zoom itself the track's dots are half the
+         *  iPhone's size (`MapStyle.zoomScaled`), and the iPhone's camera, clamped by distance, isn't there either. */
+        const val MIN_ZOOM = 3.0 + 1e-3
+        const val MAX_ZOOM = 20.0 - 1e-3
 
         /** The point on the surface that becomes the middle of the map when it zooms from `fromZoom` to `toZoom` around
          *  `focus`, the point under the focus staying where it is (`centre`: where the middle of the map is now). */

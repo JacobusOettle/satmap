@@ -84,7 +84,7 @@ package owns the file (§7). Only the owner edits a file.
 | `MapStyle.kt` | — (Android only) | `MapIds` (every source and layer id) and `MapStyle`: the base style builder, every fixed overlay source and layer in stack order, and the per-file KML layer definitions (§3.8). | C |
 | `MapController.kt` | `MapController.swift` | `MapController` (implements `MapHost`), `MapContainerView` (touch routing, press detector), `AimLineView`, `@Composable MapViewRepresentable`. | C |
 | `MapAnnotations.kt` | `MapAnnotations.swift` | `MapImages` (every style bitmap), `MapColours`, `UserDotLayer`, `MeasureMarkerLayer`, `SelectedPointLayer`, `DraftAreaLayer`, `LassoView`, `KMLColor.argb()` / `.rgba()`. | C |
-| `DynamicOverlays.kt` | `DynamicOverlays.swift` | `TrackLayer` (finished and live parts), `MeasureLineLayer`. | C |
+| `DynamicOverlays.kt` | `DynamicOverlays.swift` | `TrackLayer` (finished and live parts), `MeasureLineLayer`, `DragLineView` (the measuring line over the map while a point is moved: iOS `MapController`'s `dragLine`). | C |
 | `BlockLayers.kt` | `BlockLayers.swift` | `BlockLayers`: per-file sources and layers; `shapes()` and `points` for the tap test. | C |
 | `AviationLayer.kt` | `AviationLayer.swift` | `AviationStore` (reads `Aviation.tsv`), `AviationLayer`, `AviationCard` (card bitmaps). | C |
 | `PointAdjuster.kt` | `PointAdjuster.swift` | `MovablePoint`, `PointAdjuster`, `LoupeFrame`, `LoupeView`. | C |
@@ -608,8 +608,8 @@ against the anchors `track`, `aviation-rings` and `selected`.
 | 4 | `contours-<gen>` | raster | `contours-<gen>` | DrawnImagery | |
 | 5 | `terrain-top` | background | — | MapStyle | always hidden |
 | 6 | `kml/<uuid>/fill`, `kml/<uuid>/line` | fill, line | `kml/<uuid>` | MapStyle.kmlLayers, inserted by BlockLayers | `addLayerBelow(…, "track")`; each newly shown file goes above the earlier ones |
-| 7 | `track`, `track-live` | line | `track`, `track-live` | MapStyle | `#00E6FF`, width 4, `lineDasharray(0, 2.25)`, round cap and join |
-| 8 | `measure-fill`, `measure-line` | fill, line | `measure` | MapStyle | pink 15 % fill; pink width 3, dashes `(10/3, 7/3)`, butt cap |
+| 7 | `track`, `track-live` | line | `track`, `track-live` | MapStyle | `#00E6FF`, width `zoomScaled(4f)`, `lineDasharray(0, 2.25)`, round cap and join |
+| 8 | `measure-fill`, `measure-line` | fill, line | `measure` | MapStyle | pink 15 % fill; pink width `zoomScaled(3f)`, dashes `(10/3, 7/3)`, butt cap |
 | 9 | `draft-fill`, `draft-line` | fill, line | `draft` | MapStyle | white 15 %; white 2.5, dashes `(3.2, 2.4)`, round |
 | 10 | `kml/<uuid>/names` | symbol | `kml/<uuid>/labels` | MapStyle.kmlLayers | filter `kind == "name"`; `addLayerBelow(…, "aviation-rings")` |
 | 11 | `aviation-rings` | symbol | `aviation` | MapStyle | map-aligned runway rings, filtered to visible cards (§3.13) |
@@ -619,11 +619,29 @@ against the anchors `track`, `aviation-rings` and `selected`.
 | 15 | `measure-markers`, `measure-letters` | symbol | `measure-points` | MapStyle | markers: allow-overlap, not ignore-placement; letters: both |
 | 16 | `user-arrow`, `user-dot` | symbol | `user` | MapStyle | the arrow is `iconRotationAlignment(MAP)`; the dot allows overlap and still takes placement |
 
+**Track and measuring line widths.** iOS draws both with its own renderers (`TrackRenderer`: 4 pt wide, dots 9 pt
+apart; `MeasureLineRenderer`: 3 pt wide, dashes 10 and 7 pt) into MapKit's tiles one whole zoom further in, shown
+shrunk by k = 2^(z − ⌈z⌉), ½ to 1: on screen the dots are 4k across and 9k apart, the measuring line 3k wide with
+dashes 10k and 7k. MapLibre lays out dashes in line widths at the whole zoom below (`floorwidth`, the width at
+⌊z⌋) and grows them with the map by 2^(z − ⌊z⌋). `MapStyle.zoomScaled(points)` is a width of `points`/2 at each whole
+zoom that grows exponentially (base 2) to just under `points` at the next (stops n and n + 0.999 for n = 0…25, past
+MapLibre's 25.5), so the width and the dashes are iOS's at every zoom in between. At a whole zoom itself iOS draws
+them twice as big (k = 1); the camera is practically never exactly there, and the car map's zoom limits, where it rests
+zoomed all the way in or out, are just inside whole zooms for this (3.001 and 19.999). The style's transitions are off,
+so the dash pattern doesn't cross-fade when the zoom crosses a whole number.
+
 **Collisions.** MapLibre places symbols from the top layer down, so this order gives MapKit's priorities:
 - required items: you, then the markers;
 - KML points (750), then aviation (450–740, interleaved by sort key), then block names (250).
 
-Every collidable layer has `iconAllowOverlap(false)`, `iconIgnorePlacement(false)` and `iconPadding(0f)`.
+Every collidable layer has `iconAllowOverlap(false)` and `iconIgnorePlacement(false)`. MapKit keeps room round each
+frame: two labels collide once their frames, each grown by about 5 pt on every side, overlap. This is an empirical
+fit to the iPhone screenshots (4.9 to 5.8 pt fit every shot; with no room no value fits), so the KML names and points
+and the measuring markers have `iconPadding(MapStyle.LABEL_PADDING)` (5 dp), and your dot 2 dp (its 28 dp image has
+3 dp round the 22 dp dot for the shadow). The aviation cards keep `iconPadding(0f)`: no screenshot shows two near each
+other, and their tap test goes by MapLibre's boxes, which include the padding. Between equal priorities MapKit places
+the label lower on the screen first; the names and points layers have `symbolSortKey(get("lat"))`, the label's
+latitude, so the southern one goes first (with the map turned this only approximates the screen's order).
 
 ### 3.9 What is a style layer and what is a View
 
@@ -632,6 +650,7 @@ Every collidable layer has `iconAllowOverlap(false)`, `iconIgnorePlacement(false
 | Your dot and compass arrow, the track, KML fills/lines/names/points, the measuring line/fill/markers/letters, the selected pin, the draft area, aviation cards and runways | GeoJSON sources plus style layers and **app-drawn images** | Fixed to the ground with no frame of lag. MapLibre's `LocationComponent` is **never** activated: its location engine would keep the GPS on. |
 | All map text | Bitmaps drawn by `MapImages`/`AviationCard` with `Canvas` and added with `Style.addImages` | The style has no `glyphs` URL. App-drawn text gives the iOS fonts, shadows, tabular digits and the card background (interaction spec §2.3). The bitmap density is the map's density. A changed image gets a new id; the generation before last is removed. |
 | Aim line | `AimLineView` in `MapContainerView` | One end is on the screen centre, and it follows a pan frame by frame. |
+| Drag line | `DragLineView` in `MapContainerView` (only while a measuring point is moved; the map's measuring line is empty meanwhile) | As iOS's `dragLine`: on the screen, so it keeps 3 dp and dashes of 10 and 7 dp at every zoom. It draws only the part within 20 dp of the view, dashed where it falls along the whole line: API 26–27's OpenGL renderer leaves out a path bigger than a GPU texture. |
 | Lasso | `LassoView` in `MapContainerView` (`GONE` unless drawing) | Drawn in screen space, and it takes the finger. |
 | ZoomScript squares | small Views in `MapContainerView` | Debug only. |
 | Crosshair, panels, buttons, legends, scale bar, compass | Compose over the map (§4) | As SwiftUI over MapKit. |
@@ -641,7 +660,7 @@ View tree:
 ```
 android.R.id.content
  ├─ ComposeView ─ MapScreen ─ MapViewRepresentable ─ AndroidView(controller.container)
- │                                   MapContainerView : FrameLayout { MapView, AimLineView, LassoView, ZoomScript squares }
+ │                                   MapContainerView : FrameLayout { MapView, AimLineView, DragLineView, LassoView, ZoomScript squares }
  │               ─ Crosshair, panels, controls, sheets (ModalBottomSheet = own window)
  └─ LoupeFrame (only while a point is moved)
 ```
@@ -664,7 +683,8 @@ then follows interaction spec §1.1:
 - It is ignored while drawing, while a point is moving, and for 0.4 s after one is let go.
 - It uses the coordinate recorded at finger-up, when the tap is within 1 dp of it.
 - Then, in order:
-  1. a KML point (26 dp, or on its name via `queryRenderedFeatures(RectF(spot ± 6dp), pointLayerIds)`);
+  1. a KML point (26 dp, or on its name via `queryRenderedFeatures(RectF(spot ± 1dp), pointLayerIds)`: MapLibre's
+     boxes have the 5 dp of room round them, so this is the frame enlarged by 6 dp);
   2. an aviation place (24 dp, visible cards only);
   3. close the shape (30 dp from A);
   4. otherwise `model.mapTapped(c)`.
@@ -678,10 +698,13 @@ When it fires:
 1. send the `MapView` an `ACTION_CANCEL`;
 2. switch off scroll, zoom, rotate, double-tap and quick-zoom gestures;
 3. `following = false`;
-4. `performHapticFeedback(LONG_PRESS)`;
-5. `adjuster.begin(...)`.
+4. for a measuring point, `dragLineShown = true`: the map's measuring line is emptied and `DragLineView` draws it
+   over the map, through the markers as they are (again on each move and each camera frame);
+5. `performHapticFeedback(LONG_PRESS)`;
+6. `adjuster.begin(...)`.
 
 While a point is moving, the container consumes every event. When it ends:
+- the drag line goes and the map's measuring line comes back, through where the point was left;
 - the gestures come back on;
 - `CLOCK_TICK` haptic;
 - taps are ignored for 400 ms.
@@ -849,10 +872,10 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 | Token | Value |
 | --- | --- |
 | Accent | `#FFBD29` |
-| SystemYellow | `#FFD60A` |
+| SystemYellow | `#FFD600` |
 | SystemGreen | `#30D158` |
-| SystemOrange | `#FF9F0A` |
-| SystemRed | `#FF453A` |
+| SystemOrange | `#FF9230` |
+| SystemRed | `#FF4245` |
 | SheetBackground | `#1C1C1E` |
 | SheetBarScrolled | `#2D2D2E` |
 | CellBackground | `#2C2C2E` |
@@ -865,6 +888,9 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 | YouColour | `#59DBFF` |
 | PinColour | `#FFB833` |
 
+  The system colours are iOS 26's dark ones, which the iPhone screenshots show (red `#FF4245` and yellow `#FFD600`
+  there, not iOS 18's `#FF453A` and `#FFD60A`; no screenshot shows orange). The map's blue, your dot, is
+  `MapColours.systemBlue`, `#0091FF`.
   The elevation ramp comes from core `ElevationColours.stops`.
 - **Over the map:**
   - **Pill:** black 65 %, `CircleShape`, padding 12 / 8.
@@ -1269,7 +1295,7 @@ class Connectivity private constructor(context: Context) {
     - `setStyle(MapStyle.builder(DrawnImagery(...)))` with the car screen's contour scale
       (`TileLevels.contourScale(pixelRatio)`), then `installOverlays`;
     - `BlockLayers`, `TrackLayer`, `UserDotLayer` and `AviationLayer`, bound to the same model flows as the phone (on `Dispatchers.Main`);
-    - zoom limits 3–20, which stand in for MapKit's 150 m – 4,000 km camera clamp.
+    - zoom limits 3.001–19.999, which stand in for MapKit's 150 m – 4,000 km camera clamp: just inside whole zooms, where the track's dots would be half the iPhone's size (§3.8).
   - **`onSurfaceDestroyed`:** `MapView` pause/stop/destroy, dismiss the presentation, release the display.
   - **Visible area:** `onVisibleAreaChanged` → `setPadding` (the car map only).
   - **Pan:** `onScroll` → `following = false`, `scrollBy(-dx, -dy)` (check the sign on the DHU).

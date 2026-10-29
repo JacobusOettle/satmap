@@ -113,6 +113,9 @@ class MapController(
      *  it, so it follows a pan frame by frame. */
     private val aimLine = AimLineView(activity)
 
+    /** While a measuring point is moved: the measuring line over the map (iOS's `dragLine`). */
+    private val dragLine = DragLineView(activity)
+
     /** Choosing an offline area: the finger draws a loop over the map (shown only while it does). */
     private val lasso = LassoView(activity).apply { visibility = View.GONE }
 
@@ -121,6 +124,7 @@ class MapController(
         val fill = ViewGroup.LayoutParams.MATCH_PARENT
         addView(mapView, FrameLayout.LayoutParams(fill, fill))
         addView(aimLine, FrameLayout.LayoutParams(fill, fill))
+        addView(dragLine, FrameLayout.LayoutParams(fill, fill))
         addView(lasso, FrameLayout.LayoutParams(fill, fill))
     }
 
@@ -159,6 +163,9 @@ class MapController(
     /** The point being moved and where it is now: the map shows it there, whatever the model says meanwhile (the model
      *  hears of it up to 15 times a second). */
     private var adjusting: Pair<MovablePoint, GeoPoint>? = null
+
+    /** A measuring point is being moved: its line is drawn over the map meanwhile (`updateDragLine`), not in it. */
+    private var dragLineShown = false
 
     /** The measuring mode the markers show, and its points as the map shows them (one may be being moved). */
     private var shownMeasure: MeasureMode = MeasureMode.Off
@@ -522,6 +529,7 @@ class MapController(
     private fun visibleRegionChanged() {
         val m = map ?: return
         updateAim()
+        if (dragLineShown) updateDragLine() // the map scrolls while a point is moved
         updateScale()
         aviation?.headingChanged()
         imagery?.visibleRegionChanged()
@@ -687,7 +695,9 @@ class MapController(
         val b = blocks ?: return null
         if (b.pointLayerIds.isEmpty()) return null // (no layers would ask every layer)
         val onName by lazy {
-            val near = RectF(spot.x - 6 * density, spot.y - 6 * density, spot.x + 6 * density, spot.y + 6 * density)
+            // Its frame enlarged by 6 dp: MapLibre's box has the labels' room round it already.
+            val r = (6 - MapStyle.LABEL_PADDING) * density
+            val near = RectF(spot.x - r, spot.y - r, spot.x + r, spot.y + r)
             m.queryRenderedFeatures(near, *b.pointLayerIds).mapNotNull { f ->
                 val file = f.getStringProperty("file") ?: return@mapNotNull null
                 val i = f.getNumberProperty("i") ?: return@mapNotNull null
@@ -735,6 +745,11 @@ class MapController(
         val (which, point) = movablePoint(spot) ?: return false
         gestures(m, on = false)
         model.setFollowing(false)
+        if (which is MovablePoint.Measure) {
+            dragLineShown = true
+            updateMeasureLine()
+            updateDragLine()
+        }
         container.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS) // iOS: a medium impact
         a.begin(which, point, rootPoint(spot.x, spot.y), loupeScene(point, which))
         return true
@@ -763,10 +778,13 @@ class MapController(
     private fun adjusted(which: MovablePoint, p: GeoPoint, done: Boolean) {
         adjusting = if (done) null else which to p
         when (which) {
-            is MovablePoint.Measure -> if (which.i in markers.indices) {
-                markers[which.i] = p
-                markerLayer?.update(markers)
-                updateMeasureLine()
+            is MovablePoint.Measure -> {
+                if (which.i in markers.indices) {
+                    markers[which.i] = p
+                    markerLayer?.update(markers)
+                }
+                if (done) dragLineShown = false
+                updateDragLine()
             }
             MovablePoint.Selected -> selectedLayer?.update(p)
         }
@@ -852,7 +870,21 @@ class MapController(
             }
             MeasureMode.Off, MeasureMode.Aiming -> {}
         }
+        if (dragLineShown) line = emptyList() // drawn over the map meanwhile (`updateDragLine`)
         measureLine?.set(line, closed)
+    }
+
+    /** The measuring line over the map while a point is moved: through the markers as they are now (from you, for a
+     *  single point; joined back and filled for a closed shape). */
+    private fun updateDragLine() {
+        val m = map
+        if (!dragLineShown || m == null) {
+            dragLine.show(null)
+            return
+        }
+        val line = DragLineView.points(markers, model.recorder.location.value?.point)
+        val closed = shownMeasure is MeasureMode.Closed && line.size >= 3
+        dragLine.show(DragLineView.Line(line.map { m.projection.toScreenLocation(LatLng(it.lat, it.lon)) }, closed))
     }
 
     // Lasso (choose an offline area)

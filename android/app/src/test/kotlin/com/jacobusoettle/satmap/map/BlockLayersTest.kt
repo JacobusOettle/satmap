@@ -168,8 +168,11 @@ class BlockLayersTest {
         assertEquals(52.0, f.getNumberProperty("w").toDouble(), 0.0)
         assertEquals(31.0, f.getNumberProperty("h").toDouble(), 0.0)
         assertEquals(Point.fromLngLat(18.924, -33.9175), f.geometry())
+        // The sort key: of two labels that collide, the southern (lower) one shows, as MapKit places them bottom up.
+        assertEquals(-33.9175, f.getNumberProperty("lat").toDouble(), 0.0)
         val name = BlockLayers.labelFeature(id, point.copy(isPoint = false), "x", 10f, 17f, null)
         assertEquals("name", name.getStringProperty("kind"))
+        assertEquals(-33.9175, name.getNumberProperty("lat").toDouble(), 0.0)
         assertFalse(name.hasProperty("i"))
     }
 

@@ -218,14 +218,15 @@ class BlockLayers(private val map: MapLibreMap, private val style: Style, privat
         }
 
         /** A label's point in the labels source: `kind` ("name" or "point", for the two layers), its image `img` and
-         *  that image's size in dp (`w`, `h`), its name, its file, and for a point `i`, its place in the file's
-         *  points. */
+         *  that image's size in dp (`w`, `h`), its latitude `lat` (the sort key: of two that collide, the southern one
+         *  shows), its name, its file, and for a point `i`, its place in the file's points. */
         fun labelFeature(file: UUID, label: Label, image: String, width: Float, height: Float, i: Int?): Feature =
             Feature.fromGeometry(GeoJsonPoint.fromLngLat(label.coordinate.lon, label.coordinate.lat)).apply {
                 addStringProperty("kind", if (label.isPoint) "point" else "name")
                 addStringProperty("img", image)
                 addNumberProperty("w", width)
                 addNumberProperty("h", height)
+                addNumberProperty("lat", label.coordinate.lat)
                 addStringProperty("name", label.title)
                 addStringProperty("file", file.toString())
                 if (i != null) addNumberProperty("i", i)

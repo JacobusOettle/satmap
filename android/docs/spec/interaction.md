@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | `MapController`, `MapContainerView`, `MapViewRepresentable` | `MapController.kt` | `MapController`, `MapContainerView` (a FrameLayout), `AimLineView` (a View), `MapViewHost` (a Composable wrapping `AndroidView`), `MapIds` (object holding source and layer ids) |
 | `BlockPolygons`/`BlockLines`/`DraftAreaPolygon`, the annotation classes, `UserDotView`, `MeasureMarkerView`, `SelectedPointView`, `BlockLabelView`, `LassoView`, `UIColor(kml:)` | `MapAnnotations.kt` | `MapImages` (an object that draws every style bitmap), `MapColours`, `UserDotLayer`, `MeasureMarkerLayer`, `SelectedPointLayer`, `DraftAreaLayer`, `LassoView`, `KMLColor.argb()` / `KMLColor.rgba()` |
-| `TrackOverlay`+`TrackRenderer`, `MeasureLineOverlay`+`MeasureLineRenderer` | `DynamicOverlays.kt` | `TrackLayer`, `MeasureLineLayer` |
+| `TrackOverlay`+`TrackRenderer`, `MeasureLineOverlay`+`MeasureLineRenderer`, `MapController`'s `dragLine` | `DynamicOverlays.kt` | `TrackLayer`, `MeasureLineLayer`, `DragLineView` (a View) |
 | `BlockLayers` | `BlockLayers.kt` | `BlockLayers` |
 | `AviationStore`, `AviationAnnotation`, `AviationLayer`, `AviationView` | `AviationLayer.kt` | `AviationStore`, `AviationLayer`, `AviationCard` (paints what `AviationView` drew) |
 | `MovablePoint`, `PointAdjuster`, `LoupeFrame`, `LoupeGlass`, `LoupeView` | `PointAdjuster.kt` | `MovablePoint` (a sealed interface with `Selected` and `Measure(i)`), `PointAdjuster`, `LoupeFrame`, `LoupeView` |
@@ -25,7 +25,7 @@
 - `MKMapPoint` becomes core `WebMercator.world()` units, where the world is 1×1 and an `MKMapPoint` equals world × 2²⁸.
 - `MKMapPointsPerMeterAtLatitude(lat)` becomes `1 / Geo.metersPerWorldUnit(lat)`.
 
-**Colours.** These are exact conversions of the Swift values. The app is always dark (`preferredColorScheme(.dark)`), so the system colours use their dark variants.
+**Colours.** These are exact conversions of the Swift values. The app is always dark (`preferredColorScheme(.dark)`), so the system colours use their dark variants, as iOS 26 gives them: the iPhone screenshots show blue `#0091FF` and red `#FF4245`, not iOS 18's `#0A84FF` and `#FF453A`.
 
 | Name | ARGB |
 | --- | --- |
@@ -35,9 +35,9 @@
 | track cyan (0, 0.9, 1) | `0xFF00E6FF` |
 | aviation "you" (0.35, 0.86, 1) | `0xFF59DBFF` |
 | aviation "pin" (1, 0.72, 0.2) | `0xFFFFB833` |
-| systemBlue (dark) | `0xFF0A84FF` |
+| systemBlue (dark) | `0xFF0091FF` |
 | systemGray | `0xFF8E8E93` |
-| crosshair red (`Color.red`, dark) | `0xFFFF453A` |
+| crosshair red (`Color.red`, dark; `SystemRed` in `ui/Theme.kt`) | `0xFFFF4245` |
 | block stroke default (white 0.95) | `0xF2FFFFFF` |
 | block fill default (white 0.07) | `0x12FFFFFF` |
 | label shadow (black 0.9) | `0xE6000000` |
@@ -105,7 +105,7 @@
 - **Appearing.** From scale 0.6 and alpha 0 to 1, with a 0.25 s spring, damping 0.75.
 
 **What the map controller does with each move:**
-- Updates the moved point on the map immediately: the measuring marker and the measuring line (or the pin).
+- Updates the moved point on the map immediately: the measuring marker (or the pin). While a measuring point moves, its line is drawn over the map instead of in it (the drag line, §1.6), through the markers as they are now, and redrawn on each move and each camera frame; the map's own line is empty until the finger lifts.
 - Updates `model.movePoint(which, p, done)` at most **15 times a second**, and always when `done`.
 - On `done`: haptic light impact. Re-enable the gestures. `tapsIgnoredUntil = now + 0.4 s`.
 
@@ -173,7 +173,7 @@
 
 ### 1.5 Dotted track
 
-A cyan (`#00E6FF`) line of dots: 4 dp diameter (width 4, zero-length dashes, round caps), spaced 9 dp apart along the line, with round joins. A point with `startsSegment` starts a new line. When `model.track` gets shorter, the track was cleared and is redrawn from scratch.
+A cyan (`#00E6FF`) line of dots: zero-length dashes with round caps, with round joins. iOS's renderer asks for dots 4 pt across, 9 pt apart, but MapKit draws it into tiles one whole zoom further in and shows those shrunk by k = 2^(z − ⌈z⌉) (½ to 1): on screen the dots are **4k across and 9k apart** (2 to 4 and 4.5 to 9 dp). Android matches that between whole zooms (§2.2, `zoomScaled`). A point with `startsSegment` starts a new line. When `model.track` gets shorter, the track was cleared and is redrawn from scratch.
 
 ### 1.6 Measuring
 
@@ -181,8 +181,9 @@ A cyan (`#00E6FF`) line of dots: 4 dp diameter (width 4, zero-length dashes, rou
   - `placed`: from A to you, only once your location is known.
   - `path`: A → B → C ….
   - `closed`: back to A, filled pink 15%.
-  - Paint: pink, width 3, dashes 10 on and 7 off, butt caps, continuous along the whole line.
+  - Paint: pink, width 3, dashes 10 on and 7 off, butt caps, continuous along the whole line, all at MapKit's tile scale as the track (§1.5): on screen **3k wide, dashes 10k and 7k**.
   - Nothing for `off` or `aiming`.
+- **Drag line** (while a measuring point is moved). The map's line is emptied and the line is drawn over the map instead, through the markers as they are now: from you for a single point, joined back to A and filled pink 15% for a closed shape. Pink, width 3 dp, dashes [10, 7] from its start, butt caps, mitred corners: on the screen, so the same at every zoom. Redrawn on each move and each camera frame; when the finger lifts it goes and the map's line comes back.
 - **Markers.** 30 × 30 dp: a pink ring (circle of radius 12, stroke 3, fill pink 25%) with a white centre dot of radius 3.
   - Labels ("A", "B", … "Z", "AA" …, from `MeasureMode.label`) only when there are ≥ 2 points.
   - Label box: 15 dp heavy white text, shadow black 90% offset (0, 1). Box at (+3, −29) from the marker centre, 34 × 18, left aligned, vertically centred.
@@ -304,6 +305,8 @@ Shown only while `measure == off` and `selectedPoint != null`.
 | Aviation | yes (frame) | 450–740 | default |
 | Block names | yes (frame) | 250 | default |
 
+MapKit keeps room round each frame: two collide once their frames, each grown by about **5 pt** on every side, overlap. Between equal priorities it places the label lower on the screen first, so of two colliding block names the lower one shows. Both are fitted to the iPhone screenshots (01, 03, 05/08, 10, 15, 24): 4.9 to 5.8 pt fit every shot; with no room, or with the labels placed in the file's order, nothing fits.
+
 All of these are above every line and fill. Lines and fills, bottom to top: imagery and contours, then blocks (by file, in the order they were shown), the track, the measuring line, the draft area.
 
 ### 1.12 Background and foreground
@@ -345,6 +348,7 @@ MainActivity content (android.R.id.content, a FrameLayout)
 MapContainerView : FrameLayout      // dispatchTouchEvent watches every touch
  ├─ org.maplibre.android.maps.MapView
  ├─ AimLineView : View              // not touchable
+ ├─ DragLineView : View             // not touchable; draws only while a measuring point is moved
  ├─ LassoView : View                // GONE unless the lasso is active
  └─ (ZoomScript squares)
 ```
@@ -365,6 +369,7 @@ It installs its overlays in the `Style.OnStyleLoaded` of the style the imagery s
 The following are Android Views because they are fixed to the screen or drawn per frame in screen space:
 - the crosshair (on the screen centre),
 - the aim line (one end at the screen centre, and it must follow a pan frame by frame, as on iOS),
+- the drag line (the measuring line while a point is moved: iOS draws it over the map, the same at every zoom),
 - the lasso (screen-space drawing),
 - the loupe (its own drawing, see §2.8).
 
@@ -379,10 +384,10 @@ Sources are `org.maplibre.android.style.sources.GeoJsonSource`. They are created
 | imagery, colours, contours | Raster | (imagery subsystem) | — |
 | `kml/<uuid>/fill` | Fill | `kml/<uuid>` | filter `eq(geometryType(), "Polygon")`; `fillColor(toColor(get("fill")))` |
 | `kml/<uuid>/line` | Line | `kml/<uuid>` | `lineColor(toColor(get("stroke")))`, `lineWidth(get("width"))`, `lineCap(LINE_CAP_ROUND)`, `lineJoin(LINE_JOIN_ROUND)`; inserted with `style.addLayerBelow(fill, MapIds.TRACK)` then `addLayerBelow(line, MapIds.TRACK)` |
-| `track` | Line | `track` (finished part) | `lineColor(0xFF00E6FF)`, `lineWidth(4f)`, `lineDasharray(arrayOf(0f, 2.25f))` (units of line width: 9 dp / 4), `lineCap(ROUND)`, `lineJoin(ROUND)` |
+| `track` | Line | `track` (finished part) | `lineColor(0xFF00E6FF)`, `lineWidth(MapStyle.zoomScaled(4f))`, `lineDasharray(arrayOf(0f, 2.25f))` (units of line width: 9 / 4), `lineCap(ROUND)`, `lineJoin(ROUND)` |
 | `track-live` | Line | `track-live` | same paint |
 | `measure-fill` | Fill | `measure` | filter Polygon; `fillColor(0x26FF2E66)` |
-| `measure-line` | Line | `measure` | filter LineString; `lineColor(0xFFFF2E66)`, `lineWidth(3f)`, `lineDasharray(arrayOf(10f/3, 7f/3))`, `lineCap(LINE_CAP_BUTT)` |
+| `measure-line` | Line | `measure` | filter LineString; `lineColor(0xFFFF2E66)`, `lineWidth(MapStyle.zoomScaled(3f))`, `lineDasharray(arrayOf(10f/3, 7f/3))`, `lineCap(LINE_CAP_BUTT)` |
 | `draft-fill` | Fill | `draft` | `fillColor(0x26FFFFFF)` |
 | `draft-line` | Line | `draft` | white, `lineWidth(2.5f)`, `lineDasharray(arrayOf(3.2f, 2.4f))`, round cap and join |
 | `kml/<uuid>/names` | Symbol | `kml/<uuid>/labels` | filter `eq(get("kind"), "name")`; see §2.4; inserted `addLayerBelow(…, "aviation-rings")` |
@@ -390,12 +395,14 @@ Sources are `org.maplibre.android.style.sources.GeoJsonSource`. They are created
 | `aviation` | Symbol | `aviation` | §2.9 |
 | `kml/<uuid>/points` | Symbol | `kml/<uuid>/labels` | filter `eq(get("kind"), "point")`; inserted `addLayerBelow(…, "selected")` |
 | `selected` | Symbol | `selected` | `iconImage("selected")`, allow-overlap and ignore-placement true |
-| `measure-markers` | Symbol | `measure-points` | `iconImage("measure-marker")`, `iconAllowOverlap(true)`, `iconIgnorePlacement(false)` |
+| `measure-markers` | Symbol | `measure-points` | `iconImage("measure-marker")`, `iconAllowOverlap(true)`, `iconIgnorePlacement(false)`, `iconPadding(5f)` |
 | `measure-letters` | Symbol | `measure-points` | filter `has("letter")`; `iconImage(get("letter"))`, `iconAnchor(ICON_ANCHOR_TOP_LEFT)`, `iconOffset(arrayOf(3f, -29f))`, allow-overlap and ignore-placement true |
 | `user-arrow` | Symbol | `user` | filter `has("heading")`; `iconImage(get("arrow"))`, `iconRotate(get("heading"))`, `iconRotationAlignment(ICON_ROTATION_ALIGNMENT_MAP)`, allow-overlap and ignore-placement true |
-| `user-dot` | Symbol | `user` | `iconImage(get("dot"))`, `iconAllowOverlap(true)`, `iconIgnorePlacement(false)` |
+| `user-dot` | Symbol | `user` | `iconImage(get("dot"))`, `iconAllowOverlap(true)`, `iconIgnorePlacement(false)`, `iconPadding(2f)` |
 
 The layers `track`, `aviation-rings` and `selected` always exist, even when empty. They are the anchors the per-file layers are inserted against. `MapIds` holds every id.
+
+**`MapStyle.zoomScaled(points)`**, the width of the track and the measuring line. iOS's renderers are drawn into MapKit's tiles one whole zoom further in and shown shrunk by k = 2^(z − ⌈z⌉) (§1.5). MapLibre lays out a line's dashes in units of its width at the whole zoom below (`floorwidth`, the width at ⌊z⌋; the line shader divides `a_linesofar` by it) and grows them with the map by 2^(z − ⌊z⌋). So the width is `interpolate(exponential(2f), zoom(), stop(n, points/2), stop(n + 0.999, points/2 · 2^0.999), …)` for n = 0…25 (MapLibre's maximum zoom is 25.5): `points`/2 · 2^(z − ⌊z⌋) between whole zooms, which is iOS's `points`·k, and the dashes are iOS's too. The dots stay round (as long as they are wide). At a whole zoom itself iOS shows k = 1, twice Android's size; MapLibre's floor rule can't match that without breaking every zoom in between. The camera practically never rests there: the car map's zoom limits, where it rests zoomed all the way in or out, are 3.001 and 19.999 for this. The style's transitions are 0, so the dash pattern doesn't cross-fade at whole zooms.
 
 ### 2.3 Map text is drawn by the app into style images, not MapLibre glyphs
 
@@ -445,7 +452,8 @@ MapLibre places symbols layer by layer from the **top** layer down. Within a lay
 - **Required items** (user dot, markers): `iconAllowOverlap(true)` + `iconIgnorePlacement(false)`. Always drawn, and they block lower labels.
 - **Collision mode none** (selected pin, marker letters, arrow, runway rings): `iconAllowOverlap(true)` + `iconIgnorePlacement(true)`.
 - **KML points (750) above aviation (450–740) above block names (250).** Layer order handles this. Aviation priorities interleave only with each other: `symbolSortKey(get("key"))` with `key = 1000 − kind.priority` and `symbolZOrder(Property.SYMBOL_Z_ORDER_SOURCE)`, so the sort key also orders the drawing. Features are written in the order `ids` comes out of `regionChanged`, which is the tie-break.
-- **Every collidable layer:** `iconAllowOverlap(false)`, `iconIgnorePlacement(false)`, `iconPadding(0f)` (MapKit adds no padding).
+- **Every collidable layer:** `iconAllowOverlap(false)`, `iconIgnorePlacement(false)`, and MapKit's room round the frame (§1.11): `iconPadding(MapStyle.LABEL_PADDING)`, 5 dp, on the names, the KML points and the markers; 2 dp on your dot, whose 28 dp image already has 3 dp round the 22 dp dot. The aviation cards keep `iconPadding(0f)`: no screenshot shows two near each other, and MapLibre answers `queryRenderedFeatures` with the grown boxes, which their tap test (§1.1) uses. The names' and points' images are 1 dp taller than iOS's frames (the shadow row); 5 fits them too (4.4 to 5.35 with Android's boxes in the iPhone shots' geometry).
+- **Equal priorities, lower first:** the names and points layers have `symbolSortKey(get("lat"))`, the label's latitude, so of two colliding labels the southern one is placed first and shows. MapLibre sorts by the key across tiles too. With the map turned this only approximates MapKit's screen order.
 - **Unchanged defaults:** `symbolPlacement` point and `symbol-avoid-edges` false, so labels at the screen edge are cut off, not hidden, as in the screenshots.
 
 ### 2.5 Sources and how they are updated
@@ -472,7 +480,7 @@ MapLibre places symbols layer by layer from the **top** layer down. Within a lay
 **`measure-points`.** One `Point` per measuring point, plus `letter = "measure-letter/<L>"` when there are ≥ 2. Letter images are made on demand and cached by letter.
 - `MapController` keeps `markers: MutableList<GeoPoint>`, a copy of `measure.points`.
 - `updateMeasureLine()` builds `measure` from `markers` and the measure kind.
-- While a point moves (`adjusted`), `markers[i]` changes and both sources are re-sent on every move. This replaces the iOS `dragLine` layer: MapLibre swaps the tiles of a re-sent GeoJSON source without emptying them first, so there is no blink to work around. The difference is noted in the code.
+- While a point moves (`adjusted`), `markers[i]` changes and `measure-points` is re-sent on every move. While a measuring point moves (`dragLineShown`), `updateMeasureLine()` sends an empty line and `DragLineView` draws it over the map (iOS's `dragLine`): the map's line has MapKit's tile scale, the drag line doesn't, as on iOS.
 
 **`selected`.** One `Point` or empty. It is set when `selectedPoint` changes and `measure == off`, and on every move.
 
@@ -515,7 +523,7 @@ map.addOnCameraIdleListener { cameraIdle() }     // regionDidChange
 `mapTapped(latLng)` recovers the tap pixel as `projection.toScreenLocation(latLng)`; MapLibre converted that pixel with the current projection, so the round trip gives it back. It compares that pixel with `lastTouch` (< 1 dp), then runs §1.1 step 3.
 
 **Hit tests:**
-- KML point: distances to every entry of `blocks.points` through `toScreenLocation`. For "on its name", use `map.queryRenderedFeatures(RectF(spot ± 6dp), *blocks.pointLayerIds)`. It returns only symbols actually placed (visible), and a box intersecting that rect is the same as the box enlarged by 6 dp containing the spot. Read `i` from `feature.getNumberProperty("i")`.
+- KML point: distances to every entry of `blocks.points` through `toScreenLocation`. For "on its name", use `map.queryRenderedFeatures(RectF(spot ± 1dp), *blocks.pointLayerIds)`. It returns only symbols actually placed (visible), and their boxes have the 5 dp of room round them (§2.4), so a box intersecting that rect is the same as the frame enlarged by 6 dp containing the spot. Read `i` from `feature.getNumberProperty("i")`.
 - Aviation: `queryRenderedFeatures(RectF(spot ± 24dp), "aviation")` gives the visible candidates. Distance from `toScreenLocation(place)`. A candidate ≥ 24 dp away whose box contains the spot (`queryRenderedFeatures(PointF(spot), "aviation")`) counts as 23.
 
 **Press and hold on a point.** MapLibre's long-click listener can't do this: it fires at the system long-press timeout (400–500 ms), not 0.35 s, and it can't stop the map's own move detector (4 dp threshold). Instead `MapContainerView` runs its own detector:
@@ -543,11 +551,15 @@ override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
   6. `container.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)` (the medium impact).
   7. `adjuster.begin(which, point, touch = finger in content-root coordinates (rawX/rawY − content root location on screen), scene = loupeScene(…))`.
 - **While adjusting.** `MOVE` of the tracked pointer calls `adjuster.moved(touch)`. `UP` (or `POINTER_UP` of the tracked pointer) calls `adjuster.end(cancelled = false)`. `CANCEL` calls `end(cancelled = true)`. After either, the gestures go back on (tilt stays off) and `tapsIgnoredUntil = uptime + 400 ms`.
-- **`adjusted(which, p, done)`.** Update `markers`/`selected` and their sources at once, and the model at most every 1/15 s or on `done`. On `done`: `updateMeasureLine()` and `performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)` (the light impact).
+- **`begin`, for a measuring point:** before the haptic, `dragLineShown = true`, `updateMeasureLine()` (now empty) and `updateDragLine()`.
+- **`adjusted(which, p, done)`.** Update `markers`/`selected` and their sources at once; for a measuring point, `dragLineShown = false` on `done`, then `updateDragLine()`. The model at most every 1/15 s or on `done`. On `done`: `updateMeasureLine()` (the map's line again, through where the point was left) and `performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)` (the light impact).
+- **Every camera frame** while `dragLineShown` (the loupe scrolls the map): `updateDragLine()`.
 
 **`LassoView`.** Above the MapView and `GONE` unless it should show, so when visible it receives every touch and the map underneath none. It follows only the first pointer (`isMultipleTouchEnabled = false`). On `ACTION_UP` it calls `onFinish(points)`; on `ACTION_CANCEL`, `reset()`. `MapController.lassoFinished` runs `Simplify.douglasPeucker` on dp coordinates with tolerance 4, then converts the ring to coordinates with `projection.fromScreenLocation` in pixels.
 
 **`AimLineView`.** `onDraw` strokes `Path(start → centre)` with `DashPathEffect(floatArrayOf(10dp, 7dp), phase)`, width 3 dp, pink, butt cap. Its entry and phase maths is `MapController.entry(from:to:into:)`, a pure function in `companion object`.
+
+**`DragLineView`** (`DynamicOverlays.kt`). `show(Line(points, closed))` with the markers projected by `toScreenLocation` (`DragLineView.points(markers, me)`: from you for a single marker; closed for a closed shape of ≥ 3). `onDraw` fills the closed shape pink 15% and strokes the line with dashes of 10 and 7 dp from its start, width 3 dp, pink, butt cap, miter limit 10 (Core Animation's). It draws only what is on the view and 20 dp around it (as the aim line), and lays out the dashes itself (`DragLineView.dashes`): each segment cut to that rectangle (Liang–Barsky), each dash where it falls along the whole line, a dash that turns a corner one contour (mitred), and a closed line's last dash going on into its first when it reaches the start, as Skia's `DashPathEffect` joins them. The fill is the shape cut to the same rectangle (Sutherland–Hodgman), which covers the same pixels on the view. On API 26–27 the OpenGL renderer draws a path from a texture as big as the whole path (`PathCache`), and leaves out one bigger than `GL_MAX_TEXTURE_SIZE`: uncut, a line to a point a few km away, zoomed in, would vanish for the whole move. iOS's `CAShapeLayer` draws what is on the screen.
 
 ### 2.7 Camera API mapping
 
@@ -611,7 +623,7 @@ The source `aviation` holds one `Point` per shown place, with:
 - `key` (1000 − priority),
 - for kinds L/M/S/W only: `ring` (`"av-ring-8"` or `"av-ring-6.5"`) and `rwy` (`runwayHeading ?: 45`).
 
-**Layer `aviation`** (the cards): `iconImage(get("img"))`, `iconAnchor(ICON_ANCHOR_TOP)`, `iconOffset(arrayOf(0f, -11f))`, `iconPadding(0f)`, `symbolSortKey(get("key"))`, `symbolZOrder(SYMBOL_Z_ORDER_SOURCE)`, and allow-overlap / ignore-placement false. The card image includes the 22 × 22 symbol slot at its top, so the collision box is the whole frame, as on iOS. Kinds without a runway have their whole chart symbol (halo, stroke, letters) drawn in that slot; seaplane bases have their "~".
+**Layer `aviation`** (the cards): `iconImage(get("img"))`, `iconAnchor(ICON_ANCHOR_TOP)`, `iconOffset(arrayOf(0f, -11f))`, `iconPadding(0f)` (no room round the frame, §2.4), `symbolSortKey(get("key"))`, `symbolZOrder(SYMBOL_Z_ORDER_SOURCE)`, and allow-overlap / ignore-placement false. The card image includes the 22 × 22 symbol slot at its top, so the collision box is the whole frame, as on iOS. Kinds without a runway have their whole chart symbol (halo, stroke, letters) drawn in that slot; seaplane bases have their "~".
 
 **Layer `aviation-rings`** (directly below `aviation`):
 - `iconImage(get("ring"))`, `iconRotate(get("rwy"))`, `iconRotationAlignment(ICON_ROTATION_ALIGNMENT_MAP)`, allow-overlap and ignore-placement true.
@@ -653,7 +665,7 @@ It exposes to AppModel `centerCoordinate: GeoPoint`, `pointsApart(a, b): Double`
 
 1. Map labels are app-drawn style images, because there are no glyphs (§2.3).
 2. Runway lines are a separate map-aligned symbol layer, filtered to visible cards (§2.9).
-3. There is no drag-line overlay: the GL measuring line is re-sent on every move (§2.5).
+3. At a whole zoom itself the track and the measuring line are half iOS's size; between whole zooms they match (§2.2). The car map's zoom limits are just inside whole zooms, so it doesn't rest there.
 4. The compass arrow is map-aligned, so map rotation needs no updates, and only compass changes glide.
 5. The track is split into finished and live parts, so the dot pattern restarts at each join.
 6. Within a file, all polygon fills are drawn below all block strokes.
@@ -662,6 +674,8 @@ It exposes to AppModel `centerCoordinate: GeoPoint`, `pointsApart(a, b): Double`
 9. Haptics are `LONG_PRESS` and `CLOCK_TICK`.
 10. The loupe is a child of the content root, not the window.
 11. Map symbols aren't exposed to TalkBack. iOS sets accessibility labels on aviation views; adding them would need an `ExploreByTouchHelper` on `MapContainerView`, which is not part of this port.
+12. Of two equal-priority labels, the southern one is placed first (by latitude), not the lower one on the screen; the same unless the map is turned (§2.4).
+13. The aviation cards keep no room round their frames; whether MapKit keeps it round them too, no screenshot shows (§2.4).
 
 ### 2.12 Unit tests (Robolectric / JVM, `app/src/test`)
 
@@ -677,3 +691,6 @@ These pure functions are kept in `companion object`s so they can be tested:
 - the lasso's 3 dp step and Douglas–Peucker with tolerance 4
 - `MeasureMode.label`
 - camera save and restore round trip
+- `MapStyle.zoomScaled`: the track's dots 4k across and 9k apart, the measuring line 3k wide with dashes 10k and 7k, at zooms between whole ones (the car map's zoom limits among them)
+- `DragLineView.points` and its drawing (dashes from the start, 3 dp, the closed shape's fill; with a point 1,000,000 px off the view, only what is within 20 dp of it is drawn, with the dashes and fill as Skia draws the whole line)
+- the label features' `lat` sort key

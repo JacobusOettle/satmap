@@ -43,10 +43,14 @@ import kotlin.math.roundToInt
 // (iOS `.preferredColorScheme(.dark)`); pt become dp and SwiftUI font sizes sp.
 
 val Accent = Color(0xFFFFBD29) // the AccentColor asset (1.0, 0.74, 0.16)
-val SystemYellow = Color(0xFFFFD60A)
+
+// iOS 26's dark system colours, which the iPhone screenshots show (yellow #FFD600 and red #FF4245, not iOS 18's
+// #FFD60A and #FF453A; green is the same in both). No screenshot shows orange: iOS 26's, as the others.
+val SystemYellow = Color(0xFFFFD600)
 val SystemGreen = Color(0xFF30D158)
-val SystemOrange = Color(0xFFFF9F0A)
-val SystemRed = Color(0xFFFF453A)
+val SystemOrange = Color(0xFFFF9230)
+val SystemRed = Color(0xFFFF4245)
+
 val SheetBackground = Color(0xFF1C1C1E)
 val SheetBarScrolled = Color(0xFF2D2D2E) // a sheet's bar once its list scrolls under it: iOS's bar material (41–50)
 val CellBackground = Color(0xFF2C2C2E)

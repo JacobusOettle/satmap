@@ -99,6 +99,9 @@ class MapAnnotationsTest {
             val b = images.getValue(id)
             return b.getPixel((b.width / 2f + dx * d).roundToInt(), (b.height / 2f + dy * d).roundToInt())
         }
+        // iOS 26's dark blue and grey, as the iPhone screenshots show the dot (iOS 18's blue was #0A84FF).
+        assertEquals(0xFF0091FF.toInt(), MapColours.systemBlue)
+        assertEquals(0xFF8E8E93.toInt(), MapColours.systemGray)
         // The colour fills 8 dp around the centre; the white ring is 8–11 dp out.
         assertEquals(MapColours.systemBlue, pixel(MapImages.USER_DOT, 0f, 0f))
         assertEquals(MapColours.systemBlue, pixel(MapImages.USER_DOT, 5f, 0f))
