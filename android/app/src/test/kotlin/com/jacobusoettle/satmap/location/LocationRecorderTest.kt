@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap.location
 import android.Manifest
 import android.app.AlarmManager
 import android.app.Application
+import android.content.Intent
 import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.location.Location
@@ -11,6 +12,12 @@ import android.location.LocationRequest
 import android.os.Looper
 import android.os.SystemClock
 import android.view.Surface
+import androidx.car.app.Screen
+import androidx.car.app.Session
+import androidx.car.app.model.MessageTemplate
+import androidx.car.app.model.Template
+import androidx.car.app.testing.SessionController
+import androidx.car.app.testing.TestCarContext
 import androidx.core.location.LocationRequestCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleRegistry
@@ -43,8 +50,8 @@ import kotlin.math.roundToLong
 /** The recorder's power policy on Robolectric's location manager, alarms and clock: the requests registered in each
  *  state (DESIGN.md §5.1), the 2 s foreground gate, the 10 s background duty cycle (re-registered at +7 s, a cached
  *  fix from before rejected, used from the 10 s mark), the track's spacing and segment breaks, sleep, peeks and their
- *  wake thresholds, significant motion, and Stop. Fixes are handed to the registered listeners directly (the shadow
- *  would drop those under its own interval). */
+ *  wake thresholds, significant motion and steps, Android Auto's screen counting as the foreground, and Stop. Fixes
+ *  are handed to the registered listeners directly (the shadow would drop those under its own interval). */
 @RunWith(AndroidJUnit4::class)
 @Config(shadows = [ShadowTriggerSensors::class])
 class LocationRecorderTest {
@@ -176,6 +183,29 @@ class LocationRecorderTest {
     private fun addSignificantMotion() {
         val sensor = SensorBuilder.newBuilder().setType(Sensor.TYPE_SIGNIFICANT_MOTION).setWakeUpFlag(true).build()
         shadowOf(app.getSystemService(SensorManager::class.java)).addSensor(sensor)
+    }
+
+    /** A step detector (the wake-up kind), with the activity-recognition permission unless `granted` is false; before
+     *  the recorder is made. */
+    private fun addStepDetector(granted: Boolean = true): Sensor {
+        val sensor = SensorBuilder.newBuilder().setType(Sensor.TYPE_STEP_DETECTOR).setWakeUpFlag(true).build()
+        shadowOf(app.getSystemService(SensorManager::class.java)).addSensor(sensor)
+        if (granted) shadowOf(app).grantPermissions(Manifest.permission.ACTIVITY_RECOGNITION)
+        return sensor
+    }
+
+    /** One step. */
+    private fun step(sensor: Sensor) {
+        shadowOf(app.getSystemService(SensorManager::class.java))
+            .sendSensorEventToListeners(SensorEventBuilder.newBuilder(sensor, floatArrayOf(1f)).build(), sensor)
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    /** An Android Auto session showing SatMap (its screen doesn't matter here). */
+    private class CarSession : Session() {
+        override fun onCreateScreen(intent: Intent): Screen = object : Screen(carContext) {
+            override fun onGetTemplate(): Template = MessageTemplate.Builder("SatMap").setTitle("SatMap").build()
+        }
     }
 
     /** Fallen asleep (just now) after 120 s still on screen, with a good fix at home as the anchor. */
@@ -653,6 +683,147 @@ class LocationRecorderTest {
     fun withoutTheSensorNothingIsArmed() {
         onScreen()
         assertEquals(0, ShadowTriggerSensors.armed.size)
+    }
+
+    @Test
+    fun sixStepsIn6sWakeAtOnce() {
+        val steps = addStepDetector()
+        val r = asleep()
+        repeat(5) {
+            step(steps)
+            pass(1.0)
+        }
+        // Five steps: a wake is pending, 6 s after the first.
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        assertEquals(1.0, dueIn("motion"), 0.0)
+        step(steps)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+        assertNull(alarm("motion"))
+        assertRequest(LocationManager.GPS_PROVIDER, 2000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        assertNotNull(alarm("stationary"))
+    }
+
+    @Test
+    fun aFewStepsWakeAfter6sIfTheWalkingGoesOn() {
+        val steps = addStepDetector()
+        val r = asleep()
+        // Steps at 0, 1, 2 and 3 s.
+        step(steps)
+        repeat(3) {
+            pass(1.0)
+            step(steps)
+        }
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        assertEquals(3.0, dueIn("motion"), 0.0)
+        // At 6 s: three steps in the last 6 s.
+        pass(3.0)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+    }
+
+    @Test
+    fun stepsThatStopDontWake() {
+        val steps = addStepDetector()
+        val r = asleep()
+        step(steps)
+        pass(1.0)
+        step(steps)
+        // At 6 s only the second step is that recent: they stopped.
+        pass(6.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        assertNull(alarm("motion"))
+        assertNotNull(alarm("peek"))
+        // A step later waits again.
+        pass(10.0)
+        step(steps)
+        assertEquals(6.0, dueIn("motion"), 0.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+    }
+
+    @Test
+    fun aStepKeepsSleepOffFor15sAfterIt() {
+        val steps = addStepDetector()
+        val r = onScreen()
+        gps(home)
+        pass(110.0)
+        step(steps)
+        // From 120 s still it would sleep; a step came 10 s ago.
+        pass(10.0)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+        // 25 s without a step: asleep.
+        pass(15.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+    }
+
+    @Test
+    fun stepsKeepSleepOffFor600sAtMost() {
+        val steps = addStepDetector()
+        val r = onScreen()
+        gps(home)
+        pass(110.0)
+        // Pacing on the spot from 110 s, a step every 10 s until 700 s; now it is 710 s.
+        repeat(60) {
+            step(steps)
+            pass(10.0)
+        }
+        // The check at 705 s: 595 s since the steps began.
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+        // At 720 s: 610 s.
+        step(steps)
+        pass(10.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+    }
+
+    @Test
+    fun theStepsAreCountedOnlyWithThePermissionAndOnce() {
+        val sm = app.getSystemService(SensorManager::class.java)
+        addStepDetector(granted = false)
+        val r = onScreen()
+        assertEquals(0, shadowOf(sm).listeners.size)
+        // Allowed in the dialog (PermissionFlow then calls startMotion), and again on becoming active.
+        shadowOf(app).grantPermissions(Manifest.permission.ACTIVITY_RECOGNITION)
+        r.startMotion()
+        r.startMotion()
+        assertEquals(1, shadowOf(sm).listeners.size)
+        background()
+        foreground()
+        assertEquals(1, shadowOf(sm).listeners.size)
+        // Stop ends them.
+        background()
+        r.stop()
+        assertEquals(0, shadowOf(sm).listeners.size)
+    }
+
+    @Test
+    fun theWakeUpStepDetectorIsPreferred() {
+        val sm = app.getSystemService(SensorManager::class.java)
+        val plain = SensorBuilder.newBuilder().setType(Sensor.TYPE_STEP_DETECTOR).build()
+        shadowOf(sm).addSensor(plain)
+        val wakeUp = addStepDetector()
+        onScreen()
+        assertTrue(shadowOf(sm).hasListener(shadowOf(sm).listeners.single(), wakeUp))
+        assertFalse(shadowOf(sm).hasListener(shadowOf(sm).listeners.single(), plain))
+    }
+
+    // Android Auto
+
+    @Test
+    fun theCarScreenCountsAsForegroundWithThePhoneLocked() {
+        val r = recorder()
+        // The phone locked, SatMap not on it.
+        assertNone(LocationManager.GPS_PROVIDER)
+        val session = CarSession()
+        val car = SessionController(session, TestCarContext.createCarContext(app), Intent())
+        AppLifecycle.observeCar(session)
+        car.moveToState(Lifecycle.State.RESUMED)
+        // Recording as on screen, with its service.
+        assertRequest(LocationManager.GPS_PROVIDER, 2000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
+        gps(home)
+        assertEquals(1, fixes.size)
+        // The car screen gone too: background recording, the next fix taken now.
+        car.moveToState(Lifecycle.State.CREATED)
+        assertRequest(LocationManager.GPS_PROVIDER, 1000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
     }
 
     // Stop
