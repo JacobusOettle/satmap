@@ -113,7 +113,7 @@ fun AreaDetailView(
                     val chosen = z == state.chosenZoom
                     // Deeper levels can be added; while a download runs, a lower one stops it there.
                     val enabled = !(z == area.maxZoom || (z < area.maxZoom && complete))
-                    FormChoiceRow(chosen, enabled, verticalPadding = 9.dp, onClick = { state.chosenZoom = z }) {
+                    FormChoiceRow(chosen, enabled, onClick = { state.chosenZoom = z }) {
                         ZoomRow(
                             "Zoom $z",
                             if (z <= area.maxZoom) LabelSecondary else LabelPrimary,
@@ -136,7 +136,7 @@ fun AreaDetailView(
                     state.buttonTitle(area),
                     Icons.Filled.ArrowCircleDown,
                     enabled = state.chosenZoom != null,
-                    iconSize = 24.dp,
+                    iconSize = 26.5.dp, // the circle 22 dp, as arrow.down.circle.fill's (screenshot 18)
                     style = Headline,
                 ) {
                     askNotifications()

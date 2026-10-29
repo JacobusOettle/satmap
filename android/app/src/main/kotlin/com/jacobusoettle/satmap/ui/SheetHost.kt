@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -186,8 +187,9 @@ fun <T : Any> SheetHost(item: T?, onDismiss: () -> Unit, content: @Composable Sh
     }
 }
 
-/** The sheet's bar: the title (tagged `screenTitle`), the leading Done / Cancel / back button (tagged `back`), the
- *  trailing button, and a hairline once the list has scrolled. */
+/** The sheet's bar: the title (tagged `screenTitle`), the leading Done / Cancel / back button (tagged `back`) and the
+ *  trailing button. Once the list has scrolled under it, it turns iOS's lighter bar grey with a hairline under it
+ *  (screenshots 12, 17, 18, 20). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SheetTopBar(chrome: ScreenChrome, scrolled: Boolean) {
@@ -214,9 +216,10 @@ fun SheetTopBar(chrome: ScreenChrome, scrolled: Boolean) {
             actions = { chrome.trailing?.invoke() },
             expandedHeight = 56.dp,
             windowInsets = WindowInsets(0),
+            // Without a scroll behaviour the bar only ever shows `containerColor`; it fades between the two.
             colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = SheetBackground,
-                scrolledContainerColor = SheetBackground,
+                containerColor = if (scrolled) SheetBarScrolled else SheetBackground,
+                scrolledContainerColor = SheetBarScrolled,
             ),
         )
         if (scrolled) {
@@ -231,7 +234,9 @@ private fun BarTextButton(title: String, onClick: () -> Unit) {
     TextButton(onClick) { Text(title, style = Body, color = Accent) }
 }
 
-/** iOS's back button: a chevron and the previous screen's title, in the accent colour. */
+/** iOS's back button: a chevron and the previous screen's title, in the accent colour. The chevron's tip is 9.4 dp
+ *  from the sheet's edge (the bar's 4 dp inset and 5.33 dp), 11.4 × 19.4 dp as iOS's, and the title starts 31.5 dp
+ *  in (screenshots 07, 18, 26). */
 @Composable
 private fun BackButton(previousTitle: String, onClick: () -> Unit) {
     Row(
@@ -246,16 +251,25 @@ private fun BackButton(previousTitle: String, onClick: () -> Unit) {
                     true
                 }
             }
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(start = 5.33.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.AutoMirrored.Filled.ArrowBackIos, contentDescription = null, tint = Accent, modifier = Modifier.size(22.dp))
-        Text(previousTitle, style = Body, color = Accent, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Icon(Icons.AutoMirrored.Filled.ArrowBackIos, contentDescription = null, tint = Accent, modifier = Modifier.size(23.5.dp))
+        Text(
+            previousTitle,
+            style = Body,
+            color = Accent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.offset(x = (-2).dp), // the glyph's box is wider than the chevron
+        )
     }
 }
 
-/** A screen in a sheet: its bar, then its list (iOS's inset-grouped list: sections 32 dp apart), which scrolls under
- *  the bar, ends clear of the navigation bar and shrinks above the keyboard. */
+/** A screen in a sheet: its bar, then its list (iOS's inset-grouped list: sections 29.5 dp apart, and 5.5 dp more
+ *  under a section without a footer, see `FormSection`), which scrolls under the bar, ends 20.5 dp below its last
+ *  card (15 dp after that section's 5.5) clear of the navigation bar, as iOS's ends above the home indicator, and
+ *  shrinks above the keyboard. */
 @Composable
 fun SheetScreen(
     chrome: ScreenChrome,
@@ -268,8 +282,8 @@ fun SheetScreen(
         LazyColumn(
             Modifier.fillMaxWidth().weight(1f).imePadding(),
             state = state,
-            contentPadding = PaddingValues(top = 16.dp, bottom = bottom + 24.dp),
-            verticalArrangement = Arrangement.spacedBy(32.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = bottom + 15.dp),
+            verticalArrangement = Arrangement.spacedBy(29.5.dp),
             content = content,
         )
     }

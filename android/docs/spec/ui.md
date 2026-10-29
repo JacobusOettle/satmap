@@ -52,12 +52,14 @@ Sources: `SatMap/UI/*.swift`, the parts of `AppModel`, `OfflineManager`, `KMLLib
 | `SystemOrange` | `#FF9F0A` | Warnings ("Not a position yet.", failures, "This may not fit…") |
 | `SystemRed` | `#FF453A` | Crosshair dot, compass north needle, destructive menu item and dialog button, swipe-to-delete background |
 | `SheetBackground` | `#1C1C1E` | Sheet container and list background |
+| `SheetBarScrolled` | `#2D2D2E` | A sheet's bar once its list has scrolled under it: iOS's bar material, 41–50 in screenshots 12, 17, 18, 20 |
 | `CellBackground` | `#2C2C2E` | Form cards, alert and menu containers |
 | `CellPressed` | `#3A3A3C` | Ripple / pressed row |
-| `Separator` | `#38383A` | 0.5 dp row dividers, toolbar hairline |
+| `Separator` | `#38383A` | 0.5 dp row dividers, the hairline under a scrolled sheet bar |
 | `LabelPrimary` | `#FFFFFF` | |
 | `LabelSecondary` | `#99EBEBF5` (EBEBF5 @ 60 %) | Secondary texts, footers, headers, row values |
 | `LabelTertiary` | `#4DEBEBF5` (@ 30 %) | Chevrons, placeholders, disabled rows |
+| `SecondaryFill` | `#52787880` (#787880 @ 32 %, iOS `secondarySystemFill`, dark) | Switch track when off: (68, 67, 72) on a cell in screenshots 12 and 18 |
 | `PasteFill` | `#BD8B1A` | Paste button container (screenshot 21) |
 | `YouColour` | `#59DBFF` (0.35/0.86/1.0, `AviationView.youColour`) | Drone card "You" line |
 | `PinColour` | `#FFB833` (1.0/0.72/0.2, `AviationView.pinColour`) | Drone card "Pin" line |
@@ -88,11 +90,12 @@ Sources: `SatMap/UI/*.swift`, the parts of `AppModel`, `OfflineManager`, `KMLLib
 | `.headline` | 17 / 22 SemiBold | `Headline` |
 | `.body` | 17 / 22 Normal | `Body` (also M3 `bodyLarge`) |
 | `.subheadline` | 15 / 20 | `Subheadline` |
-| `.footnote` | 13 / 18 | `Footnote` |
+| `.footnote` | 13 / 16 | `Footnote` |
 | `.caption` | 12 / 16 | `Caption` |
 | `.caption2` | 11 / 13 | `Caption2` |
 | `.system(size: 30, weight: .bold)` | 30 / 36 Bold | `BigNumber` |
 
+- **`.footnote`'s 16 is measured**, not Apple's 18: the lines of every wrapped footer in the iPhone screenshots (06, 07, 12, 21) are 16 pt apart. The other line heights are Apple's table; measure them the same way before relying on them for wrapped text. Compose trims a text's first and last line to the font (`LineHeightStyle` default), so a line height changes only the distance between lines.
 - **Weights:** `.medium` = `FontWeight.Medium`, `.semibold` = `SemiBold`, `.bold` = `Bold`, `.heavy` = `ExtraBold`.
 - **`.monospacedDigit()`:** `fontFeatureSettings = "tnum"`.
 - **Text shadow** (`.shadow(color: .black, radius: 1.5)`): `TextStyle(shadow = Shadow(Color.Black, Offset.Zero, blurRadius = 3.dp.toPx()))`.
@@ -113,6 +116,8 @@ An SF Symbol drawn at text size *X* pt becomes a Material icon of about **1.2·X
 | title2 22 | 26 dp |
 | map buttons (20 pt semibold) | 24 dp |
 
+**Except in a list `Label`:** there the symbols are drawn larger than their text size (21–26 pt in screenshot 06), so the rule underestimates them. A list row's icon is **28 dp** (`ListIconSize`), and `arrow.down.circle.fill` on the Download buttons 26.5 dp (its circle 22 dp, as on iOS). See §1.5.
+
 ### 1.4 Shared overlay styles (map screen)
 
 - **Pill:** `background(Color.Black.copy(0.65f), CircleShape)`, padding horizontal 12 / vertical 8, content `White`.
@@ -130,17 +135,17 @@ An SF Symbol drawn at text size *X* pt becomes a Material icon of about **1.2·X
 
 | Piece | Spec |
 | --- | --- |
-| Screen | `LazyColumn` on `SheetBackground`. Content padding: top 16 dp; bottom = navigation-bar inset + 24 dp. |
-| `FormSection(header?, footer?)` | Header: Footnote, `LabelSecondary`, **upper-cased** (`"Offline areas"` shows as `OFFLINE AREAS`), padding start/end 32 dp (16 margin + 16), bottom 7 dp. Card: horizontal margin 16 dp, `RoundedCornerShape(10.dp)`, `CellBackground`, clipped (so ripples and swipe stay inside). Footer: Footnote, `LabelSecondary`, padding start/end 32 dp, top 7 dp. |
-| Gap between sections | 32 dp, from the end of one section (its footer, or else its card) to the start of the next (its header, or else its card). The first section's header starts 2 dp below the top padding; a first section without a header starts 19 dp lower. |
-| `FormRow` | Min height 44 dp; padding start 16, end 16, vertical 11 (two-line rows 8). Title Body `LabelPrimary`; caption line Caption `LabelSecondary`, spacing 2. |
-| Row with icon (`Label`) | 28 dp icon box (icon 22 dp, `Accent`), 16 dp gap, then text. Text starts 60 dp from the card's left edge. |
+| Screen | `LazyColumn` on `SheetBackground`. Content padding: top 16 dp; bottom = navigation-bar inset + 15 dp (with the last section's 5.5 dp, 20.5 dp below the last card, as iOS's list ends 20.6 pt above the home indicator in screenshots 12, 17, 18, 20). |
+| `FormSection(header?, footer?)` | Header: Footnote, `LabelSecondary`, **upper-cased** (`"Offline areas"` shows as `OFFLINE AREAS`), padding start/end 32 dp (16 margin + 16), bottom 6 dp. Card: horizontal margin 16 dp, `RoundedCornerShape(10.dp)`, `CellBackground`, clipped (so ripples and swipe stay inside). Footer: Footnote, `LabelSecondary`, padding start/end 32 dp, top 6 dp. A section without a footer ends with a 5.5 dp spacer under its card (iOS's empty footer). |
+| Gap between sections | `Arrangement.spacedBy(29.5.dp)`, from the end of one section (its footer's text, or else its 5.5 dp spacer) to the start of the next (its header, or else its card). So a card is followed by 35 dp to the next section, a footer's last baseline by 33 dp, as on iOS (screenshots 06, 07, 21). The first section's header starts 1 dp below the top padding; a first section without a header starts 19 dp lower. |
+| `FormRow` | Min height 44 dp; padding start 16, end 16 (14 before a switch), vertical 11. A row of several lines (`FormLinkRow` with content, `FormChoiceRow`, the Blocks file row) uses `MultiLineRowPadding`, 11.33 dp: SF's lines are about 0.3 pt taller than Roboto's trimmed ones, so Body + Caption make 58.3 dp (iOS 58.6) and three lines 75.3 dp (iOS 75.7). Title Body `LabelPrimary`; caption line Caption `LabelSecondary`, spacing 2. |
+| Row with icon (`Label`) | `LabelIcon`: a box 28 dp wide and one Body line (22 dp) tall, the icon centred in it at `requiredSize(28.dp)` (`ListIconSize`, `Accent`), overflowing it as an SF Symbol overflows its line, so the row stays 44 dp whatever the icon's size. Then a 16 dp gap and the text, which starts 60 dp from the card's left edge. |
 | Divider | 0.5 dp `Separator` between rows, inset to the text start (16 dp, or 60 dp for icon rows), none after the last row. |
-| `NavigationLink` row | Clickable; trailing `Icons.AutoMirrored.Filled.KeyboardArrowRight` 20 dp in `LabelTertiary`. Title text `LabelPrimary`, icon `Accent`. |
+| `NavigationLink` row | Clickable; trailing `Icons.AutoMirrored.Filled.KeyboardArrowRight` in `LabelTertiary`, drawn at 24 dp and 3.5 dp to the right over a 20 dp layout box (`offset(x = 3.5.dp).size(20.dp).requiredSize(24.dp)`): a 12 dp tall chevron whose right edge is 19 dp in from the card's, as iOS's. Title text `LabelPrimary`, icon `Accent`. |
 | Action row (`Button` in a list) | Clickable; text **and** icon `Accent`. When disabled, text and icon are `LabelTertiary` and the row is not clickable. |
 | Value row (`row(title, value)`) | Title Body primary; `Spacer(weight)`; value Body `LabelSecondary` with `tnum`. In the coordinate entry the value wraps and is end-aligned (`weight(1f, fill = false)`, `TextAlign.End`). |
-| Toggle row | Whole row `Modifier.toggleable(value, role = Role.Switch)`; title Body; trailing M3 `Switch(checked, onCheckedChange = null)` with `SwitchDefaults.colors(checkedTrackColor = SystemGreen, checkedThumbColor = White, checkedBorderColor = Transparent, uncheckedTrackColor = Color(0x29787880), uncheckedThumbColor = White, uncheckedBorderColor = Transparent)` to match the green iOS switch in screenshots 04/12. |
-| Text field row | `BasicTextField`, Body white, `cursorBrush = SolidColor(Accent)`, placeholder Body `LabelTertiary`, row padding. No underline and no outline. |
+| Toggle row | Whole row `Modifier.toggleable(value, role = Role.Switch)`, end padding 14 dp; title Body; trailing `IosSwitch(checked)`, which only draws (no semantics or clicks of its own): iOS's `UISwitch` (screenshots 04, 12, 18), a 51 × 31 dp capsule, `SystemGreen` when on and `SecondaryFill` when off, with a 27 dp white knob (a 1 dp shadow) 2 dp in from its ends, its offset and the track colour animated. Its right edge is 14 dp in from the card's. M3's `Switch` can't match it: its track and thumb sizes are fixed (52 × 32, a 16 dp thumb when off). |
+| Text field row | `BasicTextField`, Body white with `LineHeightStyle(Alignment.Center, Trim.None)`, so the line is 22 dp and the cursor as tall as iOS's; `cursorBrush = SolidColor(Accent)`, placeholder in the same style, `LabelTertiary`, row padding. No underline and no outline. |
 | Swipe-to-delete row | M3 `SwipeToDismissBox(state, backgroundContent = { red box, "Delete" Body White SemiBold end-aligned, padding end 20 }, enableDismissFromStartToEnd = false, onDismiss = { delete })`. Also `semantics { customActions = listOf(CustomAccessibilityAction("Delete") { delete(); true }) }`. |
 | Pressed state | Default M3 ripple in `CellPressed`. |
 
@@ -498,13 +503,13 @@ ModalBottomSheet(
   - "Done" and "Cancel" animate first (`scope.launch { sheetState.hide() }.invokeOnCompletion { state = null }`).
   - When the model clears the state itself (`startDrawingArea`, Download, `measure(from:)`, Show on the map), the host keeps showing the last content while it calls `sheetState.hide()`, then leaves composition.
 - **Top bar** (`SheetTopBar`):
-  - `CenterAlignedTopAppBar(expandedHeight = 56.dp, windowInsets = WindowInsets(0), colors = topAppBarColors(containerColor = SheetBackground, scrolledContainerColor = SheetBackground))`.
+  - `CenterAlignedTopAppBar(expandedHeight = 56.dp, windowInsets = WindowInsets(0), colors = topAppBarColors(containerColor = if (scrolled) SheetBarScrolled else SheetBackground, scrolledContainerColor = SheetBarScrolled))`: without a scroll behaviour the bar only shows `containerColor`, and it fades between the two.
   - Title: Headline White, 1 line, ellipsis, `Modifier.semantics { heading() }.testTag("screenTitle")`.
   - **Leading slot**, one of:
     - `TextButton("Done")` or `TextButton("Cancel")`: Body, `Accent`.
-    - The back button: `Row { Icon(Icons.AutoMirrored.Filled.ArrowBackIos, 22 dp, Accent); Text(previousTitle, Body, Accent, 1 line) }`, with `clearAndSetSemantics { contentDescription = "Back"; role = Button; testTag = "back" }`.
+    - The back button: `Row(padding start 5.33, end 8, top 8, bottom 8) { Icon(Icons.AutoMirrored.Filled.ArrowBackIos, 23.5 dp, Accent); Text(previousTitle, Body, Accent, 1 line, offset x = -2 dp) }`, with `clearAndSetSemantics { contentDescription = "Back"; role = Button; testTag = "back" }`. With the bar's 4 dp inset the chevron's tip is 9.4 dp from the sheet's edge and 11.4 × 19.4 dp, and the title starts 31.5 dp in, as on iOS (screenshots 07, 18, 26).
   - **Trailing slot:** `IconButton` (Blocks "+").
-  - When the list has scrolled (`listState.canScrollBackward`), draw a 0.5 dp `Separator` line under the bar.
+  - When the list has scrolled (`listState.canScrollBackward`), the bar turns `SheetBarScrolled` and a 0.5 dp `Separator` line shows under it, as iOS's bar turns grey with a hairline (screenshots 12, 17, 18, 20).
 - **Back stack.** navigation-compose is not used: it isn't a dependency, and the routes carry non-serialisable objects (`FoundPlace`, `PendingArea`, `CoverageShape`).
   - Each sheet keeps `val stack = remember { mutableStateListOf<Route>(Root) }`. A route is an object that holds its own screen state (§6.5), so returning to it keeps its state, as with a SwiftUI `NavigationStack`.
   - Shown through `AnimatedContent(stack.last())`:
@@ -523,10 +528,10 @@ ModalBottomSheet(
     - Each file is a swipe-to-delete row (`library.delete(f.id)`): `Row(spacedBy 12)`, then:
       - **Left** (`weight 1f`, clickable, `Column(spacedBy 2)`): `f.name` in Body primary, then `"${f.document.features.size} shapes · tap to show on map"` in Caption secondary.
       - On click: `library.setShown(f.id, true)`, `f.document.bounds?.let { model.map?.zoom(it) }`, then dismiss the sheet.
-      - **Right:** `Switch(checked = f.isShown, onCheckedChange = { library.setShown(f.id, it) })` (green colours), `semantics { contentDescription = "Show ${f.name} on the map" }`.
+      - **Right:** `IosSwitch(f.isShown, Modifier.minimumInteractiveComponentSize().toggleable(f.isShown, role = Role.Switch) { library.setShown(f.id, it) }.semantics { contentDescription = "Show ${f.name} on the map" })`, 14 dp from the card's edge. The texts have `MultiLineRowPadding` above and below (the row is 58 dp, as iOS's).
   - **Colours section** (only if files exist). Footer `Off: every block is drawn in white.`
     - One row, `Modifier.toggleable(library.useFileColours, role = Role.Checkbox) { library.useFileColours = it }` with `semantics { stateDescription = if (on) "On" else "Off" }` and `testTag("useFileColours")`.
-    - Icon: `Icons.Filled.CheckBox` or `Icons.Outlined.CheckBoxOutlineBlank`, 24 dp, `Accent`.
+    - Icon: `Icons.Filled.CheckBox` or `Icons.Outlined.CheckBoxOutlineBlank`, 30 dp (a 23 dp square, as `checkmark.square.fill`), `Accent`, in a `LabelIcon` box, so the row is 44 dp.
     - 16 dp gap, then `Use the colours in the files` in Body **primary**.
 - **Alert:** when `library.importError != null`: `AlertDialog(title "Couldn't import", text = importError, confirm "OK")`. OK or dismiss sets `importError = null`.
 
@@ -931,7 +936,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
 | `NavigationStack` / `NavigationLink` / back button | In-sheet route stack + `AnimatedContent` + `BackHandler`; link row with chevron; `ArrowBackIos` + previous title |
 | `.navigationTitle` (inline) + `.toolbar` | `CenterAlignedTopAppBar(expandedHeight = 56.dp, windowInsets = WindowInsets(0))` |
 | `List` / `Form` (inset grouped), `Section` header/footer | `LazyColumn` + `FormSection` / `FormRow` (§1.5) |
-| `Toggle` | M3 `Switch` in a `toggleable` row (green track) |
+| `Toggle` | `IosSwitch` (drawn: 51 × 31 track, 27 dp knob) in a `toggleable` row (§1.5) |
 | `Picker(.segmented)` | `SingleChoiceSegmentedButtonRow` + `SegmentedButton(icon = {})` |
 | `TextField` (in a form) | `BasicTextField` + placeholder decoration |
 | `PasteButton` | `Button` (PasteFill) reading `ClipboardManager` |
@@ -1024,7 +1029,7 @@ All are from `material-icons-extended` 1.7.8; every name below exists in the cac
 - **Map overlay:** `WindowInsets.systemBars.union(WindowInsets.displayCutout)`. Never the IME, so the overlay doesn't jump while a sheet's keyboard is open.
 - **Sheets:**
   - The outer top margin comes from `windowInsetsPadding(WindowInsets.statusBars)` + 10 dp on the `ModalBottomSheet` modifier.
-  - Inside: `LazyColumn(Modifier.fillMaxSize().imePadding(), contentPadding = PaddingValues(top = 16.dp, bottom = navigationBars + 24.dp))`. The list shrinks above the keyboard, and a focused field scrolls into view (`BringIntoView` is built into `BasicTextField` in lazy lists).
+  - Inside: `LazyColumn(Modifier.fillMaxSize().imePadding(), contentPadding = PaddingValues(top = 16.dp, bottom = navigationBars + 15.dp))` (§1.5). The list shrinks above the keyboard, and a focused field scrolls into view (`BringIntoView` is built into `BasicTextField` in lazy lists).
 - **Focus on open:**
   - Go to coordinates: always, once the sheet is expanded.
   - Find a place: when it has no results, once the push animation ends.

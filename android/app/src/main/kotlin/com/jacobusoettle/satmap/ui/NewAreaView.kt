@@ -337,7 +337,7 @@ fun NewAreaView(
                     "Download",
                     Icons.Filled.ArrowCircleDown,
                     enabled = state.canDownload,
-                    iconSize = 24.dp,
+                    iconSize = 26.5.dp, // the circle 22 dp, as arrow.down.circle.fill's (screenshot 12)
                     style = Headline,
                 ) {
                     askNotifications()
@@ -381,7 +381,7 @@ private fun DetailSection(state: NewAreaState) {
     ) {
         val chosen = state.chosenZoom
         for (z in NewAreaState.zoomChoices) {
-            FormChoiceRow(z == chosen, verticalPadding = 9.dp, onClick = { state.choose(z) }) {
+            FormChoiceRow(z == chosen, onClick = { state.choose(z) }) {
                 ZoomRow("Zoom $z", LabelPrimary, state.resolution(z), state.sizeText(z), checkShown = z == chosen, checkColour = Accent)
             }
         }
