@@ -1,6 +1,13 @@
 package com.jacobusoettle.satmap.ui
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.vector.VectorPath
+import androidx.compose.ui.graphics.vector.toPath
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -41,6 +48,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import java.io.IOException
 
 /** "Download area" (UI spec §3.7, DESIGN.md §8.1): the level chosen (the remembered one, lowered to fit half the free
@@ -355,6 +363,33 @@ class NewAreaViewTest {
         ).assertExists()
         // No switch for roads: imagery always goes along the track.
         compose.onNodeWithText("Only along roads").assertDoesNotExist()
+    }
+
+    /** The Download button's `arrow.down.circle.fill`: a solid disc 20 of the icon's 24 units across, the arrow cut out
+     *  of it everywhere (also where its stem and chevron meet, which the even-odd rule would fill again if they were
+     *  separate shapes), so the row's own background shows through, as on iOS (screenshot 12). */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun theDownloadIconIsADiscWithTheArrowCutOut() {
+        val vector = SatIcons.ArrowDownCircleFill
+        assertEquals(24f, vector.viewportWidth)
+        val shape = vector.root.single() as VectorPath
+        assertEquals(PathFillType.EvenOdd, shape.pathFillType)
+        val path = shape.pathData.toPath().apply { fillType = shape.pathFillType }.asAndroidPath()
+        // Drawn 10 px a unit.
+        val bitmap = Bitmap.createBitmap(240, 240, Bitmap.Config.ARGB_8888)
+        Canvas(bitmap).apply { scale(10f, 10f) }.drawPath(path, Paint().apply { color = android.graphics.Color.BLACK })
+        fun filled(x: Double, y: Double) = android.graphics.Color.alpha(bitmap.getPixel((x * 10).toInt(), (y * 10).toInt())) > 0
+
+        // The disc: filled around the arrow, nothing outside it.
+        for ((x, y) in listOf(12.0 to 3.0, 12.0 to 6.5, 12.0 to 18.2, 12.0 to 21.5, 3.0 to 12.0, 21.0 to 12.0, 7.0 to 12.0, 17.0 to 12.0)) {
+            assertTrue("disc at $x, $y", filled(x, y))
+        }
+        for ((x, y) in listOf(12.0 to 1.5, 12.0 to 22.5, 2.5 to 2.5, 21.5 to 21.5)) assertFalse("outside at $x, $y", filled(x, y))
+        // The arrow: its stem, the chevron's arms and their round ends, and the tip, where stem and arms overlap.
+        for ((x, y) in listOf(12.0 to 7.6, 12.0 to 11.0, 12.0 to 14.5, 12.0 to 16.2, 12.0 to 17.2, 10.0 to 14.8, 14.0 to 14.8, 8.4 to 13.4, 15.6 to 13.4)) {
+            assertFalse("arrow at $x, $y", filled(x, y))
+        }
     }
 
     @Test
