@@ -398,7 +398,7 @@ Sources are `org.maplibre.android.style.sources.GeoJsonSource`. They are created
 
 The layers `track`, `aviation-rings` and `selected` always exist, even when empty. They are the anchors the per-file layers are inserted against. `MapIds` holds every id.
 
-**`MapStyle.zoomScaled(points)`**, the width of the track and the measuring line. iOS's renderers are drawn into MapKit's tiles one whole zoom further in and shown shrunk by k = 2^(z − ⌈z⌉) (§1.5). MapLibre lays out a line's dashes in units of its width at the whole zoom below (`floorwidth`, the width at ⌊z⌋; the line shader divides `a_linesofar` by it) and grows them with the map by 2^(z − ⌊z⌋). So the width is `interpolate(exponential(2f), zoom(), stop(n, points/2), stop(n + 0.999, points/2 · 2^0.999), …)` for n = 0…25 (MapLibre's maximum zoom is 25.5): `points`/2 · 2^(z − ⌊z⌋) between whole zooms, which is iOS's `points`·k, and the dashes are iOS's too. The dots stay round (as long as they are wide). At a whole zoom itself iOS shows k = 1, twice Android's size; MapLibre's floor rule can't match that without breaking every zoom in between. The style's transitions are 0, so the dash pattern doesn't cross-fade at whole zooms.
+**`MapStyle.zoomScaled(points)`**, the width of the track and the measuring line. iOS's renderers are drawn into MapKit's tiles one whole zoom further in and shown shrunk by k = 2^(z − ⌈z⌉) (§1.5). MapLibre lays out a line's dashes in units of its width at the whole zoom below (`floorwidth`, the width at ⌊z⌋; the line shader divides `a_linesofar` by it) and grows them with the map by 2^(z − ⌊z⌋). So the width is `interpolate(exponential(2f), zoom(), stop(n, points/2), stop(n + 0.999, points/2 · 2^0.999), …)` for n = 0…25 (MapLibre's maximum zoom is 25.5): `points`/2 · 2^(z − ⌊z⌋) between whole zooms, which is iOS's `points`·k, and the dashes are iOS's too. The dots stay round (as long as they are wide). At a whole zoom itself iOS shows k = 1, twice Android's size; MapLibre's floor rule can't match that without breaking every zoom in between. The camera practically never rests there: the car map's zoom limits, where it rests zoomed all the way in or out, are 3.001 and 19.999 for this. The style's transitions are 0, so the dash pattern doesn't cross-fade at whole zooms.
 
 ### 2.3 Map text is drawn by the app into style images, not MapLibre glyphs
 
@@ -554,7 +554,7 @@ override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
 
 **`AimLineView`.** `onDraw` strokes `Path(start → centre)` with `DashPathEffect(floatArrayOf(10dp, 7dp), phase)`, width 3 dp, pink, butt cap. Its entry and phase maths is `MapController.entry(from:to:into:)`, a pure function in `companion object`.
 
-**`DragLineView`** (`DynamicOverlays.kt`). `show(Line(points, closed))` with the markers projected by `toScreenLocation` (`DragLineView.points(markers, me)`: from you for a single marker; closed for a closed shape of ≥ 3). `onDraw` fills the closed path pink 15% and strokes it with `DashPathEffect(floatArrayOf(10dp, 7dp), 0f)`, width 3 dp, pink, butt cap, miter limit 10 (Core Animation's).
+**`DragLineView`** (`DynamicOverlays.kt`). `show(Line(points, closed))` with the markers projected by `toScreenLocation` (`DragLineView.points(markers, me)`: from you for a single marker; closed for a closed shape of ≥ 3). `onDraw` fills the closed shape pink 15% and strokes the line with dashes of 10 and 7 dp from its start, width 3 dp, pink, butt cap, miter limit 10 (Core Animation's). It draws only what is on the view and 20 dp around it (as the aim line), and lays out the dashes itself (`DragLineView.dashes`): each segment cut to that rectangle (Liang–Barsky), each dash where it falls along the whole line, a dash that turns a corner one contour (mitred), and a closed line's last dash going on into its first when it reaches the start, as Skia's `DashPathEffect` joins them. The fill is the shape cut to the same rectangle (Sutherland–Hodgman), which covers the same pixels on the view. On API 26–27 the OpenGL renderer draws a path from a texture as big as the whole path (`PathCache`), and leaves out one bigger than `GL_MAX_TEXTURE_SIZE`: uncut, a line to a point a few km away, zoomed in, would vanish for the whole move. iOS's `CAShapeLayer` draws what is on the screen.
 
 ### 2.7 Camera API mapping
 
@@ -657,7 +657,7 @@ It exposes to AppModel `centerCoordinate: GeoPoint`, `pointsApart(a, b): Double`
 
 1. Map labels are app-drawn style images, because there are no glyphs (§2.3).
 2. Runway lines are a separate map-aligned symbol layer, filtered to visible cards (§2.9).
-3. At a whole zoom itself the track and the measuring line are half iOS's size; between whole zooms they match (§2.2).
+3. At a whole zoom itself the track and the measuring line are half iOS's size; between whole zooms they match (§2.2). The car map's zoom limits are just inside whole zooms, so it doesn't rest there.
 4. The compass arrow is map-aligned, so map rotation needs no updates, and only compass changes glide.
 5. The track is split into finished and live parts, so the dot pattern restarts at each join.
 6. Within a file, all polygon fills are drawn below all block strokes.
@@ -682,6 +682,6 @@ These pure functions are kept in `companion object`s so they can be tested:
 - the lasso's 3 dp step and Douglas–Peucker with tolerance 4
 - `MeasureMode.label`
 - camera save and restore round trip
-- `MapStyle.zoomScaled`: the track's dots 4k across and 9k apart, the measuring line 3k wide with dashes 10k and 7k, at zooms between whole ones
-- `DragLineView.points` and its drawing (dashes from the start, 3 dp, the closed shape's fill)
+- `MapStyle.zoomScaled`: the track's dots 4k across and 9k apart, the measuring line 3k wide with dashes 10k and 7k, at zooms between whole ones (the car map's zoom limits among them)
+- `DragLineView.points` and its drawing (dashes from the start, 3 dp, the closed shape's fill; with a point 1,000,000 px off the view, only what is within 20 dp of it is drawn, with the dashes and fill as Skia draws the whole line)
 - the label features' `lat` sort key

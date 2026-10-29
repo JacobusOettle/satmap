@@ -1044,7 +1044,7 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
 - **Behaviour**:
   - `moveToStart()` uses `CameraUpdateFactory.newLatLngBounds(LatLngBounds.from(lat + d, lon + e, lat − d, lon − e), 0)` with `d = 750 / 111_320` and `e = d / cos(lat)`. The centre is `recorder.location`, else the phone map's centre, else `(-24.99, 31.59)`.
   - `locationUpdated(loc)` moves the dot. If `following && isShown`, it calls `easeCamera(newLatLng)`. Then it updates the aviation distances. `AppModel.locationUpdated` calls `carMap?.locationUpdated(loc)`.
-  - `zoom(levels)` calls `animateCamera(CameraUpdateFactory.zoomBy(levels))`. MapKit's 150 m – 4,000 km camera-distance clamp is approximated by the zoom limits 3–20.
+  - `zoom(levels)` calls `animateCamera(CameraUpdateFactory.zoomBy(levels))`. MapKit's 150 m – 4,000 km camera-distance clamp is approximated by the zoom limits 3.001–19.999: just inside whole zooms, where the camera rests zoomed all the way in or out, as at a whole zoom the track's dots are half the iPhone's size (interaction spec §2.2).
   - `recentre()` sets `following = true` and eases to your position.
   - `dragBegan()` sets `following = false`.
   - `reload()` is called from `AppModel.requestReload()`, as `carPlayMap?.reload()`, and does the same tile reload as the phone map.

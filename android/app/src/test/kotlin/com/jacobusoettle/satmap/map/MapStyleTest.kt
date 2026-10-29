@@ -1,5 +1,6 @@
 package com.jacobusoettle.satmap.map
 
+import com.jacobusoettle.satmap.car.CarMapController
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.maplibre.android.style.expressions.Expression
@@ -64,8 +65,11 @@ class MapStyleTest {
     /** MapKit shows iOS's renderers' tiles shrunk by k = 2^(z − ⌈z⌉) (z in MapLibre's zoom; MapKit's is one more). */
     private fun k(z: Double) = 2.0.pow(z - ceil(z))
 
-    /** Zooms between whole ones, as the app's camera always is (the walk's 14.12, 13.84 and 16.45 among them). */
-    private val zooms = listOf(0.3, 5.5, 13.84, 14.12, 15.0005, 16.45, 18.9, 21.75, 25.4)
+    /** Zooms between whole ones, as the app's camera always is (the walk's 14.12, 13.84 and 16.45 among them, and the
+     *  car map's limits, where it rests zoomed all the way in or out). */
+    private val zooms = listOf(
+        0.3, 5.5, 13.84, 14.12, 15.0005, 16.45, 18.9, 21.75, 25.4, CarMapController.MIN_ZOOM, CarMapController.MAX_ZOOM,
+    )
 
     @Test
     fun theTracksDotsAreAsBigAndAsFarApartAsTheIPhonesAtEveryZoom() {

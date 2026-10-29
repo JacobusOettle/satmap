@@ -2,10 +2,10 @@ package com.jacobusoettle.satmap.map
 
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.RectF
 import android.view.View
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.TrackPoint
@@ -18,6 +18,10 @@ import org.maplibre.geojson.LineString
 import org.maplibre.geojson.MultiLineString
 import org.maplibre.geojson.Point
 import org.maplibre.geojson.Polygon
+import kotlin.math.floor
+import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 
 /** The whole recorded track in chunks, as iOS's `TrackOverlay` keeps it: up to ~512 points each; a new segment (after
  *  a gap) always starts a new chunk. Main thread only. */
@@ -164,7 +168,12 @@ class MeasureLineLayer(private val map: MapLibreMap, private val style: Style, p
  *  `MapController`), through the markers as they are now: from you for a single point, back to A and filled pink 15 %
  *  for a closed shape. Pink, 3 dp, dashes 10 and 7 dp from its start, butt caps and mitred corners: drawn on the screen,
  *  so the same at every zoom, where the map's own line has MapKit's tile scale (`MapStyle.zoomScaled`). Takes no
- *  touches. */
+ *  touches.
+ *
+ *  Only the part on the view and 20 dp around it is drawn (as the aim line), its dashes where they fall along the whole
+ *  line: Android 8's OpenGL renderer draws a path from a texture as big as the whole path, and leaves out one bigger
+ *  than the GPU's largest texture (a line to a point a few km away, zoomed in), where Core Animation draws what is on
+ *  the screen. */
 class DragLineView(context: Context) : View(context) {
     /** The line in the view's pixels, and whether it is joined back to its start (and filled). */
     data class Line(val points: List<PointF>, val closed: Boolean)
@@ -176,10 +185,10 @@ class DragLineView(context: Context) : View(context) {
         strokeWidth = 3 * density
         strokeCap = Paint.Cap.BUTT
         strokeMiter = 10f // Core Animation's miter limit
-        pathEffect = DashPathEffect(floatArrayOf(10 * density, 7 * density), 0f)
     }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = MapColours.measurePink15 }
     private val path = Path()
+    private val drawn = RectF()
     private var line: Line? = null
 
     init {
@@ -198,13 +207,21 @@ class DragLineView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         val l = line ?: return
-        path.reset()
-        path.moveTo(l.points[0].x, l.points[0].y)
-        for (p in l.points.drop(1)) path.lineTo(p.x, p.y)
+        // Past the view by more than a mitre (10 × 1.5 dp), so the cut ends and the corners outside it don't show.
+        val margin = 20 * density
+        drawn.set(-margin, -margin, width + margin, height + margin)
         if (l.closed) {
-            path.close()
-            canvas.drawPath(path, fill)
+            val area = clipped(l.points, drawn)
+            if (area.size >= 3) {
+                path.reset()
+                path.moveTo(area[0].x, area[0].y)
+                for (i in 1 until area.size) path.lineTo(area[i].x, area[i].y)
+                path.close()
+                canvas.drawPath(path, fill)
+            }
         }
+        path.reset()
+        dashes(l.points, l.closed, drawn, 10 * density, 7 * density, path)
         canvas.drawPath(path, stroke)
     }
 
@@ -212,5 +229,103 @@ class DragLineView(context: Context) : View(context) {
         /** The points the line goes through: the markers, from you when there is only one. */
         fun points(markers: List<GeoPoint>, me: GeoPoint?): List<GeoPoint> =
             if (markers.size == 1 && me != null) listOf(me) + markers else markers
+
+        /** The dashes (`on` long, `off` apart, the first from the start) of the line through `points`, back to the
+         *  first when `closed`, where it is inside `r`, as contours of `into`. A dash that turns a corner is one
+         *  contour, so the corner is mitred. A closed line's first dash is drawn last, going on from the last one when
+         *  that reaches the start, as Skia's dashing (`DashPathEffect`) joins them. */
+        internal fun dashes(points: List<PointF>, closed: Boolean, r: RectF, on: Float, off: Float, into: Path) {
+            val period = (on + off).toDouble()
+            var drawing = false // the last dash reaches the point it is at and goes on
+
+            // The parts of dashes `from` until `until` on the segment a → b, `along` the line from its start; returns
+            // the segment's length.
+            fun segment(a: PointF, b: PointF, along: Double, from: Long, until: Long): Double {
+                val dx = b.x.toDouble() - a.x
+                val dy = b.y.toDouble() - a.y
+                val length = hypot(dx, dy)
+                if (length == 0.0) return 0.0 // nothing to draw, and a dash goes on past it
+                val (t0, t1) = clip(a, b, r) ?: run { drawing = false; return length }
+                if (t0 > 0) drawing = false
+                val s0 = along + t0 * length
+                val s1 = along + t1 * length
+                var reached = false
+                var k = max(from, floor(s0 / period).toLong())
+                while (k < until && k * period < s1) {
+                    val d0 = k * period
+                    val u0 = max(d0, s0)
+                    val u1 = min(d0 + on, s1)
+                    if (u1 > u0) {
+                        val f0 = (u0 - along) / length
+                        val f1 = (u1 - along) / length
+                        if (!drawing || d0 > s0) into.moveTo((a.x + dx * f0).toFloat(), (a.y + dy * f0).toFloat())
+                        into.lineTo((a.x + dx * f1).toFloat(), (a.y + dy * f1).toFloat())
+                        reached = u1 >= s1
+                    }
+                    k++
+                }
+                drawing = reached && t1 >= 1.0
+                return length
+            }
+
+            val count = if (closed) points.size else points.size - 1
+            var along = 0.0
+            for (i in 0 until count) {
+                along += segment(points[i], points[(i + 1) % points.size], along, if (closed) 1 else 0, Long.MAX_VALUE)
+            }
+            if (closed) {
+                var head = 0.0
+                for (i in 0 until count) {
+                    if (head >= on) break
+                    head += segment(points[i], points[(i + 1) % points.size], head, 0, 1)
+                }
+            }
+        }
+
+        /** The part of the segment a → b inside `r`, as (t0, t1) along it (0 at a, 1 at b), or null when none is
+         *  (Liang–Barsky). */
+        internal fun clip(a: PointF, b: PointF, r: RectF): Pair<Double, Double>? {
+            var t0 = 0.0
+            var t1 = 1.0
+            for (edge in 0..3) {
+                val sa = inside(a, edge, r)
+                val sb = inside(b, edge, r)
+                if (sa < 0 && sb < 0) return null
+                if (sa < 0) t0 = max(t0, sa / (sa - sb)) else if (sb < 0) t1 = min(t1, sa / (sa - sb))
+            }
+            return if (t0 < t1) t0 to t1 else null
+        }
+
+        /** The polygon cut to `r` (Sutherland–Hodgman): inside `r`, it covers what the whole one covers. */
+        internal fun clipped(polygon: List<PointF>, r: RectF): List<PointF> {
+            var out = polygon
+            for (edge in 0..3) {
+                if (out.isEmpty()) break
+                val cut = ArrayList<PointF>(out.size + 4)
+                var p = out[out.size - 1]
+                for (c in out) {
+                    val sp = inside(p, edge, r)
+                    val sc = inside(c, edge, r)
+                    if ((sp < 0) != (sc < 0)) { // where p → c crosses the edge
+                        val t = sp / (sp - sc)
+                        val x = p.x + (c.x.toDouble() - p.x) * t
+                        val y = p.y + (c.y.toDouble() - p.y) * t
+                        cut += PointF(x.toFloat(), y.toFloat())
+                    }
+                    if (sc >= 0) cut += c
+                    p = c
+                }
+                out = cut
+            }
+            return out
+        }
+
+        /** How far `p` is inside `r`'s left, right, top or bottom edge (0 to 3); negative outside it. */
+        private fun inside(p: PointF, edge: Int, r: RectF): Double = when (edge) {
+            0 -> p.x.toDouble() - r.left
+            1 -> r.right.toDouble() - p.x
+            2 -> p.y.toDouble() - r.top
+            else -> r.bottom.toDouble() - p.y
+        }
     }
 }

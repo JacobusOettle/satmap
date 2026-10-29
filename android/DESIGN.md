@@ -621,8 +621,9 @@ dashes 10k and 7k. MapLibre lays out dashes in line widths at the whole zoom bel
 ⌊z⌋) and grows them with the map by 2^(z − ⌊z⌋). `MapStyle.zoomScaled(points)` is a width of `points`/2 at each whole
 zoom that grows exponentially (base 2) to just under `points` at the next (stops n and n + 0.999 for n = 0…25, past
 MapLibre's 25.5), so the width and the dashes are iOS's at every zoom in between. At a whole zoom itself iOS draws
-them twice as big (k = 1); the camera is practically never exactly there. The style's transitions are off, so the
-dash pattern doesn't cross-fade when the zoom crosses a whole number.
+them twice as big (k = 1); the camera is practically never exactly there, and the car map's zoom limits, where it rests
+zoomed all the way in or out, are just inside whole zooms for this (3.001 and 19.999). The style's transitions are off,
+so the dash pattern doesn't cross-fade when the zoom crosses a whole number.
 
 **Collisions.** MapLibre places symbols from the top layer down, so this order gives MapKit's priorities:
 - required items: you, then the markers;
@@ -644,7 +645,7 @@ latitude, so the southern one goes first (with the map turned this only approxim
 | Your dot and compass arrow, the track, KML fills/lines/names/points, the measuring line/fill/markers/letters, the selected pin, the draft area, aviation cards and runways | GeoJSON sources plus style layers and **app-drawn images** | Fixed to the ground with no frame of lag. MapLibre's `LocationComponent` is **never** activated: its location engine would keep the GPS on. |
 | All map text | Bitmaps drawn by `MapImages`/`AviationCard` with `Canvas` and added with `Style.addImages` | The style has no `glyphs` URL. App-drawn text gives the iOS fonts, shadows, tabular digits and the card background (interaction spec §2.3). The bitmap density is the map's density. A changed image gets a new id; the generation before last is removed. |
 | Aim line | `AimLineView` in `MapContainerView` | One end is on the screen centre, and it follows a pan frame by frame. |
-| Drag line | `DragLineView` in `MapContainerView` (only while a measuring point is moved; the map's measuring line is empty meanwhile) | As iOS's `dragLine`: on the screen, so it keeps 3 dp and dashes of 10 and 7 dp at every zoom. |
+| Drag line | `DragLineView` in `MapContainerView` (only while a measuring point is moved; the map's measuring line is empty meanwhile) | As iOS's `dragLine`: on the screen, so it keeps 3 dp and dashes of 10 and 7 dp at every zoom. It draws only the part within 20 dp of the view, dashed where it falls along the whole line: API 26–27's OpenGL renderer leaves out a path bigger than a GPU texture. |
 | Lasso | `LassoView` in `MapContainerView` (`GONE` unless drawing) | Drawn in screen space, and it takes the finger. |
 | ZoomScript squares | small Views in `MapContainerView` | Debug only. |
 | Crosshair, panels, buttons, legends, scale bar, compass | Compose over the map (§4) | As SwiftUI over MapKit. |
@@ -1283,7 +1284,7 @@ class Connectivity private constructor(context: Context) {
     - a `Presentation` with a `MapView(options.textureMode(true), rotate and tilt off)`, `pixelRatio = c.dpi / 160f`;
     - `setStyle(MapStyle.builder(DrawnImagery(...)))`, then `installOverlays`;
     - `BlockLayers`, `TrackLayer`, `UserDotLayer` and `AviationLayer`, bound to the same model flows as the phone (on `Dispatchers.Main`);
-    - zoom limits 3–20, which stand in for MapKit's 150 m – 4,000 km camera clamp.
+    - zoom limits 3.001–19.999, which stand in for MapKit's 150 m – 4,000 km camera clamp: just inside whole zooms, where the track's dots would be half the iPhone's size (§3.8).
   - **`onSurfaceDestroyed`:** `MapView` pause/stop/destroy, dismiss the presentation, release the display.
   - **Visible area:** `onVisibleAreaChanged` → `setPadding` (the car map only).
   - **Pan:** `onScroll` → `following = false`, `scrollBy(-dx, -dy)` (check the sign on the DHU).
