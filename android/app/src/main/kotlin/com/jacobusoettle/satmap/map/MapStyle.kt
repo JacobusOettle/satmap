@@ -9,6 +9,7 @@ import org.maplibre.android.style.expressions.Expression.geometryType
 import org.maplibre.android.style.expressions.Expression.get
 import org.maplibre.android.style.expressions.Expression.has
 import org.maplibre.android.style.expressions.Expression.literal
+import org.maplibre.android.style.expressions.Expression.toColor
 import org.maplibre.android.style.layers.BackgroundLayer
 import org.maplibre.android.style.layers.FillLayer
 import org.maplibre.android.style.layers.Layer
@@ -258,6 +259,43 @@ object MapStyle {
     fun aviationRingsFilter(visibleIds: Collection<Int>): Expression =
         all(has("ring"), Expression.`in`(get("id"), literal(visibleIds.map { it as Any }.toTypedArray())))
 
-    /** A KML file's fill, line, names and points layers, for `BlockLayers` to insert against the anchors. */
-    fun kmlLayers(file: UUID): List<Layer> = emptyList() // M3: DESIGN.md §3.8 rows 6, 10 and 13.
+    /** A KML file's layers, for `BlockLayers` to insert against the anchors (DESIGN.md §3.8 rows 6, 10 and 13). */
+    class KmlLayers(val fill: Layer, val line: Layer, val names: Layer, val points: Layer)
+
+    /** A KML file's blocks in their colours and widths (`BlockLayers.shapes` gives each shape its `fill`, `stroke` and
+     *  `width`; round joins and caps, as MapKit's path renderers), then its labels: the blocks' names, which give way to
+     *  everything else (iOS display priority 250), and the points with their names (750, above the aviation cards).
+     *  Every label is an app-drawn image, its frame what collides, with no padding (MapKit adds none). */
+    fun kmlLayers(file: UUID): KmlLayers = KmlLayers(
+        fill = FillLayer(MapIds.kmlFill(file), MapIds.kml(file))
+            .withFilter(eq(geometryType(), "Polygon"))
+            .withProperties(fillColor(toColor(get("fill")))),
+        line = LineLayer(MapIds.kmlLine(file), MapIds.kml(file)).withProperties(
+            lineColor(toColor(get("stroke"))),
+            lineWidth(get("width")),
+            lineCap(Property.LINE_CAP_ROUND),
+            lineJoin(Property.LINE_JOIN_ROUND),
+        ),
+        // A name's image is 1 dp taller than its text, for the shadow: moved down half of it, so the text is centred.
+        names = SymbolLayer(MapIds.kmlNames(file), MapIds.kmlLabels(file))
+            .withFilter(eq(get("kind"), "name"))
+            .withProperties(
+                iconImage(get("img")),
+                iconOffset(arrayOf(0f, 0.5f)),
+                iconAllowOverlap(false),
+                iconIgnorePlacement(false),
+                iconPadding(0f),
+            ),
+        // A point's image has the dot at its top, the name under it: the dot's centre (5 dp down) on the point.
+        points = SymbolLayer(MapIds.kmlPoints(file), MapIds.kmlLabels(file))
+            .withFilter(eq(get("kind"), "point"))
+            .withProperties(
+                iconImage(get("img")),
+                iconAnchor(Property.ICON_ANCHOR_TOP),
+                iconOffset(arrayOf(0f, -5f)),
+                iconAllowOverlap(false),
+                iconIgnorePlacement(false),
+                iconPadding(0f),
+            ),
+    )
 }

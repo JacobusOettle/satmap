@@ -8,8 +8,10 @@ import org.maplibre.android.maps.Style
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.LineString
 import org.maplibre.geojson.MultiLineString
 import org.maplibre.geojson.Point
+import org.maplibre.geojson.Polygon
 
 /** The whole recorded track in chunks, as iOS's `TrackOverlay` keeps it: up to ~512 points each; a new segment (after
  *  a gap) always starts a new chunk. Main thread only. */
@@ -121,9 +123,34 @@ class TrackLayer(private val map: MapLibreMap, private val style: Style, private
     }
 }
 
-/** The measuring line (placed: A to you; path: A → B → …; closed: back to A, filled). */
+/** The measuring line, dashed pink (placed: A to you; path: A → B → …; closed: back to A, filled pink 15 %). MapLibre
+ *  lays out the dashes itself along the whole line (iOS's `MeasureLineRenderer` clipped each segment to the tile and
+ *  kept the dash phase from the line's start; MapLibre restarts it in each tile the line crosses, see `TrackLayer`).
+ *  While a measuring point is moved the line is sent again at every move: MapLibre swaps a sent GeoJSON source's
+ *  tiles without emptying them first, so it doesn't blink, and iOS's drag line over the map isn't needed. */
 class MeasureLineLayer(private val map: MapLibreMap, private val style: Style, private val context: Context) {
-    fun update(points: List<GeoPoint>, closed: Boolean, from: GeoPoint?) {
-        // M3: the `measure` source.
+    private var shown: Pair<List<GeoPoint>, Boolean>? = null
+
+    /** Sets the line (fewer than two points hides it). Unchanged (it is set again on every GPS fix): nothing sent. */
+    fun set(line: List<GeoPoint>, closed: Boolean) {
+        val new = (if (line.size >= 2) line else emptyList()) to (closed && line.size >= 3)
+        if (new == shown) return
+        val source = style.getSourceAs<GeoJsonSource>(MapIds.MEASURE) ?: return
+        shown = new
+        source.setGeoJson(geoJson(new.first, new.second))
+    }
+
+    companion object {
+        /** The line through the points, back to the first when the shape is closed, plus the closed shape's area for
+         *  the fill; nothing for fewer than two points. */
+        fun geoJson(line: List<GeoPoint>, closed: Boolean): FeatureCollection {
+            if (line.size < 2) return MapStyle.empty()
+            val ring = closed && line.size >= 3
+            val points = line.map { Point.fromLngLat(it.lon, it.lat) }
+            val path = if (ring) points + points[0] else points
+            val features = mutableListOf(Feature.fromGeometry(LineString.fromLngLats(path)))
+            if (ring) features += Feature.fromGeometry(Polygon.fromLngLats(listOf(path)))
+            return FeatureCollection.fromFeatures(features)
+        }
     }
 }
