@@ -120,6 +120,10 @@ class BackgroundDownloadTest {
         assertEquals("Downloads keep going in the background. Allow notifications for SatMap to see their progress there.",
                      quiet.status)
         notifications.setNotificationsEnabled(true)
+        // Asked again (SatMap opened, or active again after the notification question): it says what happens now.
+        quiet.begin(title = "Farm", subtitle = "Starting…")
+        assertEquals("Downloads keep going in the background, with their progress in the notification.", quiet.status)
+        assertEquals(2, started.size) // not started again
 
         val refused = BackgroundDownload(app) { _, _ -> throw IllegalStateException("not allowed") }
         refused.begin(title = "Farm", subtitle = "Starting…")
@@ -338,6 +342,44 @@ class BackgroundDownloadTest {
         assertEquals(Status.paused, m.areas.value.single { it.id == a }.status)
         assertNull(m.activeID.value)
         assertTrue(shadowOf(service).isStoppedBySelf) // nothing else to download
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun theStatusFollowsWhetherNotificationsAreAllowed() {
+        // The first Download asks whether SatMap may post notifications, and starts without waiting for the answer.
+        notifications.setNotificationsEnabled(false)
+        val gate = CompletableDeferred<Unit>()
+        val m = manager {
+            gate.await()
+            TileFetchResult.Data(byteArrayOf(1))
+        }
+        idle()
+        m.add(name = "Farm", shape = farm, roads = null, preset = null, maxZoom = 16, allowCellular = false)
+        idle()
+        started += shadowOf(app).nextStartedService
+        startService()
+        assertEquals("Downloads keep going in the background. Allow notifications for SatMap to see their progress there.",
+                     m.backgroundStatus.value)
+
+        // Allowed: SatMap is active again as the question closes.
+        notifications.setNotificationsEnabled(true)
+        process.currentState = Lifecycle.State.STARTED
+        process.currentState = Lifecycle.State.RESUMED
+        idle()
+        assertEquals("Downloads keep going in the background, with their progress in the notification.",
+                     m.backgroundStatus.value)
+
+        // Turned off in Settings, and back to SatMap.
+        notifications.setNotificationsEnabled(false)
+        process.currentState = Lifecycle.State.CREATED
+        idle()
+        process.currentState = Lifecycle.State.RESUMED
+        idle()
+        assertEquals("Downloads keep going in the background. Allow notifications for SatMap to see their progress there.",
+                     m.backgroundStatus.value)
+        assertNull(shadowOf(app).nextStartedService) // the service runs on, not asked for again
+        notifications.setNotificationsEnabled(true)
         gate.complete(Unit)
     }
 

@@ -108,6 +108,9 @@ class BackgroundDownload(
         this.title = title
         this.subtitle = subtitle
         if (wanted) {
+            // Notifications may have been allowed since (the question asked at the first Download, which the download
+            // doesn't wait for) or turned off in Settings: the status says what happens now.
+            status = notificationStatus()
             post()
             return
         }
@@ -125,8 +128,12 @@ class BackgroundDownload(
         }
         wanted = true
         stopping = false
-        status = if (NotificationManagerCompat.from(context).areNotificationsEnabled()) keepsGoing else keepsGoingWithoutNotifications
+        status = notificationStatus()
     }
+
+    /** The status while the service is wanted: whether its progress can be seen in the notification. */
+    private fun notificationStatus(): String =
+        if (NotificationManagerCompat.from(context).areNotificationsEnabled()) keepsGoing else keepsGoingWithoutNotifications
 
     /** The download's progress (tiles done and planned in the area being downloaded), for the notification's bar. */
     fun update(area: UUID, title: String, subtitle: String, done: Long, total: Long) {

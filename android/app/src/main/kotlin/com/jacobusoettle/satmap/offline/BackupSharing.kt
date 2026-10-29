@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
 import android.service.chooser.ChooserAction
-import com.jacobusoettle.satmap.MainActivity
 import com.jacobusoettle.satmap.R
 import java.io.IOException
 import java.io.InputStream
@@ -20,11 +19,11 @@ import java.io.OutputStream
  *  picked with the Storage Access Framework (stock Android has no "Save to Files" target for a USB drive or a folder
  *  on the phone). */
 object BackupSharing {
-    /** "Save to a folder" in the chooser arrives at `MainActivity` with this action. */
+    /** "Save to a folder" in the chooser arrives at `MainActivity` with this action (from `SaveToFolderActivity`). */
     const val ACTION_SAVE_TO_FOLDER = "com.jacobusoettle.satmap.SAVE_TO_FOLDER"
 
     /** The chooser for the shared files: Drive, Gmail, Quick Share (the AirDrop of Android), Files … and SatMap's own
-     *  "Save to a folder" (a custom action from API 34, an extra target below). */
+     *  "Save to a folder" (a custom action from API 34, an extra target below; both open `SaveToFolderActivity`). */
     fun chooser(context: Context, uris: List<Uri>): Intent {
         val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             type = BackupFileProvider.mimeType
@@ -40,7 +39,7 @@ object BackupSharing {
         val label = context.getString(R.string.save_to_folder)
         if (Build.VERSION.SDK_INT >= 34) {
             val action = PendingIntent.getActivity(
-                context, 2, Intent(context, MainActivity::class.java).setAction(ACTION_SAVE_TO_FOLDER),
+                context, 2, Intent(context, SaveToFolderActivity::class.java),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
             chooser.putExtra(
@@ -58,7 +57,7 @@ object BackupSharing {
     }
 
     /** Copies `files` into the folder `tree` picked with `OpenDocumentTree`, each in 4 MiB pieces, telling `progress`
-     *  how many bytes are done. A file is held open (`ExportShares`), so its area doesn't download meanwhile. Returns
+     *  how many bytes are done. The caller holds the areas' downloads for the whole copy (`OfflineManager`). Returns
      *  the display names of the files that couldn't be saved. */
     fun copyInto(context: Context, tree: Uri, files: List<ExportShares.Share>, progress: (Long) -> Unit): List<String> {
         val cr = context.contentResolver
@@ -66,7 +65,6 @@ object BackupSharing {
         val failed = mutableListOf<String>()
         var before = 0L
         for (share in files) {
-            ExportShares.opened(share.area)
             var created: Uri? = null
             try {
                 created = DocumentsContract.createDocument(cr, folder, BackupFileProvider.mimeType, share.displayName)
@@ -81,8 +79,6 @@ object BackupSharing {
                 // Not left half written.
                 created?.let { runCatching { DocumentsContract.deleteDocument(cr, it) } }
                 failed += share.displayName
-            } finally {
-                ExportShares.closed(share.area)
             }
             before += share.file.length()
             progress(before)

@@ -108,9 +108,14 @@ class OfflineManager(
          *  `OfflineBackup.prepareExport`; until core has it, it is here): writes the area's settings into its tile
          *  files and folds their write-ahead logs into them, so each file holds everything by itself, and returns the
          *  files with the names they are shared under ("Farm - satellite.mbtiles"). Layers not downloaded yet are
-         *  skipped. `usedNames` keeps the names unique (" (2)", compared without case). */
+         *  skipped. `usedNames` keeps the names unique (" (2)", compared without case).
+         *
+         *  `beingRead` (Android only): another app still reads the area's files, from an earlier export. iOS writes
+         *  into the area's files and shares clones, which never change under a reader of an earlier export; here the
+         *  shared files are the area's own, so nothing is written into them then. They are shared as they are if they
+         *  already hold these settings and everything is in the file (`isExported`); otherwise the area is busy. */
         internal fun prepareExport(areaFolder: File, layers: List<OfflineBackup.Layer>, name: String, areaJSON: String,
-                                   usedNames: MutableSet<String>): List<Pair<File, String>> {
+                                   usedNames: MutableSet<String>, beingRead: Boolean = false): List<Pair<File, String>> {
             var base = OfflineBackup.fileSafe(name)
             var n = 2
             while (base.lowercase() in usedNames) {
@@ -123,14 +128,57 @@ class OfflineManager(
             for (layer in layers) {
                 val source = File(areaFolder, layer.fileName)
                 if (!source.exists()) continue
-                val store = MBTiles(source, create = false)
-                store.setMetadata(mapOf(OfflineBackup.areaKey to areaJSON, OfflineBackup.layerKey to layer.key))
-                val ready = store.checkpoint()
-                store.close()
+                val ready = if (beingRead) {
+                    isExported(source, layer.key, areaJSON)
+                } else {
+                    val store = MBTiles(source, create = false)
+                    store.setMetadata(mapOf(OfflineBackup.areaKey to areaJSON, OfflineBackup.layerKey to layer.key))
+                    val done = store.checkpoint()
+                    store.close()
+                    done
+                }
                 if (!ready) throw OfflineBackup.Failure.Busy(name)
                 out.add(Pair(source, "$base - ${layer.label}.mbtiles"))
             }
             return out
+        }
+
+        /** Whether `file` already holds everything by itself (nothing in a write-ahead log) and the settings `areaJSON`
+         *  and `layerKey`, the size aside (a restore measures it again). Read through a read-only connection, which
+         *  never writes to the file. */
+        private fun isExported(file: File, layerKey: String, areaJSON: String): Boolean {
+            if (File(file.path + "-wal").length() > 0) return false
+            val db = try {
+                AndroidSqlDriver(readOnly = true).open(file.path, create = false)
+            } catch (e: SqlException) {
+                return false
+            }
+            try {
+                db.busyTimeout(10_000)
+                val s = db.prepare("SELECT name, value FROM metadata WHERE name IN (?, ?)") ?: return false
+                val stored = HashMap<String, String?>()
+                try {
+                    s.bindText(1, OfflineBackup.areaKey)
+                    s.bindText(2, OfflineBackup.layerKey)
+                    while (s.step() == SqlResult.ROW) {
+                        val key = s.columnText(0) ?: continue
+                        stored[key] = s.columnText(1)
+                    }
+                } finally {
+                    s.close()
+                }
+                if (stored[OfflineBackup.layerKey] != layerKey) return false
+                val old = stored[OfflineBackup.areaKey] ?: return false
+                return try {
+                    val a = OfflineArea.fromJson(Json.parseToJsonElement(old))
+                    val b = OfflineArea.fromJson(Json.parseToJsonElement(areaJSON))
+                    a.copy(bytesOnDisk = 0) == b.copy(bytesOnDisk = 0)
+                } catch (e: Exception) {
+                    false
+                }
+            } finally {
+                db.close()
+            }
         }
     }
 
@@ -173,10 +221,16 @@ class OfflineManager(
     val backupMessage: StateFlow<String?> = _backupMessage.asStateFlow()
 
     /** From an export starting until its share sheet closes no download starts: an exported area's files must not
-     *  change while they are prepared or copied. */
-    private var holdDownloads = false
+     *  change while they are prepared or copied. Android: the export holding them, so that only its own share sheet's
+     *  closing ends the hold, never a late one of an earlier export's. */
+    private var exportHold: Any? = null
 
-    /** The download paused for an export, resumed by `finishExport`. */
+    /** A "Save to a folder" copy runs, which holds downloads too (Android only: it comes after the chooser closed). */
+    private var copyHold = false
+
+    private val holdDownloads: Boolean get() = exportHold != null || copyHold
+
+    /** The download paused for an export (or a copy into a folder), resumed when the hold ends (`releaseHold`). */
     private var pausedForExport: UUID? = null
 
     /** Downloads paused because another app opened their area's exported files, resumed when the last one closes
@@ -433,20 +487,21 @@ class OfflineManager(
     fun export(ids: List<UUID>) {
         if (_backupStatus.value != null) return
         _backupStatus.value = "Preparing export…"
-        holdDownloads = true
+        val hold = Any()
+        exportHold = hold
         prepareExport(ids) { result ->
             _backupStatus.value = null
             result.fold(
                 onSuccess = { uris ->
                     if (uris.isNotEmpty()) {
-                        SharePresenter.present(ShareRequest(uris, saveToFolder = ::saveToFolder) { finishExport() })
+                        SharePresenter.present(ShareRequest(uris, saveToFolder = ::saveToFolder) { finishExport(hold) })
                     } else {
-                        finishExport()
+                        finishExport(hold)
                         _backupMessage.value = "Nothing has been downloaded yet to export."
                     }
                 },
                 onFailure = { e ->
-                    finishExport()
+                    finishExport(hold)
                     _backupMessage.value = when (e) {
                         is OfflineBackup.Failure -> e.errorDescription
                         is MBTiles.StoreError -> e.errorDescription
@@ -480,7 +535,9 @@ class OfflineManager(
                 runCatching {
                     val used = HashSet<String>()
                     items.flatMap { item ->
-                        prepareExport(item.folder, backupLayers, item.name, item.json, used).map { (file, name) ->
+                        // (No new reader can open meanwhile: the shares were cleared above.)
+                        val beingRead = ExportShares.readers(item.id) > 0
+                        prepareExport(item.folder, backupLayers, item.name, item.json, used, beingRead).map { (file, name) ->
                             ExportShares.Share(area = item.id, file = file, displayName = name)
                         }
                     }
@@ -496,11 +553,19 @@ class OfflineManager(
         }
     }
 
-    /** The share sheet closed: downloads may run again, including one paused for the export. The shared files stay
-     *  readable until the next export, a deleted area or the next launch, in case the system is still sending them;
-     *  while another app reads them, their area doesn't download (`readerOpened`). */
-    fun finishExport() {
-        holdDownloads = false
+    /** The share sheet of the export holding downloads closed: downloads may run again, including one paused for the
+     *  export. The shared files stay readable until the next export, a deleted area or the next launch, in case the
+     *  system is still sending them; while another app reads them, their area doesn't download (`readerOpened`). The
+     *  closing of an earlier export's share sheet, after a later export has taken the hold, changes nothing. */
+    private fun finishExport(hold: Any) {
+        if (exportHold !== hold) return
+        exportHold = null
+        releaseHold()
+    }
+
+    /** Neither an export nor a copy holds downloads any more: they may run again, including one paused for them. */
+    private fun releaseHold() {
+        if (holdDownloads) return
         val id = pausedForExport
         pausedForExport = null
         if (id != null && _areas.value.any { it.id == id && it.status == OfflineArea.Status.paused }) {
@@ -511,21 +576,38 @@ class OfflineManager(
     }
 
     /** "Save to a folder" in the share sheet (Android only: stock Android has no "Save to Files"): copies the export's
-     *  files into the folder picked, a USB drive or a folder on the phone. While a file is copied its area doesn't
-     *  download. */
+     *  files into the folder picked, a USB drive or a folder on the phone. Downloads are held during the copy, as iOS
+     *  holds them until Save to Files has written the files: the chooser may have closed before the folder was picked
+     *  (ending the export's hold), so an exported area that started downloading again is paused, and the copy waits
+     *  for its run to end, so nothing writes to the files while they are copied. The copied areas count as read until
+     *  the copy ends. */
     private fun saveToFolder(tree: Uri) {
         val files = ExportShares.all()
         if (_backupStatus.value != null || files.isEmpty()) return
-        val total = files.sumOf { it.file.length() }
-        _backupStatus.value = copyingText(0, total)
+        _backupStatus.value = copyingText(0, files.sumOf { it.file.length() })
         _backupProgress.value = 0.0
+        copyHold = true
+        val areas = files.map { it.area }.toSet()
+        var waitFor: Job? = null
+        val active = _activeID.value
+        val running = task
+        if (active != null && active in areas && running != null) {
+            pause(active)
+            pausedForExport = active
+            waitFor = running
+        }
+        for (id in areas) ExportShares.opened(id)
         scope.launch {
+            waitFor?.join()
+            val total = files.sumOf { it.file.length() } // as the run left them
             val report = progressReporter(total)
             val failed = withContext(io) { BackupSharing.copyInto(context, tree, files, report) }
+            for (id in areas) ExportShares.closed(id)
             _backupStatus.value = null
             _backupProgress.value = null
             if (failed.isNotEmpty()) _backupMessage.value = failed.joinToString("\n") { "Couldn't save $it." }
-            finishExport()
+            copyHold = false
+            releaseHold()
         }
     }
 

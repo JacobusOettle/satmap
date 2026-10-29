@@ -540,16 +540,7 @@ class BackupTest {
         SharePresenter.finished() // the chooser closes as "Save to a folder" is chosen
 
         // A USB drive, picked with the folder picker.
-        Folder.root = File(downloads, "usb").apply { mkdirs() }
-        Folder.refuse = emptySet()
-        Robolectric.buildContentProvider(Folder::class.java).create(ProviderInfo().apply {
-            authority = "com.example.usb"
-            exported = true
-            grantUriPermissions = true
-            readPermission = android.Manifest.permission.MANAGE_DOCUMENTS
-            writePermission = android.Manifest.permission.MANAGE_DOCUMENTS
-        })
-        val tree = DocumentsContract.buildTreeDocumentUri("com.example.usb", "root")
+        val tree = usbDrive()
         share.saveToFolder!!(tree)
         assertTrue(m.backupStatus.value!!.startsWith("Copying "))
         idle()
@@ -571,11 +562,224 @@ class BackupTest {
         assertEquals(listOf("Fixture farm - satellite.mbtiles"), Folder.root.list()!!.toList())
     }
 
+    /** A USB drive with an empty folder, as the folder picker gives it. */
+    private fun usbDrive(): Uri {
+        Folder.root = File(downloads, "usb").apply { mkdirs() }
+        Folder.refuse = emptySet()
+        Folder.created = {}
+        Robolectric.buildContentProvider(Folder::class.java).create(ProviderInfo().apply {
+            authority = "com.example.usb"
+            exported = true
+            grantUriPermissions = true
+            readPermission = android.Manifest.permission.MANAGE_DOCUMENTS
+            writePermission = android.Manifest.permission.MANAGE_DOCUMENTS
+        })
+        return DocumentsContract.buildTreeDocumentUri("com.example.usb", "root")
+    }
+
+    @Test
+    fun saveToAFolderHoldsDownloadsUntilTheCopyEnds() {
+        val m = makeManager()
+        val gate = CompletableDeferred<Unit>()
+        answer = {
+            gate.await()
+            TileFetchResult.Data(byteArrayOf(1))
+        }
+        val a = m.add(name = "A", shape = farm, roads = null, preset = null, maxZoom = 16, allowCellular = false).id
+        idle()
+        m.export(listOf(a))
+        idle()
+        val share = shared()
+        assertEquals(2, share.uris.size)
+
+        // The chooser's result comes before "Save to a folder" reaches SatMap: the export's hold ends, and the area
+        // downloads again while the folder is picked; another waits behind it.
+        SharePresenter.finished()
+        idle()
+        assertEquals(a, m.activeID.value)
+        val b = m.add(name = "B", shape = farm, roads = null, preset = null, maxZoom = 16, allowCellular = false).id
+        idle()
+        assertEquals(Status.queued, area(b).status)
+
+        // The folder is picked: the area pauses, the copy waits for its run to end, and nothing downloads until the
+        // copy has ended; the area counts as read for the whole copy.
+        val tree = usbDrive()
+        val seen = mutableListOf<String>()
+        Folder.created = { name -> seen += "$name: ${m.activeID.value} ${area(a).status} ${area(b).status} ${ExportShares.readers(a)}" }
+        answer = { TileFetchResult.Data(byteArrayOf(1)) }
+        share.saveToFolder!!(tree)
+        assertEquals(Status.paused, area(a).status)
+        assertTrue(m.backupStatus.value!!.startsWith("Copying "))
+        idle()
+        assertEquals(listOf("A - satellite.mbtiles: null paused queued 1", "A - elevation.mbtiles: null paused queued 1"), seen)
+        assertNull(m.backupStatus.value)
+        assertNull(m.backupMessage.value)
+        assertEquals(0, ExportShares.readers(a))
+        // The copy is the area's file as the run left it.
+        val dir = AppPaths.offlineArea(a)
+        assertEquals(OfflineBackup.inspect(File(dir, "imagery.mbtiles")).areaJSON.toList(),
+                     OfflineBackup.inspect(File(Folder.root, "A - satellite.mbtiles")).areaJSON.toList())
+
+        // Then both go on.
+        assertEquals(Status.complete, area(a).status)
+        assertEquals(Status.complete, area(b).status)
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun saveToAFolderChosenInTheChooserHoldsDownloadsUntilTheFolderPickerCloses() {
+        val m = makeManager()
+        val gate = CompletableDeferred<Unit>()
+        answer = {
+            gate.await()
+            TileFetchResult.Data(byteArrayOf(1))
+        }
+        val a = m.add(name = "A", shape = farm, roads = null, preset = null, maxZoom = 16, allowCellular = false).id
+        idle()
+        m.export(listOf(a))
+        idle()
+        shared()
+
+        // "Save to a folder" is chosen (SaveToFolderActivity tells SharePresenter first), then the chooser closes:
+        // the area stays paused while the folder is picked.
+        SharePresenter.requestFolder()
+        SharePresenter.chooserClosed()
+        idle()
+        assertEquals(Status.paused, area(a).status)
+        assertNull(m.activeID.value)
+
+        // A folder is picked: the copy, with downloads held; then the area goes on.
+        val tree = usbDrive()
+        val seen = mutableListOf<String>()
+        Folder.created = { name -> seen += "$name: ${m.activeID.value} ${area(a).status}" }
+        answer = { TileFetchResult.Data(byteArrayOf(1)) }
+        SharePresenter.folderChosen(tree)
+        idle()
+        assertEquals(listOf("A - satellite.mbtiles: null paused", "A - elevation.mbtiles: null paused"), seen)
+        assertEquals(Status.complete, area(a).status)
+
+        // Again, with the folder picker cancelled: the area goes on when it closes.
+        val gate2 = CompletableDeferred<Unit>()
+        answer = {
+            gate2.await()
+            TileFetchResult.Data(byteArrayOf(1))
+        }
+        m.changeMaxZoom(a, 17)
+        idle()
+        assertEquals(a, m.activeID.value)
+        m.export(listOf(a))
+        idle()
+        shared()
+        SharePresenter.requestFolder()
+        SharePresenter.chooserClosed()
+        idle()
+        assertEquals(Status.paused, area(a).status)
+        assertNull(m.activeID.value)
+        answer = { TileFetchResult.Data(byteArrayOf(1)) }
+        SharePresenter.folderChosen(null)
+        idle()
+        assertEquals(Status.complete, area(a).status)
+        assertEquals(17, area(a).maxZoom)
+        gate.complete(Unit)
+        gate2.complete(Unit)
+    }
+
+    @Test
+    fun aLateCloseOfAnEarlierShareSheetDoesntEndTheNextExportsHold() {
+        val m = makeManager()
+        val gate = CompletableDeferred<Unit>()
+        answer = {
+            gate.await()
+            TileFetchResult.Data(byteArrayOf(1))
+        }
+        val a = m.add(name = "A", shape = farm, roads = null, preset = null, maxZoom = 16, allowCellular = false).id
+        idle()
+        m.export(listOf(a))
+        idle()
+        val first = shared()
+
+        // The first chooser's result never comes (its activity went), and the area is exported again: the first share
+        // ends as the second opens, but the area stays paused for the second.
+        answer = { TileFetchResult.Data(byteArrayOf(1)) }
+        m.export(listOf(a))
+        idle()
+        val second = shared()
+        assertTrue(first !== second)
+        assertEquals(Status.paused, area(a).status)
+        assertNull(m.activeID.value)
+        // Nor does the first one's completion, run late.
+        first.completion()
+        idle()
+        assertEquals(Status.paused, area(a).status)
+        assertNull(m.activeID.value)
+
+        // The second share sheet closes: the area goes on.
+        SharePresenter.finished()
+        idle()
+        assertEquals(Status.complete, area(a).status)
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun anExportWhileAnotherAppReadsTheFilesDoesntWriteIntoThem() {
+        saveArea(Fixture.area)
+        saveList(listOf(Fixture.area))
+        val m = makeManager()
+        val id = Fixture.area.id
+        m.export(listOf(id))
+        idle()
+        val uris = shared().uris
+        SharePresenter.finished()
+        idle()
+        // Drive still uploads the first export.
+        val reader = app.contentResolver.openFileDescriptor(uris[0], "r")!!
+        val dir = AppPaths.offlineArea(id)
+        val imagery = File(dir, "imagery.mbtiles").readBytes()
+        val terrain = File(dir, "terrain.mbtiles").readBytes()
+
+        // Exported again, with only the size measured since: the files are shared as they are.
+        m.refreshSizes()
+        idle()
+        assertTrue(area(id).bytesOnDisk != Fixture.area.bytesOnDisk)
+        m.export(listOf(id))
+        idle()
+        assertEquals(2, shared().uris.size)
+        assertNull(m.backupMessage.value)
+        assertArrayEquals(imagery, File(dir, "imagery.mbtiles").readBytes())
+        assertArrayEquals(terrain, File(dir, "terrain.mbtiles").readBytes())
+        SharePresenter.finished()
+        idle()
+
+        // Its settings changed meanwhile: they can't be written while the files are read.
+        m.setAllowCellular(id, true)
+        m.export(listOf(id))
+        idle()
+        assertNull(SharePresenter.request.value)
+        assertEquals("Couldn't prepare Fixture farm for export. Try again in a moment.", m.backupMessage.value)
+        assertNull(m.backupStatus.value)
+        assertArrayEquals(imagery, File(dir, "imagery.mbtiles").readBytes())
+        assertArrayEquals(terrain, File(dir, "terrain.mbtiles").readBytes())
+        assertEquals(Status.complete, area(id).status) // (nothing held)
+
+        // Once Drive has finished, they are.
+        m.clearBackupMessage()
+        reader.close()
+        idle()
+        m.export(listOf(id))
+        idle()
+        val json = OfflineBackup.inspect(File(dir, "imagery.mbtiles")).areaJSON
+        assertTrue(OfflineArea.fromJson(Json.parseToJsonElement(String(json))).allowCellular)
+        assertEquals(2, shared().uris.size)
+    }
+
     /** A folder picked with the Storage Access Framework (a USB drive): files are made by name in `root`. */
     class Folder : DocumentsProvider() {
         companion object {
             lateinit var root: File
             var refuse: Set<String> = emptySet()
+
+            /** Told of each file made, by name, as its copy starts. */
+            var created: (String) -> Unit = {}
         }
 
         override fun onCreate() = true
@@ -593,6 +797,7 @@ class BackupTest {
 
         override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String {
             if (displayName in refuse) throw IllegalStateException("No space left")
+            created(displayName)
             File(root, displayName).createNewFile()
             return displayName
         }
