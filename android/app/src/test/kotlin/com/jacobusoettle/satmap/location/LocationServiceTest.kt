@@ -21,6 +21,7 @@ import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.map.TileRepository
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -53,9 +54,7 @@ class LocationServiceTest {
 
     @Test
     fun itRunsInTheForegroundSayingRecordingYourTrack() {
-        val service = Robolectric.buildService(LocationService::class.java, Intent(app, LocationService::class.java))
-            .create().startCommand(0, 1).get()
-        val shadow = shadowOf(service)
+        val shadow = shadowOf(runningService())
         assertEquals(LocationService.ID, shadow.lastForegroundNotificationId)
         val n = shadow.lastForegroundNotification
         assertEquals("SatMap", n.extras.getString(Notification.EXTRA_TITLE))
@@ -68,22 +67,55 @@ class LocationServiceTest {
         assertEquals(NotificationManager.IMPORTANCE_LOW, channel.importance)
     }
 
+    private fun model(): AppModel = AppModel(app, object : ElevationSource {
+        override suspend fun elevation(p: GeoPoint): Double? = null
+    }).also { AppModel.shared = it }
+
+    private fun runningService(): LocationService =
+        Robolectric.buildService(LocationService::class.java, Intent(app, LocationService::class.java))
+            .create().startCommand(0, 1).get()
+
+    /** The notification's Stop, delivered to the running service. */
+    private fun pressStop(service: LocationService) {
+        service.onStartCommand(Intent(app, LocationService::class.java).setAction(LocationService.ACTION_STOP), 0, 2)
+    }
+
     @Test
-    fun stopEndsRecordingAndTheService() {
-        val model = AppModel(app, object : ElevationSource {
-            override suspend fun elevation(p: GeoPoint): Double? = null
-        })
-        AppModel.shared = model
+    fun stopInTheBackgroundEndsRecordingAndTheService() {
+        val model = model()
         shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
         process.currentState = Lifecycle.State.RESUMED
         val lm = app.getSystemService(LocationManager::class.java)
         assertEquals(1, shadowOf(lm).getLocationRequests(LocationManager.GPS_PROVIDER).size)
-        val service = Robolectric.buildService(LocationService::class.java, Intent(app, LocationService::class.java))
-            .create().startCommand(0, 1).get()
-        // The notification's Stop, delivered to the running service.
-        service.onStartCommand(Intent(app, LocationService::class.java).setAction(LocationService.ACTION_STOP), 0, 2)
+        val service = runningService()
+        process.currentState = Lifecycle.State.CREATED
+        assertEquals(1, shadowOf(lm).getLocationRequests(LocationManager.GPS_PROVIDER).size)
+        pressStop(service)
         assertTrue(shadowOf(service).isStoppedBySelf)
         assertEquals(0, shadowOf(lm).getLocationRequests(LocationManager.GPS_PROVIDER).size)
         assertEquals(LocationRecorder.Power.active, model.recorder.power.value)
+    }
+
+    @Test
+    fun stopOnScreenEndsOnlyBackgroundRecording() {
+        model()
+        shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        process.currentState = Lifecycle.State.RESUMED
+        val lm = app.getSystemService(LocationManager::class.java)
+        val service = runningService()
+        // Pressed in the notification shade over the map (SatMap stays resumed): the service goes, the map keeps its
+        // location.
+        shadowOf(app).clearStartedServices()
+        pressStop(service)
+        assertTrue(shadowOf(service).isStoppedBySelf)
+        assertNull(shadowOf(app).nextStartedService)
+        assertEquals(1, shadowOf(lm).getLocationRequests(LocationManager.GPS_PROVIDER).size)
+        // SatMap leaves the screen: recording ends.
+        process.currentState = Lifecycle.State.CREATED
+        assertEquals(0, shadowOf(lm).getLocationRequests(LocationManager.GPS_PROVIDER).size)
+        // Opened again: recording, with its service.
+        process.currentState = Lifecycle.State.RESUMED
+        assertEquals(1, shadowOf(lm).getLocationRequests(LocationManager.GPS_PROVIDER).size)
+        assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
     }
 }

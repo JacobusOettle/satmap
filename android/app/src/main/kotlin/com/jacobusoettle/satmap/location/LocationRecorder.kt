@@ -11,6 +11,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
 import android.location.Location
 import android.location.LocationManager
 import android.location.altitude.AltitudeConverter
@@ -136,6 +138,9 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     private var started = false
     private var isForeground = AppLifecycle.isForeground
 
+    /** Stop was pressed while SatMap was on screen: everything stops when it goes to the background. */
+    private var stopInBackground = false
+
     private var lastUsedAt = Double.NEGATIVE_INFINITY
     private var lastRecorded: TrackPoint? = null
 
@@ -151,11 +156,21 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     private var searchingSince = now()
     private val stationaryTimer = WakeTimer(context, "stationary") { stationaryTick() }
 
-    // Motion (M5: significant motion and the step detector, DESIGN.md §5.1). Until then motion never says moving and
-    // movement is found by the GPS peeks alone, as on an iPhone without motion permission.
-    private var motionSaysMoving = false
+    // Motion: significant motion (no permission needed); the step detector comes in M5 (DESIGN.md §5.1). Without the
+    // sensor the GPS peeks and coarse jumps alone notice movement, as on an iPhone without motion permission.
+    private val significantMotion: Sensor? = sensors?.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
+    private var significantMotionArmed = false
+    private var lastSignificantMotionAt: Double? = null
     private var motionMovingSince: Double? = null
     private val pendingMotionWake = WakeTimer(context, "motion") {}
+
+    private val significantMotionListener = object : TriggerEventListener() {
+        override fun onTrigger(event: TriggerEvent) {
+            // A one-shot sensor: it is disarmed now.
+            significantMotionArmed = false
+            significantMotionDetected()
+        }
+    }
 
     // Background duty cycle.
     private var gpsResting = false
@@ -260,8 +275,15 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     }
 
     /** The notification's Stop (iOS's force-quit): everything off until the app is next opened. The last position
-     *  stays. */
+     *  stays. Pressed while SatMap is on screen (the notification shade or split screen over the map), updates go on
+     *  while it stays visible, as an iPhone never shows a visible map without them, and stop when it goes to the
+     *  background: Stop ends background recording only. */
     fun stop() {
+        if (isForeground) {
+            stopInBackground = true
+            return
+        }
+        stopInBackground = false
         for ((slot, _) in registered) LocationManagerCompat.removeUpdates(lm, listeners.getValue(slot))
         registered.clear()
         stopMotion()
@@ -586,8 +608,9 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         if (!started || _power.value != Power.active) return
         val now = now()
         // Motion says we're walking/driving: don't sleep (covers pacing within a few metres).
+        val moving = motionSaysMoving(now)
         val since = motionMovingSince
-        if (motionSaysMoving && since != null && now - since < 600) return
+        if (moving && since != null && now - since < 600) return
         // No usable fix yet (cold start, poor sky view): keep searching for a while, since we can't tell
         // whether we're moving.
         if (lastGoodFixAt == null && now - searchingSince < 600) return
@@ -692,16 +715,55 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
 
     /** iOS's motion activity: significant motion (wake now) and the step detector (≥ 6 steps in 6 s: wake now; else
      *  a wake after 6 s that needs 3 steps). Idempotent; called again after the activity-recognition result.
-     *  M5 (DESIGN.md §5.1): until then the GPS peeks alone detect movement, as without the motion permission. */
+     *  Significant motion needs no permission and is armed here; the step detector is M5 (DESIGN.md §5.1). */
     fun startMotion() {
         if (!started) return
-        // M5: arm TYPE_SIGNIFICANT_MOTION; register TYPE_STEP_DETECTOR once ACTIVITY_RECOGNITION is granted.
+        armSignificantMotion()
+        // M5: register TYPE_STEP_DETECTOR once ACTIVITY_RECOGNITION is granted.
+    }
+
+    /** Once: Android refuses a second request for an armed trigger. */
+    private fun armSignificantMotion() {
+        val s = sensors ?: return
+        val sensor = significantMotion ?: return
+        if (significantMotionArmed) return
+        significantMotionArmed = s.requestTriggerSensor(significantMotionListener, sensor)
     }
 
     private fun stopMotion() {
-        // M5: cancel the trigger sensor, unregister the step listener.
-        motionSaysMoving = false
+        val s = sensors
+        val sensor = significantMotion
+        if (significantMotionArmed && s != null && sensor != null) {
+            s.cancelTriggerSensor(significantMotionListener, sensor)
+        }
+        significantMotionArmed = false
+        // M5: unregister the step listener.
+        lastSignificantMotionAt = null
         motionMovingSince = null
+    }
+
+    /** iOS: walking, running, cycling or driving at high confidence. Fires on the main thread. */
+    private fun significantMotionDetected() {
+        if (!started) return
+        val now = now()
+        noteMoving(now)
+        lastSignificantMotionAt = now
+        if (_power.value == Power.sleeping) wake()
+        // It disarms itself after firing.
+        armSignificantMotion()
+    }
+
+    /** iOS: a translating activity of medium or high confidence. */
+    private fun noteMoving(now: Double) {
+        if (!motionSaysMoving(now)) motionMovingSince = now
+    }
+
+    /** Motion says we're walking/driving: significant motion in the last 60 s (M5: or a step in the last 15 s). Once
+     *  it doesn't, `motionMovingSince` is cleared (iOS: a stationary activity). */
+    private fun motionSaysMoving(now: Double): Boolean {
+        val moving = lastSignificantMotionAt?.let { now - it < 60 } ?: false
+        if (!moving) motionMovingSince = null
+        return moving
     }
 
     // Compass
@@ -777,6 +839,11 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
 
     override fun didEnterBackground() {
         isForeground = false
+        // Stop was pressed while SatMap was on screen.
+        if (stopInBackground) {
+            stop()
+            return
+        }
         if (_power.value == Power.active) {
             // Take the next fix now, then rest the GPS between 10 s fixes.
             startAcquiring()

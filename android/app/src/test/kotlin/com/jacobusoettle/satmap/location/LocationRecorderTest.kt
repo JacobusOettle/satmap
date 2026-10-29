@@ -32,6 +32,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.annotation.Config
 import org.robolectric.shadows.SensorBuilder
 import org.robolectric.shadows.SensorEventBuilder
 import org.robolectric.shadows.ShadowSystemClock
@@ -41,9 +42,11 @@ import kotlin.math.roundToLong
 
 /** The recorder's power policy on Robolectric's location manager, alarms and clock: the requests registered in each
  *  state (DESIGN.md §5.1), the 2 s foreground gate, the 10 s background duty cycle (re-registered at +7 s, a cached
- *  fix from before rejected, used from the 10 s mark), the track's spacing and segment breaks, sleep and peeks. Fixes
- *  are handed to the registered listeners directly (the shadow would drop those under its own interval). */
+ *  fix from before rejected, used from the 10 s mark), the track's spacing and segment breaks, sleep, peeks and their
+ *  wake thresholds, significant motion, and Stop. Fixes are handed to the registered listeners directly (the shadow
+ *  would drop those under its own interval). */
 @RunWith(AndroidJUnit4::class)
+@Config(shadows = [ShadowTriggerSensors::class])
 class LocationRecorderTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
     private val lm get() = app.getSystemService(LocationManager::class.java)
@@ -59,6 +62,7 @@ class LocationRecorderTest {
         if (!process.currentState.isAtLeast(Lifecycle.State.CREATED)) process.currentState = Lifecycle.State.CREATED
         Defaults.init(app)
         AppLifecycle.init()
+        ShadowTriggerSensors.reset()
         shadowOf(app).grantPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
     }
 
@@ -166,6 +170,13 @@ class LocationRecorderTest {
     }
 
     private fun alarm(tag: String) = alarms.scheduledAlarms.singleOrNull { it.tag == "satmap:$tag" }
+
+    /** Phones have a significant-motion sensor (a one-shot wake-up trigger); Robolectric has none until one is added,
+     *  which must be before the recorder is made. */
+    private fun addSignificantMotion() {
+        val sensor = SensorBuilder.newBuilder().setType(Sensor.TYPE_SIGNIFICANT_MOTION).setWakeUpFlag(true).build()
+        shadowOf(app.getSystemService(SensorManager::class.java)).addSensor(sensor)
+    }
 
     /** Fallen asleep (just now) after 120 s still on screen, with a good fix at home as the anchor. */
     private fun asleep(): LocationRecorder {
@@ -508,6 +519,34 @@ class LocationRecorderTest {
     }
 
     @Test
+    fun aLessPrecisePeekFixMustBeTwiceItsErrorAway() {
+        val r = asleep()
+        pass(60.0)
+        // 15 m accuracy: the threshold is 2 × 15 = 30 m, above the 20 m floor. 28 m: still here.
+        gps(at(28.0), accuracy = 15f)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        assertNone(LocationManager.GPS_PROVIDER)
+        // 32 m: moved.
+        pass(60.0)
+        gps(at(32.0), accuracy = 15f)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+    }
+
+    @Test
+    fun whileMeasuringALessPrecisePeekFixMustBeOneAndAHalfTimesItsErrorAway() {
+        val r = asleep()
+        r.measuring = true
+        // 10 m accuracy: the threshold is 1.5 × 10 = 15 m, above the 8 m floor. 14 m: still here.
+        gps(at(14.0), accuracy = 10f)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+        assertNone(LocationManager.GPS_PROVIDER)
+        // 16 m: moved.
+        pass(15.0)
+        gps(at(16.0), accuracy = 10f)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+    }
+
+    @Test
     fun whileMeasuringAPeekComesAtOnceEvery15sAndReactsToSmallerMoves() {
         val r = asleep()
         r.measuring = true
@@ -554,19 +593,106 @@ class LocationRecorderTest {
         assertEquals(LocationRecorder.Power.sleeping, r.power.value)
     }
 
+    // Motion
+
+    @Test
+    fun significantMotionWakesAtOnceAndIsArmedAgain() {
+        addSignificantMotion()
+        val r = asleep()
+        // Armed since recording began.
+        assertEquals(1, ShadowTriggerSensors.armed.size)
+        ShadowTriggerSensors.fire()
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+        assertRequest(LocationManager.GPS_PROVIDER, 2000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        assertNull(alarm("peek"))
+        assertNotNull(alarm("stationary"))
+        // It disarms itself when it fires, and is armed again.
+        assertEquals(1, ShadowTriggerSensors.armed.size)
+        // Asked again on becoming active, it isn't requested twice (Android would refuse that); Stop disarms it.
+        background()
+        foreground()
+        background()
+        r.stop()
+        assertEquals(0, ShadowTriggerSensors.armed.size)
+    }
+
+    @Test
+    fun significantMotionKeepsSleepOffForAMinuteAfterIt() {
+        addSignificantMotion()
+        val r = onScreen()
+        gps(home)
+        pass(110.0)
+        ShadowTriggerSensors.fire()
+        // From 120 s still it would sleep; motion said moving under a minute ago.
+        pass(55.0)
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+        // A minute without motion: asleep.
+        pass(15.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+    }
+
+    @Test
+    fun motionKeepsSleepOffFor600sAtMost() {
+        addSignificantMotion()
+        val r = onScreen()
+        gps(home)
+        pass(110.0)
+        // Moving by the sensor (not by the GPS) from 110 s on: a trigger every 30 s until 680 s; now it is 710 s.
+        repeat(20) {
+            ShadowTriggerSensors.fire()
+            pass(30.0)
+        }
+        // The check at 705 s: 595 s since motion began.
+        assertEquals(LocationRecorder.Power.active, r.power.value)
+        // At 720 s: 610 s.
+        pass(10.0)
+        assertEquals(LocationRecorder.Power.sleeping, r.power.value)
+    }
+
+    @Test
+    fun withoutTheSensorNothingIsArmed() {
+        onScreen()
+        assertEquals(0, ShadowTriggerSensors.armed.size)
+    }
+
     // Stop
 
     @Test
     fun stopEndsEverythingUntilTheAppIsNextOpened() {
         val r = asleep()
+        background()
         r.stop()
         assertEquals(LocationRecorder.Power.active, r.power.value)
         assertNone(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
         assertEquals(emptyList<Any>(), alarms.scheduledAlarms)
         assertNotNull(r.location.value)
-        background()
+        // Opened again: recording, with its service.
+        shadowOf(app).clearStartedServices()
         foreground()
         assertRequest(LocationManager.GPS_PROVIDER, 2000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
+    }
+
+    @Test
+    fun stopOnScreenEndsRecordingWhenSatMapLeavesTheScreen() {
+        val r = onScreen()
+        gps(home)
+        // The notification shade or split screen over the map: SatMap stays on screen, and the map keeps its location.
+        r.stop()
+        assertRequest(LocationManager.GPS_PROVIDER, 2000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        pass(2.0)
+        gps(at(10.0))
+        assertEquals(2, fixes.size)
+        // Gone to the background: everything off.
+        background()
+        assertNone(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+        assertEquals(emptyList<Any>(), alarms.scheduledAlarms)
+        assertEquals(at(10.0).lat, r.location.value!!.lat, 1e-12)
+        // Opened again: recording, with its service.
+        shadowOf(app).clearStartedServices()
+        foreground()
+        assertRequest(LocationManager.GPS_PROVIDER, 2000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
     }
 
     // Compass

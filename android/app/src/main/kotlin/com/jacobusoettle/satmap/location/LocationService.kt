@@ -20,9 +20,10 @@ import com.jacobusoettle.satmap.app.AppModel
  *  `allowsBackgroundLocationUpdates` and the background location indicator): a foreground service of type location,
  *  started only from the foreground, keeps the app's location access while it runs, so `ACCESS_BACKGROUND_LOCATION`
  *  is never requested. Its notification says "Recording your track", with a Stop action: iOS's force-quit, until
- *  SatMap is next opened. Swiping SatMap away from Recents keeps recording (`stopWithTask` stays false). If the
- *  system ends the process, it isn't restarted in the background (`START_NOT_STICKY`); recording starts again when
- *  SatMap is opened, as on iOS. */
+ *  SatMap is next opened. Pressed with SatMap on screen (the notification shade or split screen over the map), the
+ *  map keeps its location until SatMap leaves the screen, as on iOS: Stop ends background recording only. Swiping
+ *  SatMap away from Recents keeps recording (`stopWithTask` stays false). If the system ends the process, it isn't
+ *  restarted in the background (`START_NOT_STICKY`); recording starts again when SatMap is opened, as on iOS. */
 class LocationService : Service() {
     companion object {
         const val CHANNEL = "recording"
@@ -45,6 +46,7 @@ class LocationService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            // On screen, the recorder carries on until SatMap goes to the background.
             AppModel.shared.recorder.stop()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
