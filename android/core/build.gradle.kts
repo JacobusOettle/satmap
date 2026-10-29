@@ -16,7 +16,8 @@ kotlin {
 
 dependencies {
     implementation(libs.kotlinx.coroutines.core)
-    implementation(libs.kotlinx.serialization.json)
+    // Part of core's API (OfflineArea.toJson/fromJson, GeoPoint, CoverageShape …), so the app compiles against it too.
+    api(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
