@@ -224,6 +224,66 @@ class MapControllerTest {
         assertTrue(doubleArrayOf(0.0, 0.0, 0.0, 0.0).contentEquals(c.padding))
     }
 
+    /** Where `p` is on the screen, dp right of and below the view's middle, with the camera's target `target` at `zoom`
+     *  and the map turned to `bearing`: the world (x east, y south) turned onto the screen. */
+    private fun onScreen(p: GeoPoint, target: GeoPoint, zoom: Double, bearing: Double): XY {
+        val size = 512 * 2.0.pow(zoom)
+        val a = WebMercator.world(p)
+        val t = WebMercator.world(target)
+        val dx = (a.x - t.x) * size
+        val dy = (a.y - t.y) * size
+        val b = bearing * PI / 180
+        return XY(dx * cos(b) + dy * sin(b), -dx * sin(b) + dy * cos(b))
+    }
+
+    private fun assertAt(expected: XY, actual: XY) {
+        assertEquals(expected.x, actual.x, 1e-6)
+        assertEquals(expected.y, actual.y, 1e-6)
+    }
+
+    @Test
+    fun theCompassTurnsTheMapAboutTheSafeAreasMiddle() {
+        val target = GeoPoint(-33.921765, 18.923779)
+        val zoom = 16.0
+        for (offset in listOf(XY(0.0, 14.0), XY(26.0, 0.0), XY(5.0, 14.0))) {
+            for (bearing in listOf(30.0, 90.0, 180.0, 250.0)) {
+                // The point at the safe area's middle before the turn (you, while following)...
+                val c = MapController.pointAt(target, offset, zoom, bearing)
+                assertAt(offset, onScreen(c, target, zoom, bearing))
+                // ...is there after it, north up.
+                val north = MapController.northUp(target, offset, zoom, bearing)
+                assertAt(offset, onScreen(c, north, zoom, 0.0))
+            }
+        }
+        // MapLibre's resetNorth keeps its target, the view's middle: with south up you would end 28 dp off the safe
+        // area's middle, 14 dp above the crosshair instead of below it.
+        val you = MapController.pointAt(target, XY(0.0, 14.0), zoom, 180.0)
+        assertAt(XY(0.0, -14.0), onScreen(you, target, zoom, 0.0))
+        // North up already: nothing moves.
+        val still = MapController.northUp(target, XY(0.0, 14.0), zoom, 0.0)
+        assertEquals(target.lat, still.lat, 1e-12)
+        assertEquals(target.lon, still.lon, 1e-12)
+    }
+
+    @Test
+    fun whenTheSafeAreaChangesThePointAtItsMiddleStaysThere() {
+        val target = GeoPoint(-33.921765, 18.923779)
+        val zoom = 15.5
+        // Portrait to landscape on the Pixel 7 (the cutout on the left), and a turn to the other landscape.
+        val changes = listOf(XY(0.0, 14.0) to XY(26.0, 0.0), XY(26.0, 0.0) to XY(-26.0, 0.0), XY(-26.0, 0.0) to XY(0.0, 14.0))
+        for ((from, to) in changes) {
+            for (bearing in listOf(0.0, 45.0, 200.0)) {
+                val c = MapController.pointAt(target, from, zoom, bearing)
+                val kept = MapController.kept(target, from, to, zoom, bearing)
+                assertAt(to, onScreen(c, kept, zoom, bearing))
+                // The same as moving the target by the change alone (back by the old middle, on by the new).
+                val moved = MapController.targetShowing(target, XY(to.x - from.x, to.y - from.y), zoom, bearing)
+                assertEquals(moved.lat, kept.lat, 1e-12)
+                assertEquals(moved.lon, kept.lon, 1e-12)
+            }
+        }
+    }
+
     @Test
     fun zoomingOntoAPointScalesTheScreenToTheMetresAsked() {
         // Each level halves the ground across the screen.

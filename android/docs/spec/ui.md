@@ -177,7 +177,7 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 - **Edge-to-edge:** call `enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))` in `MainActivity.onCreate`, so status-bar icons are light over the imagery. The manifest gets `android:windowSoftInputMode="adjustResize"`.
 - **No extra top padding:** the first panel sits right under the status bar, as on iOS.
 - **The controls lift** is `2 × (50 + 12) = 124 dp` (Swift `controlsLift`). It leaves room under the buttons for the tapped spot's coordinates.
-- **Landscape:** no special layout, as on iOS (all orientations allowed; the manifest already has `configChanges` for orientation, so nothing is recreated).
+- **Landscape:** no special layout, as on iOS (all orientations allowed; the manifest already has `configChanges` for orientation, so nothing is recreated). When the screen turns, the point at the safe area's middle stays at its new middle, as MapKit keeps its camera's centre (interaction spec §1.3).
 - **Recomposition scope:** `AimPanel` reads `model.aim`, `ScaleBarView` reads `model.scale`, and the two keys read `model.legend`. Each collects its own `StateFlow`, so a pan recomposes only them (Swift keeps these out of `AppModel` for the same reason).
 
 ### 2.2 The top column, in order
@@ -429,7 +429,7 @@ Every element gets a black shadow with radius 1.5 dp. Draw with `drawIntoCanvas 
   - A north needle: `SystemRed` triangle 6 dp wide, 13 dp long from the centre.
   - A south needle: `White@0.85`, the same size.
   - `N` in 10 sp Bold White, 12 dp above the centre in the rotated frame.
-- **Tap:** `model.map?.resetNorth()` (calls `MapLibreMap.resetNorth()`), `onClickLabel = "Point north up"`.
+- **Tap:** `model.map?.resetNorth()`, `onClickLabel = "Point north up"`. It turns the map north up about the safe area's middle, which stays where it is, as `MKCompassButton` keeps the camera's centre (you stay put while following): `easeCamera(newCameraPosition(…bearing(0.0).target(MapController.northUp(…))), 500)`, as long as MapLibre's own. `MapLibreMap.resetNorth()` turns about the camera's target, the view's middle, so it is only used before the map has started.
 
 ### 2.5 The tapped spot (bottom, `overlay(alignment: .bottom)`)
 
@@ -949,7 +949,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
 | `.fileImporter(allowsMultipleSelection:)` | `rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments())` with `arrayOf("*/*")` |
 | `UIActivityViewController` | `Intent.createChooser(ACTION_SEND_MULTIPLE)` via `StartActivityForResult` |
 | `UIPasteboard` / `UINotificationFeedbackGenerator(.success)` | `ClipboardManager.setPrimaryClip` / `HapticFeedbackType.Confirm` |
-| `MKCompassButton` | Custom `CompassButton` (Canvas) + `MapLibreMap.resetNorth()` |
+| `MKCompassButton` | Custom `CompassButton` (Canvas) + `MapController.resetNorth()` (north up about the safe area's middle, §2.4.6) |
 | `ViewThatFits` | Custom `Layout` (`CoordinateRow`) |
 | `.minimumScaleFactor` | `Text(autoSize = TextAutoSize.StepBased(min, max, 0.25.sp))` |
 | `.monospacedDigit()` / text `.shadow` | `fontFeatureSettings = "tnum"` / `TextStyle(shadow = Shadow(…))` |
@@ -1043,7 +1043,7 @@ Checked with `javap` on `android-sdk-13.7.1.aar`.
 
 - **Map options** (`org.maplibre.android.maps.MapLibreMapOptions`): `createFromAttributes(Context)`, `.compassEnabled(false)`, `.logoEnabled(false)`, `.attributionEnabled(false)` (the credits are in the Offline maps footer, as on iOS), `.tiltGesturesEnabled(false)` (MapKit `isPitchEnabled = false`), `.rotateGesturesEnabled(true)`.
   - The same through `org.maplibre.android.maps.UiSettings`: `setCompassEnabled(false)`, `setLogoEnabled(false)`, `setAttributionEnabled(false)`, `setTiltGesturesEnabled(false)`.
-- **Compass** (`MapLibreMap`): `getCameraPosition().bearing` (`org.maplibre.android.camera.CameraPosition.bearing`), `addOnCameraMoveListener(MapLibreMap.OnCameraMoveListener)`, and `resetNorth()` for the compass tap.
+- **Compass** (`MapLibreMap`): `getCameraPosition().bearing` (`org.maplibre.android.camera.CameraPosition.bearing`), `addOnCameraMoveListener(MapLibreMap.OnCameraMoveListener)`, and `easeCamera(CameraUpdate, int)` for the compass tap: bearing 0 with the target moved so the safe area's middle stays put, over 500 ms. `resetNorth()` (`Transform.resetNorth` → the native `easeTo` of the bearing alone, 500 ms) keeps the target, the view's middle, so it would move you while following; it is the fallback before the map has started.
 - **Scale bar and crosshair** (`org.maplibre.android.maps.Projection`, via `MapLibreMap.getProjection()`):
   - `fromScreenLocation(PointF)` at the view centre ± 50 dp gives metres per dp, as Swift does. `getMetersPerPixelAtLatitude(double)` returns metres per *logical* pixel (dp at the default `MapView.getPixelRatio()`); it is an alternative.
   - `toScreenLocation(LatLng)` gives `pointsApart`.

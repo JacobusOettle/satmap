@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap.car
 import android.app.Presentation
 import android.graphics.PointF
 import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.util.DisplayMetrics
@@ -43,6 +44,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import kotlin.math.log2
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.pow
 
 /** The map on the car's screen (Android Auto, CarPlay's counterpart): the satellite imagery with contour lines and
@@ -302,7 +304,7 @@ class CarMapController(private val carContext: CarContext, private val model: Ap
         track = TrackLayer(m, style, context).also { it.reset(model.track) }
         drawnTrackCount = model.track.size
         blocks = BlockLayers(m, style, context)
-        aviation = AviationLayer(m, style, context).also { it.isOn = model.terrainMode.value.showsAviation }
+        aviation = AviationLayer(m, style, context) { shownRegion(m) }.also { it.isOn = model.terrainMode.value.showsAviation }
         view.doOnLayout { if (map === m) start(m) }
     }
 
@@ -361,6 +363,14 @@ class CarMapController(private val carContext: CarContext, private val model: Ap
         val r = visibleArea ?: return
         if (width <= 0 || height <= 0) return
         c.padding(max(0, r.left), max(0, r.top), max(0, width - r.right), max(0, height - r.bottom))
+    }
+
+    /** The region drone mode finds places for (iOS `mapView.region`): the part of the surface the host leaves to the
+     *  map, around its middle, where the camera centres (the padding). */
+    private fun shownRegion(m: MapLibreMap): MapController.Region? {
+        val r = visibleArea ?: Rect(0, 0, width, height)
+        val area = RectF(max(0, r.left).toFloat(), max(0, r.top).toFloat(), min(width, r.right).toFloat(), min(height, r.bottom).toFloat())
+        return MapController.region(m, area)
     }
 
     /** Your dot, grey while the GPS sleeps. The car's map has no compass arrow (CarPlay's has none either). */

@@ -18,6 +18,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
 import android.view.accessibility.AccessibilityNodeInfo
@@ -190,6 +191,14 @@ class MapController(
     /** Until then (uptime ms) a new position doesn't recentre the map, which would cut short a zoom onto you. */
     private var keepCameraUntil = 0L
 
+    /** Where the safe area's middle was (`safeOffset`) when the camera was last centred there: when the safe area
+     *  changes, the point there is moved to its new middle (`keepSafeAreaMiddle`). */
+    private var centredOffset = XY(0.0, 0.0)
+
+    /** After each layout in the window: the safe area can change without the map's size (a turn from one landscape to
+     *  the other moves the cutout to the other side). */
+    private val windowLaidOut = ViewTreeObserver.OnGlobalLayoutListener { keepSafeAreaMiddle() }
+
     /** The map is laid out and its camera restored: from then on it is moved, saved and followed. Camera moves asked
      *  for before then wait for it (MapKit applies a region set before layout once the map is laid out). */
     private var started = false
@@ -226,6 +235,7 @@ class MapController(
     init {
         // Laid out again when the screen turns: the compass follows its top, and the camera hooks see the new shape.
         container.onLaidOut = { changed -> containerLaidOut(changed) }
+        container.viewTreeObserver.addOnGlobalLayoutListener(windowLaidOut)
         container.touches = touches
         container.labels = { mapLabels() }
         container.onLabelClicked = { label -> tapped(label.spot) }
@@ -264,7 +274,7 @@ class MapController(
         track = TrackLayer(m, style, activity).also { it.reset(model.track) }
         drawnTrackCount = model.track.size
         blocks = BlockLayers(m, style, activity).also { it.onChanged = { container.labelsChanged() } }
-        aviation = AviationLayer(m, style, activity).also { it.isOn = model.terrainMode.value.showsAviation }
+        aviation = AviationLayer(m, style, activity) { visibleRegion(m) }.also { it.isOn = model.terrainMode.value.showsAviation }
         markerLayer = MeasureMarkerLayer(m, style, activity)
         measureLine = MeasureLineLayer(m, style, activity)
         selectedLayer = SelectedPointLayer(m, style, activity)
@@ -289,6 +299,7 @@ class MapController(
         }
         // The names the map shows have been placed (for accessibility).
         mapView.addOnDidBecomeIdleListener { container.labelsChanged() }
+        centredOffset = safeOffset() // the safe area restoreCamera centres in
         restoreCamera(m)
         started = true
         val waiting = whenStarted.toList()
@@ -338,9 +349,20 @@ class MapController(
         imagery?.reload()
     }
 
-    /** The compass button: north up again. */
+    /** The compass button: north up again, turning about the safe area's middle, which stays where it is, as MapKit's
+     *  compass keeps the camera's centre (MapLibre's `resetNorth` turns about its target, the view's middle, which
+     *  would move you off the safe area's middle while following). Eased as long as MapLibre's own. */
     fun resetNorth() {
-        map?.resetNorth()
+        val m = map ?: return
+        val camera = m.cameraPosition
+        val target = camera.target
+        if (!started || target == null) {
+            m.resetNorth()
+            return
+        }
+        val t = northUp(GeoPoint(target.latitude, target.longitude), centringOffset(), camera.zoom, camera.bearing)
+        val north = CameraPosition.Builder(camera).target(LatLng(t.lat, t.lon)).bearing(0.0).build()
+        m.easeCamera(CameraUpdateFactory.newCameraPosition(north), NORTH_UP_MS)
     }
 
     /** The coordinate under the crosshair (the middle of the view, not the safe area's middle, where the camera centres
@@ -377,11 +399,30 @@ class MapController(
         return safeOffset(i.left.toFloat(), i.top.toFloat(), i.right.toFloat(), i.bottom.toFloat(), density)
     }
 
+    /** The safe area's middle, for centring the camera there now (kept as `centredOffset`). */
+    private fun centringOffset(): XY = safeOffset().also { centredOffset = it }
+
     /** The camera's target (the view's middle) that shows `c` at the safe area's middle at `zoom`, as MapKit's camera
      *  centre (iOS `setCenter`, `camera.centerCoordinate`). */
     private fun targetShowing(m: MapLibreMap, c: GeoPoint, zoom: Double): LatLng {
-        val t = targetShowing(c, safeOffset(), zoom, m.cameraPosition.bearing)
+        val t = targetShowing(c, centringOffset(), zoom, m.cameraPosition.bearing)
         return LatLng(t.lat, t.lon)
+    }
+
+    /** The safe area changed (the screen turned, the cutout went to the other side): MapLibre keeps its target, the
+     *  view's middle, where MapKit keeps its camera's centre, the safe area's middle. The point at its old middle is
+     *  moved to the new one, without animation as MapKit's, keeping the zoom and the heading. */
+    private fun keepSafeAreaMiddle() {
+        val m = map ?: return
+        if (!started) return
+        val before = centredOffset
+        val now = safeOffset()
+        if (now == before) return
+        centredOffset = now
+        val camera = m.cameraPosition
+        val target = camera.target ?: return
+        val t = kept(GeoPoint(target.latitude, target.longitude), before, now, camera.zoom, camera.bearing)
+        m.moveCamera(CameraUpdateFactory.newLatLng(LatLng(t.lat, t.lon)))
     }
 
     override fun center(on: GeoPoint, animated: Boolean) {
@@ -436,7 +477,7 @@ class MapController(
     private fun camera(m: MapLibreMap, region: Region): CameraPosition? {
         val i = safeInsets()
         val fitted = m.getCameraForLatLngBounds(region.latLngBounds(), intArrayOf(i.left, i.top, i.right, i.bottom)) ?: return null
-        return centred(fitted, region.center, safeOffset())
+        return centred(fitted, region.center, centringOffset())
     }
 
     private fun saveCamera() {
@@ -447,14 +488,13 @@ class MapController(
     }
 
     /** The region the safe area shows (iOS `mapView.region`, restored with `setRegion`): the coordinate at its middle
-     *  and the span of its four corners, as `camera` sets it. (Saving the view's middle and whole span, the restored map
-     *  would come out further north by the safe area's offset, and zoomed out, at each launch.) */
+     *  and the span of its four corners, as `camera` sets it. The saved camera and drone mode's places use it. (Saving
+     *  the view's middle and whole span, the restored map would come out further north by the safe area's offset, and
+     *  zoomed out, at each launch.) */
     private fun visibleRegion(m: MapLibreMap): Region? {
         val i = safeInsets()
-        val s = RectF(i.left.toFloat(), i.top.toFloat(), (mapView.width - i.right).toFloat(), (mapView.height - i.bottom).toFloat())
-        if (s.width() <= 0 || s.height() <= 0) return null
-        val corners = listOf(PointF(s.left, s.top), PointF(s.right, s.top), PointF(s.left, s.bottom), PointF(s.right, s.bottom))
-        return Region.of(coordinate(m, PointF(s.centerX(), s.centerY())), corners.map { coordinate(m, it) })
+        val safe = RectF(i.left.toFloat(), i.top.toFloat(), (mapView.width - i.right).toFloat(), (mapView.height - i.bottom).toFloat())
+        return region(m, safe)
     }
 
     /** A camera move starts: one the user's finger started stops following you (iOS: the finger on the map). */
@@ -910,12 +950,14 @@ class MapController(
         saveCamera()
     }
 
-    /** The container was laid out (as when the screen turns): the compass follows the screen's top. When its size
-     *  changed (turned, or another window beside it) MapLibre has resized the map but sends no camera callbacks, so
-     *  the camera hooks run here as MapKit sends them when its bounds change: the imagery's focus and prefetch, the
-     *  saved camera, the aim and the scale follow the new shape. */
+    /** The container was laid out (as when the screen turns): the compass follows the screen's top, and the point at
+     *  the safe area's middle stays there if it moved. When its size changed (turned, or another window beside it)
+     *  MapLibre has resized the map but sends no camera callbacks, so the camera hooks run here as MapKit sends them
+     *  when its bounds change: the imagery's focus and prefetch, the saved camera, the aim and the scale follow the new
+     *  shape. */
     private fun containerLaidOut(changed: Boolean) {
         rotationChanged()
+        keepSafeAreaMiddle()
         if (!changed || !started) return
         imagery?.regionWillChange()
         visibleRegionChanged()
@@ -956,6 +998,7 @@ class MapController(
         scope.cancel()
         owner.lifecycle.removeObserver(this)
         displayManager?.unregisterDisplayListener(displayListener)
+        container.viewTreeObserver.let { if (it.isAlive) it.removeOnGlobalLayoutListener(windowLaidOut) }
         if (model.map === this) model.map = null
         userDot?.stop()
         userDot = null
@@ -1044,6 +1087,9 @@ class MapController(
         /** The saved camera's key, as iOS's. */
         const val CAMERA_KEY = "camera"
 
+        /** How long the compass turns the map north up, ms: as MapLibre's `resetNorth` (its native `easeTo`). */
+        const val NORTH_UP_MS = 500
+
         /** The zoom that makes the screen `metersAcross` wide, from `zoom` where it is `across` metres wide (each zoom
          *  level halves the ground the screen shows). */
         fun zoomOnto(zoom: Double, across: Double, metersAcross: Double): Double = zoom + log2(across / metersAcross)
@@ -1055,6 +1101,34 @@ class MapController(
         fun centred(fitted: CameraPosition, center: GeoPoint, offset: XY = XY(0.0, 0.0)): CameraPosition {
             val t = targetShowing(center, offset, fitted.zoom, fitted.bearing)
             return CameraPosition.Builder(fitted).target(LatLng(t.lat, t.lon)).padding(0.0, 0.0, 0.0, 0.0).build()
+        }
+
+        /** The point `offset` dp right of and below the view's middle, with the camera's target (the view's middle) at
+         *  `target`: `targetShowing` the other way. */
+        fun pointAt(target: GeoPoint, offset: XY, zoom: Double, bearing: Double): GeoPoint =
+            targetShowing(target, XY(-offset.x, -offset.y), zoom, bearing)
+
+        /** The compass: the camera's target that turns the map from `bearing` to north up about the point `offset` dp
+         *  right of and below the view's middle (the safe area's middle), which stays there. */
+        fun northUp(target: GeoPoint, offset: XY, zoom: Double, bearing: Double): GeoPoint =
+            targetShowing(pointAt(target, offset, zoom, bearing), offset, zoom, 0.0)
+
+        /** The safe area changed: the camera's target that moves the point at its middle before (`from` dp off the
+         *  view's middle) to its middle now (`to`), at the same zoom and heading. */
+        fun kept(target: GeoPoint, from: XY, to: XY, zoom: Double, bearing: Double): GeoPoint =
+            targetShowing(pointAt(target, from, zoom, bearing), to, zoom, bearing)
+
+        /** The region a part of the map view shows (`area`, its pixels), as iOS's `mapView.region` with that part the
+         *  safe area: the coordinate at its middle, where the camera centres, and the span of its four corners. The
+         *  phone's map gives its safe area, the car's the part its host leaves to it. Null when the part is empty. */
+        fun region(m: MapLibreMap, area: RectF): Region? {
+            if (area.width() <= 0 || area.height() <= 0) return null
+            fun at(x: Float, y: Float): GeoPoint {
+                val c = m.projection.fromScreenLocation(PointF(x, y)).wrap()
+                return GeoPoint(c.latitude, c.longitude)
+            }
+            val corners = listOf(at(area.left, area.top), at(area.right, area.top), at(area.left, area.bottom), at(area.right, area.bottom))
+            return Region.of(at(area.centerX(), area.centerY()), corners)
         }
 
         /** How far the safe area's middle is right of and below the view's, in dp, from the insets around it (pixels,
