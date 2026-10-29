@@ -287,7 +287,7 @@ A custom `Layout`:
 - If `sum + 8 dp × (n−1) ≤ maxWidth`, place them in a row with 8 dp gaps, centred horizontally and vertically.
 - Otherwise stack them in a column with 6 dp gaps, centred.
 
-#### 2.3.7 `CoordinateBar(icon, text, id, onClose?)`
+#### 2.3.7 `CoordinateBar(icon, text, id, iconSlot, onClose?)`
 
 - **Container:** pill (padding h12 v8, `Black@0.65`, `CircleShape`), `Row(spacedBy 8)`, White, `blocksMap()`.
 - **Copy button:** `Row(spacedBy 6, CenterVertically)` holding:
@@ -444,9 +444,9 @@ Every element gets a black shadow with radius 1.5 dp. Draw with `drawIntoCanvas 
 - **Layout:** `Column(spacedBy 6, CenterHorizontally)`, padding start/end 12 and bottom 8 inside the safe area.
   1. If `selectedName != null`: the name capsule. Subheadline Bold White, 1 line, ellipsis, padding h12 v5, `Black@0.65`, `CircleShape`, `testTag("tappedName")`.
   2. `CoordinateRow`:
-     - `CoordinateBar(icon = MapPin if selectedName == null else MapPinCircleFill, text = Format.coordinate(p), id = "tappedCoordinates", onClose = { model.selectedPoint = null })`
+     - `CoordinateBar(icon = MapPin if selectedName == null else MapPinCircleFill, text = Format.coordinate(p), id = "tappedCoordinates", iconSlot = 19.7.dp if selectedName == null else 19.1.dp, onClose = { model.selectedPoint = null })`
      - `HeightBar(elevation = model.selectedElevation, unit = heightUnit, id = "tappedHeight", onTap = model::nextHeightUnit)`
-- **My row** (top, §2.2) is `CoordinateBar(icon = Icons.Outlined.NearMe if recorder.power == sleeping else Icons.Filled.NearMe, text = Format.coordinate(location), id = "myCoordinates")` beside `HeightBar(model.userElevation, gpsAltitude(loc), unit, "myHeight", nextHeightUnit)`.
+- **My row** (top, §2.2) is `CoordinateBar(icon = Icons.Outlined.NearMe if recorder.power == sleeping else Icons.Filled.NearMe, text = Format.coordinate(location), id = "myCoordinates", iconSlot = 18.7.dp)` beside `HeightBar(model.userElevation, gpsAltitude(loc), unit, "myHeight", nextHeightUnit)`.
 - `Format.coordinate` is `"%.6f, %.6f"`, through `stringFormat`.
 
 ### 2.6 `UnitSwitch` (modifier)
@@ -912,7 +912,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
   MapViewRepresentable(model)                       // map subsystem (AndroidView of MapView)
   Crosshair()
   DrawingBar(model) · DownloadBanner(area, progress, onPause) · AimPanel(model, aim, recorder) · MeasurePanel(model, recorder)
-  CoordinateRow { CoordinateBar(icon, text, id, onClose); HeightBar(elevation, gpsAltitude, unit, id, onTap) }
+  CoordinateRow { CoordinateBar(icon, text, id, iconSlot, onClose); HeightBar(elevation, gpsAltitude, unit, id, onTap) }
   DroneCard(report) · Hint(text, onClose)
   ContourKeyView(legend) · ScaleBarView(scale, onTap) · ColourKeyView(legend)
   Controls(model, offline) { CompassButton(map); MapButton(...) ×6 + DropdownMenus + TerrainToast }
