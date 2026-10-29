@@ -213,18 +213,82 @@ class CarMapControllerTest {
     fun aPinchZoomsAroundItsFocusAndTheHostsOwnZoomAroundTheMiddle() {
         val camera = start()
         camera.moves.clear()
-        car.onScale(200f, 120f, 2f)
         car.onScale(-1f, -1f, 0.5f) // no focus: the host's own zoom
         car.onScale(300f, -1f, 1.25f)
+        assertTrue(car.following) // as CarPlay's zoom buttons
+        car.onScale(200f, 120f, 2f) // a pinch (or a double tap) at a point moves the map: no more following
+        assertFalse(car.following)
         car.onScale(10f, 10f, 0f) // nothing to scale by
         assertEquals(
             listOf<Move>(
-                Move.Zoom(1.0, 200f to 120f, false),
                 Move.Zoom(-1.0, null, false),
                 Move.Zoom(kotlin.math.log2(1.25), null, false),
+                Move.Zoom(1.0, 200f to 120f, false),
             ),
             camera.moves,
         )
+    }
+
+    /** A flat map seen from a camera: the world point (in pixels at zoom 0) under a point of the surface, with the
+     *  camera's target (`tx`, `ty`) at `centre`. */
+    private fun world(p: PointF, centre: PointF, tx: Double, ty: Double, zoom: Double): Pair<Double, Double> {
+        val scale = Math.pow(2.0, zoom)
+        return (tx + (p.x - centre.x) / scale) to (ty + (p.y - centre.y) / scale)
+    }
+
+    @Test
+    fun aZoomAroundAFocusKeepsThePointUnderItWhereItIs() {
+        // MapLibre's zoomBy(amount, focus) would make the point under the focus the middle: here it stays put.
+        val centre = PointF(400f, 240f) // the middle of an 800 × 480 surface
+        val tx = 1_000.0
+        val ty = 600.0
+        for ((focus, zooms) in listOf(
+            PointF(200f, 120f) to (12.0 to 13.0),
+            PointF(700f, 400f) to (12.0 to 11.0),
+            PointF(50f, 460f) to (15.5 to 15.5 + kotlin.math.log2(1.25)),
+        )) {
+            val (from, to) = zooms
+            val middle = CarMapController.zoomedCentre(centre, focus, from, to)
+            // The camera's new target is the point under `middle` now.
+            val (nx, ny) = world(middle, centre, tx, ty, from)
+            val before = world(focus, centre, tx, ty, from)
+            val after = world(focus, centre, nx, ny, to)
+            assertEquals(before.first, after.first, 1e-6)
+            assertEquals(before.second, after.second, 1e-6)
+        }
+        // Zooming in by one level at (200, 120): the new middle is halfway from the focus to the old middle.
+        val m = CarMapController.zoomedCentre(centre, PointF(200f, 120f), 12.0, 13.0)
+        assertEquals(300f, m.x, 1e-4f)
+        assertEquals(180f, m.y, 1e-4f)
+    }
+
+    @Test
+    fun aZoomAroundTheMiddleOrAtTheZoomLimitLeavesTheTargetWhereItIs() {
+        val centre = PointF(400f, 240f)
+        val atMiddle = CarMapController.zoomedCentre(centre, PointF(400f, 240f), 12.0, 14.0)
+        assertEquals(400f, atMiddle.x, 1e-4f)
+        assertEquals(240f, atMiddle.y, 1e-4f)
+        // Already at the limit: the zoom doesn't change, so neither does the middle.
+        val atLimit = CarMapController.zoomedCentre(centre, PointF(100f, 50f), CarMapController.MAX_ZOOM, CarMapController.MAX_ZOOM)
+        assertEquals(400f, atLimit.x, 1e-4f)
+        assertEquals(240f, atLimit.y, 1e-4f)
+    }
+
+    @Test
+    fun aScrollMovesWhatTheMapShowsByThePixelsGiven() {
+        // The host's drag 30 px left and 12 px down (onScroll(30, -12)) is scrollBy(-30, 12): the new middle is the
+        // point now 30 px right of and 12 px above the middle, and every point of the map moves by (-30, 12).
+        val centre = PointF(400f, 240f)
+        val middle = CarMapController.scrolledCentre(centre, -30f, 12f)
+        assertEquals(430f, middle.x, 1e-4f)
+        assertEquals(228f, middle.y, 1e-4f)
+        val zoom = 13.0
+        val (nx, ny) = world(middle, centre, 1_000.0, 600.0, zoom)
+        val p = PointF(123f, 321f)
+        val before = world(p, centre, 1_000.0, 600.0, zoom)
+        val after = world(PointF(p.x - 30f, p.y + 12f), centre, nx, ny, zoom)
+        assertEquals(before.first, after.first, 1e-6)
+        assertEquals(before.second, after.second, 1e-6)
     }
 
     @Test

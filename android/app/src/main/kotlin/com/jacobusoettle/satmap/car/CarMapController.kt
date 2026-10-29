@@ -1,7 +1,6 @@
 package com.jacobusoettle.satmap.car
 
 import android.app.Presentation
-import android.graphics.Point
 import android.graphics.PointF
 import android.graphics.Rect
 import android.hardware.display.DisplayManager
@@ -44,7 +43,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import kotlin.math.log2
 import kotlin.math.max
-import kotlin.math.roundToInt
+import kotlin.math.pow
 
 /** The map on the car's screen (Android Auto, CarPlay's counterpart): the satellite imagery with contour lines and
  *  elevation colours (as on the phone), the blocks, the track and your position, following you until it is moved. It
@@ -70,10 +69,11 @@ class CarMapController(private val carContext: CarContext, private val model: Ap
         /** Animated, the middle of the map onto a point (iOS `setCenter(_:animated: true)`). */
         fun center(on: GeoPoint)
 
-        /** Zooms in (positive) or out by levels: around `focus` (the surface's pixels), or around the middle. */
+        /** Zooms in (positive) or out by levels: around `focus` (the surface's pixels; the point under it stays where
+         *  it is), or around the middle. */
         fun zoomBy(levels: Double, focus: PointF?, animated: Boolean)
 
-        /** Moves what the map shows by pixels. */
+        /** Moves what the map shows by pixels, as a move of the camera (its hooks run, as for MapKit's `setCenter`). */
         fun scrollBy(dx: Float, dy: Float)
 
         /** The parts of the surface the host covers (its buttons and cards), in pixels from each edge: the middle of
@@ -209,10 +209,13 @@ class CarMapController(private val carContext: CarContext, private val model: Ap
         camera?.scrollBy(-distanceX, -distanceY)
     }
 
-    /** A pinch, or the host's own zoom (no focus: around the middle of the map). */
+    /** A pinch or a double tap: zooms around where the fingers are, the point under them staying where it is, and the
+     *  map stops following you, as for a drag (and as the phone's map does for any move of the finger). The host's own
+     *  zoom (no focus) is around the middle of the map and keeps following, as CarPlay's zoom buttons do. */
     override fun onScale(focusX: Float, focusY: Float, scaleFactor: Float) {
         if (scaleFactor <= 0f) return
         val focus = if (focusX < 0 || focusY < 0) null else PointF(focusX, focusY)
+        if (focus != null) following = false
         camera?.zoomBy(log2(scaleFactor.toDouble()), focus, animated = false)
     }
 
@@ -434,6 +437,17 @@ class CarMapController(private val carContext: CarContext, private val model: Ap
         /** The zoom limits, standing in for MapKit's 150 m – 4,000 km camera distance. */
         const val MIN_ZOOM = 3.0
         const val MAX_ZOOM = 20.0
+
+        /** The point on the surface that becomes the middle of the map when it zooms from `fromZoom` to `toZoom` around
+         *  `focus`, the point under the focus staying where it is (`centre`: where the middle of the map is now). */
+        internal fun zoomedCentre(centre: PointF, focus: PointF, fromZoom: Double, toZoom: Double): PointF {
+            val s = 2.0.pow(fromZoom - toZoom).toFloat()
+            return PointF(focus.x + (centre.x - focus.x) * s, focus.y + (centre.y - focus.y) * s)
+        }
+
+        /** The point on the surface that becomes the middle of the map when what it shows moves by `dx`, `dy` pixels
+         *  (`centre`: where the middle of the map is now). */
+        internal fun scrolledCentre(centre: PointF, dx: Float, dy: Float): PointF = PointF(centre.x - dx, centre.y - dy)
     }
 }
 
@@ -458,17 +472,28 @@ private class MapLibreCamera(private val map: MapLibreMap) : CarMapController.Ca
         map.easeCamera(CameraUpdateFactory.newLatLng(LatLng(on.lat, on.lon)))
     }
 
+    /** Around a focus, the zoom and a new middle together, so the point under the focus stays where it is
+     *  (MapLibre's `zoomBy(amount, focus)` makes the point under the focus the new middle of the map). */
     override fun zoomBy(levels: Double, focus: PointF?, animated: Boolean) {
         val update = if (focus == null) {
             CameraUpdateFactory.zoomBy(levels)
         } else {
-            CameraUpdateFactory.zoomBy(levels, Point(focus.x.roundToInt(), focus.y.roundToInt()))
+            val c = map.cameraPosition
+            val target = c.target ?: return
+            val zoom = (c.zoom + levels).coerceIn(map.minZoomLevel, map.maxZoomLevel)
+            val middle = CarMapController.zoomedCentre(map.projection.toScreenLocation(target), focus, c.zoom, zoom)
+            val moved = map.projection.fromScreenLocation(middle).wrap()
+            CameraUpdateFactory.newCameraPosition(CameraPosition.Builder(c).target(moved).zoom(zoom).build())
         }
         if (animated) map.animateCamera(update) else map.moveCamera(update)
     }
 
+    /** As a new middle for the camera: `MapLibreMap.scrollBy` moves the native map without telling the camera
+     *  listeners, so the imagery, the colour range and drone mode's places would stay where the map was. */
     override fun scrollBy(dx: Float, dy: Float) {
-        map.scrollBy(dx, dy)
+        val target = map.cameraPosition.target ?: return
+        val middle = CarMapController.scrolledCentre(map.projection.toScreenLocation(target), dx, dy)
+        map.moveCamera(CameraUpdateFactory.newLatLng(map.projection.fromScreenLocation(middle).wrap()))
     }
 
     /** As camera padding (`MapLibreMap.setPadding` is deprecated): what was in the middle of the map stays in the
