@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap
 import android.Manifest
 import android.graphics.Point
 import android.graphics.PointF
+import android.graphics.Rect
 import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
@@ -33,21 +34,16 @@ import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.GeoPoint
-import com.jacobusoettle.satmap.core.KMLGeometry
+import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.MapIds
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
-import java.lang.reflect.InvocationTargetException
-import java.lang.reflect.Method
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sign
-import kotlin.math.sin
 
 /** Drives the app through its main screens on an emulator and saves screenshots (run by
  *  .github/workflows/android-screenshots.yml): SatMapUITests/ScreenshotTests.swift step for step, with the same
@@ -58,7 +54,12 @@ import kotlin.math.sin
  *  reported together at the end, so a screen that isn't there yet only fails the steps that use it.
  *
  *  Under the Compose test rule the app's screens recompose and animate on the rule's clock, which moves only when the
- *  test moves it. Every wait here moves it on with real time (`sleep`), so the screens keep up as they do on a phone. */
+ *  test moves it. Every wait here moves it on with real time (`sleep`), so the screens keep up as they do on a phone.
+ *
+ *  For the emulator in CI (Android only): each screenshot is written under another name and then renamed, so the
+ *  workflow can pull them while the walk goes on; the waits for a download end early when no download is under way
+ *  or it stopped moving; and the walk stops itself after `WALK_MINUTES`, before the workflow's own limit, so the
+ *  failures found so far are still reported. */
 @RunWith(AndroidJUnit4::class)
 class ScreenshotTest {
     private val arrival = listOf(
@@ -131,15 +132,22 @@ class ScreenshotTest {
     private var realStart = 0L
     private var clockStart = 0L
 
+    /** When the walk stops itself (uptime), so the workflow's time limit never cuts it off without a report. */
+    private var deadline = Long.MAX_VALUE
+
+    /** The walk took longer than `WALK_MINUTES` (thrown from a wait, caught by the test). */
+    private class OutOfTime : RuntimeException("the walk took longer than $WALK_MINUTES minutes")
+
     @Test
     fun screenshots() {
-        // Queries for the system's own screens (the share sheet, permission prompts) wait at most this long for the
-        // screen to settle, so a busy map doesn't stretch iOS's waits.
+        // Queries for the system's own screens (the share sheet, permission prompts, the names on the map) wait at most
+        // this long for the screen to settle, so a busy map doesn't stretch iOS's waits.
         Configurator.getInstance().waitForIdleTimeout = 2000
         limitIdleWaits()
         clearScreenshots()
         realStart = SystemClock.uptimeMillis()
         clockStart = compose.mainClock.currentTime
+        deadline = realStart + WALK_MINUTES * 60_000L
         try {
             TestLocations.setUp()
         } catch (e: Exception) {
@@ -214,13 +222,9 @@ class ScreenshotTest {
         snap("08-downloading")
 
         tap("Offline maps")
-        // As on iOS, up to a quarter of an hour for the download, whether or not the sheet opened. (Until areas can be
-        // downloaded (M4) none exists and nothing can become ready: the wait then ends after a minute without one.)
-        var areaSeen = SystemClock.uptimeMillis()
-        waitUntil(900.0) {
-            if (AppModel.shared.offline.areas.value.isNotEmpty()) areaSeen = SystemClock.uptimeMillis()
-            exists(staticText("Ready offline")) || SystemClock.uptimeMillis() - areaSeen >= 60_000
-        }
+        // As on iOS, up to a quarter of an hour for the download, whether or not the sheet opened; but only while it
+        // is under way and moving (without a download, as before M4, the wait ends after a minute).
+        waitForDownload(900.0) { exists(staticText("Ready offline")) }
         sleep(2)
         snap("09-offline-areas")
 
@@ -235,7 +239,7 @@ class ScreenshotTest {
         // The terrain button: contour lines with elevation colours, the colours alone, then neither.
         for (i in 0 until 4) {
             if (waitForExistence(button("Contour lines"), 2)) break
-            tap("Cancel")
+            if (!tap("Cancel")) break // (with no Cancel, tapping again brings nothing)
         }
         setTerrain("Contour lines and elevation colours")
         sleep(12) // heights for the colours
@@ -268,23 +272,27 @@ class ScreenshotTest {
             fail("No coordinates for the tapped spot")
         }
         // A tap on a point in the KML file selects it, with its name.
-        // (MapKit gives the point's name to accessibility as its own text or as the whole annotation, dot on top. The
-        // map's names are images, not accessibility elements (interaction spec §2.11 item 11), so the map is asked
-        // which names it has placed: the whole symbol, dot on top.)
-        val launch = if (mapLabelsReadable) {
-            mapLabel(Pattern.compile(Pattern.quote("Launch 1")), kmlPointLayers(), 5)
-        } else {
-            // Until the map can say what it shows, the point is tapped where the file puts it, so the step still runs.
-            notCheckable("the KML point drawn on the map (tapped where the file puts it)")
-            kmlPointOnScreen("Launch 1")
-        }
+        // (MapKit may give the point's name as its own text or as the whole annotation, dot on top. The map here gives
+        // accessibility services the names it shows, each as an element over the whole symbol, dot on top.)
+        val launch = mapElement(Pattern.compile(Pattern.quote("Launch 1")), 5)
         if (launch != null) {
-            device.click(launch.x, launch.y)
+            device.click(launch.centerX(), launch.top - 1)
             check(waitForExistence(id("tappedName"), 5), "Tapping the KML point didn't select it")
             sleep(3)
             snap("24-kml-point")
         } else {
-            fail("The KML point isn't on the map")
+            // The map itself is asked whether it draws the point, to tell the two failures apart; when it does, the
+            // point is tapped there, so the step still runs.
+            val drawn = mapLabel("Launch 1", kmlPointLayers())
+            if (drawn != null) {
+                fail("The KML point is on the map, but accessibility services don't see it")
+                device.click(drawn.x, drawn.y)
+                check(waitForExistence(id("tappedName"), 5), "Tapping the KML point didn't select it")
+                sleep(3)
+                snap("24-kml-point")
+            } else {
+                fail("The KML point isn't on the map")
+            }
         }
         // Drone mode: the airfields around, with how far they are from you and from a tapped spot, and where you are
         // from the nearest one. Zoomed out by going to a spot three times as far as Stellenbosch's airfield (FASH)
@@ -310,14 +318,7 @@ class ScreenshotTest {
         check(exists(id("droneCard")), "No reporting card in drone mode")
         check(exists(id("tappedCoordinates")), "Tapping the map in drone mode didn't place a pin")
         // On the map itself, not only in the card ("6.1 NM NE of FASH Stellenbosch").
-        if (mapLabelsReadable) {
-            check(
-                mapLabel(airfield, listOf(MapIds.AVIATION), 0) != null,
-                "Stellenbosch airfield (FASH) isn't on the map in drone mode",
-            )
-        } else {
-            notCheckable("Stellenbosch airfield (FASH) on the map in drone mode")
-        }
+        check(mapElement(airfield, 0) != null, "Stellenbosch airfield (FASH) isn't on the map in drone mode")
         snap("25-drone-mode")
         setTerrain("Contour lines")
         // Back in close: My location, then again for 300 m across.
@@ -397,8 +398,8 @@ class ScreenshotTest {
 
         // The one-tap Kruger National Park roads (not downloaded here: several GB).
         openOfflineSheet()
-        tap("Kruger National Park roads")
-        if (waitForExistence(staticText("Roads and tracks"), 120)) {
+        // (The long wait only once the tap was made: without the button there is nothing to wait for.)
+        if (tap("Kruger National Park roads") && waitForExistence(staticText("Roads and tracks"), 120)) {
             sleep(5) // size estimate
             scrollTo(button("Download"))
             snap("17-kruger-roads")
@@ -440,8 +441,7 @@ class ScreenshotTest {
         sleep(1)
 
         // Imagery along the simulated walk (not downloaded here, so the area counts below stay the same).
-        tap("Where I've been")
-        if (waitForExistence(staticText("Your track"), 30)) {
+        if (tap("Where I've been") && waitForExistence(staticText("Your track"), 30)) {
             sleep(3) // size estimate
             scrollTo(button("Download"))
             snap("20-where-ive-been")
@@ -481,10 +481,7 @@ class ScreenshotTest {
         openOfflineSheet()
         val ready = staticText("Ready offline")
         val alongRoads = staticText(containing = "along roads")
-        for (i in 0 until 180) {
-            if (count(ready) >= 2) break
-            sleep(5)
-        }
+        waitForDownload(900.0) { count(ready) >= 2 }
         if (count(ready) < 2 || !exists(alongRoads)) return fail("No area downloaded along roads")
         snap("13-offline-along-roads")
 
@@ -498,10 +495,7 @@ class ScreenshotTest {
             tap("Download zoom 21")
             sleep(2)
             tapBack() // back to Offline maps
-            for (i in 0 until 120) {
-                if (count(ready) >= 2) break
-                sleep(5)
-            }
+            waitForDownload(600.0) { count(ready) >= 2 }
             checkEqual(count(ready), 2, "The roads area didn't finish its extra level")
             check(exists(staticText(containing = "up to zoom 21")), "No area up to zoom 21")
         } else {
@@ -623,9 +617,13 @@ class ScreenshotTest {
         TestLocations.walk(points) { ms -> sleep(ms / 1000.0) } // the app uses one fix every 2 s on screen
     }
 
-    private fun tap(label: String) {
+    /** Returns whether the button was there to tap (so a long wait for what it opens can be skipped). */
+    private fun tap(label: String): Boolean {
         val button = button(label)
-        if (!waitForExistence(button, 10)) return fail("No button '$label'")
+        if (!waitForExistence(button, 10)) {
+            fail("No button '$label'")
+            return false
+        }
         // A button under a sheet that is still closing can't be tapped yet.
         for (i in 0 until 30) {
             if (isHittable(button)) break
@@ -633,9 +631,11 @@ class ScreenshotTest {
         }
         if (!isHittable(button)) {
             snap("not tappable - $label", debug = true)
-            return fail("Button '$label' can't be tapped")
+            fail("Button '$label' can't be tapped")
+            return false
         }
         click(button)
+        return true
     }
 
     /** List rows are buttons whose label combines their texts ("Demo farm, 7 shapes · …"). */
@@ -660,7 +660,8 @@ class ScreenshotTest {
     }
 
     /** Location (and motion) permission prompts come from the system's permission controller (none shows when the rule
-     *  above has granted the permissions). */
+     *  above has granted the permissions). As on iOS, up to 6 s for each button in turn, twice: with no prompt (as in
+     *  CI) the walk starts 24 s after launch, so the first screenshot gives the imagery as long to load as on iOS. */
     private fun allowPermissionPrompts() {
         val controller = Pattern.compile(".*permissioncontroller")
         for (i in 0 until 2) {
@@ -682,12 +683,17 @@ class ScreenshotTest {
     }
 
     /** Saves a screenshot to the app's external files (pulled by the workflow); `debug` ones go to a folder of their
-     *  own, kept with the run but not committed. */
+     *  own, kept with the run but not committed. Written as "<name>.png.part", then renamed: the workflow pulls the
+     *  .png files while the walk goes on, and must never get one half written. */
     private fun snap(name: String, debug: Boolean = false) {
         if (!debug) step = name
         settle()
         val folder = screenshotFolder(debug) ?: return fail("No folder for screenshots")
-        if (!device.takeScreenshot(File(folder, "$name.png"))) fail("Screenshot '$name' wasn't saved")
+        val part = File(folder, "$name.png.part")
+        if (!device.takeScreenshot(part) || !part.renameTo(File(folder, "$name.png"))) {
+            part.delete()
+            fail("Screenshot '$name' wasn't saved")
+        }
         Log.i(TAG, "snap $name")
     }
 
@@ -814,6 +820,52 @@ class ScreenshotTest {
     /** `waitForExistence(timeout:)`. */
     private fun waitForExistence(q: Query, seconds: Int) = waitUntil(seconds.toDouble()) { exists(q) }
 
+    /** Waits up to `seconds` for `done`, as iOS waits for a download to finish, but only while a download is under way
+     *  or will be: it gives up after a minute with no area queued, downloading or waiting for a network (none was
+     *  started, as before M4, or it stopped for good: paused or incomplete), or after three minutes in which a running
+     *  download got no further. An area waiting for a network is retried by the app itself after 15 s, 30 s, 60 s …
+     *  up to 10 minutes (also while the phone is online, when the tile server stops answering for a while), so that
+     *  wait counts as under way, and as moving: as on iOS, the walk rides it out. Returns whether `done` came true. */
+    private fun waitForDownload(seconds: Double, done: () -> Boolean): Boolean {
+        val offline = AppModel.shared.offline
+        var lastBusy = SystemClock.uptimeMillis()
+        var lastMoved = lastBusy
+        var lastMark: String? = null
+        var finished = false
+        var why = ""
+        waitUntil(seconds) {
+            if (done()) {
+                finished = true
+                return@waitUntil true
+            }
+            val now = SystemClock.uptimeMillis()
+            val areas = offline.areas.value
+            val active = offline.activeID.value
+            val busy = active != null || areas.any {
+                it.status == OfflineArea.Status.queued || it.status == OfflineArea.Status.downloading ||
+                    it.status == OfflineArea.Status.waitingForNetwork
+            }
+            if (busy) lastBusy = now
+            val p = offline.progress.value
+            val mark = "$active ${p?.layer} ${p?.zoom} ${p?.levelDone} ${p?.overallDone} ${p?.failed}"
+            if (mark != lastMark) {
+                lastMark = mark
+                lastMoved = now
+            }
+            // Only a running download can get stuck: between runs (waiting to retry) nothing moves.
+            if (active == null) lastMoved = now
+            val states = areas.joinToString { a -> "${a.name}: ${a.status}" + (a.problem?.let { ", $it" } ?: "") }
+            why = when {
+                now - lastBusy >= 60_000 -> "no download under way (${states.ifEmpty { "no areas" }})"
+                now - lastMoved >= 180_000 -> "the download got no further for three minutes ($states)"
+                else -> ""
+            }
+            why.isNotEmpty()
+        }
+        if (!finished) Log.w(TAG, "after $step: stopped waiting for the download: ${why.ifEmpty { "out of time" }}")
+        return finished
+    }
+
     private fun waitUntil(seconds: Double, condition: () -> Boolean): Boolean {
         val end = SystemClock.uptimeMillis() + (seconds * 1000).toLong()
         while (true) {
@@ -825,10 +877,12 @@ class ScreenshotTest {
 
     private fun sleep(seconds: Int) = sleep(seconds.toDouble())
 
-    /** Waits `seconds`, moving the Compose clock on with real time meanwhile. */
+    /** Waits `seconds`, moving the Compose clock on with real time meanwhile. Past the walk's deadline it throws
+     *  `OutOfTime` instead (every wait comes here). */
     private fun sleep(seconds: Double) {
         val end = SystemClock.uptimeMillis() + (seconds * 1000).toLong()
         while (true) {
+            if (SystemClock.uptimeMillis() >= deadline) throw OutOfTime()
             val left = end - SystemClock.uptimeMillis()
             if (left <= 0) return
             Thread.sleep(minOf(left, 50L))
@@ -887,93 +941,44 @@ class ScreenshotTest {
         RectF(p.x, p.y, p.x + it.size.width, p.y + it.size.height)
     }
 
-    /** A name on the map itself (a KML point, an airfield) that is `label` in full, in the symbol layers `layers`: the
-     *  spot just above it (the dot of a point is on top), or null when none shows within `seconds`. On iOS it is an
-     *  accessibility element of MapKit's; here the map's names are images (interaction spec §2.11 item 11), so the map
-     *  is asked. Only names MapLibre has placed count, as MapKit makes elements only of the annotations it shows. */
-    private fun mapLabel(label: Pattern, layers: List<String>, seconds: Int): Point? {
-        var frame: RectF? = null
+    /** `app.descendants(matching: .any)` with a label: a name on the map itself (a KML point, an airfield) that is
+     *  `label` in full, as accessibility services see it, with its frame on the screen; null when none shows within
+     *  `seconds`. The map gives them the names MapLibre has placed, each as an element over its whole symbol (dot on
+     *  top for a point), as MapKit makes elements of the annotations it shows. */
+    private fun mapElement(label: Pattern, seconds: Int): Rect? {
+        var frame: Rect? = null
         waitUntil(seconds.toDouble()) {
-            frame = shownLabels(layers)?.firstOrNull { label.matcher(it.first).matches() }?.second
+            frame = try {
+                device.findObject(By.desc(label))?.visibleBounds?.takeIf { !it.isEmpty }
+            } catch (e: RuntimeException) {
+                null // (gone while it was read: StaleObjectException)
+            }
             frame != null
         }
-        return frame?.let { Point(it.centerX().roundToInt(), (it.top - 1).roundToInt()) }
+        return frame
     }
 
-    /** `MapController.renderedLabels(layerIds)`, the map's test hook (WP-C): every name MapLibre has placed in those
-     *  layers (iOS's accessibility label), with its box in the map view's pixels. Looked up by name so the walk builds
-     *  before the hook exists; null until it does. */
-    private val labelsHook: Method? by lazy {
-        try {
-            MapController::class.java.getMethod("renderedLabels", List::class.java)
-        } catch (e: NoSuchMethodException) {
-            null
-        }
-    }
-
-    /** Whether the map can say which names it shows. */
-    private val mapLabelsReadable get() = labelsHook != null
-
-    /** The names the map shows in `layers`, each with its box in screen pixels; null when there is no map (or no hook). */
-    private fun shownLabels(layers: List<String>): List<Pair<String, RectF>>? {
-        val hook = labelsHook ?: return null
-        var shown: List<Pair<String, RectF>>? = null
+    /** The map's own answer, when accessibility doesn't find a name (`MapController.renderedLabels`, what MapLibre has
+     *  placed in `layers`): the spot just above the name `name` (the dot of a point is on top), or null when the map
+     *  doesn't show it. Only to tell "not drawn" from "not given to accessibility" and to tap it then. */
+    private fun mapLabel(name: String, layers: List<String>): Point? {
+        var spot: Point? = null
         instrumentation.runOnMainSync {
             // (On the main thread an exception would end the app.)
             try {
                 val map = AppModel.shared.map as? MapController ?: return@runOnMainSync
+                val box = map.renderedLabels(layers).firstOrNull { it.first == name }?.second ?: return@runOnMainSync
                 val at = IntArray(2).also { map.container.getLocationOnScreen(it) }
-                shown = (hook.invoke(map, layers) as? List<*>).orEmpty().mapNotNull { item ->
-                    val (name, box) = item as? Pair<*, *> ?: return@mapNotNull null
-                    if (name !is String || box !is RectF) return@mapNotNull null
-                    name to RectF(box).apply { offset(at[0].toFloat(), at[1].toFloat()) }
-                }
+                spot = Point((at[0] + box.centerX()).roundToInt(), (at[1] + box.top - 1).roundToInt())
             } catch (e: Throwable) {
-                val cause = (e as? InvocationTargetException)?.targetException ?: e
-                if (problems.add("names: ${short(cause)}")) Log.w(TAG, "The names on the map", cause) // once
+                Log.w(TAG, "The names on the map: ${short(e)}")
             }
         }
-        return shown
+        return spot
     }
 
     /** The points layers of the shown KML files. */
     private fun kmlPointLayers() = AppModel.shared.kml.files.value.filter { it.isShown }.map { MapIds.kmlPoints(it.id) }
-
-    /** Where the point named `name` in a shown KML file is on the screen, worked out from the file and the camera; null
-     *  when it isn't on the screen. Only for tapping it while the map can't say which names it shows: it doesn't tell
-     *  whether the point is drawn (the map's tap rule selects a KML point whether or not its name shows). */
-    private fun kmlPointOnScreen(name: String): Point? {
-        val model = AppModel.shared
-        val point = model.kml.files.value.filter { it.isShown }.flatMap { it.document.features }
-            .firstNotNullOfOrNull { f -> (f.geometry as? KMLGeometry.Point)?.point?.takeIf { f.name == name } }
-            ?: return null
-        var found: Point? = null
-        instrumentation.runOnMainSync {
-            // (On the main thread an exception would end the app.)
-            try {
-                val map = model.map as? MapController ?: return@runOnMainSync
-                if (!map.isOnScreen) return@runOnMainSync
-                val c = map.centerCoordinate
-                // The point's offset from the centre in dp, east and north, then turned as the map is turned.
-                val east = map.pointsApart(c, GeoPoint(c.lat, point.lon)) * sign(point.lon - c.lon)
-                val north = map.pointsApart(c, GeoPoint(point.lat, c.lon)) * sign(point.lat - c.lat)
-                val b = Math.toRadians(map.bearing.value)
-                val dx = east * cos(b) - north * sin(b)
-                val dy = -(north * cos(b) + east * sin(b))
-                val view = map.container
-                val at = IntArray(2).also { view.getLocationOnScreen(it) }
-                val density = view.resources.displayMetrics.density
-                val x = at[0] + view.width / 2.0 + dx * density
-                val y = at[1] + view.height / 2.0 + dy * density
-                if (x >= at[0] && x < at[0] + view.width && y >= at[1] && y < at[1] + view.height) {
-                    found = Point(x.roundToInt(), y.roundToInt())
-                }
-            } catch (e: Throwable) {
-                Log.w(TAG, "Finding $name on the map: ${short(e)}")
-            }
-        }
-        return found
-    }
 
     // Launch, failures, files
 
@@ -993,11 +998,6 @@ class ScreenshotTest {
 
     private fun check(condition: Boolean, message: String) {
         if (!condition) fail(message)
-    }
-
-    /** A check iOS makes that the Android app can't answer yet: logged, not counted as a failure. */
-    private fun notCheckable(what: String) {
-        Log.w(TAG, "after $step: not checkable on Android yet: $what")
     }
 
     private fun <T> checkEqual(actual: T, expected: T, message: String = "") {
@@ -1028,5 +1028,9 @@ class ScreenshotTest {
 
     private companion object {
         const val TAG = "ScreenshotTest"
+
+        /** How long the walk may take before it stops itself: under the 45 minutes the workflow gives the run
+         *  (android-screenshots.yml), so the checks that failed are still reported. */
+        const val WALK_MINUTES = 40
     }
 }
