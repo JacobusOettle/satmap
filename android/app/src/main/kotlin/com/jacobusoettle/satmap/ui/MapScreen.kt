@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -45,7 +46,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.ArrowCircleDown
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -94,6 +94,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.dropShadow
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.center
 import androidx.compose.ui.graphics.BlendMode
@@ -101,6 +102,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.graphicsLayer
@@ -294,6 +296,7 @@ private fun MyCoordinates(model: AppModel, recorder: LocationRecorder) {
             icon = if (power == LocationRecorder.Power.sleeping) Icons.Outlined.NearMe else Icons.Filled.NearMe,
             text = Format.coordinate(loc.point),
             id = "myCoordinates",
+            iconSlot = 18.7.dp,
         )
         HeightBar(elevation, gpsAltitude(loc), unit, id = "myHeight", onTap = model::nextHeightUnit)
     }
@@ -376,6 +379,7 @@ private fun TappedSpot(model: AppModel, modifier: Modifier) {
                 icon = if (name == null) SatIcons.MapPin else SatIcons.MapPinCircleFill,
                 text = Format.coordinate(p),
                 id = "tappedCoordinates",
+                iconSlot = if (name == null) 19.7.dp else 19.1.dp,
                 onClose = { model.setSelectedPoint(null) },
             )
             HeightBar(elevation, unit = unit, id = "tappedHeight", onTap = model::nextHeightUnit)
@@ -440,8 +444,6 @@ private fun TerrainButton(model: AppModel) {
             "Contour lines",
             dimmed = mode == TerrainMode.off,
             heightColours = mode.showsColours,
-            // mountain.2 is a wide symbol: Landscape at 34 dp is as wide and tall as it is on iOS (screenshot 01).
-            iconSize = if (icon == Icons.Filled.Landscape || icon == Icons.Outlined.Landscape) 34.dp else 24.dp,
             glyph = when (icon) {
                 Icons.Filled.Landscape, Icons.Outlined.Landscape -> 6f / 24..18f / 24
                 Icons.Filled.Palette -> 2f / 24..22f / 24
@@ -553,7 +555,9 @@ private fun BlocksButton(model: AppModel) {
 private fun OfflineButton(model: AppModel, offline: OfflineManager) {
     val activeID by offline.activeID.collectAsStateWithLifecycle()
     MapButton(
-        if (activeID == null) Icons.Outlined.ArrowCircleDown else Icons.Filled.ArrowCircleDown,
+        // While downloading, arrow.down.circle.fill: the arrow cut out of a black disc, 20 dp across as on iOS
+        // (screenshot 08). Material's Filled.ArrowCircleDown is the outlined ring.
+        if (activeID == null) Icons.Outlined.ArrowCircleDown else SatIcons.ArrowDownCircleFill,
         "Offline maps",
         active = activeID != null,
         onClick = { model.setSheet(ActiveSheet.offline) },
@@ -678,7 +682,6 @@ fun MapButton(
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
     onLongClickLabel: String? = null,
-    iconSize: Dp = 24.dp,
     glyph: ClosedFloatingPointRange<Float> = 0f..1f,
     iconModifier: Modifier = Modifier,
     modifier: Modifier = Modifier,
@@ -710,10 +713,21 @@ fun MapButton(
             contentDescription = null,
             tint = tint,
             modifier = iconModifier
-                .size(iconSize)
+                .size(mapButtonIconSize(icon))
                 .then(if (heightColours && !active) Modifier.heightColours(glyph) else Modifier),
         )
     }
+}
+
+/** How big a map button draws `icon`: 24 dp for SF's 20 pt semibold (UI spec §1.3), more where the Material glyph
+ *  fills less of its box than the SF symbol does of its frame, to draw it as big as iOS (screenshots 01, 02, 19):
+ *  mountain.2 is 35 × 17.5 pt (Landscape fills 22 × 12 of its 24), scope 23.5 (GpsFixed 22), xmark 15.5 (Close 14) and
+ *  location 18.8 (NearMe 18). */
+private fun mapButtonIconSize(icon: ImageVector): Dp = when (icon) {
+    Icons.Filled.Landscape, Icons.Outlined.Landscape -> 38.dp
+    Icons.Filled.Close -> 27.dp
+    Icons.Filled.GpsFixed, Icons.Filled.NearMe, Icons.Outlined.NearMe -> 26.dp
+    else -> 24.dp
 }
 
 /** Paints what is drawn in the elevation colours, blue at `glyph`'s bottom to red at its top. */
@@ -1101,7 +1115,6 @@ fun ColourKeyView(r: ElevationRange?) {
     // In metres, as the Swift (it passes no unit).
     val low = Format.height(r.low)
     val high = Format.height(r.high)
-    val shape = RoundedCornerShape(2.dp)
     // Takes no touches: the map under it gets them.
     Column(
         Modifier.clearAndSetSemantics {
@@ -1114,8 +1127,17 @@ fun ColourKeyView(r: ElevationRange?) {
         Spacer(
             Modifier
                 .size(MapScale.maxWidth.dp, 8.dp)
-                .background(Brush.horizontalGradient(*ElevationKey.colorStops), shape)
-                .border(1.dp, Color.White.copy(alpha = 0.85f), shape),
+                .background(Brush.horizontalGradient(*ElevationKey.colorStops), RoundedCornerShape(2.dp))
+                // A 1 dp white border centred on the bar's edge, as SwiftUI's `stroke` draws it: half of it outside,
+                // so the key is 111 × 9 dp over all (screenshot 23). `Modifier.border` would draw all of it inside.
+                .drawWithContent {
+                    drawContent()
+                    drawRoundRect(
+                        Color.White.copy(alpha = 0.85f),
+                        cornerRadius = CornerRadius(2.dp.toPx()),
+                        style = Stroke(1.dp.toPx()),
+                    )
+                },
         )
         Row(Modifier.width(MapScale.maxWidth.dp)) {
             Text(low, style = keyText, color = Color.White)
@@ -1308,8 +1330,10 @@ fun HeightBar(
         horizontalArrangement = Arrangement.spacedBy(5.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // mountain.2.fill at caption size is 20 × 10 pt (screenshot 01): Landscape at 20 dp is as tall.
-        Icon(Icons.Filled.Landscape, contentDescription = null, modifier = Modifier.size(20.dp))
+        // mountain.2.fill at caption size is 20 × 10.5 pt (screenshots 01, 15, 24): Landscape at 22 dp, which fills
+        // 22 × 12 of its 24. It is laid out only as tall as its drawing, so the text line sets the pill's height
+        // (34 dp), as on iOS.
+        Icon(Icons.Filled.Landscape, contentDescription = null, modifier = Modifier.size(22.dp, 12.dp).requiredSize(22.dp))
         Text(text, style = barText, maxLines = 1, softWrap = false)
         if (elevation == null && gpsAltitude != null) {
             Text("GPS", style = Caption2.copy(fontWeight = FontWeight.Bold), modifier = Modifier.alpha(0.75f))
@@ -1373,9 +1397,10 @@ private fun DroneLine(icon: ImageVector, iconSize: DpSize, who: String, text: St
 }
 
 /** Coordinates you can copy: tap to put them on the clipboard ("Copied" for 2.5 s). `id`: the copy button's test
- *  tag, for the UI test. */
+ *  tag, for the UI test. `iconSlot`: how tall SF lays out the symbol at body size, which with the text sets the pill's
+ *  height (screenshots 01, 15, 24): `location.fill` 18.7, `mappin` 19.7, `mappin.circle.fill` 19.1. */
 @Composable
-fun CoordinateBar(icon: ImageVector, text: String, id: String, onClose: (() -> Unit)? = null) {
+fun CoordinateBar(icon: ImageVector, text: String, id: String, iconSlot: Dp, onClose: (() -> Unit)? = null) {
     var copied by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -1406,9 +1431,9 @@ fun CoordinateBar(icon: ImageVector, text: String, id: String, onClose: (() -> U
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // The symbol at the button's body size: 20 dp tall (screenshots 01 and 15); a narrow one (the pin) keeps
-            // its narrow frame, as SF's does.
-            Icon(icon, contentDescription = null, modifier = Modifier.height(20.dp))
+            // The symbol at the button's body size: 20 dp tall (screenshots 01 and 15), in its slot; a narrow one (the
+            // pin) keeps its narrow frame, as SF's does.
+            Icon(icon, contentDescription = null, modifier = Modifier.height(iconSlot).requiredHeight(20.dp))
             Text(
                 if (copied) "Copied" else text,
                 style = barText,
@@ -1417,7 +1442,8 @@ fun CoordinateBar(icon: ImageVector, text: String, id: String, onClose: (() -> U
                 modifier = Modifier.weight(1f, fill = false),
             )
             if (!copied) {
-                Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp).alpha(0.8f))
+                // doc.on.doc at caption size is 12 × 14.7 pt (screenshot 01): ContentCopy fills 19 × 22 of its 24.
+                Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp).alpha(0.8f))
             }
         }
         if (onClose != null) {
@@ -1478,14 +1504,17 @@ fun DownloadBanner(area: OfflineArea, progress: DownloadProgress?, onPause: () -
                     drawStopIndicator = {},
                 )
             }
-            // pause.fill at body size, with 8 dp round it to tap.
+            // Swift's Spacer() at its least, 8 pt: the column takes the rest of the width.
+            Spacer(Modifier.width(8.dp))
+            // pause.fill at body size with 8 pt round it is 13.4 pt tall in a button 31 pt wide (screenshot 08): Pause
+            // at 23 dp is as tall, and 4 dp at its sides make the button as wide (its frame is wider than SF's).
             Box(
                 Modifier
                     .pressable(onClick = onPause)
                     .semantics { contentDescription = "Pause" }
-                    .padding(8.dp),
+                    .padding(horizontal = 4.dp, vertical = 8.dp),
             ) {
-                Icon(Icons.Filled.Pause, contentDescription = null, modifier = Modifier.size(20.dp))
+                Icon(Icons.Filled.Pause, contentDescription = null, modifier = Modifier.size(23.dp))
             }
         }
     }
@@ -1557,9 +1586,9 @@ private fun BarButton(title: String, weight: FontWeight = FontWeight.Normal, onC
     Text(title, style = Body.copy(fontWeight = weight), modifier = Modifier.pressable(onClick = onClick))
 }
 
-/** iOS's segmented `Picker` (screenshot 10): a 32 dp track, the chosen segment a lighter rounded box 2 dp inside it.
- *  (Material's segmented buttons are outlined capsule halves, not this.) Each segment is a choice TalkBack reads as
- *  selected or not. */
+/** iOS's segmented `Picker` (screenshot 10): a 32 dp track, the chosen segment a lighter rounded box 2 dp inside it,
+ *  its title semibold and the others' regular, as UISegmentedControl's. (Material's segmented buttons are outlined
+ *  capsule halves, not this.) Each segment is a choice TalkBack reads as selected or not. */
 @Composable
 private fun SegmentedControl(titles: List<String>, selected: Int, onSelect: (Int) -> Unit) {
     Row(
@@ -1576,11 +1605,16 @@ private fun SegmentedControl(titles: List<String>, selected: Int, onSelect: (Int
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(if (chosen) Color(0xFF636366) else Color.Transparent, RoundedCornerShape(7.dp))
+                    // See-through, as iOS's: grey 99 over the bar, with the map's contour lines in it (screenshot 10).
+                    .background(if (chosen) Color.White.copy(alpha = 0.27f) else Color.Transparent, RoundedCornerShape(7.dp))
                     .selectable(chosen, interactionSource = null, indication = null, role = Role.Tab) { onSelect(i) },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(title, style = Footnote.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
+                Text(
+                    title,
+                    style = Footnote.copy(fontWeight = if (chosen) FontWeight.SemiBold else FontWeight.Normal),
+                    maxLines = 1,
+                )
             }
         }
     }

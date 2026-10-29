@@ -907,8 +907,11 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 ### 4.4 Icons (SF Symbol → Material)
 
 From `material-icons-extended` 1.7.8; the custom vectors are in `Icons.kt`, with the paths in UI spec §6.3. Size
-rule: an SF Symbol at text size X becomes an icon of about 1.2·X dp. Map buttons use 24 dp icons. The exception is a list
-`Label`, whose symbols are drawn larger than their text: its icons are 28 dp (`ListIconSize`; UI spec §1.3).
+rule: an SF Symbol at text size X becomes an icon of about 1.2·X dp. Map buttons use 24 dp icons. The exceptions are a
+list `Label`, whose symbols are drawn larger than their text: its icons are 28 dp (`ListIconSize`), and the Material
+glyphs that fill less of their box than the SF symbols do of their frames, sized to draw as big as iOS's: on the map buttons
+Landscape 38 dp, GpsFixed and NearMe 26, Close 27; in the pills Landscape 22 and ContentCopy 16; the banner's Pause 23
+(UI spec §1.3).
 
 | SF Symbol | Android |
 | --- | --- |
