@@ -27,7 +27,19 @@ data class KMLFeature(
     val geometry: KMLGeometry,
     /** How the file draws it (null: no style of its own). */
     val style: KMLStyle? = null,
+    /** Its description (GPX: desc, then cmt on a line of its own). */
+    val description: String? = null,
+    /** The names of the Folders and Documents it is in, innermost first (KML). */
+    val folders: List<String> = emptyList(),
+    /** Its data, in file order: KML ExtendedData (Data and SimpleData), and a GPX feature's type (named "type") and
+     *  the simple values in its extensions. */
+    val data: List<KMLData> = emptyList(),
+    /** A KML LinearRing of its own: drawn as a line, but closed (`FileShapes`). */
+    val isRing: Boolean = false,
 )
+
+/** A named value a file gives a feature (`KMLFeature.data`). */
+data class KMLData(val name: String, val value: String)
 
 /** A KML colour: written aabbggrr in hex (alpha first, then blue, green, red). */
 data class KMLColor(val red: Double, val green: Double, val blue: Double, val alpha: Double) {
@@ -70,7 +82,18 @@ data class KMLStyle(
         )
 }
 
-data class KMLDocument(val name: String?, val features: List<KMLFeature>) {
+/** A KML, KMZ or GPX file (`GPXParser` reads GPX into the same document). */
+data class KMLDocument(
+    val name: String?,
+    val features: List<KMLFeature>,
+    /** KML (or KMZ) or GPX: GPX has no styles, and its closed tracks stay lines (`FileShapes`). */
+    val format: Format = Format.kml,
+) {
+    enum class Format {
+        kml,
+        gpx,
+    }
+
     val bounds: GeoBounds?
         get() {
             val all = mutableListOf<GeoPoint>()
@@ -84,7 +107,8 @@ data class KMLDocument(val name: String?, val features: List<KMLFeature>) {
             return GeoBounds(points = all)
         }
 
-    /** The area to download offline for this file: block polygons filled, lines and points buffered. */
+    /** The file's geometry as it is drawn: polygons filled, lines and points, all grown by `bufferMeters`. What a file
+     *  saves offline is `FileShapes`. */
     fun coverageShape(bufferMeters: Double): CoverageShape {
         val polygons = mutableListOf<List<GeoPoint>>()
         val lines = mutableListOf<List<GeoPoint>>()
@@ -108,6 +132,9 @@ sealed class KMLError(val errorDescription: String) : Exception(errorDescription
 }
 
 object KMLParser {
+    /** A file for the Blocks list: GPX when its first element is <gpx> (`GPXParser.isGPX`), else KML or KMZ. */
+    fun parseKMLOrGPX(data: ByteArray): KMLDocument = if (GPXParser.isGPX(data)) GPXParser.parse(data) else parse(data)
+
     /** Parses .kml or .kmz data (KMZ is detected by its zip signature). */
     fun parse(data: ByteArray): KMLDocument {
         var kmlData = data
@@ -134,56 +161,12 @@ object KMLParser {
             kmlData = archive.extract(entry)
         }
         val delegate = KMLParserDelegate()
-        // As Foundation's XMLParser with shouldProcessNamespaces off: element and attribute names as written
-        // ("gx:CascadingStyle", "kml:id").
-        val factory = SAXParserFactory.newInstance()
-        factory.isNamespaceAware = false
-        // XMLParser (libxml2) decodes in the encoding the XML declaration names; Android's SAX parser (Expat) reads
-        // any byte stream as UTF-8 whatever it says. So another declared encoding is decoded here, up to the first
-        // byte it can't decode (where libxml2 stops), and parsed as text.
-        val declared = declaredCharset(kmlData)
-        // A file whose DTD declares entities: as XMLParser reports them (see XMLParserEntities).
-        val expanded = XMLParserEntities.expand(kmlData, declared)
-        var decodedAll = true
-        val source = when {
-            expanded != null -> InputSource(StringReader(keepingCDATACarriageReturns(expanded)))
-            declared == null -> InputSource(ByteArrayInputStream(keepingCDATACarriageReturns(kmlData)))
-            else -> {
-                val decoder = declared.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-                val out = CharBuffer.allocate((kmlData.size * decoder.maxCharsPerByte().toDouble()).toInt() + 16)
-                decodedAll = !decoder.decode(ByteBuffer.wrap(kmlData), out, true).isError && !decoder.flush(out).isError
-                InputSource(StringReader(keepingCDATACarriageReturns(out.flip().toString())))
-            }
-        }
-        val parsed = try {
-            factory.newSAXParser().parse(source, delegate)
-            decodedAll
-        } catch (e: SAXException) {
-            false
-        } catch (e: IOException) {
-            false
-        }
+        val parsed = parseAsXMLParser(kmlData, delegate) ?: throw KMLError.Unreadable()
         // What was read before an error still counts, as with XMLParser.
         if (!(parsed || delegate.features.isNotEmpty())) throw KMLError.Unreadable()
         if (delegate.features.isEmpty()) throw KMLError.NoGeometry()
         return KMLDocument(name = delegate.documentName, features = delegate.styledFeatures())
     }
-
-    /** The charset an XML declaration at the very start names, when it isn't UTF-8 or UTF-16 (null: none, or one
-     *  of those, which the byte stream is read as). A name no charset has is unreadable, as with libxml2. */
-    private fun declaredCharset(data: ByteArray): Charset? {
-        val head = String(data, 0, minOf(data.size, 1024), Charsets.ISO_8859_1)
-        val name = xmlDeclEncoding.find(head)?.groupValues?.get(2) ?: return null
-        val charset = try {
-            Charset.forName(name)
-        } catch (e: IllegalArgumentException) {
-            throw KMLError.Unreadable()
-        }
-        return if (charset == Charsets.UTF_8 || charset.name().startsWith("UTF-16")) null else charset
-    }
-
-    private val xmlDeclEncoding = Regex("^<\\?xml\\s[^>]*?\\sencoding\\s*=\\s*([\"'])([A-Za-z][A-Za-z0-9._-]*)\\1")
 
     /** Parses a KML `<coordinates>` string: whitespace-separated "lon,lat[,alt]" tuples. */
     fun coordinates(text: String): List<GeoPoint> {
@@ -200,10 +183,63 @@ object KMLParser {
     }
 }
 
+/** Parses a file with a SAX handler as Foundation's XMLParser (shouldProcessNamespaces off) reads it, for the KML and
+ *  GPX parsers: element and attribute names as written ("gx:CascadingStyle", "kml:id"), in the encoding the XML
+ *  declaration names, with the entities its DTD declares and carriage returns in CDATA as written. True when all of it
+ *  was read, false after an error (what was read before it has reached the handler); null when the declaration names
+ *  an encoding no charset has (unreadable, as with libxml2). The handler must not fetch external entities. No Swift
+ *  function of its own: XMLParser does all this. */
+internal fun parseAsXMLParser(data: ByteArray, handler: DefaultHandler): Boolean? {
+    val factory = SAXParserFactory.newInstance()
+    factory.isNamespaceAware = false
+    // XMLParser (libxml2) decodes in the encoding the XML declaration names; Android's SAX parser (Expat) reads
+    // any byte stream as UTF-8 whatever it says. So another declared encoding is decoded here, up to the first
+    // byte it can't decode (where libxml2 stops), and parsed as text.
+    val declared = try {
+        declaredCharset(data)
+    } catch (e: IllegalArgumentException) {
+        return null
+    }
+    // A file whose DTD declares entities: as XMLParser reports them (see XMLParserEntities).
+    val expanded = XMLParserEntities.expand(data, declared)
+    var decodedAll = true
+    val source = when {
+        expanded != null -> InputSource(StringReader(keepingCDATACarriageReturns(expanded)))
+        declared == null -> InputSource(ByteArrayInputStream(keepingCDATACarriageReturns(data)))
+        else -> {
+            val decoder = declared.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+            val out = CharBuffer.allocate((data.size * decoder.maxCharsPerByte().toDouble()).toInt() + 16)
+            decodedAll = !decoder.decode(ByteBuffer.wrap(data), out, true).isError && !decoder.flush(out).isError
+            InputSource(StringReader(keepingCDATACarriageReturns(out.flip().toString())))
+        }
+    }
+    return try {
+        factory.newSAXParser().parse(source, handler)
+        decodedAll
+    } catch (e: SAXException) {
+        false
+    } catch (e: IOException) {
+        false
+    }
+}
+
+/** The charset an XML declaration at the very start names, when it isn't UTF-8 or UTF-16 (null: none, or one of
+ *  those, which the byte stream is read as). Throws `IllegalArgumentException` for a name no charset has. */
+private fun declaredCharset(data: ByteArray): Charset? {
+    val head = String(data, 0, minOf(data.size, 1024), Charsets.ISO_8859_1)
+    val name = xmlDeclEncoding.find(head)?.groupValues?.get(2) ?: return null
+    val charset = Charset.forName(name)
+    return if (charset == Charsets.UTF_8 || charset.name().startsWith("UTF-16")) null else charset
+}
+
+private val xmlDeclEncoding = Regex("^<\\?xml\\s[^>]*?\\sencoding\\s*=\\s*([\"'])([A-Za-z][A-Za-z0-9._-]*)\\1")
+
 private class KMLParserDelegate : DefaultHandler() {
     private data class StyleMapEntry(val url: String?, val style: KMLStyle?)
     private data class FeatureStyle(val url: String?, val own: KMLStyle?)
     private class StylePair(var key: String? = null, var url: String? = null, var style: KMLStyle? = null)
+    private class PendingGeometry(val geometry: KMLGeometry, val isRing: Boolean)
 
     val features = mutableListOf<KMLFeature>()
     var documentName: String? = null
@@ -211,8 +247,16 @@ private class KMLParserDelegate : DefaultHandler() {
     private val stack = mutableListOf<String>()
     private var text = StringBuilder()
     private var placemarkName: String? = null
+    private var placemarkDescription: String? = null
+    private var placemarkData = mutableListOf<KMLData>()
+    /** The name of the Data or SimpleData being read, and a Data's value. */
+    private var dataName: String? = null
+    private var dataValue: String? = null
     private var inPlacemark = false
-    private var pendingGeometries = mutableListOf<KMLGeometry>()
+    /** Each geometry, and whether it is a LinearRing of its own. */
+    private var pendingGeometries = mutableListOf<PendingGeometry>()
+    /** The Folders and Documents around what is being read, outermost first, with their names (null: none yet). */
+    private val containers = mutableListOf<String?>()
     private var outer: List<GeoPoint> = emptyList()
     private var holes = mutableListOf<List<GeoPoint>>()
 
@@ -285,9 +329,16 @@ private class KMLParserDelegate : DefaultHandler() {
             "Placemark" -> {
                 inPlacemark = true
                 placemarkName = null
+                placemarkDescription = null
+                placemarkData = mutableListOf()
                 pendingGeometries = mutableListOf()
                 placemarkStyleURL = null
                 placemarkStyle = null
+            }
+            "Folder", "Document" -> containers.add(null)
+            "Data", "SimpleData" -> {
+                dataName = attributes.getValue("name")
+                dataValue = null
             }
             "Polygon" -> {
                 outer = emptyList()
@@ -370,9 +421,23 @@ private class KMLParserDelegate : DefaultHandler() {
             name == "name" -> {
                 if (parent == "Placemark") {
                     placemarkName = if (value.isEmpty()) null else value
-                } else if (parent == "Document" && documentName == null && value.isNotEmpty()) {
-                    documentName = value
+                } else if (parent == "Folder" || parent == "Document") {
+                    if (parent == "Document" && documentName == null && value.isNotEmpty()) documentName = value
+                    if (containers.isNotEmpty() && containers.last() == null && value.isNotEmpty()) {
+                        containers[containers.lastIndex] = value
+                    }
                 }
+            }
+            name == "Folder" || name == "Document" -> if (containers.isNotEmpty()) containers.removeAt(containers.lastIndex)
+            name == "description" && parent == "Placemark" -> placemarkDescription = if (value.isEmpty()) null else value
+            name == "value" && parent == "Data" -> dataValue = value
+            name == "Data" || name == "SimpleData" -> {
+                val n = dataName?.let(::swiftTrimmed)
+                if (inPlacemark && !n.isNullOrEmpty()) {
+                    placemarkData.add(KMLData(name = n, value = if (name == "Data") dataValue ?: "" else value))
+                }
+                dataName = null
+                dataValue = null
             }
             name == "coordinates" -> {
                 if (!inPlacemark) return
@@ -385,22 +450,30 @@ private class KMLParserDelegate : DefaultHandler() {
                     if (pts.size >= 3) holes.add(pts)
                 } else if (parent == "LineString" || parent == "LinearRing") {
                     if (pts.size >= 2) {
-                        pendingGeometries.add(KMLGeometry.Line(pts))
+                        pendingGeometries.add(PendingGeometry(KMLGeometry.Line(pts), isRing = parent == "LinearRing"))
                     } else if (pts.isNotEmpty()) {
-                        pendingGeometries.add(KMLGeometry.Point(pts.first()))
+                        pendingGeometries.add(PendingGeometry(KMLGeometry.Point(pts.first()), isRing = false))
                     }
                 } else if (parent == "Point") {
-                    if (pts.isNotEmpty()) pendingGeometries.add(KMLGeometry.Point(pts.first()))
+                    if (pts.isNotEmpty()) pendingGeometries.add(PendingGeometry(KMLGeometry.Point(pts.first()), isRing = false))
                 }
             }
             name == "Polygon" -> {
-                if (outer.size >= 3) pendingGeometries.add(KMLGeometry.Polygon(outer = outer, holes = holes.toList()))
+                if (outer.size >= 3) {
+                    pendingGeometries.add(PendingGeometry(KMLGeometry.Polygon(outer = outer, holes = holes.toList()), isRing = false))
+                }
                 outer = emptyList()
                 holes = mutableListOf()
             }
             name == "Placemark" -> {
+                val folders = containers.asReversed().filterNotNull()
                 for (g in pendingGeometries) {
-                    features.add(KMLFeature(name = placemarkName, geometry = g))
+                    features.add(
+                        KMLFeature(
+                            name = placemarkName, geometry = g.geometry, description = placemarkDescription,
+                            folders = folders, data = placemarkData.toList(), isRing = g.isRing,
+                        )
+                    )
                     featureStyles.add(FeatureStyle(url = placemarkStyleURL, own = placemarkStyle))
                 }
                 pendingGeometries = mutableListOf()
@@ -482,7 +555,7 @@ private fun keepingCDATACarriageReturns(text: String): String {
 /** Swift's `trimmingCharacters(in: .whitespacesAndNewlines)`: Unicode spaces (Zs) and U+200B ZERO WIDTH SPACE (as
  *  Core Foundation's whitespace set has U+2000–U+200B), line and paragraph separators, tab, line feed to carriage
  *  return, and NEL. Kotlin's `trim()` also takes U+001C–U+001F and leaves NEL and U+200B. */
-private fun swiftTrimmed(s: String): String =
+internal fun swiftTrimmed(s: String): String =
     s.trim { c ->
         c == '\t' || c in '\n'..'\r' || c == '\u0085' || c == '\u200B' || Character.getType(c).toByte().let {
             it == Character.SPACE_SEPARATOR || it == Character.LINE_SEPARATOR || it == Character.PARAGRAPH_SEPARATOR
@@ -492,7 +565,7 @@ private fun swiftTrimmed(s: String): String =
 /** Swift's `Double(String)`: a decimal or hexadecimal number ("2.5", "-1e3", "0x1.8p1"), or "inf", "infinity" or
  *  "nan" in any case, with an optional sign and nothing around it. Kotlin's `toDoubleOrNull` also takes surrounding
  *  spaces and a "d" or "f" after the number, but not "inf" or a hexadecimal number without a "p" exponent. */
-private fun swiftDouble(text: String): Double? {
+internal fun swiftDouble(text: String): Double? {
     if (!swiftNumber.matches(text)) return null
     val negative = text.startsWith("-")
     val number = text.removePrefix("-").removePrefix("+")

@@ -86,13 +86,19 @@ writes and reads exactly what the iPhone app does:
   numbers as `JSONEncoder` writes them (`swiftJSONNumber`: "150", "1e-07"), whole-number fields (`maxZoom`,
   `failedTiles`, `bytesOnDisk`) without a decimal point; `status` one of
   queued/downloading/paused/waitingForNetwork/complete/incomplete; properties that aren't set (`roads`, `preset`,
-  `isTrack`, `problem`) left out; `shape` = {polygons, lines, points, bufferMeters} with points as {lat, lon}.
+  `isTrack`, `problem`) left out; `shape` = {polygons, lines, points, bufferMeters, polygonBufferMeters} with points
+  as {lat, lon}. `polygonBufferMeters` (the buffer around the polygons, when it isn't `bufferMeters`) is written only
+  when set, as Swift's synthesized `Codable` leaves out nil: a KML or GPX file's area (`FileShapes.downloadShape`) has
+  `"bufferMeters":15,"polygonBufferMeters":0`; every other area (and every area saved before it) has none, and a
+  missing or null one means `bufferMeters`. An older version that doesn't know the key takes 15 m around a file's
+  areas too. A file's area saved along roads keeps its lines, and each dot as a one-point line, in `roads`.
   Reading accepts any key order, lower-case UUIDs, numbers with or without decimals, and `null` for a value not set,
   and is otherwise as strict as Swift's `JSONDecoder`: restore reads the text with `OfflineArea.decode`.
 - Restore accepts the files from any app or folder (they may have been through Google Drive, a computer, e-mail …):
   any file name, chosen together in one pick; the files say which area and layer they are.
 - Tests on both sides read a backup made by the other app: `Tests/SatMapCoreTests/Fixtures/backup/iphone` (made by
-  the iPhone code) and `…/backup/android` (made by the Android code).
+  the iPhone code) and `…/backup/android` (made by the Android code), and write a file's shape as the same text
+  (`…/Fixtures/file-area-shape.json`, keys sorted: Swift's `JSONEncoder` puts them in a different order each run).
 
 ## The map on Android
 

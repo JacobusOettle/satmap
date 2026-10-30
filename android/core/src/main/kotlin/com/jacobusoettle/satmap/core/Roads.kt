@@ -26,13 +26,14 @@ object Roads {
     private const val maxQueryBoxes = 40
 
     /** Overpass QL for the roads in boxes around each part of the area (so a KML file with blocks far apart
-     *  doesn't fetch every road between them). */
+     *  doesn't fetch every road between them). Each box is the part grown by its buffer and the corridor. */
     fun overpassQuery(area: CoverageShape): String? {
         val margin = area.bufferMeters + corridorMeters
+        val polygonMargin = area.polygonBuffer + corridorMeters
         var boxes = mutableListOf<GeoBounds>()
         for (ring in area.polygons) {
             if (ring.size < 3) continue
-            GeoBounds(points = ring)?.let { boxes.add(it.expanded(margin)) }
+            GeoBounds(points = ring)?.let { boxes.add(it.expanded(polygonMargin)) }
         }
         for (line in area.lines) {
             if (line.isEmpty()) continue
@@ -43,7 +44,7 @@ object Roads {
         }
         val all = area.geometryBounds
         if (boxes.size > maxQueryBoxes && all != null) {
-            boxes = mutableListOf(all.expanded(margin))
+            boxes = mutableListOf(all.expanded(max(margin, polygonMargin)))
         }
         if (boxes.isEmpty()) return null
         val filter = "way[\"highway\"~\"^(${highwayTypes.joinToString("|")})$\"]"
@@ -179,7 +180,8 @@ object Roads {
         return out
     }
 
-    /** The area to download imagery for: every road with `corridorMeters` on each side. */
+    /** The area to download imagery for: every road with `corridorMeters` on each side (a one-point line: that far
+     *  around its point, as a file's dots are saved along roads). */
     fun corridor(roads: List<List<GeoPoint>>): CoverageShape = CoverageShape(lines = roads, bufferMeters = corridorMeters)
 
     /** Total length in metres. */

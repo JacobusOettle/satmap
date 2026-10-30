@@ -46,6 +46,16 @@ class RoadsTests {
     }
 
     @Test
+    fun testQueryBoxesTakeEachPartsBuffer() {
+        // A file's areas have no buffer: the box is the block and the corridor; its lines get their 15 m more.
+        val line = listOf(GeoPoint(lat = -33.95, lon = 18.95), GeoPoint(lat = -33.95, lon = 18.96))
+        val file = CoverageShape(polygons = square.polygons, lines = listOf(line), bufferMeters = 15.0, polygonBufferMeters = 0.0)
+        val q = Roads.overpassQuery(file)!!
+        assertTrue(q.contains("(-33.920135,"))
+        assertTrue(q.contains("(-33.950269,"))
+    }
+
+    @Test
     fun testParsesWaysAndSkipsMissingNodes() {
         val json = """
         {"version":0.6,"elements":[

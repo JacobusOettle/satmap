@@ -14,6 +14,21 @@ struct KMLFeature: Hashable {
     var geometry: KMLGeometry
     /// How the file draws it (nil: no style of its own).
     var style: KMLStyle?
+    /// Its description (GPX: desc, then cmt on a line of its own).
+    var description: String? = nil
+    /// The names of the Folders and Documents it is in, innermost first (KML).
+    var folders: [String] = []
+    /// Its data, in file order: KML ExtendedData (Data and SimpleData), and a GPX feature's type (named "type") and
+    /// the simple values in its extensions.
+    var data: [KMLData] = []
+    /// A KML LinearRing of its own: drawn as a line, but closed (`FileShapes`).
+    var isRing = false
+}
+
+/// A named value a file gives a feature (`KMLFeature.data`).
+struct KMLData: Hashable {
+    var name: String
+    var value: String
 }
 
 /// A KML colour: written aabbggrr in hex (alpha first, then blue, green, red).
@@ -53,9 +68,17 @@ struct KMLStyle: Hashable {
     }
 }
 
+/// A KML, KMZ or GPX file (`GPXParser` reads GPX into the same document).
 struct KMLDocument {
+    enum Format {
+        case kml
+        case gpx
+    }
+
     var name: String?
     var features: [KMLFeature]
+    /// KML (or KMZ) or GPX: GPX has no styles, and its closed tracks stay lines (`FileShapes`).
+    var format: Format = .kml
 
     var bounds: GeoBounds? {
         var all: [GeoPoint] = []
@@ -69,7 +92,8 @@ struct KMLDocument {
         return GeoBounds(points: all)
     }
 
-    /// The area to download offline for this file: block polygons filled, lines and points buffered.
+    /// The file's geometry as it is drawn: polygons filled, lines and points, all grown by `bufferMeters`. What a file
+    /// saves offline is `FileShapes`.
     func coverageShape(bufferMeters: Double) -> CoverageShape {
         var shape = CoverageShape(bufferMeters: bufferMeters)
         for f in features {
@@ -98,6 +122,11 @@ enum KMLError: Error, LocalizedError {
 }
 
 enum KMLParser {
+    /// A file for the Blocks list: GPX when its first element is <gpx> (`GPXParser.isGPX`), else KML or KMZ.
+    static func parseKMLOrGPX(_ data: Data) throws -> KMLDocument {
+        try GPXParser.isGPX(data) ? GPXParser.parse(data) : parse(data)
+    }
+
     /// Parses .kml or .kmz data (KMZ is detected by its zip signature).
     static func parse(_ data: Data) throws -> KMLDocument {
         var kmlData = data
@@ -140,8 +169,16 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
     private var stack: [String] = []
     private var text = ""
     private var placemarkName: String?
+    private var placemarkDescription: String?
+    private var placemarkData: [KMLData] = []
+    /// The name of the Data or SimpleData being read, and a Data's value.
+    private var dataName: String?
+    private var dataValue: String?
     private var inPlacemark = false
-    private var pendingGeometries: [KMLGeometry] = []
+    /// Each geometry, and whether it is a LinearRing of its own.
+    private var pendingGeometries: [(geometry: KMLGeometry, isRing: Bool)] = []
+    /// The Folders and Documents around what is being read, outermost first, with their names (nil: none yet).
+    private var containers: [String?] = []
     private var outer: [GeoPoint] = []
     private var holes: [[GeoPoint]] = []
 
@@ -209,9 +246,16 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
         case "Placemark":
             inPlacemark = true
             placemarkName = nil
+            placemarkDescription = nil
+            placemarkData = []
             pendingGeometries = []
             placemarkStyleURL = nil
             placemarkStyle = nil
+        case "Folder", "Document":
+            containers.append(nil)
+        case "Data", "SimpleData":
+            dataName = attributeDict["name"]
+            dataValue = nil
         case "Polygon":
             outer = []
             holes = []
@@ -292,9 +336,22 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
         case "name":
             if parent == "Placemark" {
                 placemarkName = value.isEmpty ? nil : value
-            } else if parent == "Document" && documentName == nil && !value.isEmpty {
-                documentName = value
+            } else if parent == "Folder" || parent == "Document" {
+                if parent == "Document" && documentName == nil && !value.isEmpty { documentName = value }
+                if let last = containers.indices.last, containers[last] == nil, !value.isEmpty { containers[last] = value }
             }
+        case "Folder", "Document":
+            if !containers.isEmpty { containers.removeLast() }
+        case "description" where parent == "Placemark":
+            placemarkDescription = value.isEmpty ? nil : value
+        case "value" where parent == "Data":
+            dataValue = value
+        case "Data", "SimpleData":
+            if inPlacemark, let n = dataName?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty {
+                placemarkData.append(KMLData(name: n, value: name == "Data" ? dataValue ?? "" : value))
+            }
+            dataName = nil
+            dataValue = nil
         case "coordinates":
             guard inPlacemark else { return }
             let pts = KMLParser.coordinates(text)
@@ -305,17 +362,23 @@ private final class KMLParserDelegate: NSObject, XMLParserDelegate {
             } else if ancestors.contains("innerBoundaryIs") {
                 if pts.count >= 3 { holes.append(pts) }
             } else if parent == "LineString" || parent == "LinearRing" {
-                if pts.count >= 2 { pendingGeometries.append(.line(pts)) } else if let p = pts.first { pendingGeometries.append(.point(p)) }
+                if pts.count >= 2 {
+                    pendingGeometries.append((.line(pts), parent == "LinearRing"))
+                } else if let p = pts.first {
+                    pendingGeometries.append((.point(p), false))
+                }
             } else if parent == "Point" {
-                if let p = pts.first { pendingGeometries.append(.point(p)) }
+                if let p = pts.first { pendingGeometries.append((.point(p), false)) }
             }
         case "Polygon":
-            if outer.count >= 3 { pendingGeometries.append(.polygon(outer: outer, holes: holes)) }
+            if outer.count >= 3 { pendingGeometries.append((.polygon(outer: outer, holes: holes), false)) }
             outer = []
             holes = []
         case "Placemark":
+            let folders = containers.reversed().compactMap { $0 }
             for g in pendingGeometries {
-                features.append(KMLFeature(name: placemarkName, geometry: g))
+                features.append(KMLFeature(name: placemarkName, geometry: g.geometry, description: placemarkDescription,
+                                           folders: folders, data: placemarkData, isRing: g.isRing))
                 featureStyles.append((url: placemarkStyleURL, own: placemarkStyle))
             }
             pendingGeometries = []

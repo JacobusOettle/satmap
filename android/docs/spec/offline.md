@@ -21,7 +21,7 @@ Scope: `SatMap/Offline/*` (OfflineManager, BackgroundDownload, RoadFetcher, Plac
 | `CarPlay/CarPlayMapController.swift` | `car/CarMapController.kt` |
 | `Info.plist` document types, `onOpenURL` | `AndroidManifest.xml` intent filters, `MainActivity.handleIncoming` |
 
-The core (`android/core`) supplies these, under the same names: `OfflineArea`, `OfflineBackup`, `TileDownloadJob`, `DownloadLayer`, `DownloadProgress`, `DownloadOutcome`, `TileFetching`, `TileFetchResult`, `MBTiles`, `TileCoverage`, `CoverageShape`, `Roads`, `RoadPreset`, `Polyline`, `Places`, `FoundPlace`, `KMLParser`, `KMLDocument`, `Terrarium`, `TerrainMode` and `stringFormat`.
+The core (`android/core`) supplies these, under the same names: `OfflineArea`, `OfflineBackup`, `TileDownloadJob`, `DownloadLayer`, `DownloadProgress`, `DownloadOutcome`, `TileFetching`, `TileFetchResult`, `MBTiles`, `TileCoverage`, `CoverageShape`, `Roads`, `RoadPreset`, `Polyline`, `Places`, `FoundPlace`, `KMLParser`, `KMLDocument`, `GPXParser`, `FileShapes`, `Terrarium`, `TerrainMode` and `stringFormat`.
 
 The spec needs one addition in core, described in §2.8: `OfflineBackup.prepareExport(...)`.
 

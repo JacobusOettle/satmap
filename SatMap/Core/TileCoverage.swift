@@ -1,19 +1,28 @@
 import Foundation
 
 /// The area to make available offline: filled polygons, lines and points, each grown by a buffer.
-/// A lasso-drawn area is a single polygon; a KML file contributes all of its geometry.
+/// A lasso-drawn area is a single polygon; a KML or GPX file contributes its areas, lines and dots (`FileShapes`).
 struct CoverageShape: Codable, Hashable {
     var polygons: [[GeoPoint]]
     var lines: [[GeoPoint]]
     var points: [GeoPoint]
     var bufferMeters: Double
+    /// The buffer around the polygons, when it isn't `bufferMeters` (nil): a file's areas are saved as they are (0),
+    /// with 15 m around its lines and dots. Left out of the saved JSON when nil, so areas saved before read the same
+    /// (an older version reading a file's area takes `bufferMeters` around its polygons too).
+    var polygonBufferMeters: Double?
 
-    init(polygons: [[GeoPoint]] = [], lines: [[GeoPoint]] = [], points: [GeoPoint] = [], bufferMeters: Double = 0) {
+    init(polygons: [[GeoPoint]] = [], lines: [[GeoPoint]] = [], points: [GeoPoint] = [], bufferMeters: Double = 0,
+         polygonBufferMeters: Double? = nil) {
         self.polygons = polygons
         self.lines = lines
         self.points = points
         self.bufferMeters = bufferMeters
+        self.polygonBufferMeters = polygonBufferMeters
     }
+
+    /// The buffer around the polygons in metres: `polygonBufferMeters`, or else `bufferMeters`.
+    var polygonBuffer: Double { polygonBufferMeters ?? bufferMeters }
 
     var isEmpty: Bool {
         polygons.allSatisfy { $0.count < 3 } && lines.allSatisfy { $0.isEmpty } && points.isEmpty
@@ -24,9 +33,13 @@ struct CoverageShape: Codable, Hashable {
         GeoBounds(points: Array(polygons.joined()) + Array(lines.joined()) + points)
     }
 
-    /// Bounds including the buffer.
+    /// Bounds including the buffers.
     var bounds: GeoBounds? {
-        geometryBounds?.expanded(byMeters: bufferMeters)
+        guard polygonBuffer != bufferMeters else { return geometryBounds?.expanded(byMeters: bufferMeters) }
+        let rings = GeoBounds(points: polygons.joined())?.expanded(byMeters: polygonBuffer)
+        let rest = GeoBounds(points: Array(lines.joined()) + points)?.expanded(byMeters: bufferMeters)
+        if let a = rings, let b = rest { return a.union(b) }
+        return rings ?? rest
     }
 
     /// Area of the filled polygons in square metres (lines/points are not counted).
@@ -57,11 +70,12 @@ struct TileCoverage {
         }
         let n = Double(1 << zoom)
         let maxIndex = (1 << zoom) - 1
-        /// The buffer in tiles at a latitude. Each piece uses its own (at the largest |latitude| it reaches, so it is
+        /// A buffer in tiles at a latitude. Each piece uses its own (at the largest |latitude| it reaches, so it is
         /// never narrower than asked): one shape can hold places far apart, e.g. trips months apart in one track area.
-        func bufAt(_ lat: Double) -> Double {
+        /// Polygons take `polygonBuffer`, lines and points `bufferMeters`.
+        func bufAt(_ lat: Double, _ meters: Double) -> Double {
             // Clamped as the map is: at the poles the buffer would cover the whole world.
-            max(0, shape.bufferMeters) / Geo.metersPerWorldUnit(atLatitude: min(abs(lat), WebMercator.maxLatitude)) * n
+            max(0, meters) / Geo.metersPerWorldUnit(atLatitude: min(abs(lat), WebMercator.maxLatitude)) * n
         }
 
         /// Per row, x-extents already grown by their buffer.
@@ -102,7 +116,7 @@ struct TileCoverage {
         // Interior uses the non-zero winding rule, so a hand-drawn lasso that loops past its start
         // still covers the doubly-encircled part (as it looks on screen).
         for ring in shape.polygons where ring.count >= 3 {
-            let buf = bufAt(ring.map { abs($0.lat) }.max()!)
+            let buf = bufAt(ring.map { abs($0.lat) }.max()!, shape.polygonBuffer)
             var pts = ring.map(toTile)
             if pts.first! != pts.last! { pts.append(pts.first!) }
             let ys = pts.map(\.y)
@@ -140,7 +154,7 @@ struct TileCoverage {
         for line in shape.lines where !line.isEmpty {
             let pts = line.map(toTile)
             if pts.count == 1 {
-                let buf = bufAt(line[0].lat)
+                let buf = bufAt(line[0].lat, shape.bufferMeters)
                 if let span = rowSpan(pts[0].y, pts[0].y, buf: buf) {
                     for row in span { add(row: row, pts[0].x, pts[0].x, buf: buf) }
                 }
@@ -148,7 +162,7 @@ struct TileCoverage {
             }
             for i in 0..<(pts.count - 1) {
                 let p = pts[i], q = pts[i + 1]
-                let buf = bufAt(max(abs(line[i].lat), abs(line[i + 1].lat)))
+                let buf = bufAt(max(abs(line[i].lat), abs(line[i + 1].lat)), shape.bufferMeters)
                 guard let span = rowSpan(min(p.y, q.y), max(p.y, q.y), buf: buf) else { continue }
                 for row in span {
                     if let e = clip(p, q, Double(row) - buf, Double(row + 1) + buf) { add(row: row, e.0, e.1, buf: buf) }
@@ -158,7 +172,7 @@ struct TileCoverage {
 
         for point in shape.points {
             let p = toTile(point)
-            let buf = bufAt(point.lat)
+            let buf = bufAt(point.lat, shape.bufferMeters)
             if let span = rowSpan(p.y, p.y, buf: buf) {
                 for row in span { add(row: row, p.x, p.x, buf: buf) }
             }

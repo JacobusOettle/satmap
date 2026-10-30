@@ -24,6 +24,38 @@ final class BackupCompatibilityTests: XCTestCase {
         XCTAssertEqual(ring.first, ["lat": -33.9245, "lon": 18.9232])
     }
 
+    func testFileAreaShapeIsTheSharedFormat() throws {
+        // A file's area has no buffer around its areas: written as polygonBufferMeters, the same text as on Android
+        // (Fixtures/file-area-shape.json, keys sorted, as Swift's own order changes from run to run).
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/file-area-shape.json", withExtension: nil))
+        let expected = try String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        XCTAssertEqual(String(decoding: try encoder.encode(BackupFixture.fileShape), as: UTF8.self), expected)
+        XCTAssertEqual(try JSONDecoder().decode(CoverageShape.self, from: Data(expected.utf8)), BackupFixture.fileShape)
+        // Not set: left out, and read as not set (also when null). An older version, which doesn't know the key,
+        // takes the 15 m around the areas too.
+        var older = BackupFixture.fileShape
+        older.polygonBufferMeters = nil
+        let keys = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(older)) as? [String: Any]).keys
+        XCTAssertEqual(Set(keys), ["polygons", "lines", "points", "bufferMeters"])
+        for text in [expected.replacingOccurrences(of: #""polygonBufferMeters":0,"#, with: ""),
+                     expected.replacingOccurrences(of: #""polygonBufferMeters":0"#, with: #""polygonBufferMeters":null"#)] {
+            let shape = try JSONDecoder().decode(CoverageShape.self, from: Data(text.utf8))
+            XCTAssertEqual(shape, older, text)
+            XCTAssertEqual(shape.polygonBuffer, 15)
+        }
+        XCTAssertThrowsError(try JSONDecoder().decode(CoverageShape.self, from: Data(
+            expected.replacingOccurrences(of: #""polygonBufferMeters":0"#, with: #""polygonBufferMeters":"0""#).utf8)))
+        // A file's area along roads round-trips whole: its roads with the file's line and a dot as a one-point line.
+        var area = BackupFixture.area
+        area.shape = BackupFixture.fileShape
+        area.roads = (area.roads ?? []) + BackupFixture.fileShape.lines + [BackupFixture.fileShape.points]
+        let decoded = try JSONDecoder().decode(OfflineArea.self, from: JSONEncoder().encode(area))
+        XCTAssertEqual(decoded, area)
+        XCTAssertEqual(decoded.roads?.last, [GeoPoint(lat: -33.9175, lon: 18.924)])
+    }
+
     func testReadsBackupsMadeOnTheIPhone() throws {
         try checkBackup(in: "iphone")
     }
@@ -105,6 +137,12 @@ enum BackupFixture {
         roads: [[GeoPoint(lat: -33.9238, lon: 18.9241), GeoPoint(lat: -33.9259, lon: 18.9312)]],
         preset: nil, isTrack: nil, maxZoom: 18, allowCellular: false, status: .complete, failedTiles: 0,
         bytesOnDisk: 2_345_678_901, problem: nil)
+
+    /// A KML or GPX file's area (`FileShapes.downloadShape`): its areas as they are, 15 m around its line and dot.
+    static let fileShape = CoverageShape(
+        polygons: [[GeoPoint(lat: -33.9245, lon: 18.9232), GeoPoint(lat: -33.9201, lon: 18.9302), GeoPoint(lat: -33.9263, lon: 18.9355)]],
+        lines: [[GeoPoint(lat: -33.9238, lon: 18.9241), GeoPoint(lat: -33.9259, lon: 18.9312)]],
+        points: [GeoPoint(lat: -33.9175, lon: 18.924)], bufferMeters: 15, polygonBufferMeters: 0)
 
     /// Two imagery tiles (any bytes do; real ones are JPEG) and one known to be missing.
     static let imageryTiles: [(TileID, Data)] = [

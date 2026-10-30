@@ -2,6 +2,7 @@ package com.jacobusoettle.satmap.core
 
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -15,13 +16,21 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** The area to make available offline: filled polygons, lines and points, each grown by a buffer.
- *  A lasso-drawn area is a single polygon; a KML file contributes all of its geometry. */
+ *  A lasso-drawn area is a single polygon; a KML or GPX file contributes its areas, lines and dots (`FileShapes`). */
 data class CoverageShape(
     val polygons: List<List<GeoPoint>> = emptyList(),
     val lines: List<List<GeoPoint>> = emptyList(),
     val points: List<GeoPoint> = emptyList(),
     val bufferMeters: Double = 0.0,
+    /** The buffer around the polygons, when it isn't `bufferMeters` (null): a file's areas are saved as they are (0),
+     *  with 15 m around its lines and dots. Left out of the saved JSON when null, so areas saved before read the same
+     *  (an older version reading a file's area takes `bufferMeters` around its polygons too). */
+    val polygonBufferMeters: Double? = null,
 ) {
+    /** The buffer around the polygons in metres: `polygonBufferMeters`, or else `bufferMeters`. */
+    val polygonBuffer: Double
+        get() = polygonBufferMeters ?: bufferMeters
+
     val isEmpty: Boolean
         get() = polygons.all { it.size < 3 } && lines.all { it.isEmpty() } && points.isEmpty()
 
@@ -29,25 +38,33 @@ data class CoverageShape(
     val geometryBounds: GeoBounds?
         get() = GeoBounds(points = polygons.flatten() + lines.flatten() + points)
 
-    /** Bounds including the buffer. */
+    /** Bounds including the buffers. */
     val bounds: GeoBounds?
-        get() = geometryBounds?.expanded(bufferMeters)
+        get() {
+            if (polygonBuffer == bufferMeters) return geometryBounds?.expanded(bufferMeters)
+            val rings = GeoBounds(points = polygons.flatten())?.expanded(polygonBuffer)
+            val rest = GeoBounds(points = lines.flatten() + points)?.expanded(bufferMeters)
+            if (rings != null && rest != null) return rings.union(rest)
+            return rings ?: rest
+        }
 
     /** Area of the filled polygons in square metres (lines/points are not counted). */
     val polygonAreaSquareMeters: Double
         get() = polygons.fold(0.0) { total, ring -> total + Geo.ringArea(ring) }
 
-    /** The Swift `Codable` form, `{"polygons":[[{"lat":…,"lon":…}]],"lines":[…],"points":[…],"bufferMeters":…}`,
-     *  so saved areas (and the area in a backup) read the same on both platforms. */
+    /** The Swift `Codable` form, `{"polygons":[[{"lat":…,"lon":…}]],"lines":[…],"points":[…],"bufferMeters":…}`
+     *  (and `"polygonBufferMeters":…` when set), so saved areas (and the area in a backup) read the same on both
+     *  platforms. */
     fun toJson(): JsonObject = buildJsonObject {
         put("polygons", buildJsonArray { polygons.forEach { add(pointsJson(it)) } })
         put("lines", buildJsonArray { lines.forEach { add(pointsJson(it)) } })
         put("points", pointsJson(points))
         put("bufferMeters", swiftJSONNumber(bufferMeters))
+        polygonBufferMeters?.let { put("polygonBufferMeters", swiftJSONNumber(it)) }
     }
 
     companion object {
-        /** Reads `toJson()`'s form; throws if it isn't one. */
+        /** Reads `toJson()`'s form; throws if it isn't one. A `polygonBufferMeters` that is missing or null is not set. */
         fun fromJson(json: JsonElement): CoverageShape {
             val o = json.jsonObject
             return CoverageShape(
@@ -55,6 +72,7 @@ data class CoverageShape(
                 lines = o.getValue("lines").jsonArray.map(::pointsFromJson),
                 points = pointsFromJson(o.getValue("points")),
                 bufferMeters = jsonDouble(o.getValue("bufferMeters")),
+                polygonBufferMeters = o["polygonBufferMeters"]?.takeIf { it !is JsonNull }?.let(::jsonDouble),
             )
         }
 
@@ -103,12 +121,12 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
             val n = (1 shl zoom).toDouble()
             val maxIndex = (1 shl zoom) - 1
 
-            /** The buffer in tiles at a latitude. Each piece uses its own (at the largest |latitude| it reaches, so it
+            /** A buffer in tiles at a latitude. Each piece uses its own (at the largest |latitude| it reaches, so it
              *  is never narrower than asked): one shape can hold places far apart, e.g. trips months apart in one
-             *  track area. */
-            fun bufAt(lat: Double): Double =
+             *  track area. Polygons take `polygonBuffer`, lines and points `bufferMeters`. */
+            fun bufAt(lat: Double, meters: Double): Double =
                 // Clamped as the map is: at the poles the buffer would cover the whole world.
-                max(0.0, shape.bufferMeters) / Geo.metersPerWorldUnit(min(abs(lat), WebMercator.maxLatitude)) * n
+                max(0.0, meters) / Geo.metersPerWorldUnit(min(abs(lat), WebMercator.maxLatitude)) * n
 
             /** Per row, x-extents already grown by their buffer. */
             val extents = HashMap<Int, Extents>()
@@ -149,7 +167,7 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
             // still covers the doubly-encircled part (as it looks on screen).
             for (ring in shape.polygons) {
                 if (ring.size < 3) continue
-                val buf = bufAt(ring.maxOf { abs(it.lat) })
+                val buf = bufAt(ring.maxOf { abs(it.lat) }, shape.polygonBuffer)
                 val pts = ring.map(::toTile).toMutableList()
                 if (pts.first().x != pts.last().x || pts.first().y != pts.last().y) pts.add(pts.first())
                 val ys = pts.map { it.y }
@@ -189,7 +207,7 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
                 if (line.isEmpty()) continue
                 val pts = line.map(::toTile)
                 if (pts.size == 1) {
-                    val buf = bufAt(line[0].lat)
+                    val buf = bufAt(line[0].lat, shape.bufferMeters)
                     rowSpan(pts[0].y, pts[0].y, buf)?.let { span ->
                         for (row in span) add(row, pts[0].x, pts[0].x, buf)
                     }
@@ -198,7 +216,7 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
                 for (i in 0 until pts.size - 1) {
                     val p = pts[i]
                     val q = pts[i + 1]
-                    val buf = bufAt(max(abs(line[i].lat), abs(line[i + 1].lat)))
+                    val buf = bufAt(max(abs(line[i].lat), abs(line[i + 1].lat)), shape.bufferMeters)
                     val span = rowSpan(min(p.y, q.y), max(p.y, q.y), buf) ?: continue
                     for (row in span) {
                         clip(p, q, row.toDouble() - buf, (row + 1).toDouble() + buf)?.let { add(row, it.lo, it.hi, buf) }
@@ -208,7 +226,7 @@ class TileCoverage(shape: CoverageShape, val zoom: Int) {
 
             for (point in shape.points) {
                 val p = toTile(point)
-                val buf = bufAt(point.lat)
+                val buf = bufAt(point.lat, shape.bufferMeters)
                 rowSpan(p.y, p.y, buf)?.let { span ->
                     for (row in span) add(row, p.x, p.x, buf)
                 }

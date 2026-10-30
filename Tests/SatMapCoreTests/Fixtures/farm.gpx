@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SatMap tests" xmlns="http://www.topografix.com/GPX/1/1"
+     xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3" xmlns:ogr="http://osgeo.org/gdal">
+  <metadata>
+    <name>Farm drive</name>
+    <author><name>Somebody</name></author>
+  </metadata>
+  <wpt lat="-25.4600" lon="30.9900">
+    <ele>812</ele>
+    <name>Pump</name>
+    <cmt>Check monthly</cmt>
+    <desc>Borehole pump</desc>
+    <sym>Flag</sym>
+  </wpt>
+  <wpt lat="-25.4650" lon="30.9950"><name>Gate</name><type>Gate</type></wpt>
+  <rte>
+    <name>To the dam</name>
+    <rtept lat="-25.4700" lon="30.9700"><name>Start</name></rtept>
+    <rtept lat="-25.4720" lon="30.9800"/>
+    <rtept lat="-25.4750" lon="30.9850"/>
+  </rte>
+  <trk>
+    <name>Morning drive</name>
+    <type>Driving</type>
+    <trkseg>
+      <trkpt lat="-25.4800" lon="30.9700"><ele>800</ele><time>2026-10-01T06:00:00Z</time></trkpt>
+      <trkpt lat="-25.4800" lon="30.9750"/>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="-25.4850" lon="30.9750"/>
+      <trkpt lat="-25.4850" lon="30.9800"/>
+    </trkseg>
+  </trk>
+  <trk>
+    <name>Loop</name>
+    <trkseg>
+      <trkpt lat="-25.4900" lon="30.9700"/>
+      <trkpt lat="-25.4900" lon="30.9800"/>
+      <trkpt lat="-25.4950" lon="30.9800"/>
+      <trkpt lat="-25.4950" lon="30.9700"/>
+      <trkpt lat="-25.4900" lon="30.9700"/>
+    </trkseg>
+  </trk>
+  <trk>
+    <name>North camp</name>
+    <type>Boundary</type>
+    <trkseg>
+      <trkpt lat="-25.4500" lon="30.9700"/>
+      <trkpt lat="-25.4500" lon="30.9750"/>
+      <trkpt lat="-25.4550" lon="30.9750"/>
+      <trkpt lat="-25.4550" lon="30.9700"/>
+      <trkpt lat="-25.4500" lon="30.9700"/>
+    </trkseg>
+  </trk>
+  <trk>
+    <name>Camp 2</name>
+    <extensions>
+      <ogr:landuse>meadow</ogr:landuse>
+      <gpxx:TrackExtension><gpxx:DisplayColor>Red</gpxx:DisplayColor></gpxx:TrackExtension>
+    </extensions>
+    <trkseg>
+      <trkpt lat="-25.4400" lon="30.9700"><extensions><gpxx:speed>3</gpxx:speed></extensions></trkpt>
+      <trkpt lat="-25.4400" lon="30.9750"/>
+      <trkpt lat="-25.4450" lon="30.9750"/>
+    </trkseg>
+  </trk>
+  <trk>
+    <name>Nothing recorded</name>
+    <trkseg></trkseg>
+  </trk>
+</gpx>

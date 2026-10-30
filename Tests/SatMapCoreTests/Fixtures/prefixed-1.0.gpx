@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!-- GPX 1.0 written with a namespace prefix, extensions straight inside the track -->
+<g:gpx version="1.0" creator="SatMap tests" xmlns:g="http://www.topografix.com/GPX/1/0"
+       xmlns:t="http://www.topografix.com/GPX/Private/TopoGrafix/0/1">
+  <g:name>Old tracks</g:name>
+  <g:time>2026-10-01T06:00:00Z</g:time>
+  <g:wpt lat="-33.9175" lon="18.924"><g:name>Launch</g:name><g:type>Field</g:type></g:wpt>
+  <g:trk>
+    <g:name>Fence</g:name>
+    <g:number>1</g:number>
+    <t:color>ff0000</t:color>
+    <t:highway>track</t:highway>
+    <g:trkseg>
+      <g:trkpt lat="-33.9200" lon="18.9200"/>
+      <g:trkpt lat="-33.9200" lon="18.9300"/>
+      <g:trkpt lat="-33.9250" lon="18.9300"/>
+      <g:trkpt lat="-33.9200" lon="18.9200"/>
+    </g:trkseg>
+  </g:trk>
+  <g:rte><g:name>Single</g:name><g:rtept lat="-33.9300" lon="18.9400"/></g:rte>
+</g:gpx>
