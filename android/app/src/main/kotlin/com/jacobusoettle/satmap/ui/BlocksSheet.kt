@@ -40,18 +40,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.kml.KMLLibrary
 
-/** The types the import offers: iOS's kml, kmz, xml and zip, plus octet-stream, which many providers report for
- *  `.kml` and `.kmz` (offline spec §2.9, DESIGN.md D13). */
-private val kmlTypes = arrayOf(
-    "application/vnd.google-earth.kml+xml",
-    "application/vnd.google-earth.kmz",
-    "application/xml",
-    "text/xml",
-    "application/zip",
-    "application/octet-stream",
-)
-
-/** Imported KML/KMZ files: each one's blocks switched on or off the map, and whether they keep the files' colours. */
+/** Imported KML/KMZ and GPX files: each one's blocks switched on or off the map, and whether they keep the files'
+ *  colours. The import offers `KMLLibrary.pickerTypes` (offline spec §2.9, DESIGN.md D13). */
 @Composable
 fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
     val files by library.files.collectAsStateWithLifecycle()
@@ -65,9 +55,12 @@ fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
             "Blocks",
             ScreenChrome.Leading.Done(close),
             trailing = {
-                IconButton(onClick = { importer.launch(kmlTypes) }, modifier = Modifier.testTag("importKml")) {
+                IconButton(
+                    onClick = { importer.launch(KMLLibrary.pickerTypes) },
+                    modifier = Modifier.testTag("importKml"),
+                ) {
                     // Material's cross is 14/24 of its icon: 30 dp makes it 17.5 dp, iOS's plus (screenshot 04).
-                    Icon(Icons.Filled.Add, contentDescription = "Import KML", tint = Accent, modifier = Modifier.size(30.dp))
+                    Icon(Icons.Filled.Add, contentDescription = "Import KML or GPX", tint = Accent, modifier = Modifier.size(30.dp))
                 }
             },
         ),
@@ -76,7 +69,7 @@ fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
             item {
                 FormSection(first = true) {
                     FormRow {
-                        Text("Import a .kml or .kmz file to show your blocks on the map.", style = Body, color = LabelSecondary)
+                        Text("Import a .kml, .kmz or .gpx file to show your blocks on the map.", style = Body, color = LabelSecondary)
                     }
                 }
             }

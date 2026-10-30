@@ -33,7 +33,7 @@ other, and how the work is ordered and tested.
 | D10 | Permissions | At launch: location, then motion (`ACTIVITY_RECOGNITION`), as iOS asks for location and motion. **Notifications** are asked once, on the first tap of a Download button (offline spec). `PermissionFlow` does not ask for them. |
 | D11 | Location hints | Three texts (state spec): denied, location services off, approximate only. A tap on the hint opens the right Settings page (an Android addition). See §4.6. |
 | D12 | Texts the specs disagree on | `backgroundStatus`: the offline spec's three texts (§5.2). Backup footer: "Saves each area as two MBTiles files, satellite and elevation, to Google Drive, a folder or a USB drive, or send them to a computer. To restore, choose both files of each area. Long-press an area to export only that one." |
-| D13 | KML picker types | Use the offline spec's MIME list (kml, kmz, xml, zip, octet-stream). Restore uses `*/*`. |
+| D13 | KML picker types | Use the offline spec's MIME list (kml, kmz, gpx, xml, zip, octet-stream: `KMLLibrary.pickerTypes`). Restore uses `*/*`. |
 | D14 | `HTTPTileFetcher` | Lives in `map/TileRepository.kt` (as in Swift) with signature `HTTPTileFetcher(client, url, wifiOnly = false)`. The download clients are in `offline/DownloadHttp.kt`. |
 | D15 | Memory trims | `onTrimMemory` trims when `level == RUNNING_LOW`, `level == RUNNING_CRITICAL` or `level >= TRIM_MEMORY_BACKGROUND`, and `onLowMemory` always trims. "Entering the background" is `AppLifecycle.didEnterBackground`. Details in §3.14. |
 | D16 | Free space | `StorageManager.getAllocatableBytes(getUuidForPath(root))` (iOS "important usage" counts purgeable space too). Fall back to `StatFs.availableBytes` when it throws. |
@@ -54,7 +54,7 @@ package owns the file (§7). Only the owner edits a file.
 
 | File | iOS counterpart | Contents and responsibility | WP |
 | --- | --- | --- | --- |
-| `MainActivity.kt` | `SatMapApp.swift` (`WindowGroup`, `onOpenURL`) | Edge-to-edge dark Compose host. It creates `MapController` and `PermissionFlow`, handles incoming KML intents, `ACTION_SAVE_TO_FOLDER` and launch extras, and forwards `onSaveInstanceState`. | A |
+| `MainActivity.kt` | `SatMapApp.swift` (`WindowGroup`, `onOpenURL`) | Edge-to-edge dark Compose host. It creates `MapController` and `PermissionFlow`, handles incoming KML and GPX intents, `ACTION_SAVE_TO_FOLDER` and launch extras, and forwards `onSaveInstanceState`. | A |
 | `app/SatMapApp.kt` | `AppDelegate` | `SatMapApplication`: the init order (§2.2) and memory trims. | A |
 | `app/AppModel.kt` | `AppModel.swift` | `MeasureMode`, `CrosshairAim`, `MapScale`, `DroneReport`, `MapLegend`, `HeightLookup`, `PendingArea`, `ActiveSheet`, `AppModel`, plus the seams `MapHost`, `CarMapHost` and `ElevationSource` (§2.5). | A |
 | `app/AppPaths.kt` | `AppPaths.swift` | `AppPaths` (folders, `size`, `freeDiskSpace`) and `Format` (all formatting through core `stringFormat`; `bytes` = ByteCountFormatter `.file`). | A |
@@ -839,7 +839,7 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 - **No navigation-compose.** Each sheet keeps `mutableStateListOf<Route>(Root)`. A route object holds its screen's state (`PlaceSearchState`, `NewAreaState`, …), so a screen under another one keeps its state.
   - Routes change through `AnimatedContent`: push slides in from the right; pop slides back.
   - `BackHandler(stack.size > 1)` pops the stack. At the root, system back closes the sheet.
-  - Offline routes: `Root`, `PlaceSearch`, `PlaceArea`, `KMLPicker`, `NewArea`, `Preset`, `Track`, `AreaDetail`.
+  - Offline routes: `Root`, `PlaceSearch`, `PlaceArea`, `KMLPicker`, `NewArea`, `Preset`, `Track`, `AreaDetail`. No row opens `Preset` now (the Kruger roads row is off the first screen); it is kept with `RoadPresets`.
 - **`SheetTopBar`:** `CenterAlignedTopAppBar(expandedHeight = 56.dp, windowInsets = WindowInsets(0))`.
   - The title is Headline, tagged `screenTitle`, marked as a heading.
   - The leading slot is "Done", "Cancel", or a back button (`ArrowBackIos` with the previous title, tagged `back`).
@@ -987,7 +987,7 @@ How the iOS accessibility properties map to Compose:
 - `Contour lines`, with `stateDescription` = the mode title;
 - `Blocks`, `Offline maps`, `Go to coordinates`, `Measure`, `My location`;
 - `Stop measuring`, `Undo`, `Close shape`;
-- `Height`, `Scale`, `Hide coordinates`, `Import KML`, `Show <name> on the map`.
+- `Height`, `Scale`, `Hide coordinates`, `Import KML or GPX`, `Show <name> on the map`.
 
 **State and hints:**
 - The copy buttons' description is `Copy <text>`, then `Copied` for 2.5 s.
@@ -1153,7 +1153,7 @@ Core's `TileDownloadJob.run` returns `DownloadOutcome.Cancelled` on cancellation
         android:windowSoftInputMode="adjustResize"
         android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode">
       <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
-      <!-- KML/KMZ: VIEW by type, VIEW by name (octet-stream + pathPattern), SEND/SEND_MULTIPLE: offline spec §2.9 verbatim -->
+      <!-- KML/KMZ/GPX: VIEW by type, VIEW by name (octet-stream + pathPattern; a .gpx whatever its type), SEND/SEND_MULTIPLE: offline spec §2.9 -->
     </activity>
     <activity android:name=".offline.SaveToFolderActivity" android:exported="true"
         android:theme="@android:style/Theme.Translucent.NoTitleBar" android:excludeFromRecents="true" />
@@ -1206,7 +1206,7 @@ Core's `TileDownloadJob.run` returns `DownloadOutcome.Cancelled` on cancellation
 ```
 filesDir/SatMap/                          (credential-encrypted: readable after the first unlock, as iOS's protection class)
   track.bin                               TrackLog, 32-byte records                     backed up
-  KML/index.json, KML/<UUID>.kml|.kmz     KMLLibrary (AtomicFile)                       backed up
+  KML/index.json, KML/<UUID>.kml|.kmz|.gpx KMLLibrary (AtomicFile)                     backed up
   Offline/                                excluded from backup and device transfer
     areas.json                            AtomicFile; an unreadable file is renamed areas.json.unreadable-<unix s>
     <UUID upper-case>/imagery.mbtiles, terrain.mbtiles (+ -wal, -shm while open)
@@ -1258,7 +1258,7 @@ class Connectivity private constructor(context: Context) {
 
 ### 5.9 Files in and out
 
-- **KML in:** the three `MainActivity` intent filters (offline spec §2.9). `MainActivity.handleIncoming(intent)` runs from `onCreate` (when `savedInstanceState == null`) and `onNewIntent`:
+- **KML and GPX in:** the four `MainActivity` intent filters (offline spec §2.9). `MainActivity.handleIncoming(intent)` runs from `onCreate` (when `savedInstanceState == null`) and `onNewIntent`:
   - it takes the URIs from `data` or `EXTRA_STREAM`;
   - for each: `model.kml.importFile(uri) { f -> f?.document?.bounds?.let { model.map?.zoom(it) } ?: model.setSheet(ActiveSheet.blocks) }`;
   - then it clears the intent action;
@@ -1379,7 +1379,7 @@ classes that don't touch `MapLibreMap`. `org.maplibre.geojson` types are plain J
 | map tiles (B) | `TileLevels` against iOS's formulas (zoom 0–21; pixel ratios 1, 2, 2.625, 3, 3.5; tolerances in rendering spec §2.13); `contourMinZoom`; `TileUrls` round trip; `RequestLimiter` order and cancellation; `TileRepository.nearestImagery` with a fake fetcher and fake offline stores (beyond depth, failure → offline ancestors only, the network pause after 8 failures); the interceptor answer table through a real `OkHttpClient` (codes, `Cache-Control`, the 1×1 blank, cancellation); contour colour ints and widths; `colourPng` edge pixels. |
 | map interaction (C) | `PointAdjuster.place`, `fingerGround`, the 5 m clamp and scroll step; `MapController.entry` (the aim line's entry and dash phase); camera string round trip; `BlockLayers.shapes` (every style case, width clamp, white when colours are off); `AviationLayer` selection (km filter, 15 % padding, cap of 140); `AviationCard.text`; the lasso's 3 dp step + Douglas–Peucker; `MeasureMode.label`. |
 | ui (D) | Compose tests under Robolectric with `MapScreen(map = null)`: panel texts for each measure state; `HeightBar` semantics (`above sea level`, ` ft `, ` m `); `CoordinateBar` "Copied" for 2.5 s; terrain toast 1.8 s; `NewAreaView` chosen zoom (`deepestFitting`, `rememberedZoom`) and size texts; `AreaDetailView` button titles; the back stack keeping route state. |
-| offline, kml (E) | The `OfflineManager` state machine (offline spec §2.14): queue order, pause winning, re-queue during a run, Wi-Fi-only waiting, retry delay 15→600, low-space stop, the preset guard, unreadable `areas.json`, orphan folders, `downloading` → `queued` at load. Export display names and the reader hold; restore of `Tests/SatMapCoreTests/Fixtures/backup/iphone`, a satellite-only file, a duplicate, a non-backup. `KMLLibrary`: `.kmz` when the data starts with `PK`, `hidden` round trip, the `kmlFileColours` default, delete, an import during the initial load. `RoadFetcher` and `PlaceSearch` with `MockWebServer`: the 12 s stagger, the first answer winning, the error texts, percent-encoding, `lat`/`lon` with a point under a German locale. |
+| offline, kml (E) | The `OfflineManager` state machine (offline spec §2.14): queue order, pause winning, re-queue during a run, Wi-Fi-only waiting, retry delay 15→600, low-space stop, the preset guard, unreadable `areas.json`, orphan folders, `downloading` → `queued` at load. Export display names and the reader hold; restore of `Tests/SatMapCoreTests/Fixtures/backup/iphone`, a satellite-only file, a duplicate, a non-backup. `KMLLibrary`: `.kmz` when the data starts with `PK`, `.gpx` for a GPX file, `hidden` round trip, the `kmlFileColours` default, delete, an import during the initial load. `RoadFetcher` and `PlaceSearch` with `MockWebServer`: the 12 s stagger, the first answer winning, the error texts, percent-encoding, `lat`/`lon` with a point under a German locale. |
 | car (B) | `app-testing`: `ScreenController(CarMapScreen)` → one `NavigationTemplate` titled `Contours`; after a click, `Contours + colours`; the map strip has 4 actions, the last `TYPE_PAN`. `CarMapController` camera logic against a fake map. |
 
 ### 8.2 Instrumented screenshot walkthrough (emulator in GitHub Actions)

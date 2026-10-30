@@ -209,7 +209,7 @@ class MapScreenTest {
     fun blocksOpensInASheetAndDoneClosesIt() {
         compose.onNodeWithTag("blocksButton").performClick()
         compose.onNodeWithTag("screenTitle").assertTextEquals("Blocks")
-        compose.onNodeWithTag("importKml").assertContentDescriptionEquals("Import KML")
+        compose.onNodeWithTag("importKml").assertContentDescriptionEquals("Import KML or GPX")
         compose.onNode(hasText("Done") and hasClickAction()).performClick()
         compose.waitForIdle()
         assertNull(model.sheet.value)

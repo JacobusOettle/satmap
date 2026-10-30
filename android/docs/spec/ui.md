@@ -523,14 +523,15 @@ ModalBottomSheet(
     - push: `slideInHorizontally { it } togetherWith slideOutHorizontally { -it / 3 }`
     - pop: `slideInHorizontally { -it / 3 } togetherWith slideOutHorizontally { it }`
   - `BackHandler(enabled = stack.size > 1) { stack.removeLast() }` goes inside the sheet content. It is registered after the sheet's own back callback, so it wins; at the root, system back closes the sheet. If an instrumentation test shows otherwise, use `ModalBottomSheetProperties(shouldDismissOnBackPress = false)` and do both steps in our handler.
-  - The back label is the previous route's title: `Offline maps`, `Find a place` or `Choose KML`.
+  - The back label is the previous route's title: `Offline maps`, `Find a place` or `Choose a file`.
 
 ### 3.1 Blocks (`BlocksSheet`, `model.sheet == blocks`)
 
-- **Top bar:** title `Blocks`; leading `Done` (dismiss); trailing `IconButton(Icons.Filled.Add, tint Accent, contentDescription = "Import KML", testTag "importKml")`.
-  - "+" launches `rememberLauncherForActivityResult(OpenMultipleDocuments())` with `arrayOf("*/*")` and calls `library.importFile(uri)` for each result. Android MIME types for KML are unreliable (often `application/octet-stream`), so every file is offered and the import says what is wrong.
+- **Top bar:** title `Blocks`; leading `Done` (dismiss); trailing `IconButton(Icons.Filled.Add, tint Accent, contentDescription = "Import KML or GPX", testTag "importKml")`.
+  - "+" launches `rememberLauncherForActivityResult(OpenMultipleDocuments())` with `KMLLibrary.pickerTypes` (DESIGN.md D13: kml, kmz, gpx, xml, zip and octet-stream, which many providers report for these files) and calls `library.importFile(uri)` for each result; the import says what is wrong with a file it can't read.
 - **List:**
-  - If `library.files` is empty: a card with one row, `Import a .kml or .kmz file to show your blocks on the map.` in Body `LabelSecondary`.
+  - If `library.files` is empty: a card with one row, `Import a .kml, .kmz or .gpx file to show your blocks on the map.` in Body `LabelSecondary`.
+  - A GPX file is listed, drawn and switched like a KML file (its tracks and routes as lines, its waypoints as points, all in the app's white: GPX has no colours).
   - **Files section.** Footer, only if files exist: `Switch a file off to take its blocks off the map.`
     - Each file is a swipe-to-delete row (`library.delete(f.id)`): `Row(spacedBy 12)`, then:
       - **Left** (`weight 1f`, clickable, `Column(spacedBy 2)`): `f.name` in Body primary, then `"${f.document.features.size} shapes · tap to show on map"` in Caption secondary.
@@ -554,9 +555,10 @@ ModalBottomSheet(
 | --- | --- | --- | --- |
 | `Find a park, reserve or town` | `Icons.Filled.Search` | link | push `PlaceSearch` |
 | `Draw an area on the map` | `Lasso` (custom) | action (Accent text) | `model.startDrawingArea()` (closes the sheet) |
-| `Use the blocks in a KML file` | `SquareDashed` | link | push `KMLPicker` |
-| `Kruger National Park roads` | `Icons.Filled.DirectionsCar` | link | push `Preset(RoadPresets.kruger)` |
+| `Use a GPX or KML file` | `SquareDashed` | link | push `KMLPicker` |
 | `Where I've been` | `Icons.AutoMirrored.Filled.DirectionsWalk` | link | push `Track` |
+
+The `Kruger National Park roads` row is gone; its route (`Preset(RoadPresets.kruger)`) and screen (§3.5) stay in the code.
 
 **Section 2**, header `Offline areas`.
 - **Rows:**
@@ -639,13 +641,15 @@ ModalBottomSheet(
   - Loading: a centred spinner with `Getting the boundary of ${place.name} …` below it in `LabelSecondary`.
   - The title is empty until loaded (then `Download area`).
 
-### 3.4 Choose KML (`KMLAreaPicker`)
+### 3.4 Choose a file (`KMLAreaPicker`)
 
-- Title `Choose KML`, back `Offline maps`.
-- If there are no files: `Import a KML file first (Blocks button on the map).` in `LabelSecondary`.
-- Each file is a link to `NewArea(PendingArea(f.name, f.document.coverageShape(bufferMeters = 150.0)))`: `Column(spacedBy 2)` with `f.name` in Body, then `"${f.document.features.size} shapes · includes 150 m around them"` in Caption secondary.
+- Title `Choose a file`, back `Offline maps`.
+- If there are no files: `Import a KML or GPX file first (Blocks button on the map).` in `LabelSecondary`.
+- Each file is a link to `NewArea(PendingArea(f.name, FileShapes(f.document).downloadShape))` (inside the file's shapes, 15 m around its lines and points, nothing in between): `Column(spacedBy 2)` with `f.name` in Body, then `"${f.document.features.size} shapes"` in Caption secondary.
 
 ### 3.5 Kruger National Park roads (`PresetAreaView`)
+
+No row opens it now (§3.2); it is kept for the areas saved from it and the shipped road list.
 
 - If `RoadPresets.load(presetID)` succeeds: `NewAreaView(PendingArea(preset.name, CoverageShape(polygons = preset.boundary)), presetID = presetID)`.
 - Otherwise: `The road list is missing from this build of SatMap.` in `LabelSecondary`.
@@ -665,7 +669,7 @@ ModalBottomSheet(
 
 - **Title:** `Download area`.
 - **Leading button:** `Cancel` only when `showsCancel` (the lasso sheet). It calls `model.discardPendingArea()` and closes.
-- **Pushed** from KML, Kruger, track or place, it gets the back button instead.
+- **Pushed** from a KML or GPX file, Kruger, track or place, it gets the back button instead.
 
 **State:**
 - `name = area.name`.
@@ -675,10 +679,12 @@ ModalBottomSheet(
 - `picked = false`.
 - `allowCellular = track?.allowCellular ?: false`.
 - `alongRoads = presetID != null || track != null`.
-- `roads = NotLoaded | Loading | Loaded(lines, km, counts) | Failed(msg)`.
+- `roads = NotLoaded | Loading | Loaded(lines, km, counts, found) | Failed(msg)`.
 - `counts: Map<Int, Int>?`, `freeSpace: Long?`.
 - `imageryTileBytes = 17000`, `terrainTileBytes = 45000`, `typicalDepth = 19`.
 - `fixedLines = presetID != null || track != null`.
+- `file`: a KML or GPX file's area when `area.shape.polygonBufferMeters == 0.0` (`FileShapes.downloadShape`), as `FileShapes(areas = polygons, lines, dots = points)`; else null.
+- `offersAlongRoads = !fixedLines && file?.hasAreas != false`.
 
 **Sections, in order:**
 
@@ -689,9 +695,10 @@ ModalBottomSheet(
    - Content: `Column(spacedBy 2) { "Zoom $z" (Body primary); resolution(z) (Caption secondary) }`, `Spacer(weight)`, `sizeText(z)` (Body secondary `tnum`), then `Icons.Filled.Check` at 20 dp in `Accent`, alpha 1 when chosen else 0. The check is hidden from semantics.
    - Footer: `Each zoom level has twice the detail of the one before and takes about 4 times the space. Esri's imagery often stops at zoom 18–19 on farms and 20–21 in towns; the download stops where the imagery does, so deeper levels can add little. Sizes include elevation for contours and heights.`
 
-3. **Roads section**, one of three:
+3. **Roads section**, one of four:
    - **Track:** rows = `roadsStatus`. Footer: `Satellite imagery 15 m to each side of everywhere you've been (your dotted track), with elevation under it. Come back here after a trip to add the new parts: what is already saved is skipped.`
    - **Preset:** rows = `roadsStatus`. Footer: `"Satellite imagery 15 m to each side of every tar and gravel road in the park, including management tracks: ${preset.note}. Elevation for contours and heights is saved for the whole park."`
+   - **A file** (`file != null`): the toggle row `Only along roads`, followed by `roadsStatus` when on, only when `offersAlongRoads` (no rows otherwise, the footer alone). Footer: `Satellite imagery inside the file's shapes and 15 m around its lines and points, with elevation for contours and heights.`, or with `alongRoads`: `Satellite imagery only 15 m to each side of the roads inside the file's shapes, and 15 m around the file's lines and points. Elevation for contours and heights is still saved for the whole of each shape.`
    - **Otherwise:** a toggle row `Only along roads` (`alongRoads`), followed by `roadsStatus` when on. Footer: `Saves satellite imagery only 15 m to each side of every road and track in the area, including gravel and farm roads, as mapped on OpenStreetMap. Elevation for contours and heights is still saved for the whole area.`
    - "15" is `Roads.corridorMeters.toInt()`.
 
@@ -709,7 +716,7 @@ ModalBottomSheet(
    - Otherwise: `Row(spacedBy 8) { spinner 20 dp; "Calculating…" (secondary) }`.
 
 6. **Download.** One action row: `SatIcons.ArrowDownCircleFill` (26.5 dp, so its disc is 22 dp; Accent, the arrow cut out of it) plus `Download` in Headline Accent.
-   - Disabled (tertiary) when `name.trim().isEmpty()`, or `alongRoads && roadLines.isNullOrEmpty()`, or `chosenEstimate == null`.
+   - Disabled (tertiary) when `name.trim().isEmpty()`, or along roads with no road found (`alongRoads && (roads as? Loaded)?.found != true`: a file's own lines and points don't count), or `chosenEstimate == null`.
    - Action:
      - With a track: `model.startTrackDownload(trimmed, track.lines, chosenZoom, allowCellular)`.
      - Otherwise: `model.startDownload(PendingArea(trimmed, area.shape), roads = if (presetID == null && alongRoads) roadLines else null, preset = presetID, maxZoom = chosenZoom, allowCellular)`.
@@ -748,9 +755,10 @@ ModalBottomSheet(
   - Then `freeSpace = AppPaths.freeDiskSpace()`.
 - **`LaunchedEffect(alongRoads)`:** if `alongRoads && roads is NotLoaded`, call `loadRoads()`.
 - **`loadRoads()`:**
-  - `lines` comes from `track.lines`, or `preset.roads`, or `RoadPresets.covering(shape)?.let { Roads.clip(it.roads, shape) }` (computed off the main thread), or else `RoadFetcher.roads(shape)`.
+  - `found` comes from `track.lines`, or `preset.roads`, or `RoadPresets.covering(shape)?.let { Roads.clip(it.roads, shape) }` (computed off the main thread), or else `RoadFetcher.roads(shape)`. For a file, `shape` is `file.roadSearchShape` (its shapes only, no buffer).
+  - `lines = file?.roadsToSave(found) ?: found`: a file keeps its lines, and each point as a one-point line, with the roads.
   - Then, off the main thread: `whole = Roads.corridor(lines)`. For each z in `0..22`: `count(notIn = corridor(previousLines))` if `z ≤ track.completeTo`, else `tileCount`.
-  - `km = Roads.length(lines) / 1000`.
+  - `km = Roads.length(found) / 1000`, `found = found.isNotEmpty()`.
   - Errors: cancellation sets `NotLoaded`; anything else `Failed(error.message ?: "Couldn't get the roads. Try again.")`.
 
 ### 3.8 Area detail (`AreaDetailView(areaID)`)
@@ -850,10 +858,10 @@ Compose mapping:
 **Labels used to find controls** (`contentDescription` for icon buttons; visible text for text buttons and rows):
 - Map buttons: `Contour lines` (value = mode title), `Blocks`, `Offline maps`, `Go to coordinates`, `Measure`, `My location`.
 - Measuring: `Stop measuring`, `Undo`, `Close shape`.
-- Sheet bars and rows: `Done`, `Cancel`, `Draw an area on the map`, `Use the blocks in a KML file`, `Kruger National Park roads`, `Find a park, reserve or town`, `Where I've been`, `Download`, `Download zoom 21`, `Try again`, `Show and measure from here`, `Export all offline maps`, `Restore from a backup`, `Search`.
+- Sheet bars and rows: `Done`, `Cancel`, `Draw an area on the map`, `Use a GPX or KML file`, `Find a park, reserve or town`, `Where I've been`, `Download`, `Download zoom 21`, `Try again`, `Show and measure from here`, `Export all offline maps`, `Restore from a backup`, `Search`.
 - Toggles: `Only along roads`, `Allow mobile data`.
 - Texts the test waits for: `Ready offline`, `Roads and tracks`, `Your track`, `Imagery found down to`, `Shape A–D · 4 corners`, and texts starting with `From A to`, `Shape A`, `Move the crosshair onto the spot`, or containing `than you`, `Height:`, `Waiting for GPS`.
-- Other icon controls: `Hide coordinates`, `Import KML`, `Show <name> on the map`, `Height`, `Scale`.
+- Other icon controls: `Hide coordinates`, `Import KML or GPX`, `Show <name> on the map`, `Height`, `Scale`.
 
 **Clashes:** `Contour lines` is both the terrain button and the contour key, and `Blocks` is both a button and a sheet title. Android tests should therefore use the extra tags below, or `hasContentDescription(...) and hasClickAction()`.
 
@@ -975,7 +983,7 @@ All are from `material-icons-extended` 1.7.8; every name below exists in the cac
 | `mountain.2.fill` / `mountain.2` | `Icons.Filled.Landscape` / `Icons.Outlined.Landscape` | Terrain button, height pills |
 | `paintpalette.fill` | `Icons.Filled.Palette` | Terrain: colours |
 | `airplane` | `Icons.Filled.Flight` + `Modifier.rotate(90f)` | Terrain: drone |
-| `square.dashed` | **custom `SquareDashed`**, stroke 2, round caps: `M4,8V6a2,2 0 0 1 2,-2h2 M16,4h2a2,2 0 0 1 2,2v2 M20,16v2a2,2 0 0 1 -2,2h-2 M8,20H6a2,2 0 0 1 -2,-2v-2 M11,4h2 M20,11v2 M11,20h2 M4,11v2` | Blocks button, "Use the blocks in a KML file" |
+| `square.dashed` | **custom `SquareDashed`**, stroke 2, round caps: `M4,8V6a2,2 0 0 1 2,-2h2 M16,4h2a2,2 0 0 1 2,2v2 M20,16v2a2,2 0 0 1 -2,2h-2 M8,20H6a2,2 0 0 1 -2,-2v-2 M11,4h2 M20,11v2 M11,20h2 M4,11v2` | Blocks button, "Use a GPX or KML file" |
 | `arrow.down.circle` / `.fill` | `Icons.Outlined.ArrowCircleDown` / **custom `ArrowDownCircleFill`** (Material's `Filled.ArrowCircleDown` is the same ring as the outlined one), fill, `PathFillType.EvenOdd`, the disc and the arrow as one outline that doesn't cross itself (SF's stem and chevron, 1.8 wide, round ends): `M12,2a10,10 0 1 1 0,20a10,10 0 1 1 0,-20z M11.1,8.15A0.9,0.9 0 0 1 12.9,8.15L12.9,14.57L14.9,12.81A0.9,0.9 0 0 1 16.08,14.17L12.59,17.24A0.9,0.9 0 0 1 11.41,17.24L7.92,14.17A0.9,0.9 0 0 1 9.1,12.81L11.1,14.57Z` | Offline button; Download buttons |
 | `location.magnifyingglass` | **custom `LocationMagnifyingGlass`**: lens stroke 2 `M10.5,4a6.5,6.5 0 1 0 0.001,0z`, handle stroke 2.6 round `M15.3,15.3L20.5,20.5`, arrow fill `M13.4,7.6L7.4,10.1L10.2,10.8L10.9,13.6Z` | Go to coordinates |
 | `ruler` | `Icons.Outlined.Straighten` | Measure (off), "Show and measure from here" |
@@ -1000,7 +1008,7 @@ All are from `material-icons-extended` 1.7.8; every name below exists in the cac
 | `arrow.clockwise.circle` | **composite `RetryCircle`**: `Icons.Filled.Refresh` 17 dp in a 24 dp circle with a 1.75 dp border | Area row |
 | `map` | `Icons.Outlined.Map` | Show on the map |
 | `checkmark` | `Icons.Filled.Check` | Zoom rows |
-| `plus` | `Icons.Filled.Add` | Import KML |
+| `plus` | `Icons.Filled.Add` | Import KML or GPX |
 | (paste button) | `Icons.Outlined.ContentPaste` | Paste |
 | (disclosure chevron) / (back) | `Icons.AutoMirrored.Filled.KeyboardArrowRight` / `Icons.AutoMirrored.Filled.ArrowBackIos` | Link rows / sheet back button |
 
@@ -1078,4 +1086,4 @@ Checked with `javap` on `android-sdk-13.7.1.aar`.
 | Zoom levels offered | 22 → 15; remembered under `offlineMaxZoom` (default 22) |
 | Size estimates | 17 000 B per imagery tile, 45 000 B per elevation tile; "≈" up to z19, "up to" deeper |
 | Free-space limit | `OfflineManager.minimumFreeSpace` = 500 MiB; auto-chosen level ≤ half of what's above it |
-| KML area buffer / road corridor | 150 m / `Roads.corridorMeters` (15 m) |
+| A file's area / road corridor | inside its shapes (no buffer), `Roads.corridorMeters` around its lines and points / `Roads.corridorMeters` (15 m) |

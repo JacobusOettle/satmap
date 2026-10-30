@@ -505,7 +505,7 @@ object AppLifecycle {
 - Calls `enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))`, so the status bar icons are white over the imagery, as in the screenshots.
 - `setContent { SatMapTheme(darkColorScheme(...)) { MapScreen(AppModel.shared) } }`, always dark.
 - `android:launchMode="singleTask"`, so a share lands in the open map.
-- **KML import:** handled in `onCreate` (when `savedInstanceState == null`) and in `onNewIntent`. The intent is `ACTION_VIEW` or `ACTION_SEND` (`EXTRA_STREAM`) with a .kml/.kmz URI. It calls `model.kml.importFile(uri) { file -> file?.document?.bounds?.let { model.map?.zoom(it) } ?: model.setSheet(ActiveSheet.BLOCKS) }`. The intent filters belong to the KML subsystem.
+- **KML and GPX import:** handled in `onCreate` (when `savedInstanceState == null`) and in `onNewIntent`. The intent is `ACTION_VIEW` or `ACTION_SEND` (`EXTRA_STREAM`) with a .kml/.kmz/.gpx URI. It calls `model.kml.importFile(uri) { file -> file?.document?.bounds?.let { model.map?.zoom(it) } ?: model.setSheet(ActiveSheet.BLOCKS) }`. The intent filters belong to the KML subsystem.
 - **Launch arguments**, the CI counterpart of iOS `-key value`: `adb shell am start -n com.jacobusoettle.satmap/.MainActivity --es terrainMode colours --ez zoomScript true`.
   - In `onCreate`, call `Defaults.setLaunchArguments(intent.extras)`, then `AppModel.shared.applyLaunchArguments()`.
   - `applyLaunchArguments()` re-reads `terrainMode`, `distanceUnit` and `heightUnit` from `Defaults` and sets the flows directly, without writing them back, as iOS reads its argument domain only in init.

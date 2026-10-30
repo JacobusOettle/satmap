@@ -17,7 +17,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.PauseCircle
@@ -70,6 +69,7 @@ import com.jacobusoettle.satmap.app.TileSources
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.DownloadProgress
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.FoundPlace
 import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.Roads
@@ -95,7 +95,9 @@ sealed interface OfflineRoute {
     data object KMLPicker : OfflineRoute
     class NewArea(val state: NewAreaState) : OfflineRoute
 
-    /** A road set shipped with the app. */
+    /** A road set shipped with the app. No row opens it now (the Kruger roads row is off the first screen), but the
+     *  screen is kept, as is `RoadPresets`, which the areas saved from it and the place search inside Kruger still
+     *  use. */
     class Preset(val id: String) : OfflineRoute {
         /** Its download screen, or null when the road list is missing (loaded when shown, as iOS's). */
         val state: NewAreaState? by lazy {
@@ -114,7 +116,7 @@ sealed interface OfflineRoute {
         get() = when (this) {
             Root -> "Offline maps"
             is PlaceSearch -> "Find a place"
-            KMLPicker -> "Choose KML"
+            KMLPicker -> "Choose a file"
             else -> ""
         }
 }
@@ -157,8 +159,9 @@ class TrackState {
     var newArea by mutableStateOf<NewAreaState?>(null)
 }
 
-/** Offline areas: choose a new area (lasso or KML), manage downloads, and back them up. Owns its screens' back stack
- *  (a new one each time the sheet is shown; a test passes its own); `close` slides the sheet away. */
+/** Offline areas: choose a new area (lasso, or a KML or GPX file), manage downloads, and back them up. Owns its
+ *  screens' back stack (a new one each time the sheet is shown; a test passes its own); `close` slides the sheet
+ *  away. */
 @Composable
 fun OfflineSheet(
     model: AppModel,
@@ -236,10 +239,7 @@ private fun OfflineRoot(
             ) {
                 FormLinkRow("Find a park, reserve or town", Icons.Filled.Search) { push(OfflineRoute.PlaceSearch()) }
                 FormActionRow("Draw an area on the map", SatIcons.Lasso, onClick = model::startDrawingArea)
-                FormLinkRow("Use the blocks in a KML file", SatIcons.SquareDashed) { push(OfflineRoute.KMLPicker) }
-                FormLinkRow("Kruger National Park roads", Icons.Filled.DirectionsCar) {
-                    push(OfflineRoute.Preset(RoadPresets.kruger))
-                }
+                FormLinkRow("Use a GPX or KML file", SatIcons.SquareDashed) { push(OfflineRoute.KMLPicker) }
                 FormLinkRow("Where I've been", Icons.AutoMirrored.Filled.DirectionsWalk) { push(OfflineRoute.Track()) }
             }
         }
@@ -639,7 +639,7 @@ fun PlaceAreaView(
 }
 
 /** A road set shipped with the app (Kruger), on the download screen: imagery along its roads. `state` is null when
- *  the road list is missing from the build. */
+ *  the road list is missing from the build. (No row opens it now: see `OfflineRoute.Preset`.) */
 @Composable
 fun PresetAreaView(model: AppModel, state: NewAreaState?, back: ScreenChrome.Leading.Back?, close: () -> Unit) {
     if (state != null) {
@@ -699,28 +699,27 @@ fun TrackAreaView(model: AppModel, state: TrackState, back: ScreenChrome.Leading
     }
 }
 
-/** Pick an imported KML file to download the area around its blocks. */
+/** Pick an imported KML or GPX file to download what is in it (`FileShapes`): inside its shapes, and 15 m around its
+ *  lines and points, with nothing in between. */
 @Composable
 fun KMLAreaPicker(library: KMLLibrary, back: ScreenChrome.Leading.Back?, push: (OfflineRoute) -> Unit) {
     val files by library.files.collectAsStateWithLifecycle()
-    SheetScreen(ScreenChrome("Choose KML", back)) {
+    SheetScreen(ScreenChrome("Choose a file", back)) {
         item {
             FormSection(first = true) {
                 if (files.isEmpty()) {
-                    FormRow { Text("Import a KML file first (Blocks button on the map).", style = Body, color = LabelSecondary) }
+                    FormRow {
+                        Text("Import a KML or GPX file first (Blocks button on the map).", style = Body, color = LabelSecondary)
+                    }
                 }
                 for (f in files) {
                     FormLinkRow(onClick = {
-                        val shape = f.document.coverageShape(bufferMeters = 150.0)
+                        val shape = FileShapes(f.document).downloadShape
                         push(OfflineRoute.NewArea(NewAreaState(PendingArea(name = f.name, shape = shape))))
                     }) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(f.name, style = Body, color = LabelPrimary)
-                            Text(
-                                "${f.document.features.size} shapes · includes 150 m around them",
-                                style = Caption,
-                                color = LabelSecondary,
-                            )
+                            Text("${f.document.features.size} shapes", style = Caption, color = LabelSecondary)
                         }
                     }
                 }

@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.ui
 
 import android.app.Application
+import android.net.Uri
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsActions
@@ -46,10 +47,13 @@ import com.jacobusoettle.satmap.app.TileSources
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.DownloadProgress
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.FoundPlace
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.OfflineArea
+import com.jacobusoettle.satmap.kml.KMLLibrary
+import com.jacobusoettle.satmap.offline.AndroidSqlDriverTest
 import com.jacobusoettle.satmap.offline.OfflineManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
@@ -67,8 +71,8 @@ import java.io.File
 import java.util.Locale
 import java.util.UUID
 
-/** The Offline maps sheet (UI spec §3.2–3.6, DESIGN.md §8.1): its first screen, the areas' rows, the backup alert, and
- *  the back stack keeping each screen's state. */
+/** The Offline maps sheet (UI spec §3.2–3.6, DESIGN.md §8.1): its first screen, the file picker, the areas' rows, the
+ *  backup alert, and the back stack keeping each screen's state. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "w402dp-h874dp")
 class OfflineSheetTest {
@@ -114,12 +118,13 @@ class OfflineSheetTest {
         for (title in listOf(
             "Find a park, reserve or town",
             "Draw an area on the map",
-            "Use the blocks in a KML file",
-            "Kruger National Park roads",
+            "Use a GPX or KML file",
             "Where I've been",
         )) {
             button(title).assertIsEnabled()
         }
+        // The Kruger roads row is gone (its screen stays in the code).
+        compose.onNodeWithText("Kruger National Park roads").assertDoesNotExist()
         compose.onNodeWithText(
             "Saves satellite imagery at the highest detail available plus elevation data for contours and heights, so " +
                 "the map works with no signal.",
@@ -212,8 +217,7 @@ class OfflineSheetTest {
             compose.waitForIdle()
         }
         for (link in listOf(
-            "Use the blocks in a KML file",
-            "Kruger National Park roads",
+            "Use a GPX or KML file",
             "Where I've been",
             "Find a park, reserve or town",
         )) {
@@ -234,15 +238,44 @@ class OfflineSheetTest {
     }
 
     @Test
-    fun theKMLPickerAsksForAFileFirst() {
+    fun theFilePickerAsksForAFileFirst() {
         compose.setContent { SatMapTheme { OfflineSheet(model, model.offline, model.kml, close = {}) } }
-        button("Use the blocks in a KML file").performClick()
+        button("Use a GPX or KML file").performClick()
         compose.waitForIdle()
-        compose.onNodeWithTag("screenTitle").assertTextEquals("Choose KML")
-        compose.onNodeWithText("Import a KML file first (Blocks button on the map).").assertExists()
+        compose.onNodeWithTag("screenTitle").assertTextEquals("Choose a file")
+        compose.onNodeWithText("Import a KML or GPX file first (Blocks button on the map).").assertExists()
         compose.onNodeWithTag("back").performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("screenTitle").assertTextEquals("Offline maps")
+    }
+
+    @Test
+    fun aFileInThePickerOpensTheDownloadOfItsShapes() {
+        val gpx = File(app.cacheDir, "Farm drive.gpx").apply { writeBytes(File(AndroidSqlDriverTest.fixtures, "farm.gpx").readBytes()) }
+        var imported: KMLLibrary.File? = null
+        model.kml.importFile(Uri.fromFile(gpx)) { imported = it }
+        val deadline = System.nanoTime() + 10_000_000_000L
+        while (imported == null && System.nanoTime() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+        }
+        val file = imported!!
+        val stack = RouteStack<OfflineRoute>(OfflineRoute.Root)
+        compose.setContent { SatMapTheme { OfflineSheet(model, model.offline, model.kml, close = {}, stack = stack) } }
+        button("Use a GPX or KML file").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("screenTitle").assertTextEquals("Choose a file")
+        compose.onNodeWithText("Import a KML or GPX file first (Blocks button on the map).").assertDoesNotExist()
+        compose.onNodeWithText("${file.document.features.size} shapes").assertExists()
+        button("Farm drive").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("screenTitle").assertTextEquals("Download area")
+        assertEquals("Choose a file", stack.below(stack.top)?.title)
+        // Inside the file's shapes and 15 m around its lines and points.
+        val state = (stack.top as OfflineRoute.NewArea).state
+        assertEquals(FileShapes(file.document).downloadShape, state.area.shape)
+        assertEquals(FileShapes(file.document), state.file)
+        assertTrue(state.offersAlongRoads)
     }
 
     private fun area(name: String, status: OfflineArea.Status, bytes: Long = 68_400_000, roads: Boolean = false) = OfflineArea(

@@ -35,10 +35,10 @@ import org.robolectric.Shadows.shadowOf
 import java.io.File
 import java.util.UUID
 
-/** KML and KMZ files opened with SatMap or shared to it (iOS's `onOpenURL`): which intents bring which files, and the
- *  map zooming to an imported file or the Blocks sheet showing why it couldn't be imported; and "Save to a folder"
- *  from the backup chooser asking for the folder. (`MainActivity` itself can't start here: its map needs MapLibre's
- *  native code.) */
+/** KML, KMZ and GPX files opened with SatMap or shared to it (iOS's `onOpenURL`): which intents reach SatMap, which
+ *  bring which files, and the map zooming to an imported file or the Blocks sheet showing why it couldn't be imported;
+ *  and "Save to a folder" from the backup chooser asking for the folder. (`MainActivity` itself can't start here: its
+ *  map needs MapLibre's native code.) */
 @RunWith(AndroidJUnit4::class)
 class MainActivityTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
@@ -143,6 +143,44 @@ class MainActivityTest {
         assertEquals(listOf(a), KMLLibrary.incomingUris(replayedView))
         // The launcher reopened from Recents too, which has no files anyway.
         assertTrue(MainActivity.isReplay(Intent(Intent.ACTION_MAIN).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)))
+    }
+
+    /** Whether the manifest's intent filters send this intent to SatMap. */
+    private fun opensSatMap(intent: Intent): Boolean =
+        app.packageManager.queryIntentActivities(intent, 0).any { it.activityInfo.name == MainActivity::class.java.name }
+
+    @Test
+    fun kmlKmzAndGpxFilesOpenWithSatMap() {
+        val gpx = Uri.parse("content://com.example.files/document/Download%2FFarm%20drive.gpx")
+        // By type, and a .gpx by name whatever type the file manager gives it.
+        for (type in listOf("application/gpx+xml", "application/octet-stream", "text/xml", "text/plain", "*/*")) {
+            assertTrue(type, opensSatMap(Intent(Intent.ACTION_VIEW).setDataAndType(gpx, type)))
+        }
+        // Not any text file.
+        val notes = Uri.parse("content://com.example.files/document/Download%2Fnotes.txt")
+        assertFalse(opensSatMap(Intent(Intent.ACTION_VIEW).setDataAndType(notes, "text/plain")))
+        // KML and KMZ as before.
+        val kml = Uri.parse("content://com.example.files/document/Download%2FFarm.kml")
+        assertTrue(opensSatMap(Intent(Intent.ACTION_VIEW).setDataAndType(kml, "application/vnd.google-earth.kml+xml")))
+        assertTrue(opensSatMap(Intent(Intent.ACTION_VIEW).setDataAndType(kml, "application/octet-stream")))
+        // Shared.
+        for (type in listOf("application/gpx+xml", "application/vnd.google-earth.kmz", "application/octet-stream")) {
+            assertTrue(type, opensSatMap(Intent(Intent.ACTION_SEND).setType(type).putExtra(Intent.EXTRA_STREAM, gpx)))
+        }
+    }
+
+    @Test
+    fun anImportedGPXIsShownOnTheMap() {
+        val model = AppModel(app, noHeights)
+        val map = FakeMap()
+        model.map = map
+        assertTrue(MainActivity.openFiles(model, Intent(Intent.ACTION_VIEW, shared("Farm drive.gpx", fixture("farm.gpx")))))
+        waitFor { model.kml.files.value.isNotEmpty() && map.zooms.isNotEmpty() }
+        val file = model.kml.files.value.single()
+        assertEquals("Farm drive", file.name)
+        assertTrue(file.fileName.endsWith(".gpx"))
+        assertEquals(listOf(file.document.bounds), map.zooms)
+        assertNull(model.kml.importError.value)
     }
 
     @Test

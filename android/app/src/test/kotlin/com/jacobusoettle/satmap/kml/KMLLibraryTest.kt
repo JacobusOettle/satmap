@@ -15,6 +15,8 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Defaults
+import com.jacobusoettle.satmap.core.KMLDocument
+import com.jacobusoettle.satmap.core.KMLGeometry
 import com.jacobusoettle.satmap.offline.AndroidSqlDriverTest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -40,8 +42,8 @@ import java.io.File
 import java.util.UUID
 import kotlin.coroutines.CoroutineContext
 
-/** `KMLLibrary`: the iPhone's storage layout and `index.json`, imports, switching files off, deleting, the colours
- *  setting, and an import arriving while the saved files are still being read. */
+/** `KMLLibrary`: the iPhone's storage layout and `index.json`, imports (KML, KMZ and GPX), switching files off,
+ *  deleting, the colours setting, and an import arriving while the saved files are still being read. */
 @RunWith(AndroidJUnit4::class)
 class KMLLibraryTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
@@ -116,6 +118,32 @@ class KMLLibraryTest {
         assertEquals(zipped.id.toString().uppercase(), saved[0]["id"]!!.jsonPrimitive.content)
         assertEquals("Farm blocks", saved[0]["name"]!!.jsonPrimitive.content)
         assertEquals(zipped.fileName, saved[0]["fileName"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun aGPXIsStoredAsGpxBesideTheKMLFiles() {
+        val library = KMLLibrary(app, now)
+        val data = fixture("farm.gpx")
+        val gpx = import(library, shared("Farm drive.gpx", data))!!
+        assertEquals("Farm drive", gpx.name)
+        assertEquals(gpx.id.toString().uppercase() + ".gpx", gpx.fileName)
+        assertArrayEquals(data, File(AppPaths.kml, gpx.fileName).readBytes())
+        assertEquals(KMLDocument.Format.gpx, gpx.document.format)
+        // Waypoints are points and tracks and routes lines, as in a KML file; GPX has no colours.
+        assertTrue(gpx.document.features.any { it.geometry is KMLGeometry.Point })
+        assertTrue(gpx.document.features.any { it.geometry is KMLGeometry.Line })
+        assertTrue(gpx.document.features.all { it.style == null })
+        // Even under another name: the file says what it is.
+        val renamed = import(library, shared("export.xml", data))!!
+        assertTrue(renamed.fileName, renamed.fileName.endsWith(".gpx"))
+
+        // Loaded again with the KML files.
+        val kml = import(library, shared("Farm.kml", fixture("blocks.kml")))!!
+        val again = KMLLibrary(app, now)
+        idle()
+        assertEquals(listOf(gpx.id, renamed.id, kml.id), again.files.value.map { it.id })
+        assertEquals(gpx.document, again.files.value[0].document)
+        assertEquals(KMLDocument.Format.kml, again.files.value[2].document.format)
     }
 
     @Test
@@ -228,6 +256,10 @@ class KMLLibraryTest {
         assertNull(import(library, shared("empty.kml", empty.toByteArray())))
         assertEquals("empty.kml: The file contains no points, lines or polygons.", library.importError.value)
 
+        val noTracks = """<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1"><metadata><name>x</name></metadata></gpx>"""
+        assertNull(import(library, shared("empty.gpx", noTracks.toByteArray())))
+        assertEquals("empty.gpx: The file contains no waypoints, routes or tracks.", library.importError.value)
+
         assertNull(import(library, Uri.fromFile(File(incoming, "gone.kml"))))
         assertTrue(library.importError.value!!, library.importError.value!!.startsWith("Couldn't read gone.kml: "))
         assertEquals(emptyList<KMLLibrary.File>(), library.files.value)
@@ -273,11 +305,12 @@ class KMLLibraryTest {
     }
 
     @Test
-    fun thePickerOffersKMLKMZXMLAndZip() {
-        // iOS's kml, kmz, xml and zip, plus octet-stream, as many providers call .kml and .kmz (DESIGN.md D13).
+    fun thePickerOffersKMLKMZGPXXMLAndZip() {
+        // iOS's kml, kmz, gpx, xml and zip, plus octet-stream, as many providers call .kml, .kmz and .gpx (DESIGN.md
+        // D13).
         assertEquals(
-            listOf("application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/xml", "text/xml",
-                   "application/zip", "application/octet-stream"),
+            listOf("application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/gpx+xml",
+                   "application/xml", "text/xml", "application/zip", "application/octet-stream"),
             KMLLibrary.pickerTypes.toList(),
         )
     }

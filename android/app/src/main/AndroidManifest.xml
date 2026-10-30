@@ -50,6 +50,7 @@
                 <data android:scheme="content" />
                 <data android:mimeType="application/vnd.google-earth.kml+xml" />
                 <data android:mimeType="application/vnd.google-earth.kmz" />
+                <data android:mimeType="application/gpx+xml" />
             </intent-filter>
             <!-- "Open with" where the provider doesn't know the type: by name. -->
             <intent-filter>
@@ -61,15 +62,27 @@
                 <data android:pathPattern=".*\\.kmz" />
                 <data android:pathPattern=".*\\..*\\.kmz" />
             </intent-filter>
-            <!-- Share to SatMap (WhatsApp, Gmail, Files, Drive). They often pass KML and KMZ on as octet-stream, text/xml
-                 or zip, so SatMap also appears for other files of those types; parsing rejects those with the usual
-                 "Couldn't import" (a deliberate difference from iOS's kml/kmz-only document types). -->
+            <!-- A .gpx by name, whatever type the provider gives it: file managers call it octet-stream, text/xml,
+                 text/plain or */*, as few phones know application/gpx+xml. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" android:host="*" android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.gpx" />
+                <data android:pathPattern=".*\\..*\\.gpx" />
+                <data android:pathPattern=".*\\.GPX" />
+                <data android:pathPattern=".*\\..*\\.GPX" />
+            </intent-filter>
+            <!-- Share to SatMap (WhatsApp, Gmail, Files, Drive). They often pass KML, KMZ and GPX on as octet-stream,
+                 text/xml or zip, so SatMap also appears for other files of those types; parsing rejects those with the
+                 usual "Couldn't import" (a deliberate difference from iOS's kml/kmz/gpx-only document types). -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/vnd.google-earth.kml+xml" />
                 <data android:mimeType="application/vnd.google-earth.kmz" />
+                <data android:mimeType="application/gpx+xml" />
                 <data android:mimeType="application/xml" />
                 <data android:mimeType="text/xml" />
                 <data android:mimeType="application/zip" />

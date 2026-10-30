@@ -74,7 +74,7 @@ class ScreenRendersOfflineTest {
         compose.waitForIdle()
     }
 
-    /** The walkthrough's blocks around the vineyard near Stellenbosch (DemoFarm.kml), with 150 m around them. */
+    /** The walkthrough's farm near Stellenbosch (where DemoFarm.kml's blocks are), as a box. */
     private val farm = CoverageShape(
         polygons = listOf(
             listOf(GeoPoint(-33.9165, 18.9195), GeoPoint(-33.9165, 18.9265), GeoPoint(-33.9260, 18.9265), GeoPoint(-33.9260, 18.9195)),
