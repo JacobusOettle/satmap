@@ -393,7 +393,7 @@ private struct KMLAreaPicker: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(f.name)
-                        Text(Self.contents(f.shapes))
+                        Text(Format.fileContents(f.shapes))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -401,14 +401,5 @@ private struct KMLAreaPicker: View {
             }
         }
         .navigationTitle("Choose a file")
-    }
-
-    /// What the file saves: "2 shapes · 1 line · 3 points" (only the kinds it has).
-    private static func contents(_ s: FileShapes) -> String {
-        func count(_ n: Int, _ one: String, _ many: String) -> String? {
-            n == 0 ? nil : "\(Format.count(n)) \(n == 1 ? one : many)"
-        }
-        return [count(s.areas.count, "shape", "shapes"), count(s.lines.count, "line", "lines"),
-                count(s.dots.count, "point", "points")].compactMap { $0 }.joined(separator: " · ")
     }
 }

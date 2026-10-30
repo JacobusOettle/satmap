@@ -38,6 +38,8 @@ import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jacobusoettle.satmap.app.AppModel
+import com.jacobusoettle.satmap.app.Format
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.kml.KMLLibrary
 
 /** The types the import offers: iOS's kml, kmz, xml and zip, plus octet-stream, which many providers report for
@@ -110,10 +112,11 @@ fun BlocksSheet(model: AppModel, library: KMLLibrary, close: () -> Unit) {
     importError?.let { ImportErrorAlert(it, onDismiss = library::clearImportError) }
 }
 
-/** A file: its name and how many shapes (a tap shows it and zooms to it), and its switch. `deleteAction` goes on the
- *  name's button, where TalkBack lands. */
+/** A file: its name and what it holds (`Format.fileContents`; a tap shows it and zooms to it), and its switch.
+ *  `deleteAction` goes on the name's button, where TalkBack lands. */
 @Composable
 private fun FileRow(f: KMLLibrary.File, deleteAction: Modifier, onShow: () -> Unit, onShownChange: (Boolean) -> Unit) {
+    val contents = remember(f.document) { Format.fileContents(FileShapes(f.document)) }
     // The texts' button fills the row's height (58 dp, as iOS's); the switch has a 48 dp tall touch area and ends
     // 14 dp in from the card's edge, as iOS's does.
     FormRow(verticalPadding = 0.dp, endPadding = 14.dp) {
@@ -122,7 +125,7 @@ private fun FileRow(f: KMLLibrary.File, deleteAction: Modifier, onShow: () -> Un
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             Text(f.name, style = Body, color = LabelPrimary)
-            Text("${f.document.features.size} shapes · tap to show on map", style = Caption, color = LabelSecondary)
+            Text("$contents · tap to show on map", style = Caption, color = LabelSecondary)
         }
         Spacer(Modifier.width(12.dp))
         IosSwitch(

@@ -32,7 +32,7 @@ struct BlocksSheet: View {
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(f.name).foregroundColor(.primary)
-                                    Text("\(f.document.features.count) shapes · tap to show on map")
+                                    Text("\(Format.fileContents(f.shapes)) · tap to show on map")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }

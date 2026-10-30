@@ -71,7 +71,8 @@ class ScreenRendersBlocksTest {
 
     @Test
     fun blocksList() {
-        // The demo farm the iPhone screenshots show (SatMapUITests/DemoFarm.kml, 8 shapes), shown, with its colours.
+        // The demo farm the iPhone screenshots show (SatMapUITests/DemoFarm.kml, 7 shapes and a point), shown, with its
+        // colours.
         val library = KMLLibrary(app, Dispatchers.Unconfined)
         val file = File(app.cacheDir, "Demo farm.kml")
         File(repo, "SatMapUITests/DemoFarm.kml").copyTo(file, overwrite = true)

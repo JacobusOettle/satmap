@@ -533,7 +533,7 @@ ModalBottomSheet(
   - If `library.files` is empty: a card with one row, `Import a .kml or .kmz file to show your blocks on the map.` in Body `LabelSecondary`.
   - **Files section.** Footer, only if files exist: `Switch a file off to take its blocks off the map.`
     - Each file is a swipe-to-delete row (`library.delete(f.id)`): `Row(spacedBy 12)`, then:
-      - **Left** (`weight 1f`, clickable, `Column(spacedBy 2)`): `f.name` in Body primary, then `"${f.document.features.size} shapes · tap to show on map"` in Caption secondary.
+      - **Left** (`weight 1f`, clickable, `Column(spacedBy 2)`): `f.name` in Body primary, then `"${Format.fileContents(FileShapes(f.document))} · tap to show on map"` in Caption secondary (`remember`ed per document), e.g. `7 shapes · 1 point · tap to show on map`. `Format.fileContents` counts the file's shapes (`FileShapes.areas`), lines and points with `Format.count` as `"<n> shape|shapes"`, `"<n> line|lines"`, `"<n> point|points"`, leaves out the kinds it hasn't and joins the rest with `" · "`; each row of Choose a file (§3.4) shows the same text.
       - On click: `library.setShown(f.id, true)`, `f.document.bounds?.let { model.map?.zoom(it) }`, then dismiss the sheet.
       - **Right:** `IosSwitch(f.isShown, Modifier.minimumInteractiveComponentSize().toggleable(f.isShown, role = Role.Switch) { library.setShown(f.id, it) }.semantics { contentDescription = "Show ${f.name} on the map" })`, 14 dp from the card's edge. The texts have `MultiLineRowPadding` above and below (the row is 58 dp, as iOS's).
   - **Colours section** (only if files exist). Footer `Off: every block is drawn in white.`

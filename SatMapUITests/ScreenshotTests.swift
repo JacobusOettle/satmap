@@ -277,6 +277,7 @@ final class ScreenshotTests: XCTestCase {
         }
 
         // A place found by name: the Sabi Sand reserve, within its boundary.
+        openOfflineSheet()
         tap("Find a park, reserve or town")
         let search = app.textFields["placeSearchText"].firstMatch
         if search.waitForExistence(timeout: 10) {
