@@ -218,7 +218,7 @@ The navigation title is the area's name; if the area is gone, the screen shows `
 
 The section's data is recomputed when `maxZoom` or `status` changes. A chosen level below maxZoom is cleared once the area is complete.
 
-## 1.8 New area screen (`NewAreaView`; screenshots 07, 12, 17, 27)
+## 1.8 New area screen (`NewAreaView`; screenshots 07, 12, 27)
 
 The title is `"Download area"`. A `"Cancel"` button is shown only when the screen is presented on its own (after drawing with the lasso); it calls `discardPendingArea()`.
 
@@ -236,7 +236,7 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
   - `"≈ X"` for z ≤ 19, otherwise `"up to X"`.
 
 **Size estimate**
-- Imagery tiles from zoom 0 to the depth, from the imagery counts. These are the whole area's counts, or the along-roads counts when the box is ticked.
+- Imagery tiles from zoom 0 to the depth, from the imagery counts. These are the whole area's counts, or the along-roads counts when the box is ticked. A KML or GPX file's area is `FileShapes.downloadShape`: inside its shapes (`polygonBufferMeters` 0) and 15 m around its lines and points, nothing in between.
 - Plus terrain tiles from 0 to 15 from the area's counts.
 - Bytes = imagery × 17,000 + terrain × 45,000.
 - The area's counts are worked out in the background:
@@ -248,7 +248,7 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
 - If a level was not picked here, this isn't a track area that already has a level, and `deepestFitting` is known: the chosen zoom is `min(remembered, deepestFitting)`. Otherwise it is `remembered`.
 - `deepestFitting` needs the counts, the imagery counts and the free space, with free space above 500 MB. With `room = (free − 500 MB) / 2`, it is the first zoom from 22 downwards whose estimate is at most `room`, or 15 if none is.
 
-**Roads section**, in one of three forms:
+**Roads section**, in one of four forms:
 
 1. **Track** (`track != nil`)
    - Rows: `"Your track"` with the length in km. When the area was complete before, also `"New since the last download"` with the length of `newLines`.
@@ -256,7 +256,10 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
 2. **Preset** (Kruger)
    - Row: `"Roads and tracks"` with the length in km.
    - Footer: `"Satellite imagery 15 m to each side of every tar and gravel road in the park, including management tracks: <preset.note>. Elevation for contours and heights is saved for the whole park."`
-3. **Otherwise**
+3. **A KML or GPX file's area** (`NewAreaState.file`: the shape's `polygonBufferMeters` is 0)
+   - The switch `"Only along roads"` only when the file has shapes (`FileShapes.hasAreas`), with the roads status under it when on; with only lines and points, no rows, the footer alone.
+   - Footer: `"Satellite imagery inside the file's shapes and 15 m around its lines and points, with elevation for contours and heights."`; with the switch on, `"Satellite imagery only 15 m to each side of the roads inside the file's shapes, and 15 m around the file's lines and points. Elevation for contours and heights is still saved for the whole of each shape."`
+4. **Otherwise**
    - A switch `"Only along roads"`. When it is on, the roads status shows under it.
    - Footer: `"Saves satellite imagery only 15 m to each side of every road and track in the area, including gravel and farm roads, as mapped on OpenStreetMap. Elevation for contours and heights is still saved for the whole area."`
 
@@ -270,6 +273,7 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
 - Track: `track.lines`.
 - Preset: `preset.roads`.
 - Otherwise, if `RoadPresets.covering(shape)` finds a shipped set (Kruger holding the area), its roads clipped to the shape (`Roads.clip`); else `RoadFetcher.roads(in: shape)`.
+- For a file's area, the shape looked in is `FileShapes.roadSearchShape` (its shapes only, nothing around them), and the lines are `FileShapes.roadsToSave(found)`: the roads found, then the file's lines, then each point as a one-point line, so they keep their 15 m. The km shown are the roads found only.
 - Then the imagery counts per zoom from 0 to 22 along `Roads.corridor(lines)`. For a track, levels up to `completeTo` count only tiles not in the corridor of the previous lines.
 
 **Mobile data.** A switch `"Allow mobile data"`, default off; for a track it starts from the track area's own setting. The Android footer is in §2.10.
@@ -284,7 +288,7 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
 - For a track: `startTrackDownload(trimmedName, track.lines, chosenZoom, allowCellular)`.
 - Otherwise: `startDownload(PendingArea(trimmedName, shape), roads = if (presetID == null && alongRoads) roadLines else null, preset = presetID, …)`.
 - Then `sheet = null` and the screen closes. Back on the map, the banner shows the progress.
-- The button is disabled when the name is blank, when along roads with no road lines, or while the estimate is unknown.
+- The button is disabled when the name is blank, when along roads with no road found (a file's own lines and points don't count), or while the estimate is unknown.
 
 ## 1.9 Where areas come from (`OfflineSheet` first section; screenshot 06)
 
@@ -304,10 +308,10 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
      - fewer than 3 points means no draft;
      - the draft is drawn as a dashed white 2.5 px polygon with a 15 % fill.
    - Tile taps are ignored while drawing.
-3. **"Use the blocks in a KML file"** (dashed square) opens `KMLAreaPicker`, titled `"Choose KML"`.
-   - Each file row shows its name and `"<n> shapes · includes 150 m around them"`, and leads to `NewAreaView(PendingArea(f.name, f.document.coverageShape(bufferMeters = 150)))`.
-   - With no files: `"Import a KML file first (Blocks button on the map)."`.
-4. **"Kruger National Park roads"** (car) opens `NewAreaView(PendingArea(preset.name, CoverageShape(polygons = preset.boundary)), presetID = "KrugerRoads")`.
+3. **"Use a GPX or KML file"** (dashed square) opens `KMLAreaPicker`, titled `"Choose a file"` (the download screen's back label; screenshot 17).
+   - Each file row shows its name and what the file holds (`Format.fileContents`): its shapes, lines and points (`FileShapes` areas, lines and dots), only the kinds it has, as `"2 shapes · 1 line · 3 points"` or `"7 shapes · 1 point"`. It leads to `NewAreaView(PendingArea(f.name, FileShapes(f.document).downloadShape))`: imagery and elevation inside the file's shapes and 15 m around its lines and points (§1.8). `FileShapes` (core) says which features are shapes, lines and points, from their geometry and the file's own marks.
+   - With no files: `"Import a KML or GPX file first (Blocks button on the map)."`.
+4. The Kruger roads screen (`OfflineRoute.Preset`, `PresetAreaView`) has no row on the first screen any more, but stays in the code: areas saved with preset `"KrugerRoads"` still load, download, resume, go deeper and back up through `RoadPresets`, and the place search inside Kruger uses its roads (`RoadPresets.covering`). It is `NewAreaView(PendingArea(preset.name, CoverageShape(polygons = preset.boundary)), presetID = "KrugerRoads")`.
    - If the preset is missing: `"The road list is missing from this build of SatMap."`.
    - `RoadPresets.load(id)` reads `<id>.json` once (thread-safe cache). A failure is logged as `road preset <id> missing or unreadable`.
    - `RoadPresets.covering(area)` compares coverage at zoom 14: the preset is used if tiles outside its boundary × 10 ≤ the area's tiles.
@@ -458,9 +462,11 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
 
 ## 1.14 KML library (`KMLLibrary`, `BlocksSheet`, Blocks long-press; screenshots 04, 05, 24)
 
+The library holds GPX files too, read by `KMLParser.parseKMLOrGPX` (GPX when the file's first element is `<gpx>`) into the same `KMLDocument`: a waypoint is a point, a track (its segments joined) or route a line. GPX has no styles, so its features draw in the app's white, and a tap on a waypoint selects it as a KML point.
+
 **Storage.**
 - `KML/index.json` is a JSON array of `Entry { id (UUID), name, fileName, hidden: Bool? }`. `hidden` is `true` when switched off and left out when shown.
-- Each file is stored as `KML/<UUID>.kml`, or `.kmz` when its data starts with `PK`.
+- Each file is stored as `KML/<UUID>.kml`, or `.kmz` when its data starts with `PK`, or `.gpx` for a GPX file (`document.format == gpx`).
 - The index is read synchronously at start, so an "Open in SatMap" import at launch can't overwrite it. The documents are parsed in the background.
 - Merge after parsing: the loaded files (with the current entry, so a change made meanwhile is kept), plus files imported meanwhile. Files deleted meanwhile are skipped.
 
@@ -474,22 +480,22 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
   - `completion(file)`.
 - Errors set `importError` and call `completion(null)`:
   - read failure: `"Couldn't read <file name>: <reason>"`;
-  - parse failure: `"<file name>: <error description>"`, using `KMLError` texts.
+  - parse failure: `"<file name>: <error description>"`, using `KMLError` or `GPXError` texts.
 
 **Other operations**
 - `setShown(id, shown)` updates the entry and its `File`, then saves the index.
 - `delete(id)` removes the entry, the `File` and the stored file, then saves the index.
 - `useFileColours` is the preference `"kmlFileColours"`, **true when never set**.
 
-**Blocks sheet**, titled `"Blocks"`, with `"Done"` on the leading side and a `+` (`"Import KML"`) on the trailing side.
-- Empty: `"Import a .kml or .kmz file to show your blocks on the map."`.
+**Blocks sheet**, titled `"Blocks"`, with `"Done"` on the leading side and a `+` (`"Import KML or GPX"`) on the trailing side.
+- Empty: `"Import a .kml, .kmz or .gpx file to show your blocks on the map."`.
 - Each row:
   - left part, a button: the name, and `"<contents> · tap to show on map"` as a caption, with what the file holds (`Format.fileContents`, the same text as its row in "Choose a file"): its shapes, lines and points (`FileShapes` areas, lines and dots), only the kinds it has, as `"2 shapes · 1 line · 3 points"` or `"7 shapes · 1 point"`. Tapping it calls `setShown(true)`, zooms the map to the document's bounds and closes the sheet;
   - right: a switch bound to `isShown` (accessibility label `"Show <name> on the map"`);
   - swipe to delete.
 - Footer, when there are files: `"Switch a file off to take its blocks off the map."`.
 - With files, a checkbox row `"Use the colours in the files"` (filled checked square or empty square) that toggles `useFileColours`. Footer `"Off: every block is drawn in white."`.
-- The import picker allows several files: kml, kmz, xml and zip.
+- The import picker allows several files: kml, kmz, gpx, xml and zip.
 - Errors show an alert titled `"Couldn't import"` with `"OK"`.
 
 **Long-press on the Blocks map button**: a menu with one item per file (name, with a filled check circle or an empty circle; it toggles `setShown`). Then, if there are files, a divider and `"Colours from the files"` (checked or empty square), which toggles `useFileColours`.
@@ -713,7 +719,7 @@ filesDir/SatMap/
     areas.json             written with android.util.AtomicFile (startWrite / finishWrite)
     <UUID>/imagery.mbtiles, terrain.mbtiles (+ -wal/-shm while open)
     Restoring/             staging for a restore, removed at start and after each restore
-  KML/index.json, KML/<UUID>.kml|.kmz     backed up
+  KML/index.json, KML/<UUID>.kml|.kmz|.gpx backed up
   track.bin                                backed up
 ```
 
@@ -800,16 +806,16 @@ val chooser = Intent.createChooser(send, null)
   - work runs on `Dispatchers.IO`, and the result is applied on Main.
 - Android OfflineSheet backup footer: `"Saves each area as two MBTiles files, satellite and elevation, to Google Drive, a folder or a USB drive, or sends them to a computer. To restore, choose both files of each area. Long-press an area to export only that one."`
 
-## 2.9 KML import and "share to SatMap"
+## 2.9 KML and GPX import and "share to SatMap"
 
 **Picker** (Blocks `+`): `rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments())` with
-`arrayOf("application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/xml", "text/xml", "application/zip", "application/octet-stream")`.
-These are iOS's kml/kmz/xml/zip types, plus octet-stream, which many providers report for `.kml` and `.kmz`. Each URI goes to `kml.importFile(uri)`.
+`KMLLibrary.pickerTypes`: `arrayOf("application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/gpx+xml", "application/xml", "text/xml", "application/zip", "application/octet-stream")`.
+These are iOS's kml/kmz/gpx/xml/zip types, plus octet-stream, which many providers report for `.kml`, `.kmz` and `.gpx`. Each URI goes to `kml.importFile(uri)`.
 
 **`KMLLibrary.importFile(uri: Uri, completion: ((File?) -> Unit)? = null)`**
 - The display name comes from `OpenableColumns.DISPLAY_NAME`, or `uri.lastPathSegment`, with `substringBeforeLast('.')`. The `"<file name>"` used in error texts is the full `DISPLAY_NAME`.
 - It reads with `cr.openInputStream(uri)!!.use { it.readBytes() }` on `Dispatchers.IO`, straight away, because the URI grant lives with the receiving activity.
-- Storage: `KML/<UUID upper-case>.kml|.kmz`, written with `AtomicFile`, and an atomic `index.json`. Entries are encoded as Swift encodes them: `{"id":"<UPPER-UUID>","name":…,"fileName":…}`, plus `"hidden":true` when switched off.
+- Storage: `KML/<UUID upper-case>.kml|.kmz|.gpx`, written with `AtomicFile`, and an atomic `index.json`. Entries are encoded as Swift encodes them: `{"id":"<UPPER-UUID>","name":…,"fileName":…}`, plus `"hidden":true` when switched off.
 - No inbox clean-up is needed on Android (content URIs).
 
 **Intent filters** on `MainActivity`, with `android:launchMode="singleTask"`. SatMap then opens in its own task with the map, as iOS switches to SatMap.
@@ -821,6 +827,7 @@ These are iOS's kml/kmz/xml/zip types, plus octet-stream, which many providers r
   <data android:scheme="content" />
   <data android:mimeType="application/vnd.google-earth.kml+xml" />
   <data android:mimeType="application/vnd.google-earth.kmz" />
+  <data android:mimeType="application/gpx+xml" />
 </intent-filter>
 <intent-filter>                                   <!-- "Open with" where the provider doesn't know the type: by name -->
   <action android:name="android.intent.action.VIEW" />
@@ -829,12 +836,20 @@ These are iOS's kml/kmz/xml/zip types, plus octet-stream, which many providers r
   <data android:pathPattern=".*\\.kml" /><data android:pathPattern=".*\\..*\\.kml" />
   <data android:pathPattern=".*\\.kmz" /><data android:pathPattern=".*\\..*\\.kmz" />
 </intent-filter>
+<intent-filter>                                   <!-- A .gpx by name, whatever type it is given (octet-stream, text/xml, text/plain, */*) -->
+  <action android:name="android.intent.action.VIEW" />
+  <category android:name="android.intent.category.DEFAULT" />
+  <data android:scheme="content" android:host="*" android:mimeType="*/*" />
+  <data android:pathPattern=".*\\.gpx" /><data android:pathPattern=".*\\..*\\.gpx" />
+  <data android:pathPattern=".*\\.GPX" /><data android:pathPattern=".*\\..*\\.GPX" />
+</intent-filter>
 <intent-filter>                                   <!-- Share to SatMap: WhatsApp, Gmail, Files, Drive -->
   <action android:name="android.intent.action.SEND" />
   <action android:name="android.intent.action.SEND_MULTIPLE" />
   <category android:name="android.intent.category.DEFAULT" />
   <data android:mimeType="application/vnd.google-earth.kml+xml" />
   <data android:mimeType="application/vnd.google-earth.kmz" />
+  <data android:mimeType="application/gpx+xml" />
   <data android:mimeType="application/xml" />
   <data android:mimeType="text/xml" />
   <data android:mimeType="application/zip" />
@@ -842,7 +857,7 @@ These are iOS's kml/kmz/xml/zip types, plus octet-stream, which many providers r
 </intent-filter>
 ```
 
-WhatsApp and Gmail pass on the sender's type, which for KML/KMZ is often `application/octet-stream`, `text/xml` or `application/zip`, and their URIs carry no file name. Without those types SatMap couldn't receive their files. As a result SatMap also appears for other files of those types, and parsing rejects them with the usual "Couldn't import" alert. This is a deliberate difference from iOS's kml/kmz-only document types.
+WhatsApp and Gmail pass on the sender's type, which for KML/KMZ/GPX is often `application/octet-stream`, `text/xml` or `application/zip`, and their URIs carry no file name. Without those types SatMap couldn't receive their files. As a result SatMap also appears for other files of those types, and parsing rejects them with the usual "Couldn't import" alert. This is a deliberate difference from iOS's kml/kmz/gpx-only document types. Few phones know `application/gpx+xml` (file managers call a `.gpx` octet-stream, `text/xml`, `text/plain` or `*/*`), so "Open with" also takes a `.gpx` by name whatever its type.
 
 **`MainActivity.handleIncoming(intent)`**
 - It is called from `onCreate` (when `savedInstanceState == null`) and from `onNewIntent`.
@@ -876,7 +891,6 @@ WhatsApp and Gmail pass on the sender's type, which for KML/KMZ is often `applic
 | magnifyingglass | `Icons.Outlined.Search` |
 | lasso | `Icons.Outlined.Gesture` |
 | square.dashed | `Icons.Outlined.SelectAll` (also on the Blocks button) |
-| car | `Icons.Outlined.DirectionsCar` |
 | figure.walk | `Icons.Outlined.DirectionsWalk` |
 | square.and.arrow.up | `Icons.Outlined.IosShare` |
 | square.and.arrow.down | `Icons.Outlined.Download` |
@@ -1086,7 +1100,7 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
   - the `BackupFileProvider`;
   - `SaveToFolderActivity` (exported, no filter, translucent theme);
   - the car service and its meta-data.
-- `MainActivity` gets `launchMode="singleTask"` and the three KML intent filters.
+- `MainActivity` gets `launchMode="singleTask"` and the four KML and GPX intent filters.
 - `<application>` gets the backup attributes from §2.6.
 
 ## 2.14 Unit tests (`app/src/test`, Robolectric)
@@ -1115,7 +1129,7 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
   - the fixture `Tests/SatMapCoreTests/Fixtures/backup/iphone` restores.
 
 **KMLLibrary**
-- An import writes `.kmz` when the data starts with `PK`.
+- An import writes `.kmz` when the data starts with `PK`, and `.gpx` for a GPX file.
 - `hidden` is round-tripped and left out when shown.
 - `kmlFileColours` defaults to true.
 - A delete removes the stored file.

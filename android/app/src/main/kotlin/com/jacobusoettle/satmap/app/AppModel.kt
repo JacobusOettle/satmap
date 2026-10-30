@@ -8,6 +8,7 @@ import com.jacobusoettle.satmap.core.AviationIndex
 import com.jacobusoettle.satmap.core.AviationPoint
 import com.jacobusoettle.satmap.core.CoverageShape
 import com.jacobusoettle.satmap.core.DistanceUnit
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
@@ -884,10 +885,10 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         setPendingArea(PendingArea(name = "Area ${offline.areas.value.size + 1}", shape = CoverageShape(polygons = listOf(ring))))
     }
 
-    /** Offline area around every block, line and point in a KML file (with a 150 m margin). */
+    /** Offline area of a KML or GPX file: inside its shapes, and 15 m around its lines and points (`FileShapes`). */
     fun prepareArea(from: KMLLibrary.File) {
         setSheet(null)
-        setPendingArea(PendingArea(name = from.name, shape = from.document.coverageShape(bufferMeters = 150.0)))
+        setPendingArea(PendingArea(name = from.name, shape = FileShapes(from.document).downloadShape))
     }
 
     /** `roads` or `preset`: download satellite imagery only along these roads (or a road set shipped with the app). */

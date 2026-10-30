@@ -72,8 +72,9 @@ class MainActivity : ComponentActivity() {
         mapController.onSaveInstanceState(outState)
     }
 
-    /** KML/KMZ opened or shared from another app (zoom to it, or the Blocks sheet with the error), and "Save to a
-     *  folder" from the backup chooser. Once handled, a recreated activity (its intent kept) doesn't handle it again. */
+    /** KML/KMZ or GPX opened or shared from another app (zoom to it, or the Blocks sheet with the error), and "Save to
+     *  a folder" from the backup chooser. Once handled, a recreated activity (its intent kept) doesn't handle it
+     *  again. */
     private fun handleIncoming(intent: Intent) {
         if (handleIncoming(AppModel.shared, intent)) setIntent(Intent(intent).setAction(null))
     }
@@ -97,9 +98,9 @@ class MainActivity : ComponentActivity() {
             return openFiles(model, intent)
         }
 
-        /** iOS's `onOpenURL`: each .kml/.kmz shared into the app ("Open with SatMap" / "Share to SatMap") is imported
-         *  at once (the permission to read it lives with the activity that received it); the map then zooms to it, or
-         *  the Blocks sheet shows why the import failed. False when the intent brings no file. */
+        /** iOS's `onOpenURL`: each .kml/.kmz/.gpx shared into the app ("Open with SatMap" / "Share to SatMap") is
+         *  imported at once (the permission to read it lives with the activity that received it); the map then zooms
+         *  to it, or the Blocks sheet shows why the import failed. False when the intent brings no file. */
         fun openFiles(model: AppModel, intent: Intent): Boolean {
             val uris = KMLLibrary.incomingUris(intent)
             for (uri in uris) {

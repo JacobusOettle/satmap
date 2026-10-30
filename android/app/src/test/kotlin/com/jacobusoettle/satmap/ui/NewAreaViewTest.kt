@@ -33,10 +33,14 @@ import com.jacobusoettle.satmap.app.ElevationSource
 import com.jacobusoettle.satmap.app.Format
 import com.jacobusoettle.satmap.app.PendingArea
 import com.jacobusoettle.satmap.core.CoverageShape
+import com.jacobusoettle.satmap.core.FileShapes
+import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.Roads
+import com.jacobusoettle.satmap.core.TileCoverage
 import com.jacobusoettle.satmap.offline.OfflineManager
 import com.jacobusoettle.satmap.offline.RoadFetcher
+import com.jacobusoettle.satmap.offline.RoadPresets
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -52,7 +56,8 @@ import org.robolectric.annotation.GraphicsMode
 import java.io.IOException
 
 /** "Download area" (UI spec §3.7, DESIGN.md §8.1): the level chosen (the remembered one, lowered to fit half the free
- *  space unless one is tapped; the track area's own), the size texts, the roads, and the screen itself. */
+ *  space unless one is tapped; the track area's own), the size texts, the roads, a KML or GPX file's area, and the
+ *  screen itself. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "w402dp-h874dp")
 class NewAreaViewTest {
@@ -274,8 +279,141 @@ class NewAreaViewTest {
         assertEquals(all.getValue(21), loaded.counts.getValue(21))
     }
 
+    /** A KML or GPX file's area as the file picker makes it: two blocks about 2 km apart, a track and a launch point
+     *  between them. */
+    private val blockA = listOf(GeoPoint(-33.920, 18.920), GeoPoint(-33.920, 18.925), GeoPoint(-33.924, 18.925), GeoPoint(-33.924, 18.920))
+    private val blockB = listOf(GeoPoint(-33.940, 18.940), GeoPoint(-33.940, 18.945), GeoPoint(-33.944, 18.945), GeoPoint(-33.944, 18.940))
+    private val fileTrack = listOf(GeoPoint(-33.926, 18.930), GeoPoint(-33.930, 18.934))
+    private val launch = GeoPoint(-33.935, 18.936)
+    private val shapes = FileShapes(areas = listOf(blockA, blockB), lines = listOf(fileTrack), dots = listOf(launch))
+
+    private fun fileState(f: FileShapes = shapes) = NewAreaState(PendingArea(name = "Farm", shape = f.downloadShape))
+
+    @Test
+    fun aFilesAreaIsInsideItsShapesAndAroundItsLinesAndPointsWithNothingInBetween() = runBlocking {
+        val s = fileState()
+        assertEquals(shapes, s.file)
+        assertTrue(s.offersAlongRoads)
+        assertFalse(s.alongRoads)
+        // The area figure is the blocks'.
+        assertEquals(Geo.ringArea(blockA) + Geo.ringArea(blockB), s.areaSquareMeters!!, 1e-6)
+        // The sizes are the file's shapes, not a box around them.
+        s.count()
+        assertEquals(TileCoverage.tileCounts(shapes.downloadShape, 0..22), s.counts)
+        val box = CoverageShape(
+            polygons = listOf(listOf(GeoPoint(-33.920, 18.920), GeoPoint(-33.920, 18.945), GeoPoint(-33.944, 18.945), GeoPoint(-33.944, 18.920))),
+        )
+        assertTrue(s.counts!!.getValue(18) * 3 < TileCoverage(box, 18).tileCount)
+
+        // Only lines and points: no roads to look up inside anything.
+        val lines = fileState(FileShapes(lines = listOf(fileTrack), dots = listOf(launch)))
+        assertFalse(lines.offersAlongRoads)
+        // Other areas: as before.
+        assertNull(newState().file)
+        assertTrue(newState().offersAlongRoads)
+        assertFalse(NewAreaState(PendingArea(name = "Farm", shape = farm), presetID = "KrugerRoads").offersAlongRoads)
+    }
+
+    @Test
+    fun alongRoadsAFileLooksRoadsUpInItsShapesOnlyAndKeepsItsLinesAndPoints() = runBlocking {
+        val s = fileState()
+        s.counts = counts
+        s.freeSpace = freeFor(300_000_000)
+        s.alongRoads = true
+        val road = listOf(listOf(GeoPoint(-33.921, 18.921), GeoPoint(-33.923, 18.924)))
+        var asked: CoverageShape? = null
+        s.loadRoads(fetch = {
+            asked = it
+            road
+        })
+        // Looked up inside the blocks, with nothing around them.
+        assertEquals(CoverageShape(polygons = listOf(blockA, blockB)), asked)
+        val loaded = s.roads as NewAreaState.RoadsState.Loaded
+        // Saved: the roads, then the file's track and its point as a one-point line.
+        assertEquals(road + listOf(fileTrack) + listOf(listOf(launch)), loaded.lines)
+        assertEquals(shapes.roadsToSave(road), s.roadLines)
+        // Only the roads are counted as roads.
+        assertEquals(Roads.length(road) / 1000, loaded.km, 1e-9)
+        assertTrue(loaded.found)
+        assertEquals(TileCoverage.tileCounts(Roads.corridor(loaded.lines), 0..22), loaded.counts)
+        assertTrue(s.canDownload)
+
+        // No roads in the blocks: the track and the point alone aren't a download along roads.
+        s.loadRoads(fetch = { emptyList() })
+        val none = s.roads as NewAreaState.RoadsState.Loaded
+        assertEquals(listOf(fileTrack, listOf(launch)), none.lines)
+        assertEquals(0.0, none.km, 0.0)
+        assertFalse(none.found)
+        assertFalse(s.canDownload)
+        s.alongRoads = false
+        assertTrue(s.canDownload)
+    }
+
+    @Test
+    fun aFilesBlocksInKrugerUseTheShippedRoads() = runBlocking {
+        RoadPresets.init(app)
+        // A block around Skukuza, and a point outside the park that isn't looked up.
+        val skukuza = listOf(GeoPoint(-24.98, 31.58), GeoPoint(-24.98, 31.62), GeoPoint(-25.01, 31.62), GeoPoint(-25.01, 31.58))
+        val f = FileShapes(areas = listOf(skukuza), dots = listOf(GeoPoint(-25.47, 30.97)))
+        val s = fileState(f)
+        s.loadRoads(fetch = { error("the shipped roads are used inside Kruger") })
+        val loaded = s.roads as NewAreaState.RoadsState.Loaded
+        val kruger = Roads.clip(RoadPresets.load(RoadPresets.kruger)!!.roads, f.roadSearchShape)
+        assertTrue(kruger.isNotEmpty())
+        assertEquals(f.roadsToSave(kruger), loaded.lines)
+    }
+
     private val noHeights = object : ElevationSource {
         override suspend fun elevation(p: GeoPoint): Double? = null
+    }
+
+    @Test
+    fun aFilesScreenSaysWhatItSaves() {
+        val model = AppModel(app, noHeights)
+        val s = fileState()
+        s.counts = counts
+        s.freeSpace = freeFor(300_000_000)
+        compose.setContent {
+            SatMapTheme { NewAreaView(model, s, back = ScreenChrome.Leading.Back("Choose a file") {}, close = {}) }
+        }
+        list().performScrollToNode(hasText("Only along roads"))
+        compose.onNodeWithText(
+            "Satellite imagery inside the file's shapes and 15 m around its lines and points, with elevation for " +
+                "contours and heights.",
+        ).assertExists()
+        compose.runOnIdle {
+            s.alongRoads = true
+            s.roads = NewAreaState.RoadsState.Loaded(shapes.roadsToSave(emptyList()), km = 0.0, counts = counts, found = false)
+        }
+        list().performScrollToNode(hasText("No roads or tracks are mapped in this area."))
+        compose.onNodeWithText(
+            "Satellite imagery only 15 m to each side of the roads inside the file's shapes, and 15 m around the " +
+                "file's lines and points. Elevation for contours and heights is still saved for the whole of each shape.",
+        ).assertExists()
+        list().performScrollToNode(hasText("Download"))
+        compose.onNode(hasText("Download") and hasClickAction()).assertIsNotEnabled()
+    }
+
+    @Test
+    fun aFileWithOnlyLinesAndPointsHasNoSwitch() {
+        val model = AppModel(app, noHeights)
+        val s = fileState(FileShapes(lines = listOf(fileTrack), dots = listOf(launch)))
+        s.counts = counts
+        s.freeSpace = freeFor(300_000_000)
+        compose.setContent {
+            SatMapTheme { NewAreaView(model, s, back = ScreenChrome.Leading.Back("Choose a file") {}, close = {}) }
+        }
+        list().performScrollToNode(
+            hasText(
+                "Satellite imagery inside the file's shapes and 15 m around its lines and points, with elevation for " +
+                    "contours and heights.",
+            ),
+        )
+        compose.onNodeWithText("Only along roads").assertDoesNotExist()
+        // Lines and points have no area.
+        assertNull(s.areaSquareMeters)
+        list().performScrollToNode(hasText("Download"))
+        compose.onNode(hasText("Download") and hasClickAction()).assertIsEnabled()
     }
 
     @Test

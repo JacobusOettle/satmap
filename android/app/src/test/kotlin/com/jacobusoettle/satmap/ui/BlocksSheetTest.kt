@@ -130,10 +130,10 @@ class BlocksSheetTest {
     fun withNoFilesItSaysWhatToImport() {
         show()
         compose.onNodeWithTag("screenTitle").assert(hasText("Blocks"))
-        compose.onNodeWithText("Import a .kml or .kmz file to show your blocks on the map.").assertExists()
+        compose.onNodeWithText("Import a .kml, .kmz or .gpx file to show your blocks on the map.").assertExists()
         compose.onNodeWithText("Switch a file off to take its blocks off the map.").assertDoesNotExist()
         compose.onNodeWithTag("useFileColours").assertDoesNotExist()
-        compose.onNodeWithTag("importKml").assert(hasContentDescription("Import KML")).assert(hasClickAction())
+        compose.onNodeWithTag("importKml").assert(hasContentDescription("Import KML or GPX")).assert(hasClickAction())
         compose.onNode(hasText("Done") and hasClickAction()).performClick()
         assertEquals(1, closed)
     }
@@ -142,7 +142,7 @@ class BlocksSheetTest {
     fun eachFileHasARowWithItsShapesAndASwitch() {
         show()
         import("Demo farm.kml", farm)
-        compose.onNodeWithText("Import a .kml or .kmz file to show your blocks on the map.").assertDoesNotExist()
+        compose.onNodeWithText("Import a .kml, .kmz or .gpx file to show your blocks on the map.").assertDoesNotExist()
         // The walkthrough taps the row by its label, "Demo farm, 2 shapes · …" (and a point: Format.fileContents).
         compose.onNode(hasText("Demo farm") and hasText("2 shapes · 1 point · tap to show on map") and hasClickAction())
             .assertExists()

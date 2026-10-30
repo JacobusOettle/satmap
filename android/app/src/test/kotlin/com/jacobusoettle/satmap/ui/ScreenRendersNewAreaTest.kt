@@ -14,6 +14,7 @@ import com.jacobusoettle.satmap.app.Connectivity
 import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.ElevationSource
 import com.jacobusoettle.satmap.app.PendingArea
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.FoundPlace
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
@@ -32,10 +33,10 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
 
-/** "Download area" drawn as the iPhone screenshots 07, 12, 17, 20 and 27 show it, into app/build/renders (see
- *  `render`), to compare with docs/screenshots side by side. The same data as there (SatMapUITests/ScreenshotTests):
- *  the demo farm's KML file, the Kruger road list, the walk's track, the Sabi Sand boundary; the free space the
- *  iPhone had. They check nothing themselves. */
+/** "Download area" drawn as the iPhone screenshots 07, 12, 20 and 27 show it, into app/build/renders (see `render`), to
+ *  compare with docs/screenshots side by side. The same data as there (SatMapUITests/ScreenshotTests): the demo farm's
+ *  KML file, the walk's track, the Sabi Sand boundary; the free space the iPhone had. Also the Kruger roads screen, no
+ *  longer in the screenshots. They check nothing themselves. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = IPHONE_SCREEN)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -81,16 +82,17 @@ class ScreenRendersNewAreaTest {
 
     private fun back(title: String) = ScreenChrome.Leading.Back(title) {}
 
-    /** SatMapUITests/DemoFarm.kml, as KMLAreaPicker makes its area: the blocks with 150 m around them. */
+    /** SatMapUITests/DemoFarm.kml, as KMLAreaPicker makes its area: inside the blocks, and 15 m around the launch
+     *  point. */
     private fun demoFarm(name: String): NewAreaState {
         val doc = KMLParser.parse(File("../../SatMapUITests/DemoFarm.kml").readBytes())
-        return NewAreaState(PendingArea(name = name, shape = doc.coverageShape(bufferMeters = 150.0)))
+        return NewAreaState(PendingArea(name = name, shape = FileShapes(doc).downloadShape))
     }
 
     @Test
     fun downloadArea() {
         val state = counted(demoFarm("Demo farm"))
-        compose.setSheet { NewAreaView(model, state, back = back("Choose KML"), close = {}) }
+        compose.setSheet { NewAreaView(model, state, back = back("Choose a file"), close = {}) }
         compose.render("07-download-area")
     }
 
@@ -99,7 +101,7 @@ class ScreenRendersNewAreaTest {
     private fun farmRoads(): List<List<GeoPoint>> {
         val doc = KMLParser.parse(File("../../SatMapUITests/DemoFarm.kml").readBytes())
         val lines = ArrayList<List<GeoPoint>>()
-        for (ring in doc.coverageShape(bufferMeters = 0.0).polygons) {
+        for (ring in FileShapes(doc).areas) {
             val minLon = ring.minOf { it.lon }
             val maxLon = ring.maxOf { it.lon }
             var lat = ring.minOf { it.lat }
@@ -120,11 +122,13 @@ class ScreenRendersNewAreaTest {
         val roads = farmRoads()
         runBlocking { state.loadRoads(fetch = { roads }) }
         counted(state)
-        compose.setSheet { NewAreaView(model, state, back = back("Choose KML"), close = {}) }
+        compose.setSheet { NewAreaView(model, state, back = back("Choose a file"), close = {}) }
         scrollToDownload()
         compose.render("12-download-along-roads")
     }
 
+    /** The Kruger roads screen: no row opens it now, but it is kept (`OfflineRoute.Preset`). It was screenshot 17,
+     *  which is now Choose a file. */
     @Test
     fun krugerRoads() {
         val state = OfflineRoute.Preset(RoadPresets.kruger).state!!
@@ -132,7 +136,7 @@ class ScreenRendersNewAreaTest {
         counted(state)
         compose.setSheet { PresetAreaView(model, state, back = back("Offline maps"), close = {}) }
         scrollToDownload()
-        compose.render("17-kruger-roads")
+        compose.render("kruger-roads")
     }
 
     /** The iPhone test's walk: in along the farm road, then uphill (a fix every 2.4 s). */

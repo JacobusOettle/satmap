@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.ui
 
 import android.app.Application
+import android.net.Uri
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
@@ -21,9 +22,11 @@ import com.jacobusoettle.satmap.core.FoundPlace
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.OfflineArea
+import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.offline.BackgroundDownload
 import com.jacobusoettle.satmap.offline.OfflineManager
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -39,8 +42,8 @@ import java.util.UUID
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.roundToLong
 
-/** The Offline maps sheet's screens drawn as the iPhone screenshots 06, 09, 13 and 26 show them, into app/build/renders
- *  (see `render`), to compare with docs/screenshots side by side. They check nothing themselves. */
+/** The Offline maps sheet's screens drawn as the iPhone screenshots 06, 09, 13, 17 and 26 show them, into
+ *  app/build/renders (see `render`), to compare with docs/screenshots side by side. They check nothing themselves. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = IPHONE_SCREEN)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -60,13 +63,20 @@ class ScreenRendersOfflineTest {
         AppPaths.init(app)
         Connectivity.init(app)
         AppLifecycle.init()
+        AppPaths.kml.deleteRecursively()
+        AppPaths.kml.mkdirs()
         model = AppModel(app, noHeights)
     }
 
     @After
     fun tearDown() {
         AppLifecycle.resetForTests()
+        AppPaths.kml.deleteRecursively()
+        AppPaths.kml.mkdirs()
     }
+
+    /** The repository's root (the fixtures are in Tests/SatMapCoreTests/Fixtures). */
+    private val repo = File(System.getProperty("satmap.fixtures")!!).parentFile!!.parentFile!!.parentFile!!
 
     /** Runs what the manager posted to the main thread, then lets the screen catch up. */
     private fun settle() {
@@ -74,7 +84,7 @@ class ScreenRendersOfflineTest {
         compose.waitForIdle()
     }
 
-    /** The walkthrough's blocks around the vineyard near Stellenbosch (DemoFarm.kml), with 150 m around them. */
+    /** The walkthrough's farm near Stellenbosch (where DemoFarm.kml's blocks are), as a box. */
     private val farm = CoverageShape(
         polygons = listOf(
             listOf(GeoPoint(-33.9165, 18.9195), GeoPoint(-33.9165, 18.9265), GeoPoint(-33.9260, 18.9265), GeoPoint(-33.9260, 18.9195)),
@@ -122,6 +132,21 @@ class ScreenRendersOfflineTest {
                 .fetchSemanticsNodes().isNotEmpty()
         }
         compose.render("06-offline-maps")
+    }
+
+    @Test
+    fun chooseFile() {
+        // The demo farm the walkthrough imported (SatMapUITests/DemoFarm.kml: 7 shapes and a point).
+        val library = KMLLibrary(app, Dispatchers.Unconfined)
+        val file = File(app.cacheDir, "Demo farm.kml")
+        File(repo, "SatMapUITests/DemoFarm.kml").copyTo(file, overwrite = true)
+        val stack = RouteStack<OfflineRoute>(OfflineRoute.Root).apply { push(OfflineRoute.KMLPicker) }
+        compose.setSheet { OfflineSheet(model, model.offline, library, close = {}, stack = stack) }
+        compose.runOnUiThread { library.importFile(Uri.fromFile(file)) }
+        compose.waitForIdle()
+        compose.onNodeWithText("Demo farm").assertExists()
+        compose.onNodeWithText("7 shapes · 1 point").assertExists()
+        compose.render("17-choose-file")
     }
 
     @Test

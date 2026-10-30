@@ -33,9 +33,9 @@ import kotlinx.serialization.json.put
 import java.io.IOException
 import java.util.UUID
 
-/** Imported KML/KMZ files (farm blocks etc.), stored in the app and shown on the map (each can be switched off):
- *  `KML/index.json` plus `KML/<UUID>.kml|.kmz`, as on the iPhone. Main thread only. (`File` here is the library's
- *  entry; files on disk are written `java.io.File` in full.) */
+/** Imported KML/KMZ and GPX files (farm blocks, tracks, waypoints etc.), stored in the app and shown on the map (each
+ *  can be switched off): `KML/index.json` plus `KML/<UUID>.kml|.kmz|.gpx`, as on the iPhone. Main thread only.
+ *  (`File` here is the library's entry; files on disk are written `java.io.File` in full.) */
 class KMLLibrary(
     private val context: Context,
     /** Where files are read and parsed (a test passes its own). */
@@ -83,11 +83,11 @@ class KMLLibrary(
     data class File(val id: UUID, val name: String, val fileName: String, val document: KMLDocument, val isShown: Boolean)
 
     companion object {
-        /** The types the import picker offers (Blocks +, several files at once): iOS's kml, kmz, xml and zip, plus
-         *  octet-stream, which many providers report for .kml and .kmz (DESIGN.md D13). */
+        /** The types the import picker offers (Blocks +, several files at once): iOS's kml, kmz, gpx, xml and zip,
+         *  plus octet-stream, which many providers report for .kml, .kmz and .gpx (DESIGN.md D13). */
         val pickerTypes = arrayOf(
-            "application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/xml", "text/xml",
-            "application/zip", "application/octet-stream",
+            "application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/gpx+xml",
+            "application/xml", "text/xml", "application/zip", "application/octet-stream",
         )
 
         /** The files another app sends SatMap (iOS `onOpenURL`): "Open with" (`ACTION_VIEW`, its data) and "Share"
@@ -136,7 +136,7 @@ class KMLLibrary(
             val loaded = withContext(io) {
                 toLoad.mapNotNull { e ->
                     try {
-                        file(e, KMLParser.parse(java.io.File(AppPaths.kml, e.fileName).readBytes()))
+                        file(e, KMLParser.parseKMLOrGPX(java.io.File(AppPaths.kml, e.fileName).readBytes()))
                     } catch (x: Exception) {
                         null
                     }
@@ -155,8 +155,8 @@ class KMLLibrary(
         class Failed(val message: String) : Import
     }
 
-    /** Imports a .kml/.kmz picked in the app or shared to it ("Open with SatMap"). It is read at once, off the main
-     *  thread, as the permission to read it lives with the activity that received it. */
+    /** Imports a .kml/.kmz/.gpx picked in the app or shared to it ("Open with SatMap"). It is read at once, off the
+     *  main thread, as the permission to read it lives with the activity that received it. */
     fun importFile(uri: Uri, completion: ((File?) -> Unit)? = null) {
         scope.launch {
             when (val result = withContext(io) { read(uri) }) {
@@ -186,11 +186,11 @@ class KMLLibrary(
             return Import.Failed("Couldn't read $fileName: ${e.localizedMessage ?: "unknown error"}")
         }
         return try {
-            val doc = KMLParser.parse(data)
+            val doc = KMLParser.parseKMLOrGPX(data)
             val id = UUID.randomUUID()
             val isZip = data.size >= 2 && data[0] == 0x50.toByte() && data[1] == 0x4B.toByte()
-            val entry = Entry(id = id, name = displayName,
-                              fileName = "${id.toString().uppercase()}.${if (isZip) "kmz" else "kml"}")
+            val ext = if (doc.format == KMLDocument.Format.gpx) "gpx" else if (isZip) "kmz" else "kml"
+            val entry = Entry(id = id, name = displayName, fileName = "${id.toString().uppercase()}.$ext")
             write(java.io.File(AppPaths.kml, entry.fileName), data)
             Import.Done(entry, file(entry, doc))
         } catch (e: Exception) {

@@ -208,11 +208,17 @@ class ScreenshotTest {
         sleep(23)
         snap("05-blocks-on-map")
 
-        // Offline: download the area around the blocks.
+        // Offline: download the blocks (and 15 m around the launch point).
         tap("Offline maps")
         sleep(2)
         snap("06-offline-maps")
-        tap("Use the blocks in a KML file")
+        tap("Use a GPX or KML file")
+        if (waitForExistence(navigationBar("Choose a file"), 5)) {
+            sleep(1)
+            snap("17-choose-file")
+        } else {
+            fail("The list of files didn't open")
+        }
         tapRow(startingWith = "Demo farm")
         sleep(8) // size estimate
         snap("07-download-area")
@@ -396,20 +402,8 @@ class ScreenshotTest {
             fail("No field for coordinates")
         }
 
-        // The one-tap Kruger National Park roads (not downloaded here: several GB).
-        openOfflineSheet()
-        // (The long wait only once the tap was made: without the button there is nothing to wait for.)
-        if (tap("Kruger National Park roads") && waitForExistence(staticText("Roads and tracks"), 120)) {
-            sleep(5) // size estimate
-            scrollTo(button("Download"))
-            snap("17-kruger-roads")
-        } else {
-            fail("Kruger roads didn't load")
-        }
-        tapBack() // back to Offline maps
-        sleep(1)
-
         // A place found by name: the Sabi Sand reserve, within its boundary.
+        openOfflineSheet()
         tap("Find a park, reserve or town")
         val search = id("placeSearchText")
         if (waitForExistence(search, 10)) {
@@ -451,8 +445,8 @@ class ScreenshotTest {
         tapBack() // back to Offline maps
         sleep(1)
 
-        // The same blocks again, but satellite imagery only along the roads.
-        tap("Use the blocks in a KML file")
+        // The same blocks again, but satellite imagery only along the roads inside them.
+        tap("Use a GPX or KML file")
         tapRow(startingWith = "Demo farm")
         val name = textField()
         if (waitForExistence(name, 10)) {
@@ -475,6 +469,8 @@ class ScreenshotTest {
         if (!exists(roadsLoaded)) return fail("Roads didn't load")
         sleep(3) // size estimate
         scrollTo(button("Download"))
+        check(exists(staticText(startingWith = "Satellite imagery only 15 m to each side of the roads inside the file's shapes")),
+              "No explanation of what a file saves along roads")
         snap("12-download-along-roads")
         tap("Download")
         sleep(5)

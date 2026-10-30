@@ -7,9 +7,11 @@ import com.jacobusoettle.satmap.core.KMLColor
 import com.jacobusoettle.satmap.core.KMLDocument
 import com.jacobusoettle.satmap.core.KMLFeature
 import com.jacobusoettle.satmap.core.KMLGeometry
+import com.jacobusoettle.satmap.core.KMLParser
 import com.jacobusoettle.satmap.core.KMLStyle
 import com.jacobusoettle.satmap.core.PolygonLabel
 import com.jacobusoettle.satmap.kml.KMLLibrary
+import com.jacobusoettle.satmap.offline.AndroidSqlDriverTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -20,10 +22,11 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 import org.maplibre.geojson.Polygon
+import java.io.File
 import java.util.UUID
 
 /** A KML file's shapes and labels on the map (iOS `BlockLayers.shapes` and its renderers' styles): every style case,
- *  the width limits, the app's white when the file's colours are off, and the label points. */
+ *  the width limits, the app's white when the file's colours are off (and for GPX), and the label points. */
 @RunWith(AndroidJUnit4::class)
 class BlockLayersTest {
     private val id = UUID.fromString("6F1C2D3E-4B5A-4C7D-8E9F-0A1B2C3D4E5F")
@@ -174,6 +177,26 @@ class BlockLayersTest {
         assertEquals("name", name.getStringProperty("kind"))
         assertEquals(-33.9175, name.getNumberProperty("lat").toDouble(), 0.0)
         assertFalse(name.hasProperty("i"))
+    }
+
+    @Test
+    fun aGPXFilesTracksAndRoutesAreWhiteLinesAndItsWaypointsPoints() {
+        val doc = KMLParser.parseKMLOrGPX(File(AndroidSqlDriverTest.fixtures, "farm.gpx").readBytes())
+        val gpx = KMLLibrary.File(id, "Farm drive", "farm.gpx", doc, isShown = true)
+        // GPX has no colours: the app's white, with the files' colours on or off.
+        val shapes = BlockLayers.shapes(gpx, useFileColours = true)
+        assertEquals(5, shapes.features.size) // a route and four tracks
+        for (line in shapes.features) {
+            assertTrue(line.geometry() is LineString)
+            assertEquals("rgba(255,255,255,0.95)", line.getStringProperty("stroke"))
+        }
+        assertEquals(
+            listOf(
+                BlockLayers.Label(GeoPoint(-25.46, 30.99), "Pump", isPoint = true),
+                BlockLayers.Label(GeoPoint(-25.465, 30.995), "Gate", isPoint = true),
+            ),
+            shapes.labels,
+        )
     }
 
     @Test

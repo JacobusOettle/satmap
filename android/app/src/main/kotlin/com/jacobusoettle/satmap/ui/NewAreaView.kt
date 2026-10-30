@@ -45,6 +45,7 @@ import com.jacobusoettle.satmap.app.Format
 import com.jacobusoettle.satmap.app.PendingArea
 import com.jacobusoettle.satmap.app.TileSources
 import com.jacobusoettle.satmap.core.CoverageShape
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.Roads
 import com.jacobusoettle.satmap.core.Terrarium
@@ -89,8 +90,15 @@ class NewAreaState(
         data object NotLoaded : RoadsState
         data object Loading : RoadsState
 
-        /** Roads clipped to the area, their length, and imagery tile counts per zoom along them. */
-        class Loaded(val lines: List<List<GeoPoint>>, val km: Double, val counts: Map<Int, Long>) : RoadsState
+        /** Roads clipped to the area, their length, and imagery tile counts per zoom along them. For a file's area,
+         *  `lines` also holds the file's own lines and dots (`FileShapes.roadsToSave`), which `km` leaves out;
+         *  `found`: whether any road was found. */
+        class Loaded(
+            val lines: List<List<GeoPoint>>,
+            val km: Double,
+            val counts: Map<Int, Long>,
+            val found: Boolean = lines.isNotEmpty(),
+        ) : RoadsState
         class Failed(val message: String) : RoadsState
     }
 
@@ -120,6 +128,19 @@ class NewAreaState(
 
     /** Imagery always goes along given lines (a shipped road list or your track), never the whole area. */
     val fixedLines: Boolean get() = presetID != null || track != null
+
+    /** A KML or GPX file's areas, lines and dots, when this is a file's area (`FileShapes.downloadShape`, the one
+     *  shape with nothing around its polygons). */
+    val file: FileShapes? =
+        if (area.shape.polygonBufferMeters == 0.0) {
+            FileShapes(areas = area.shape.polygons, lines = area.shape.lines, dots = area.shape.points)
+        } else {
+            null
+        }
+
+    /** "Only along roads" is offered: not along a road list or your track, nor for a file without areas (roads are
+     *  only looked up inside them). */
+    val offersAlongRoads: Boolean get() = !fixedLines && file?.hasAreas != false
 
     /** A level tapped: downloaded as chosen, and remembered (for your track, as the track area's own). */
     fun choose(z: Int) {
@@ -188,10 +209,11 @@ class NewAreaState(
             return (roads as? RoadsState.Loaded)?.counts
         }
 
-    /** The Download button: a name, the roads when along them, and the sizes known (the level may yet be lowered to
-     *  fit). */
+    /** The Download button: a name, the roads when along them (some found: a file's own lines and dots don't count),
+     *  and the sizes known (the level may yet be lowered to fit). */
     val canDownload: Boolean
-        get() = name.trim().isNotEmpty() && !(alongRoads && roadLines.isNullOrEmpty()) && chosenEstimate != null
+        get() = name.trim().isNotEmpty() && !(alongRoads && (roads as? RoadsState.Loaded)?.found != true) &&
+            chosenEstimate != null
 
     /** The area's size, when it has one (lines and points have none). Worked out once: a park's outline is long. */
     val areaSquareMeters: Double? by lazy {
@@ -226,13 +248,15 @@ class NewAreaState(
     }
 
     /** The roads: your track, the shipped road list, or those in the area (shipped for Kruger, else from
-     *  OpenStreetMap through `fetch`), with the imagery tile counts along them. */
+     *  OpenStreetMap through `fetch`), with the imagery tile counts along them. A file's roads are looked up inside
+     *  its areas only, and its own lines and dots are kept with them. */
     internal suspend fun loadRoads(fetch: suspend (CoverageShape) -> List<List<GeoPoint>> = RoadFetcher::roads) {
         roads = RoadsState.Loading
-        val shape = area.shape
+        val file = file
+        val shape = file?.roadSearchShape ?: area.shape
         val preset = RoadPresets.load(presetID)
         try {
-            val lines: List<List<GeoPoint>> = when {
+            val found: List<List<GeoPoint>> = when {
                 track != null -> track.lines
                 preset != null -> preset.roads
                 else -> withContext(Dispatchers.Default) {
@@ -240,6 +264,7 @@ class NewAreaState(
                     RoadPresets.covering(shape)?.let { Roads.clip(it.roads, shape) }
                 } ?: fetch(shape)
             }
+            val lines = file?.roadsToSave(found) ?: found
             // For your track, the levels the area already has are only needed where its corridor is new.
             val saved = track?.let { Roads.corridor(it.previousLines) }
             val savedTo = track?.completeTo ?: -1
@@ -250,9 +275,9 @@ class NewAreaState(
                     val c = TileCoverage(shape = whole, zoom = z)
                     counts[z] = if (z <= savedTo && saved != null) c.count(TileCoverage(shape = saved, zoom = z)) else c.tileCount
                 }
-                Pair(Roads.length(lines) / 1000, counts)
+                Pair(Roads.length(found) / 1000, counts)
             }
-            roads = RoadsState.Loaded(lines, km = result.first, counts = result.second)
+            roads = RoadsState.Loaded(lines, km = result.first, counts = result.second, found = found.isNotEmpty())
         } catch (e: CancellationException) {
             roads = RoadsState.NotLoaded
             throw e
@@ -284,7 +309,7 @@ class NewAreaState(
 
 /** Confirm an offline area: name, detail (deepest zoom level, with the size of each), only along roads, mobile data,
  *  and the size of the chosen download. `showsCancel`: presented on its own (lasso) rather than pushed inside the
- *  Offline sheet (KML), which gives `back`. `close` closes the sheet it is in. */
+ *  Offline sheet (a KML or GPX file), which gives `back`. `close` closes the sheet it is in. */
 @Composable
 fun NewAreaView(
     model: AppModel,
@@ -414,7 +439,8 @@ internal fun RowScope.ZoomRow(
     )
 }
 
-/** Imagery along your track, along the shipped road list, or a switch for along the area's roads. */
+/** Imagery along your track, along the shipped road list, or a switch for along the area's roads (for a file, the
+ *  roads inside its shapes, when it has any). */
 @Composable
 private fun RoadsSection(state: NewAreaState, onRetry: () -> Unit) {
     val corridor = Roads.corridorMeters.toInt()
@@ -431,6 +457,22 @@ private fun RoadsSection(state: NewAreaState, onRetry: () -> Unit) {
                 "management tracks: ${preset.note}. Elevation for contours and heights is saved for the whole park.",
         ) {
             RoadsStatus(state, onRetry)
+        }
+        state.file != null -> FormSection(
+            footer = if (state.alongRoads) {
+                "Satellite imagery only $corridor m to each side of the roads inside the file's shapes, and $corridor m " +
+                    "around the file's lines and points. Elevation for contours and heights is still saved for the " +
+                    "whole of each shape."
+            } else {
+                "Satellite imagery inside the file's shapes and $corridor m around its lines and points, with " +
+                    "elevation for contours and heights."
+            },
+        ) {
+            // Only lines and points: no switch, the footer alone.
+            if (state.offersAlongRoads) {
+                FormToggleRow("Only along roads", state.alongRoads) { state.alongRoads = it }
+                if (state.alongRoads) RoadsStatus(state, onRetry)
+            }
         }
         else -> FormSection(
             footer = "Saves satellite imagery only $corridor m to each side of every road and track in the area, " +

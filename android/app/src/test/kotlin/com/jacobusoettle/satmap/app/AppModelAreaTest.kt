@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.core.CoverageShape
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.KMLParser
 import com.jacobusoettle.satmap.core.OfflineArea
@@ -23,7 +24,8 @@ import java.io.File
 import java.util.UUID
 
 /** `AppModel`'s offline areas, as `AppModel.swift`: drawing one with the lasso (the draft, then the pending area named
- *  "Area <n>"), a KML file's area with its 150 m margin, and a download clearing what led to it. SatMap is in the
+ *  "Area <n>"), a KML or GPX file's area (inside its shapes, 15 m around its lines and points), and a download clearing
+ *  what led to it. SatMap is in the
  *  background here, so the areas added are queued and no download starts. */
 @RunWith(AndroidJUnit4::class)
 class AppModelAreaTest {
@@ -159,7 +161,7 @@ class AppModelAreaTest {
     }
 
     @Test
-    fun aKMLFilesAreaIsEveryShapeInItWithA150mMargin() {
+    fun aFilesAreaIsInsideItsShapesAnd15mAroundItsLinesAndPoints() {
         val document = KMLParser.parse(File(AndroidSqlDriverTest.fixtures, "blocks.kml").readBytes())
         val file = KMLLibrary.File(UUID.randomUUID(), "Farm blocks", "farm.kml", document, isShown = true)
         model.setSheet(ActiveSheet.offline)
@@ -167,8 +169,9 @@ class AppModelAreaTest {
         assertNull(model.sheet.value)
         val pending = model.pendingArea.value!!
         assertEquals("Farm blocks", pending.name)
-        assertEquals(document.coverageShape(bufferMeters = 150.0), pending.shape)
-        assertEquals(150.0, pending.shape.bufferMeters, 0.0)
+        assertEquals(FileShapes(document).downloadShape, pending.shape)
+        assertEquals(15.0, pending.shape.bufferMeters, 0.0)
+        assertEquals(0.0, pending.shape.polygonBufferMeters)
         assertFalse(pending.shape.isEmpty)
     }
 
