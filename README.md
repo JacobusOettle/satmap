@@ -1,9 +1,9 @@
 # SatMap
 
 A map for flying drones, for iPhone and Android: satellite imagery, contour lines and elevation colours, your
-position (with a compass arrow), height and dotted track, your KML blocks, a measuring tool with live distance
-and height difference, and offline satellite maps of areas you draw (or take from a KML file), at the
-highest detail the imagery has.
+position (with a compass arrow), height and dotted track, your KML and GPX files, a measuring tool with live
+distance and height difference, and offline satellite maps of areas you draw (or take from a KML or GPX file), at
+the highest detail the imagery has.
 
 Native on both: Swift + MapKit on the iPhone, with no third-party dependencies; Kotlin + Jetpack Compose +
 MapLibre on Android (`android/`). The two apps look and work the same, and offline maps exported on one restore
@@ -25,8 +25,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/10-draw-area.jpg" width="250"> | <img src="docs/screenshots/11-contours-off.jpg" width="250"> | <img src="docs/screenshots/12-download-along-roads.jpg" width="250"> |
 | **Whole area and along roads** | **Exporting a backup** | **Coordinates of a tapped spot and of you** |
 | <img src="docs/screenshots/13-offline-along-roads.jpg" width="250"> | <img src="docs/screenshots/14-export-backup.jpg" width="250"> | <img src="docs/screenshots/15-coordinates.jpg" width="250"> |
-| **Measuring between two points** | **Kruger National Park roads** | **One level deeper for an area** |
-| <img src="docs/screenshots/16-measure-two-points.jpg" width="250"> | <img src="docs/screenshots/17-kruger-roads.jpg" width="250"> | <img src="docs/screenshots/18-area-deeper-level.jpg" width="250"> |
+| **Measuring between two points** | **Choosing a GPX or KML file** | **One level deeper for an area** |
+| <img src="docs/screenshots/16-measure-two-points.jpg" width="250"> | <img src="docs/screenshots/17-choose-file.jpg" width="250"> | <img src="docs/screenshots/18-area-deeper-level.jpg" width="250"> |
 | **Measuring a shape's area** | **Where I've been** | **Go to coordinates** |
 | <img src="docs/screenshots/19-measure-area.jpg" width="250"> | <img src="docs/screenshots/20-where-ive-been.jpg" width="250"> | <img src="docs/screenshots/21-go-to-coordinates.jpg" width="250"> |
 | **Contour lines with elevation colours** | **Elevation colours only** | **A KML point selected** |
@@ -48,11 +48,11 @@ are in [docs/screenshots/android](docs/screenshots/android):
 | Satellite view | Esri World Imagery tiles drawn over MapKit (Apple's own map is switched off). SatMap draws the imagery itself: every spot at once with the best imagery already in memory (the coarser tile enlarged when zooming in, the sharper ones shrunk when zooming out), with the contour lines on top, and swaps in a freshly drawn layer under the old one as better tiles arrive, so the map doesn't go grey while tiles load. In a new place it asks for a tile three levels up first (one request covers 64 tiles), and when the map stops it keeps coarse tiles around the screen ready for the next zoom or pan. |
 | Contour lines and elevation colours | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Contour spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. The elevation colours tint the map by height, blue for the lowest ground on screen to red for the highest, so high spots stand out; the range is chosen from the heights on screen (round numbers, at least 10 m) and kept while you pan around, so the colours stay put. The mountain button at the top of the side buttons cycles through contour lines → contour lines with colours → colours only → neither (remembered; a label says which). On the left, the contour interval shows above the scale bar and the colours' heights below it. Works offline for downloaded areas; with neither shown, no elevation is downloaded for the map. The same button's next mode is **drone mode** (the plane): the airports, airstrips, helipads and radio beacons (VOR, NDB) around, from [OurAirports](https://ourairports.com) (public domain, shipped with the app, so it works offline), more of them as you zoom in. Each shows its code and name, how far it is from you in nautical miles (cyan) and, once you tap a spot, from that spot (amber). A card at the top says where you are as a pilot reports it ("3.2 NM NE of FASZ Skukuza"), and where the tapped spot is. Tap an airfield to select it: the distances to the others are then from it. Visual reporting points and airspace aren't in the open data, so they aren't shown. |
 | My location + dotted track | Blue dot (grey while the GPS sleeps) with a small arrow pointing where the phone points (the compass; it turns with the map) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
-| KML blocks | **Blocks** button → **+** to import `.kml`/`.kmz` from Files, or share a KML from WhatsApp/Mail/Files to SatMap. Blocks are drawn in the file's own colours and line widths (what a file leaves unset is white), with their names. Each file has a switch to take its blocks off the map and put them back; untick **Use the colours in the files** to draw every block in white. Long-press the **Blocks** button to switch files (and the colours) without opening the list. Points in a file (launch points …) show as a dot with their name; tap one to select it at its exact position, with its name, coordinates and height at the bottom. Tap a file to zoom to it. Swipe to remove. |
+| KML and GPX files | **Blocks** button → **+** to import `.kml`/`.kmz`/`.gpx` from Files, or share a KML or GPX file from WhatsApp/Mail/Files to SatMap. Blocks are drawn in the file's own colours and line widths (what a file leaves unset is white), with their names. A GPX file's tracks and routes are drawn as white lines and its waypoints as points (GPX has no colours). Each file has a switch to take its blocks off the map and put them back; untick **Use the colours in the files** to draw every block in white. Long-press the **Blocks** button to switch files (and the colours) without opening the list. Points in a file (launch points …) show as a dot with their name; tap one to select it at its exact position, with its name, coordinates and height at the bottom. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Move the map to put the crosshair on the spot, then tap anywhere on the map (or the ruler again) to drop a marker under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). Add more points the same way (B, C, D …): the panel shows the total distance along the line, the last leg, and how much higher or lower the last point is than A. Tap A, or put the crosshair on A and tap (or **Close shape**), to close the shape: its area (hectares and m²) and perimeter. **Undo** removes the last point; ✕ clears it all. Tap the distance (or the scale bar) to show distances in kilometres, miles or nautical miles; the scale bar follows. |
 | Go to coordinates | The button with the magnifying glass: paste or type a position in any common format (decimal degrees signed or with N/S/E/W; degrees and minutes; degrees, minutes and seconds with any symbols; decimal commas; GPS/NMEA; Google, Apple, OpenStreetMap and geo: links; UTM; MGRS; plus codes). It shows how it was read and how far it is from you; **Show and measure from here** puts it on the map as measuring point A, with the live distance from you, as if you had tapped it. |
 | Coordinates | Your own coordinates (latitude, longitude in decimal degrees) show at the top and follow you, with your height above sea level beside them (from the elevation model; from the GPS, marked, where there is no elevation data). Tap a spot on the map: a pin marks it and its coordinates show at the bottom, within easy reach, with its height beside them. Tap either to copy it to the clipboard.  To move the pin or a measuring point precisely, press and hold it: a glass square above your finger shows 15 m × 15 m of ground around it, magnified. Keep your finger down and drag: the point follows at the square's scale, and beyond 5 m from the square's middle (the dashed ring) the map scrolls that way, faster the further you drag. Lift your finger to leave it there. Tap a height to show heights in feet, and again for metres. |
-| Offline maps | **Offline** button → **Find a park, reserve or town** (search for Kruger, Sabi Sand, Skukuza, Hazyview …: parks and reserves are saved within their boundary from OpenStreetMap, towns and camps with the area around them; inside Kruger, "Only along roads" uses the road list shipped with the app), or **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use the blocks in a KML file** (downloads the blocks plus 150 m around them), or **Kruger National Park roads** (every tar and gravel road inside the park, shipped with the app; see below), or **Where I've been** (along your dotted track; see below). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (see below). Allow mobile data or wait for Wi-Fi, and download. |
+| Offline maps | **Offline** button → **Find a park, reserve or town** (search for Kruger, Sabi Sand, Skukuza, Hazyview …: parks and reserves are saved within their boundary from OpenStreetMap, towns and camps with the area around them; inside Kruger, "Only along roads" uses the road list shipped with the app), or **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use a GPX or KML file** (the imagery inside the file's shapes and 15 m around its lines and points; see below), or **Where I've been** (along your dotted track; see below). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (for a file: in its shapes; see below). Allow mobile data or wait for Wi-Fi, and download. |
 
 ### Offline downloads
 
@@ -74,9 +74,21 @@ are in [docs/screenshots/android](docs/screenshots/android):
   the imagery within 15 m of each side of them is downloaded, at every zoom level. Away from the roads the map
   shows the nearest coarser imagery that was saved, enlarged. Roads missing from OpenStreetMap are missed too,
   so check the area first: rural tracks are not always mapped.
-- **Kruger National Park roads:** the park's boundary and every road in it (tar, gravel and management
-  tracks, about the same road types as above) come with the app, from OpenStreetMap, so no lookup is needed. Only
-  the parts inside the park are kept. Imagery is saved 15 m to each side of them, elevation for the whole park.
+- **From a GPX or KML file:** each of the file's features is saved on its own, with nothing in between, however
+  far apart they are. A shape (a KML polygon, or a closed line: a ring, or a line ending within 5 m of where it
+  starts) is saved inside its outline, with nothing around it. A line (a KML line, a GPX track, its segments joined
+  into one road, or a GPX route) is saved 15 m to each side, and a point (a waypoint) 15 m around it. A GPX track or
+  route that ends where it started stays a road, so a round drive doesn't save everything inside it. Where the file
+  says what a line is, that wins: first its data (a `highway` or `railway` field makes it a road; `landuse`,
+  `boundary`, `building`, `leisure`, `natural` or `area=yes` a shape; other fields and a GPX `<type>` are read for
+  the words below), then its name and description, then the names of its folders (words such as *road*, *track*,
+  *firebreak* or *route* for a road, *block*, *field*, *paddock* or *area* for a shape). With **Only along roads**
+  (when the file has shapes), roads are looked up inside the shapes only and imagery is saved 15 m to each side of
+  them, and still 15 m around the file's lines and points; elevation is saved for the whole of each shape.
+- **Kruger roads:** the boundary of Kruger National Park and every road in it (tar, gravel and management tracks,
+  about the same road types as above) come with the app, from OpenStreetMap. An area inside the park (a place, a
+  drawn area or a file's shapes) takes its roads from this list when saved along roads, so no lookup is needed.
+  Areas saved with the earlier *Kruger National Park roads* button keep downloading along it.
   Refresh the list with the *Kruger roads* workflow (`tools/extract_kruger_osm.sh`, `tools/build_kruger_roads.py`); roads missing
   from OpenStreetMap can be added as KML/KMZ files in `tools/kruger-extra`.
 - **Where I've been:** imagery 15 m to each side of your dotted track (the same as along roads), for when you
@@ -230,10 +242,10 @@ SatMap/
   Location/   LocationRecorder – GPS + motion power policy, track recording
   Map/        MapController (MKMapView), tile overlays, contour renderer, tile repository, overlays
   Offline/    OfflineManager – offline areas, download queue
-  KML/        imported KML files
+  KML/        imported KML and GPX files
   UI/         SwiftUI screens
   Core/       platform-independent logic: tile maths, area → tile coverage, PNG/Terrarium decoding,
-              marching-squares contours, KML/KMZ parsing, MBTiles (SQLite), track log, download engine
+              marching-squares contours, KML/KMZ and GPX parsing, MBTiles (SQLite), track log, download engine
 Tests/        unit tests for Core (run with `swift test`, also on Linux)
 android/      the Android app (Gradle): a file-for-file port of the above
   core/       SatMap/Core in Kotlin, with the same tests ported

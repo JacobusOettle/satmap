@@ -90,11 +90,17 @@ final class ScreenshotTests: XCTestCase {
         sleep(23)
         snap("05-blocks-on-map")
 
-        // Offline: download the area around the blocks.
+        // Offline: download the blocks (and 15 m around the launch point).
         tap("Offline maps")
         sleep(2)
         snap("06-offline-maps")
-        tap("Use the blocks in a KML file")
+        tap("Use a GPX or KML file")
+        if app.navigationBars["Choose a file"].waitForExistence(timeout: 5) {
+            sleep(1)
+            snap("17-choose-file")
+        } else {
+            XCTFail("The list of files didn't open")
+        }
         tapRow(startingWith: "Demo farm")
         sleep(8) // size estimate
         snap("07-download-area")
@@ -270,19 +276,6 @@ final class ScreenshotTests: XCTestCase {
             XCTFail("No field for coordinates")
         }
 
-        // The one-tap Kruger National Park roads (not downloaded here: several GB).
-        openOfflineSheet()
-        tap("Kruger National Park roads")
-        if app.staticTexts["Roads and tracks"].waitForExistence(timeout: 120) {
-            sleep(5) // size estimate
-            scrollTo(app.buttons["Download"].firstMatch)
-            snap("17-kruger-roads")
-        } else {
-            XCTFail("Kruger roads didn't load")
-        }
-        app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
-        sleep(1)
-
         // A place found by name: the Sabi Sand reserve, within its boundary.
         tap("Find a park, reserve or town")
         let search = app.textFields["placeSearchText"].firstMatch
@@ -326,8 +319,8 @@ final class ScreenshotTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap() // back to Offline maps
         sleep(1)
 
-        // The same blocks again, but satellite imagery only along the roads.
-        tap("Use the blocks in a KML file")
+        // The same blocks again, but satellite imagery only along the roads inside them.
+        tap("Use a GPX or KML file")
         tapRow(startingWith: "Demo farm")
         let name = app.textFields.firstMatch
         if name.waitForExistence(timeout: 10) {
@@ -350,6 +343,9 @@ final class ScreenshotTests: XCTestCase {
         guard roadsLoaded.exists else { return XCTFail("Roads didn't load") }
         sleep(3) // size estimate
         scrollTo(app.buttons["Download"].firstMatch)
+        let explained = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@",
+                                                             "Satellite imagery only 15 m to each side of the roads inside the file's shapes")).firstMatch
+        XCTAssertTrue(explained.exists, "No explanation of what a file saves along roads")
         snap("12-download-along-roads")
         tap("Download")
         sleep(5)

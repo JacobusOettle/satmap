@@ -1,7 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Offline areas: choose a new area (lasso or KML), manage downloads, and back them up.
+/// Offline areas: choose a new area (a place, the lasso, a GPX or KML file, your track), manage downloads, and back
+/// them up.
 struct OfflineSheet: View {
     @ObservedObject var model: AppModel
     @ObservedObject var offline: OfflineManager
@@ -27,12 +28,7 @@ struct OfflineSheet: View {
                     NavigationLink {
                         KMLAreaPicker(model: model, library: library)
                     } label: {
-                        Label("Use the blocks in a KML file", systemImage: "square.dashed")
-                    }
-                    NavigationLink {
-                        PresetAreaView(model: model, presetID: RoadPresets.kruger)
-                    } label: {
-                        Label("Kruger National Park roads", systemImage: "car")
+                        Label("Use a GPX or KML file", systemImage: "square.dashed")
                     }
                     NavigationLink {
                         TrackAreaView(model: model)
@@ -199,7 +195,6 @@ private struct AreaRow: View {
     }
 }
 
-/// A road set shipped with the app, opened in the download screen (loaded when shown).
 /// Finds a place by name (a park, a reserve, a town, a camp …) to download: its whole area or only along its roads.
 private struct PlaceSearchView: View {
     @ObservedObject var model: AppModel
@@ -320,6 +315,9 @@ private struct PlaceAreaView: View {
     }
 }
 
+/// A road set shipped with the app, opened in the download screen (loaded when shown). Offline maps no longer offers
+/// Kruger's: areas saved with it still download, resume and go deeper (`OfflineArea.roadLines`), and an area inside
+/// Kruger takes its roads from it (`RoadPresets.covering`).
 private struct PresetAreaView: View {
     @ObservedObject var model: AppModel
     let presetID: String
@@ -377,7 +375,8 @@ private struct TrackAreaView: View {
     }
 }
 
-/// Pick an imported KML file to download the area around its blocks.
+/// Pick an imported KML or GPX file to download: inside its shapes, and 15 m around its lines and points
+/// (`FileShapes`).
 private struct KMLAreaPicker: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: KMLLibrary
@@ -385,22 +384,31 @@ private struct KMLAreaPicker: View {
     var body: some View {
         List {
             if library.files.isEmpty {
-                Text("Import a KML file first (Blocks button on the map).")
+                Text("Import a KML or GPX file first (Blocks button on the map).")
                     .foregroundColor(.secondary)
             }
             ForEach(library.files) { f in
                 NavigationLink {
-                    NewAreaView(model: model, area: PendingArea(name: f.name, shape: f.document.coverageShape(bufferMeters: 150)))
+                    NewAreaView(model: model, area: PendingArea(name: f.name, shape: f.shapes.downloadShape, file: f.shapes))
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(f.name)
-                        Text("\(f.document.features.count) shapes · includes 150 m around them")
+                        Text(Self.contents(f.shapes))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
                 }
             }
         }
-        .navigationTitle("Choose KML")
+        .navigationTitle("Choose a file")
+    }
+
+    /// What the file saves: "2 shapes · 1 line · 3 points" (only the kinds it has).
+    private static func contents(_ s: FileShapes) -> String {
+        func count(_ n: Int, _ one: String, _ many: String) -> String? {
+            n == 0 ? nil : "\(Format.count(n)) \(n == 1 ? one : many)"
+        }
+        return [count(s.areas.count, "shape", "shapes"), count(s.lines.count, "line", "lines"),
+                count(s.dots.count, "point", "points")].compactMap { $0 }.joined(separator: " · ")
     }
 }

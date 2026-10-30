@@ -2,8 +2,8 @@ import Combine
 import Foundation
 import UIKit
 
-/// Offline areas: each is a shape (lasso or KML) downloaded as satellite imagery up to `maxZoom`
-/// plus elevation tiles for contours and height differences. Downloads run one at a time, resume
+/// Offline areas: each is a shape (a place, a lasso, a KML or GPX file) downloaded as satellite imagery up to
+/// `maxZoom` plus elevation tiles for contours and height differences. Downloads run one at a time, resume
 /// where they stopped, wait for the network (or Wi-Fi) and continue after the app restarts.
 /// Used on the main thread only.
 final class OfflineManager: ObservableObject, @unchecked Sendable {

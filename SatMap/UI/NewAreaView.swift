@@ -5,7 +5,7 @@ import SwiftUI
 struct NewAreaView: View {
     @ObservedObject var model: AppModel
     let area: PendingArea
-    /// Presented on its own (lasso) rather than pushed inside the Offline sheet (KML).
+    /// Presented on its own (lasso) rather than pushed inside the Offline sheet (a place, a file …).
     var showsCancel = false
     /// A road set shipped with the app (`RoadPresets`): imagery is always downloaded along its roads.
     var presetID: String?
@@ -37,7 +37,8 @@ struct NewAreaView: View {
     private enum RoadsState {
         case notLoaded
         case loading
-        /// Roads clipped to the area, their length, and imagery tile counts per zoom along them.
+        /// Roads clipped to the area, their length, and imagery tile counts per zoom along them (and a file's lines and
+        /// points: `roadsToSave`).
         case loaded(lines: [[GeoPoint]], km: Double, counts: [Int: Int])
         case failed(String)
     }
@@ -77,6 +78,22 @@ struct NewAreaView: View {
                 } footer: {
                     Text("Satellite imagery \(Int(Roads.corridorMeters)) m to each side of every tar and gravel road in the park, including management tracks: \(preset.note). Elevation for contours and heights is saved for the whole park.")
                 }
+            } else if let file = area.file {
+                // Roads are only looked up inside a file's shapes: without any there is nothing to choose.
+                Section {
+                    if file.hasAreas {
+                        Toggle("Only along roads", isOn: $alongRoads)
+                        if alongRoads {
+                            roadsStatus
+                        }
+                    }
+                } footer: {
+                    if alongRoads {
+                        Text("Satellite imagery only \(Int(Roads.corridorMeters)) m to each side of the roads inside the file's shapes, and \(Int(Roads.corridorMeters)) m around the file's lines and points. Elevation for contours and heights is still saved for the whole of each shape.")
+                    } else {
+                        Text("Satellite imagery inside the file's shapes and \(Int(Roads.corridorMeters)) m around its lines and points, with elevation for contours and heights.")
+                    }
+                }
             } else {
                 Section {
                     Toggle("Only along roads", isOn: $alongRoads)
@@ -103,7 +120,7 @@ struct NewAreaView: View {
                         model.startTrackDownload(name: trimmed, lines: track.lines, maxZoom: chosenZoom, allowCellular: allowCellular)
                     } else {
                         model.startDownload(PendingArea(name: trimmed, shape: area.shape),
-                                            roads: presetID == nil && alongRoads ? roadLines : nil, preset: presetID,
+                                            roads: presetID == nil && alongRoads ? roadsToSave : nil, preset: presetID,
                                             maxZoom: chosenZoom, allowCellular: allowCellular)
                     }
                     // Back to the map, where the download banner shows progress.
@@ -293,6 +310,12 @@ struct NewAreaView: View {
         return nil
     }
 
+    /// What an area saved along roads keeps as its roads: those found, and a file's lines and points too, so they keep
+    /// their 15 m (`FileShapes.roadsToSave`).
+    private var roadsToSave: [[GeoPoint]]? {
+        roadLines.map { area.file?.roadsToSave($0) ?? $0 }
+    }
+
     /// Imagery tile counts per zoom: the whole area, or only along the roads.
     private var imageryCounts: [Int: Int]? {
         guard alongRoads else { return counts }
@@ -303,7 +326,9 @@ struct NewAreaView: View {
     @MainActor
     private func loadRoads() async {
         roads = .loading
-        let shape = area.shape
+        // A file's roads are looked up inside its shapes only (clipped to them), not around its lines and points.
+        let shape = area.file?.roadSearchShape ?? area.shape
+        let file = area.file
         let preset = presetID.flatMap(RoadPresets.load)
         do {
             let lines: [[GeoPoint]]
@@ -323,7 +348,8 @@ struct NewAreaView: View {
             let saved = track.map { Roads.corridor($0.previousLines) }
             let savedTo = track?.completeTo ?? -1
             let result = await Task.detached(priority: .userInitiated) { () -> (Double, [Int: Int]) in
-                let whole = Roads.corridor(lines)
+                // A file's lines and points are saved whatever the roads.
+                let whole = Roads.corridor(file?.roadsToSave(lines) ?? lines)
                 var counts: [Int: Int] = [:]
                 for z in 0...TileSources.imageryMaxZoom {
                     let c = TileCoverage(shape: whole, zoom: z)
