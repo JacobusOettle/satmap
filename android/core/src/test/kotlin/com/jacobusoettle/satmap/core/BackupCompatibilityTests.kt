@@ -1,6 +1,8 @@
 package com.jacobusoettle.satmap.core
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -134,6 +136,44 @@ class BackupCompatibilityTests {
     }
 
     @Test
+    fun testFileAreaShapeIsTheSharedFormat() {
+        // A file's area has no buffer around its areas: written as polygonBufferMeters, the same text as on the iPhone
+        // (Fixtures/file-area-shape.json, keys sorted, as the iPhone's own order changes from run to run).
+        val expected = String(fixture("file-area-shape.json"), Charsets.UTF_8).trim()
+        assertEquals(expected, sortedKeys(BackupFixture.fileShape.toJson()).toString())
+        assertEquals(BackupFixture.fileShape, CoverageShape.fromJson(SwiftJSON.parse(expected)))
+        assertTrue(BackupFixture.fileShape.toJson().toString().endsWith(""","bufferMeters":15,"polygonBufferMeters":0}"""))
+        // Not set: left out, and read as not set (also when null). An older version, which doesn't know the key,
+        // takes the 15 m around the areas too.
+        val older = BackupFixture.fileShape.copy(polygonBufferMeters = null)
+        assertEquals(setOf("polygons", "lines", "points", "bufferMeters"), older.toJson().keys)
+        for (text in listOf(expected.replace(""""polygonBufferMeters":0,""", ""),
+                            expected.replace(""""polygonBufferMeters":0""", """"polygonBufferMeters":null"""))) {
+            val shape = CoverageShape.fromJson(SwiftJSON.parse(text))
+            assertEquals(text, older, shape)
+            assertEquals(15.0, shape.polygonBuffer, 0.0)
+        }
+        assertThrows(Exception::class.java) {
+            CoverageShape.fromJson(SwiftJSON.parse(expected.replace(""""polygonBufferMeters":0""", """"polygonBufferMeters":"0"""")))
+        }
+        // A file's area along roads round-trips whole: its roads with the file's line and a dot as a one-point line.
+        val area = BackupFixture.area.copy(
+            shape = BackupFixture.fileShape,
+            roads = BackupFixture.area.roads.orEmpty() + BackupFixture.fileShape.lines + listOf(BackupFixture.fileShape.points),
+        )
+        val decoded = OfflineArea.decode(area.toJson().toString())
+        assertEquals(area, decoded)
+        assertEquals(listOf(GeoPoint(lat = -33.9175, lon = 18.924)), decoded.roads?.last())
+    }
+
+    /** The JSON with every object's keys sorted, as Swift's JSONEncoder writes it with `.sortedKeys`. */
+    private fun sortedKeys(json: JsonElement): JsonElement = when (json) {
+        is JsonObject -> JsonObject(json.entries.sortedBy { it.key }.associate { it.key to sortedKeys(it.value) })
+        is JsonArray -> JsonArray(json.map(::sortedKeys))
+        else -> json
+    }
+
+    @Test
     fun testReadsBackupsMadeOnTheIPhone() {
         checkBackup(folder = "iphone")
     }
@@ -225,6 +265,14 @@ object BackupFixture {
         roads = listOf(listOf(GeoPoint(lat = -33.9238, lon = 18.9241), GeoPoint(lat = -33.9259, lon = 18.9312))),
         preset = null, isTrack = null, maxZoom = 18, allowCellular = false, status = OfflineArea.Status.complete, failedTiles = 0,
         bytesOnDisk = 2_345_678_901, problem = null,
+    )
+
+    /** A KML or GPX file's area (`FileShapes.downloadShape`): its areas as they are, 15 m around its line and dot. */
+    val fileShape = CoverageShape(
+        polygons = listOf(listOf(GeoPoint(lat = -33.9245, lon = 18.9232), GeoPoint(lat = -33.9201, lon = 18.9302),
+                                 GeoPoint(lat = -33.9263, lon = 18.9355))),
+        lines = listOf(listOf(GeoPoint(lat = -33.9238, lon = 18.9241), GeoPoint(lat = -33.9259, lon = 18.9312))),
+        points = listOf(GeoPoint(lat = -33.9175, lon = 18.924)), bufferMeters = 15.0, polygonBufferMeters = 0.0,
     )
 
     /** Two imagery tiles (any bytes do; real ones are JPEG) and one known to be missing. */

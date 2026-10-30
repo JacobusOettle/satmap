@@ -178,6 +178,78 @@ final class TileCoverageTests: XCTestCase {
         XCTAssertEqual(missing, 0)
         XCTAssertGreaterThan(single.tileCount, 40)
     }
+
+    private func tiles(_ c: TileCoverage) -> Set<TileID> {
+        var out = Set<TileID>()
+        c.forEachTile { out.insert($0) }
+        return out
+    }
+
+    /// A square block with its south-west corner at a point.
+    private func block(_ lat: Double, _ lon: Double, meters: Double = 500) -> [GeoPoint] {
+        let dLat = meters / 110_574, dLon = meters / (111_320 * cos(lat * .pi / 180))
+        return [GeoPoint(lat: lat, lon: lon), GeoPoint(lat: lat, lon: lon + dLon),
+                GeoPoint(lat: lat + dLat, lon: lon + dLon), GeoPoint(lat: lat + dLat, lon: lon)]
+    }
+
+    /// Points that far north, east, south and west of a point.
+    private func around(_ p: GeoPoint, meters: Double) -> [GeoPoint] {
+        let dLat = meters / 111_319.49, dLon = meters / (111_319.49 * cos(p.lat * .pi / 180))
+        return [GeoPoint(lat: p.lat + dLat, lon: p.lon), GeoPoint(lat: p.lat, lon: p.lon + dLon),
+                GeoPoint(lat: p.lat - dLat, lon: p.lon), GeoPoint(lat: p.lat, lon: p.lon - dLon)]
+    }
+
+    func testFileAreasWithoutABufferAndNothingBetweenThem() {
+        // Two blocks of a file about 4.5 km apart: each saved as it is, and nothing between them.
+        let a = block(-25.475, 30.97), b = block(-25.475, 31.02)
+        let file = CoverageShape(polygons: [a, b], bufferMeters: 15, polygonBufferMeters: 0)
+        for z in [15, 17, 19, 21] {
+            let c = TileCoverage(shape: file, zoom: z)
+            let alone = [a, b].map { tiles(TileCoverage(shape: CoverageShape(polygons: [$0]), zoom: z)) }
+            XCTAssertEqual(tiles(c), alone[0].union(alone[1]), "zoom \(z)")
+            XCTAssertEqual(c.tileCount, alone[0].count + alone[1].count, "zoom \(z)")
+            XCTAssertFalse(c.contains(TileID.containing(GeoPoint(lat: -25.4728, lon: 30.9975), z: z)), "zoom \(z)")
+        }
+        // The 150 m a KML area used to get around its blocks is more.
+        XCTAssertLessThan(TileCoverage(shape: file, zoom: 19).tileCount,
+                          TileCoverage(shape: CoverageShape(polygons: [a, b], bufferMeters: 150), zoom: 19).tileCount)
+    }
+
+    func testLinesAndDotsKeepTheirBufferBesideAreasWithout() {
+        let dot = GeoPoint(lat: -25.47, lon: 30.97)
+        let line = [GeoPoint(lat: -25.48, lon: 30.97), GeoPoint(lat: -25.48, lon: 30.98)]
+        let area = block(-25.49, 30.97)
+        let file = CoverageShape(polygons: [area], lines: [line], points: [dot], bufferMeters: 15, polygonBufferMeters: 0)
+        for z in [19, 21] {
+            let c = TileCoverage(shape: file, zoom: z)
+            let expected = tiles(TileCoverage(shape: CoverageShape(lines: [line], points: [dot], bufferMeters: 15), zoom: z))
+                .union(tiles(TileCoverage(shape: CoverageShape(polygons: [area]), zoom: z)))
+            XCTAssertEqual(tiles(c), expected, "zoom \(z)")
+            // 15 m around the dot, also as a one-point line (a file's dot along roads), and to each side of the line.
+            let alongRoads = TileCoverage(shape: Roads.corridor([[dot], line]), zoom: z)
+            for p in around(dot, meters: 14.9) + around(line[0], meters: 14.9) + around(GeoPoint(lat: -25.48, lon: 30.975), meters: 14.9) {
+                XCTAssertTrue(c.contains(TileID.containing(p, z: z)), "zoom \(z): \(p)")
+                XCTAssertTrue(alongRoads.contains(TileID.containing(p, z: z)), "zoom \(z): \(p)")
+            }
+        }
+        // And not much more: tiles at zoom 21 are about 17 m here.
+        let deepest = TileCoverage(shape: file, zoom: 21)
+        for p in around(dot, meters: 40) { XCTAssertFalse(deepest.contains(TileID.containing(p, z: 21)), "\(p)") }
+    }
+
+    func testBoundsTakeEachPartsBuffer() throws {
+        let area = block(-25.49, 30.97), line = [GeoPoint(lat: -25.48, lon: 30.97), GeoPoint(lat: -25.48, lon: 30.98)]
+        let file = CoverageShape(polygons: [area], lines: [line], bufferMeters: 15, polygonBufferMeters: 0)
+        let areaBounds = try XCTUnwrap(GeoBounds(points: area)), lineBounds = try XCTUnwrap(GeoBounds(points: line))
+        XCTAssertEqual(file.polygonBuffer, 0)
+        XCTAssertEqual(file.bounds, areaBounds.union(lineBounds.expanded(byMeters: 15)))
+        XCTAssertEqual(CoverageShape(polygons: [area], bufferMeters: 15, polygonBufferMeters: 0).bounds, areaBounds)
+        XCTAssertEqual(CoverageShape(lines: [line], bufferMeters: 15, polygonBufferMeters: 0).bounds, lineBounds.expanded(byMeters: 15))
+        // Without it, as before: the whole shape grown by its buffer.
+        let kml = CoverageShape(polygons: [area], lines: [line], bufferMeters: 150)
+        XCTAssertEqual(kml.polygonBuffer, 150)
+        XCTAssertEqual(kml.bounds, try XCTUnwrap(kml.geometryBounds).expanded(byMeters: 150))
+    }
 }
 
 final class DecoderTests: XCTestCase {
@@ -282,6 +354,33 @@ final class DecoderTests: XCTestCase {
         XCTAssertEqual(web.fillColor, KMLColor(kml: "402dc0fb"))
         XCTAssertNil(KMLColor(kml: "red"))
         XCTAssertEqual(KMLColor(kml: "0000ff")?.red, 1)
+    }
+
+    func testKMLFoldersDescriptionsAndData() throws {
+        let doc = try KMLParser.parse(try fixture("farm-folders.kml"))
+        XCTAssertEqual(doc.name, "Farm roads and blocks")
+        XCTAssertEqual(doc.format, .kml)
+        XCTAssertEqual(doc.features.count, 12)
+        let a1 = doc.features[0]
+        XCTAssertEqual(a1.folders, ["Blocks", "Farm roads and blocks"])
+        XCTAssertEqual(a1.description, "Maize, <b>2024</b>")
+        // Its own data, not its folder's.
+        XCTAssertEqual(a1.data, [KMLData(name: "crop", value: "Maize")])
+        XCTAssertEqual(doc.features[4].name, "B1")
+        XCTAssertEqual(doc.features[4].folders, ["Far camp", "Blocks", "Farm roads and blocks"])
+        // A LinearRing of its own is a ring; one in a polygon isn't a feature.
+        XCTAssertTrue(doc.features[4].isRing)
+        XCTAssertEqual(doc.features.filter(\.isRing).count, 1)
+        XCTAssertEqual(doc.features[5].folders, ["Roads", "Farm roads and blocks"])
+        XCTAssertEqual(doc.features[6].data, [KMLData(name: "highway", value: "track"), KMLData(name: "surface", value: "gravel")])
+        XCTAssertEqual(doc.features[7].data, [KMLData(name: "kind", value: "Field")])
+        XCTAssertEqual(doc.features[7].description, "Fenced off")
+        XCTAssertEqual(doc.features[9].folders, ["Farm roads and blocks"])
+        XCTAssertNil(doc.features[9].description)
+        // A file without descriptions or data.
+        let blocks = try KMLParser.parse(try fixture("blocks.kml"))
+        XCTAssertEqual(blocks.features.map(\.folders), Array(repeating: ["Section A", "Farm Blocks"], count: 4))
+        XCTAssertTrue(blocks.features.allSatisfy { $0.data.isEmpty && $0.description == nil && !$0.isRing })
     }
 
     func testRejectsGarbage() {
@@ -639,6 +738,15 @@ final class RoadsTests: XCTestCase {
                                       bufferMeters: 150)
         XCTAssertEqual(try XCTUnwrap(Roads.overpassQuery(for: twoBlocks)).components(separatedBy: "way[").count - 1, 2)
         XCTAssertNil(Roads.overpassQuery(for: CoverageShape()))
+    }
+
+    func testQueryBoxesTakeEachPartsBuffer() throws {
+        // A file's areas have no buffer: the box is the block and the corridor; its lines get their 15 m more.
+        let line = [GeoPoint(lat: -33.95, lon: 18.95), GeoPoint(lat: -33.95, lon: 18.96)]
+        let file = CoverageShape(polygons: square.polygons, lines: [line], bufferMeters: 15, polygonBufferMeters: 0)
+        let q = try XCTUnwrap(Roads.overpassQuery(for: file))
+        XCTAssertTrue(q.contains("(-33.920135,"))
+        XCTAssertTrue(q.contains("(-33.950269,"))
     }
 
     func testParsesWaysAndSkipsMissingNodes() throws {

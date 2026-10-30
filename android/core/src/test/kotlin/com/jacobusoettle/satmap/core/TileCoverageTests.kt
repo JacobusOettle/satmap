@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -125,6 +126,87 @@ class TileCoverageTests {
         single.forEachTile { if (!looped.contains(it)) missing += 1 }
         assertEquals(0, missing)
         assertGreaterThan(single.tileCount, 40L)
+    }
+
+    private fun tiles(c: TileCoverage): Set<TileID> {
+        val out = HashSet<TileID>()
+        c.forEachTile { out.add(it) }
+        return out
+    }
+
+    /** A square block with its south-west corner at a point. */
+    private fun block(lat: Double, lon: Double, meters: Double = 500.0): List<GeoPoint> {
+        val dLat = meters / 110_574
+        val dLon = meters / (111_320 * cos(lat * PI / 180))
+        return listOf(GeoPoint(lat = lat, lon = lon), GeoPoint(lat = lat, lon = lon + dLon),
+                      GeoPoint(lat = lat + dLat, lon = lon + dLon), GeoPoint(lat = lat + dLat, lon = lon))
+    }
+
+    /** Points that far north, east, south and west of a point. */
+    private fun around(p: GeoPoint, meters: Double): List<GeoPoint> {
+        val dLat = meters / 111_319.49
+        val dLon = meters / (111_319.49 * cos(p.lat * PI / 180))
+        return listOf(GeoPoint(lat = p.lat + dLat, lon = p.lon), GeoPoint(lat = p.lat, lon = p.lon + dLon),
+                      GeoPoint(lat = p.lat - dLat, lon = p.lon), GeoPoint(lat = p.lat, lon = p.lon - dLon))
+    }
+
+    @Test
+    fun testFileAreasWithoutABufferAndNothingBetweenThem() {
+        // Two blocks of a file about 4.5 km apart: each saved as it is, and nothing between them.
+        val a = block(-25.475, 30.97)
+        val b = block(-25.475, 31.02)
+        val file = CoverageShape(polygons = listOf(a, b), bufferMeters = 15.0, polygonBufferMeters = 0.0)
+        for (z in listOf(15, 17, 19, 21)) {
+            val c = TileCoverage(shape = file, zoom = z)
+            val alone = listOf(a, b).map { tiles(TileCoverage(shape = CoverageShape(polygons = listOf(it)), zoom = z)) }
+            assertEquals("zoom $z", alone[0] + alone[1], tiles(c))
+            assertEquals("zoom $z", (alone[0].size + alone[1].size).toLong(), c.tileCount)
+            assertFalse("zoom $z", c.contains(TileID.containing(GeoPoint(lat = -25.4728, lon = 30.9975), z = z)))
+        }
+        // The 150 m a KML area used to get around its blocks is more.
+        assertLessThan(TileCoverage(shape = file, zoom = 19).tileCount,
+                       TileCoverage(shape = CoverageShape(polygons = listOf(a, b), bufferMeters = 150.0), zoom = 19).tileCount)
+    }
+
+    @Test
+    fun testLinesAndDotsKeepTheirBufferBesideAreasWithout() {
+        val dot = GeoPoint(lat = -25.47, lon = 30.97)
+        val line = listOf(GeoPoint(lat = -25.48, lon = 30.97), GeoPoint(lat = -25.48, lon = 30.98))
+        val area = block(-25.49, 30.97)
+        val file = CoverageShape(polygons = listOf(area), lines = listOf(line), points = listOf(dot), bufferMeters = 15.0,
+                                 polygonBufferMeters = 0.0)
+        for (z in listOf(19, 21)) {
+            val c = TileCoverage(shape = file, zoom = z)
+            val expected = tiles(TileCoverage(shape = CoverageShape(lines = listOf(line), points = listOf(dot), bufferMeters = 15.0), zoom = z)) +
+                tiles(TileCoverage(shape = CoverageShape(polygons = listOf(area)), zoom = z))
+            assertEquals("zoom $z", expected, tiles(c))
+            // 15 m around the dot, also as a one-point line (a file's dot along roads), and to each side of the line.
+            val alongRoads = TileCoverage(shape = Roads.corridor(listOf(listOf(dot), line)), zoom = z)
+            for (p in around(dot, 14.9) + around(line[0], 14.9) + around(GeoPoint(lat = -25.48, lon = 30.975), 14.9)) {
+                assertTrue("zoom $z: $p", c.contains(TileID.containing(p, z = z)))
+                assertTrue("zoom $z: $p", alongRoads.contains(TileID.containing(p, z = z)))
+            }
+        }
+        // And not much more: tiles at zoom 21 are about 17 m here.
+        val deepest = TileCoverage(shape = file, zoom = 21)
+        for (p in around(dot, 40.0)) assertFalse("$p", deepest.contains(TileID.containing(p, z = 21)))
+    }
+
+    @Test
+    fun testBoundsTakeEachPartsBuffer() {
+        val area = block(-25.49, 30.97)
+        val line = listOf(GeoPoint(lat = -25.48, lon = 30.97), GeoPoint(lat = -25.48, lon = 30.98))
+        val file = CoverageShape(polygons = listOf(area), lines = listOf(line), bufferMeters = 15.0, polygonBufferMeters = 0.0)
+        val areaBounds = GeoBounds(points = area)!!
+        val lineBounds = GeoBounds(points = line)!!
+        assertEquals(0.0, file.polygonBuffer, 0.0)
+        assertEquals(areaBounds.union(lineBounds.expanded(15.0)), file.bounds)
+        assertEquals(areaBounds, CoverageShape(polygons = listOf(area), bufferMeters = 15.0, polygonBufferMeters = 0.0).bounds)
+        assertEquals(lineBounds.expanded(15.0), CoverageShape(lines = listOf(line), bufferMeters = 15.0, polygonBufferMeters = 0.0).bounds)
+        // Without it, as before: the whole shape grown by its buffer.
+        val kml = CoverageShape(polygons = listOf(area), lines = listOf(line), bufferMeters = 150.0)
+        assertEquals(150.0, kml.polygonBuffer, 0.0)
+        assertEquals(kml.geometryBounds!!.expanded(150.0), kml.bounds)
     }
 
     @Test

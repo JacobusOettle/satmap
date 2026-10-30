@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap.core
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.xml.sax.InputSource
@@ -97,6 +98,34 @@ class KMLTests {
         assertEquals(KMLColor(kml = "402dc0fb"), web.fillColor)
         assertNull(KMLColor(kml = "red"))
         assertEquals(1.0, KMLColor(kml = "0000ff")?.red)
+    }
+
+    @Test
+    fun testKMLFoldersDescriptionsAndData() {
+        val doc = KMLParser.parse(fixture("farm-folders.kml"))
+        assertEquals("Farm roads and blocks", doc.name)
+        assertEquals(KMLDocument.Format.kml, doc.format)
+        assertEquals(12, doc.features.size)
+        val a1 = doc.features[0]
+        assertEquals(listOf("Blocks", "Farm roads and blocks"), a1.folders)
+        assertEquals("Maize, <b>2024</b>", a1.description)
+        // Its own data, not its folder's.
+        assertEquals(listOf(KMLData(name = "crop", value = "Maize")), a1.data)
+        assertEquals("B1", doc.features[4].name)
+        assertEquals(listOf("Far camp", "Blocks", "Farm roads and blocks"), doc.features[4].folders)
+        // A LinearRing of its own is a ring; one in a polygon isn't a feature.
+        assertTrue(doc.features[4].isRing)
+        assertEquals(1, doc.features.count { it.isRing })
+        assertEquals(listOf("Roads", "Farm roads and blocks"), doc.features[5].folders)
+        assertEquals(listOf(KMLData(name = "highway", value = "track"), KMLData(name = "surface", value = "gravel")), doc.features[6].data)
+        assertEquals(listOf(KMLData(name = "kind", value = "Field")), doc.features[7].data)
+        assertEquals("Fenced off", doc.features[7].description)
+        assertEquals(listOf("Farm roads and blocks"), doc.features[9].folders)
+        assertNull(doc.features[9].description)
+        // A file without descriptions or data.
+        val blocks = KMLParser.parse(fixture("blocks.kml"))
+        assertEquals(List(4) { listOf("Section A", "Farm Blocks") }, blocks.features.map { it.folders })
+        assertTrue(blocks.features.all { it.data.isEmpty() && it.description == null && !it.isRing })
     }
 
     @Test

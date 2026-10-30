@@ -16,12 +16,13 @@ enum Roads {
     private static let maxQueryBoxes = 40
 
     /// Overpass QL for the roads in boxes around each part of the area (so a KML file with blocks far apart
-    /// doesn't fetch every road between them).
+    /// doesn't fetch every road between them). Each box is the part grown by its buffer and the corridor.
     static func overpassQuery(for area: CoverageShape) -> String? {
         let margin = area.bufferMeters + corridorMeters
+        let polygonMargin = area.polygonBuffer + corridorMeters
         var boxes: [GeoBounds] = []
         for ring in area.polygons where ring.count >= 3 {
-            if let b = GeoBounds(points: ring) { boxes.append(b.expanded(byMeters: margin)) }
+            if let b = GeoBounds(points: ring) { boxes.append(b.expanded(byMeters: polygonMargin)) }
         }
         for line in area.lines where !line.isEmpty {
             if let b = GeoBounds(points: line) { boxes.append(b.expanded(byMeters: margin)) }
@@ -30,7 +31,7 @@ enum Roads {
             boxes.append(GeoBounds(minLat: p.lat, minLon: p.lon, maxLat: p.lat, maxLon: p.lon).expanded(byMeters: margin))
         }
         if boxes.count > maxQueryBoxes, let all = area.geometryBounds {
-            boxes = [all.expanded(byMeters: margin)]
+            boxes = [all.expanded(byMeters: max(margin, polygonMargin))]
         }
         guard !boxes.isEmpty else { return nil }
         let filter = "way[\"highway\"~\"^(\(highwayTypes.joined(separator: "|")))$\"]"
@@ -125,7 +126,8 @@ enum Roads {
         return out
     }
 
-    /// The area to download imagery for: every road with `corridorMeters` on each side.
+    /// The area to download imagery for: every road with `corridorMeters` on each side (a one-point line: that far
+    /// around its point, as a file's dots are saved along roads).
     static func corridor(_ roads: [[GeoPoint]]) -> CoverageShape {
         CoverageShape(lines: roads, bufferMeters: corridorMeters)
     }

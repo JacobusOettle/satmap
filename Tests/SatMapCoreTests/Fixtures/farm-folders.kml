@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>Farm roads and blocks</name>
+  <Schema name="roads" id="roads">
+    <SimpleField name="highway" type="string"/>
+    <SimpleField name="surface" type="string"/>
+  </Schema>
+  <Folder>
+    <name>Blocks</name>
+    <ExtendedData><Data name="highway"><value>yes</value></Data></ExtendedData>
+    <Placemark>
+      <name>A1</name>
+      <description><![CDATA[Maize, <b>2024</b>]]></description>
+      <ExtendedData><Data name="crop"><displayName>Crop</displayName><value> Maize </value></Data></ExtendedData>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>
+        30.97,-25.47 30.975,-25.47 30.975,-25.475 30.97,-25.475 30.97,-25.47
+      </coordinates></LinearRing></outerBoundaryIs></Polygon>
+    </Placemark>
+    <Placemark>
+      <name>A2</name>
+      <LineString><coordinates>30.98,-25.47 30.985,-25.47 30.985,-25.475 30.98,-25.475 30.98,-25.47</coordinates></LineString>
+    </Placemark>
+    <Placemark>
+      <name>A3 outline</name>
+      <LineString><coordinates>30.99,-25.47 30.995,-25.47 30.995,-25.475 30.99,-25.475</coordinates></LineString>
+    </Placemark>
+    <Placemark>
+      <name>North firebreak</name>
+      <LineString><coordinates>30.97,-25.48 30.975,-25.48 30.975,-25.485 30.97,-25.48</coordinates></LineString>
+    </Placemark>
+    <Folder>
+      <name>Far camp</name>
+      <Placemark>
+        <name>B1</name>
+        <LinearRing><coordinates>31.10,-25.60 31.105,-25.60 31.105,-25.605</coordinates></LinearRing>
+      </Placemark>
+    </Folder>
+  </Folder>
+  <Folder>
+    <name>Roads</name>
+    <Placemark>
+      <name>Ring road</name>
+      <LineString><coordinates>30.97,-25.49 30.98,-25.49 30.98,-25.495 30.97,-25.495 30.97,-25.49</coordinates></LineString>
+    </Placemark>
+    <Placemark>
+      <name>Main</name>
+      <ExtendedData><SchemaData schemaUrl="#roads">
+        <SimpleData name="highway">track</SimpleData>
+        <SimpleData name="surface">gravel</SimpleData>
+      </SchemaData></ExtendedData>
+      <LineString><coordinates>30.97,-25.50 30.99,-25.50</coordinates></LineString>
+    </Placemark>
+    <Placemark>
+      <name>Dam wall</name>
+      <description>Fenced off</description>
+      <ExtendedData><Data name="kind"><value>Field</value></Data></ExtendedData>
+      <LineString><coordinates>30.98,-25.50 30.985,-25.50 30.985,-25.505 30.98,-25.50</coordinates></LineString>
+    </Placemark>
+    <Placemark>
+      <name>Paddock 4</name>
+      <LineString><coordinates>30.99,-25.49 30.995,-25.49 30.995,-25.495 30.99,-25.49</coordinates></LineString>
+    </Placemark>
+  </Folder>
+  <Placemark>
+    <name>Pump</name>
+    <Point><coordinates>30.99,-25.46</coordinates></Point>
+  </Placemark>
+  <Placemark>
+    <name>Loop</name>
+    <LineString><coordinates>31.00,-25.47 31.005,-25.47 31.005,-25.475 31.00002,-25.47002</coordinates></LineString>
+  </Placemark>
+  <Placemark>
+    <name>To the dam</name>
+    <LineString><coordinates>31.00,-25.48 31.01,-25.48 31.01,-25.485</coordinates></LineString>
+  </Placemark>
+</Document>
+</kml>
