@@ -5,6 +5,7 @@ import android.os.StatFs
 import android.os.storage.StorageManager
 import android.system.Os
 import com.jacobusoettle.satmap.core.DistanceUnit
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
 import com.jacobusoettle.satmap.core.rounded
@@ -154,4 +155,13 @@ object Format {
 
     /** The same for tile counts, which can pass Int's range (Swift's Int is 64-bit). */
     fun count(n: Long): String = NumberFormat.getIntegerInstance(Locale.getDefault()).format(n)
+
+    /** What a KML or GPX file holds, as Blocks and "Choose a file" show it: "2 shapes · 1 line · 3 points", only the
+     *  kinds it has (a file has at least one). Its shapes are its areas (`FileShapes`). */
+    fun fileContents(s: FileShapes): String {
+        fun part(n: Int, one: String, many: String): String? =
+            if (n == 0) null else "${count(n)} ${if (n == 1) one else many}"
+        return listOfNotNull(part(s.areas.size, "shape", "shapes"), part(s.lines.size, "line", "lines"),
+                             part(s.dots.size, "point", "points")).joinToString(" · ")
+    }
 }

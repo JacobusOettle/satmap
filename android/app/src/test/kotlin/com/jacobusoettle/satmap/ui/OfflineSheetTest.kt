@@ -266,7 +266,8 @@ class OfflineSheetTest {
         compose.waitForIdle()
         compose.onNodeWithTag("screenTitle").assertTextEquals("Choose a file")
         compose.onNodeWithText("Import a KML or GPX file first (Blocks button on the map).").assertDoesNotExist()
-        compose.onNodeWithText("${file.document.features.size} shapes").assertExists()
+        // What the file holds: the 2 tracks it marks as areas, its route and its 2 other tracks, its 2 waypoints.
+        compose.onNodeWithText("2 shapes · 3 lines · 2 points").assertExists()
         button("Farm drive").performClick()
         compose.waitForIdle()
         compose.onNodeWithTag("screenTitle").assertTextEquals("Download area")

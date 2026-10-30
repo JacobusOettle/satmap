@@ -938,7 +938,6 @@ Landscape 38 dp, GpsFixed and NearMe 26, Close 27; in the pills Landscape 22 and
 | `pause.fill` / `pause.circle` | `Icons.Filled.Pause` / `Icons.Outlined.PauseCircle` |
 | `magnifyingglass` | `Icons.Filled.Search` |
 | `lasso` | custom `Lasso` |
-| `car` | `Icons.Filled.DirectionsCar` |
 | `figure.walk` | `Icons.AutoMirrored.Filled.DirectionsWalk` |
 | `square.and.arrow.up` / `.down` | `Icons.Outlined.IosShare` / `Icons.Outlined.SaveAlt` |
 | `arrow.clockwise.circle` | `RetryCircle` (`Icons.Filled.Refresh` 17 dp in a 24 dp ring) |

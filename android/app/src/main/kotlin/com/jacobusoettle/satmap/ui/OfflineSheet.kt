@@ -700,7 +700,7 @@ fun TrackAreaView(model: AppModel, state: TrackState, back: ScreenChrome.Leading
 }
 
 /** Pick an imported KML or GPX file to download what is in it (`FileShapes`): inside its shapes, and 15 m around its
- *  lines and points, with nothing in between. */
+ *  lines and points, with nothing in between. Each row says what the file holds (`Format.fileContents`). */
 @Composable
 fun KMLAreaPicker(library: KMLLibrary, back: ScreenChrome.Leading.Back?, push: (OfflineRoute) -> Unit) {
     val files by library.files.collectAsStateWithLifecycle()
@@ -712,14 +712,15 @@ fun KMLAreaPicker(library: KMLLibrary, back: ScreenChrome.Leading.Back?, push: (
                         Text("Import a KML or GPX file first (Blocks button on the map).", style = Body, color = LabelSecondary)
                     }
                 }
-                for (f in files) {
+                for (f in files) key(f.id) {
+                    // Worked out once per file, as the iPhone keeps it with the file (`File.shapes`).
+                    val shapes = remember(f.document) { FileShapes(f.document) }
                     FormLinkRow(onClick = {
-                        val shape = FileShapes(f.document).downloadShape
-                        push(OfflineRoute.NewArea(NewAreaState(PendingArea(name = f.name, shape = shape))))
+                        push(OfflineRoute.NewArea(NewAreaState(PendingArea(name = f.name, shape = shapes.downloadShape))))
                     }) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(f.name, style = Body, color = LabelPrimary)
-                            Text("${f.document.features.size} shapes", style = Caption, color = LabelSecondary)
+                            Text(Format.fileContents(shapes), style = Caption, color = LabelSecondary)
                         }
                     }
                 }

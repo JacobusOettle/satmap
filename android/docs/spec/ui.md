@@ -52,7 +52,7 @@ Sources: `SatMap/UI/*.swift`, the parts of `AppModel`, `OfflineManager`, `KMLLib
 | `SystemOrange` | `#FF9230` (iOS 26 dark; iOS 18 was `#FF9F0A`; no screenshot shows it) | Warnings ("Not a position yet.", failures, "This may not fit…") |
 | `SystemRed` | `#FF4245` (iOS 26 dark; iOS 18 was `#FF453A`) | Crosshair dot, compass north needle, destructive menu item and dialog button, swipe-to-delete background |
 | `SheetBackground` | `#1C1C1E` | Sheet container and list background |
-| `SheetBarScrolled` | `#2D2D2E` | A sheet's bar once its list has scrolled under it: iOS's bar material, 41–50 in screenshots 12, 17, 18, 20 |
+| `SheetBarScrolled` | `#2D2D2E` | A sheet's bar once its list has scrolled under it: iOS's bar material, 41–50 in screenshots 12, 18, 20 |
 | `CellBackground` | `#2C2C2E` | Form cards, alert and menu containers |
 | `CellPressed` | `#3A3A3C` | Ripple / pressed row |
 | `Separator` | `#38383A` | 0.5 dp row dividers, the hairline under a scrolled sheet bar |
@@ -137,7 +137,7 @@ An SF Symbol drawn at text size *X* pt becomes a Material icon of about **1.2·X
 
 | Piece | Spec |
 | --- | --- |
-| Screen | `LazyColumn` on `SheetBackground`. Content padding: top 16 dp; bottom = navigation-bar inset + 15 dp (with the last section's 5.5 dp, 20.5 dp below the last card, as iOS's list ends 20.6 pt above the home indicator in screenshots 12, 17, 18, 20). |
+| Screen | `LazyColumn` on `SheetBackground`. Content padding: top 16 dp; bottom = navigation-bar inset + 15 dp (with the last section's 5.5 dp, 20.5 dp below the last card, as iOS's list ends 20.6 pt above the home indicator in screenshots 12, 18, 20). |
 | `FormSection(header?, footer?)` | Header: Footnote, `LabelSecondary`, **upper-cased** (`"Offline areas"` shows as `OFFLINE AREAS`), padding start/end 32 dp (16 margin + 16), bottom 6 dp. Card: horizontal margin 16 dp, `RoundedCornerShape(10.dp)`, `CellBackground`, clipped (so ripples and swipe stay inside). Footer: Footnote, `LabelSecondary`, padding start/end 32 dp, top 6 dp. A section without a footer ends with a 5.5 dp spacer under its card (iOS's empty footer). |
 | Gap between sections | `Arrangement.spacedBy(29.5.dp)`, from the end of one section (its footer's text, or else its 5.5 dp spacer) to the start of the next (its header, or else its card). So a card is followed by 35 dp to the next section, a footer's last baseline by 33 dp, as on iOS (screenshots 06, 07, 21). The first section's header starts 1 dp below the top padding; a first section without a header starts 19 dp lower. |
 | `FormRow` | Min height 44 dp; padding start 16, end 16 (14 before a switch), vertical 11. A row of several lines (`FormLinkRow` with content, `FormChoiceRow`, the Blocks file row) uses `MultiLineRowPadding`, 11.33 dp: SF's lines are about 0.3 pt taller than Roboto's trimmed ones, so Body + Caption make 58.3 dp (iOS 58.6) and three lines 75.3 dp (iOS 75.7). Title Body `LabelPrimary`; caption line Caption `LabelSecondary`, spacing 2. |
@@ -516,7 +516,7 @@ ModalBottomSheet(
     - `TextButton("Done")` or `TextButton("Cancel")`: Body, `Accent`.
     - The back button: `Row(padding start 5.33, end 8, top 8, bottom 8) { Icon(Icons.AutoMirrored.Filled.ArrowBackIos, 23.5 dp, Accent); Text(previousTitle, Body, Accent, 1 line, offset x = -2 dp) }`, with `clearAndSetSemantics { contentDescription = "Back"; role = Button; testTag = "back" }`. With the bar's 4 dp inset the chevron's tip is 9.4 dp from the sheet's edge and 11.4 × 19.4 dp, and the title starts 31.5 dp in, as on iOS (screenshots 07, 18, 26).
   - **Trailing slot:** `IconButton` (Blocks "+").
-  - When the list has scrolled (`listState.canScrollBackward`), the bar turns `SheetBarScrolled` and a 0.5 dp `Separator` line shows under it, as iOS's bar turns grey with a hairline (screenshots 12, 17, 18, 20).
+  - When the list has scrolled (`listState.canScrollBackward`), the bar turns `SheetBarScrolled` and a 0.5 dp `Separator` line shows under it, as iOS's bar turns grey with a hairline (screenshots 12, 18, 20).
 - **Back stack.** navigation-compose is not used: it isn't a dependency, and the routes carry non-serialisable objects (`FoundPlace`, `PendingArea`, `CoverageShape`).
   - Each sheet keeps `val stack = remember { mutableStateListOf<Route>(Root) }`. A route is an object that holds its own screen state (§6.5), so returning to it keeps its state, as with a SwiftUI `NavigationStack`.
   - Shown through `AnimatedContent(stack.last())`:
@@ -645,7 +645,7 @@ The `Kruger National Park roads` row is gone; its route (`Preset(RoadPresets.kru
 
 - Title `Choose a file`, back `Offline maps`.
 - If there are no files: `Import a KML or GPX file first (Blocks button on the map).` in `LabelSecondary`.
-- Each file is a link to `NewArea(PendingArea(f.name, FileShapes(f.document).downloadShape))` (inside the file's shapes, 15 m around its lines and points, nothing in between): `Column(spacedBy 2)` with `f.name` in Body, then `"${f.document.features.size} shapes"` in Caption secondary.
+- Each file (`key(f.id)`, with `shapes = FileShapes(f.document)` `remember`ed per document) is a link to `NewArea(PendingArea(f.name, shapes.downloadShape))` (inside the file's shapes, 15 m around its lines and points, nothing in between): `Column(spacedBy 2)` with `f.name` in Body, then `Format.fileContents(shapes)` in Caption secondary, e.g. `7 shapes · 1 point` (screenshot 17). `Format.fileContents` counts the file's shapes (`FileShapes.areas`), lines and points with `Format.count` as `"<n> shape|shapes"`, `"<n> line|lines"`, `"<n> point|points"`, leaves out the kinds it hasn't and joins the rest with `" · "`.
 
 ### 3.5 Kruger National Park roads (`PresetAreaView`)
 
@@ -1000,7 +1000,6 @@ All are from `material-icons-extended` 1.7.8; every name below exists in the cac
 | `pause.fill` | `Icons.Filled.Pause` | Download banner |
 | `magnifyingglass` | `Icons.Filled.Search` | Find a park… |
 | `lasso` | **custom `Lasso`**, stroke 1.8, round: `M12,4.5c4.7,0 8.5,2.4 8.5,5.25S16.7,15 12,15S3.5,12.6 3.5,9.75S7.3,4.5 12,4.5z M7.6,14.1c-1.3,0.9 -1.6,2.4 -0.6,3.3c1.1,1 2.9,0.5 3.1,-0.9c0.2,-1.3 -1.2,-1.9 -2,-1.1 M8.2,17.9c0.3,1.3 -0.2,2.5 -1.2,3.1` | Draw an area |
-| `car` | `Icons.Filled.DirectionsCar` | Kruger roads |
 | `figure.walk` | `Icons.AutoMirrored.Filled.DirectionsWalk` | Where I've been |
 | `square.and.arrow.up` | `Icons.Outlined.IosShare` | Export, Export all |
 | `square.and.arrow.down` | `Icons.Outlined.SaveAlt` | Restore |

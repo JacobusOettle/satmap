@@ -218,7 +218,7 @@ The navigation title is the area's name; if the area is gone, the screen shows `
 
 The section's data is recomputed when `maxZoom` or `status` changes. A chosen level below maxZoom is cleared once the area is complete.
 
-## 1.8 New area screen (`NewAreaView`; screenshots 07, 12, 17, 27)
+## 1.8 New area screen (`NewAreaView`; screenshots 07, 12, 27)
 
 The title is `"Download area"`. A `"Cancel"` button is shown only when the screen is presented on its own (after drawing with the lasso); it calls `discardPendingArea()`.
 
@@ -308,8 +308,8 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
      - fewer than 3 points means no draft;
      - the draft is drawn as a dashed white 2.5 px polygon with a 15 % fill.
    - Tile taps are ignored while drawing.
-3. **"Use a GPX or KML file"** (dashed square) opens `KMLAreaPicker`, titled `"Choose a file"` (the download screen's back label).
-   - Each file row shows its name and `"<n> shapes"`, and leads to `NewAreaView(PendingArea(f.name, FileShapes(f.document).downloadShape))`: imagery and elevation inside the file's shapes and 15 m around its lines and points (§1.8). `FileShapes` (core) says which features are shapes, lines and points, from their geometry and the file's own marks.
+3. **"Use a GPX or KML file"** (dashed square) opens `KMLAreaPicker`, titled `"Choose a file"` (the download screen's back label; screenshot 17).
+   - Each file row shows its name and what the file holds (`Format.fileContents`): its shapes, lines and points (`FileShapes` areas, lines and dots), only the kinds it has, as `"2 shapes · 1 line · 3 points"` or `"7 shapes · 1 point"`. It leads to `NewAreaView(PendingArea(f.name, FileShapes(f.document).downloadShape))`: imagery and elevation inside the file's shapes and 15 m around its lines and points (§1.8). `FileShapes` (core) says which features are shapes, lines and points, from their geometry and the file's own marks.
    - With no files: `"Import a KML or GPX file first (Blocks button on the map)."`.
 4. The Kruger roads screen (`OfflineRoute.Preset`, `PresetAreaView`) has no row on the first screen any more, but stays in the code: areas saved with preset `"KrugerRoads"` still load, download, resume, go deeper and back up through `RoadPresets`, and the place search inside Kruger uses its roads (`RoadPresets.covering`). It is `NewAreaView(PendingArea(preset.name, CoverageShape(polygons = preset.boundary)), presetID = "KrugerRoads")`.
    - If the preset is missing: `"The road list is missing from this build of SatMap."`.
@@ -891,7 +891,6 @@ WhatsApp and Gmail pass on the sender's type, which for KML/KMZ/GPX is often `ap
 | magnifyingglass | `Icons.Outlined.Search` |
 | lasso | `Icons.Outlined.Gesture` |
 | square.dashed | `Icons.Outlined.SelectAll` (also on the Blocks button) |
-| car | `Icons.Outlined.DirectionsCar` |
 | figure.walk | `Icons.Outlined.DirectionsWalk` |
 | square.and.arrow.up | `Icons.Outlined.IosShare` |
 | square.and.arrow.down | `Icons.Outlined.Download` |

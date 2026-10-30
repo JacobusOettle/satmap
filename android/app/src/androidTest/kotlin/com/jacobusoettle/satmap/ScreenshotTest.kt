@@ -208,11 +208,17 @@ class ScreenshotTest {
         sleep(23)
         snap("05-blocks-on-map")
 
-        // Offline: download the blocks (inside them, and 15 m around the launch point).
+        // Offline: download the blocks (and 15 m around the launch point).
         tap("Offline maps")
         sleep(2)
         snap("06-offline-maps")
         tap("Use a GPX or KML file")
+        if (waitForExistence(navigationBar("Choose a file"), 5)) {
+            sleep(1)
+            snap("17-choose-file")
+        } else {
+            fail("The list of files didn't open")
+        }
         tapRow(startingWith = "Demo farm")
         sleep(8) // size estimate
         snap("07-download-area")
@@ -396,10 +402,8 @@ class ScreenshotTest {
             fail("No field for coordinates")
         }
 
-        // Offline maps again. (The Kruger National Park roads row, and its snapshot 17, are gone.)
-        openOfflineSheet()
-
         // A place found by name: the Sabi Sand reserve, within its boundary.
+        openOfflineSheet()
         tap("Find a park, reserve or town")
         val search = id("placeSearchText")
         if (waitForExistence(search, 10)) {
@@ -441,7 +445,7 @@ class ScreenshotTest {
         tapBack() // back to Offline maps
         sleep(1)
 
-        // The same blocks again, but satellite imagery only along the roads.
+        // The same blocks again, but satellite imagery only along the roads inside them.
         tap("Use a GPX or KML file")
         tapRow(startingWith = "Demo farm")
         val name = textField()
@@ -465,6 +469,8 @@ class ScreenshotTest {
         if (!exists(roadsLoaded)) return fail("Roads didn't load")
         sleep(3) // size estimate
         scrollTo(button("Download"))
+        check(exists(staticText(startingWith = "Satellite imagery only 15 m to each side of the roads inside the file's shapes")),
+              "No explanation of what a file saves along roads")
         snap("12-download-along-roads")
         tap("Download")
         sleep(5)
