@@ -230,6 +230,8 @@ struct PendingArea: Identifiable {
     let id = UUID()
     var name: String
     var shape: CoverageShape
+    /// What a KML or GPX file saves, when the area is one (`shape` is then its `downloadShape`).
+    var file: FileShapes?
 }
 
 enum ActiveSheet: String, Identifiable {
@@ -739,10 +741,10 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         pendingArea = PendingArea(name: "Area \(offline.areas.count + 1)", shape: CoverageShape(polygons: [ring]))
     }
 
-    /// Offline area around every block, line and point in a KML file (with a 150 m margin).
+    /// Offline area for a KML or GPX file: inside its shapes, and 15 m around its lines and points.
     func prepareArea(from file: KMLLibrary.File) {
         sheet = nil
-        pendingArea = PendingArea(name: file.name, shape: file.document.coverageShape(bufferMeters: 150))
+        pendingArea = PendingArea(name: file.name, shape: file.shapes.downloadShape, file: file.shapes)
     }
 
     /// `roads` or `preset`: download satellite imagery only along these roads (or a road set shipped with the app).

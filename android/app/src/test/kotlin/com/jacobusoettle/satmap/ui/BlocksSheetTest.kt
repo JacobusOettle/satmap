@@ -143,8 +143,8 @@ class BlocksSheetTest {
         show()
         import("Demo farm.kml", farm)
         compose.onNodeWithText("Import a .kml or .kmz file to show your blocks on the map.").assertDoesNotExist()
-        // The walkthrough taps the row by its label, "Demo farm, 3 shapes · …".
-        compose.onNode(hasText("Demo farm") and hasText("3 shapes · tap to show on map") and hasClickAction())
+        // The walkthrough taps the row by its label, "Demo farm, 2 shapes · …" (and a point: Format.fileContents).
+        compose.onNode(hasText("Demo farm") and hasText("2 shapes · 1 point · tap to show on map") and hasClickAction())
             .assertExists()
         compose.onNodeWithText("Switch a file off to take its blocks off the map.").assertExists()
         compose.onNodeWithText("Off: every block is drawn in white.").assertExists()

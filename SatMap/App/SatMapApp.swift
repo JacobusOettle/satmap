@@ -11,7 +11,7 @@ struct SatMapApp: App {
             MapScreen(model: model, offline: model.offline, recorder: model.recorder)
                 .preferredColorScheme(.dark)
                 .onOpenURL { url in
-                    // A .kml/.kmz shared into the app ("Open in SatMap" / "Copy to SatMap").
+                    // A .kml, .kmz or .gpx shared into the app ("Open in SatMap" / "Copy to SatMap").
                     model.kml.importFile(at: url) { file in
                         if let b = file?.document.bounds {
                             model.map?.zoom(to: b)

@@ -484,7 +484,7 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
 **Blocks sheet**, titled `"Blocks"`, with `"Done"` on the leading side and a `+` (`"Import KML"`) on the trailing side.
 - Empty: `"Import a .kml or .kmz file to show your blocks on the map."`.
 - Each row:
-  - left part, a button: the name, and `"<n> shapes · tap to show on map"` as a caption. Tapping it calls `setShown(true)`, zooms the map to the document's bounds and closes the sheet;
+  - left part, a button: the name, and `"<contents> · tap to show on map"` as a caption, with what the file holds (`Format.fileContents`, the same text as its row in "Choose a file"): its shapes, lines and points (`FileShapes` areas, lines and dots), only the kinds it has, as `"2 shapes · 1 line · 3 points"` or `"7 shapes · 1 point"`. Tapping it calls `setShown(true)`, zooms the map to the document's bounds and closes the sheet;
   - right: a switch bound to `isShown` (accessibility label `"Show <name> on the map"`);
   - swipe to delete.
 - Footer, when there are files: `"Switch a file off to take its blocks off the map."`.

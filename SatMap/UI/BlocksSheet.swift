@@ -4,9 +4,11 @@ import UniformTypeIdentifiers
 extension UTType {
     static let kml = UTType(importedAs: "com.google.earth.kml")
     static let kmz = UTType(importedAs: "com.google.earth.kmz")
+    static let gpx = UTType(importedAs: "com.topografix.gpx")
 }
 
-/// Imported KML/KMZ files: each one's blocks switched on or off the map, and whether they keep the files' colours.
+/// Imported KML, KMZ and GPX files: each one's blocks switched on or off the map, and whether they keep the files'
+/// colours (GPX has none: always white).
 struct BlocksSheet: View {
     @ObservedObject var model: AppModel
     @ObservedObject var library: KMLLibrary
@@ -17,7 +19,7 @@ struct BlocksSheet: View {
         NavigationStack {
             List {
                 if library.files.isEmpty {
-                    Text("Import a .kml or .kmz file to show your blocks on the map.")
+                    Text("Import a .kml, .kmz or .gpx file to show your blocks on the map.")
                         .foregroundColor(.secondary)
                 }
                 Section {
@@ -30,7 +32,7 @@ struct BlocksSheet: View {
                             } label: {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(f.name).foregroundColor(.primary)
-                                    Text("\(f.document.features.count) shapes · tap to show on map")
+                                    Text("\(Format.fileContents(f.shapes)) · tap to show on map")
                                         .font(.caption)
                                         .foregroundColor(.secondary)
                                 }
@@ -81,11 +83,11 @@ struct BlocksSheet: View {
                     Button {
                         showImporter = true
                     } label: {
-                        Label("Import KML", systemImage: "plus")
+                        Label("Import KML or GPX", systemImage: "plus")
                     }
                 }
             }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.kml, .kmz, .xml, .zip],
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.kml, .kmz, .gpx, .xml, .zip],
                           allowsMultipleSelection: true) { result in
                 if case .success(let urls) = result {
                     urls.forEach { library.importFile(at: $0) }

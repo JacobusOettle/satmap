@@ -1,6 +1,7 @@
 import Foundation
 
-/// Imported KML/KMZ files (farm blocks etc.), stored in the app and shown on the map (each can be switched off).
+/// Imported KML, KMZ and GPX files (farm blocks, tracks etc.), stored in the app and shown on the map (each can be
+/// switched off).
 final class KMLLibrary: ObservableObject {
     struct Entry: Codable, Identifiable, Equatable {
         let id: UUID
@@ -13,6 +14,8 @@ final class KMLLibrary: ObservableObject {
     struct File: Identifiable {
         let entry: Entry
         let document: KMLDocument
+        /// What the file saves offline, worked out once with the document.
+        let shapes: FileShapes
 
         var id: UUID { entry.id }
         var name: String { entry.name }
@@ -41,19 +44,20 @@ final class KMLLibrary: ObservableObject {
             var loaded: [File] = []
             for e in toLoad {
                 guard let d = try? Data(contentsOf: AppPaths.kml.appendingPathComponent(e.fileName)),
-                      let doc = try? KMLParser.parse(d) else { continue }
-                loaded.append(File(entry: e, document: doc))
+                      let doc = try? KMLParser.parseKMLOrGPX(d) else { continue }
+                loaded.append(File(entry: e, document: doc, shapes: FileShapes(doc)))
             }
             DispatchQueue.main.async {
                 // Keep anything imported meanwhile, skip files deleted meanwhile, and take any change made meanwhile.
                 let current = Dictionary(uniqueKeysWithValues: self.entries.map { ($0.id, $0) })
-                self.files = loaded.compactMap { f in current[f.id].map { File(entry: $0, document: f.document) } }
-                    + self.files.filter { f in !loaded.contains { $0.id == f.id } }
+                self.files = loaded.compactMap { f in
+                    current[f.id].map { File(entry: $0, document: f.document, shapes: f.shapes) }
+                } + self.files.filter { f in !loaded.contains { $0.id == f.id } }
             }
         }
     }
 
-    /// Imports a .kml/.kmz picked in Files or shared into the app ("Open in SatMap").
+    /// Imports a .kml, .kmz or .gpx picked in Files or shared into the app ("Open in SatMap").
     func importFile(at url: URL, completion: ((File?) -> Void)? = nil) {
         let displayName = url.deletingPathExtension().lastPathComponent
         DispatchQueue.global(qos: .userInitiated).async {
@@ -79,12 +83,14 @@ final class KMLLibrary: ObservableObject {
                 return
             }
             do {
-                let doc = try KMLParser.parse(data)
+                let doc = try KMLParser.parseKMLOrGPX(data)
                 let id = UUID()
                 let isZip = data.prefix(2) == Data([0x50, 0x4B])
-                let entry = Entry(id: id, name: displayName, fileName: "\(id.uuidString).\(isZip ? "kmz" : "kml")")
+                // Kept beside the KML files, with the extension of what it is.
+                let ext = doc.format == .gpx ? "gpx" : isZip ? "kmz" : "kml"
+                let entry = Entry(id: id, name: displayName, fileName: "\(id.uuidString).\(ext)")
                 try data.write(to: AppPaths.kml.appendingPathComponent(entry.fileName), options: .atomic)
-                let file = File(entry: entry, document: doc)
+                let file = File(entry: entry, document: doc, shapes: FileShapes(doc))
                 DispatchQueue.main.async {
                     self.entries.append(entry)
                     self.files.append(file)
@@ -105,7 +111,7 @@ final class KMLLibrary: ObservableObject {
         guard let i = entries.firstIndex(where: { $0.id == id }), (entries[i].hidden != true) != shown else { return }
         entries[i].hidden = shown ? nil : true
         if let j = files.firstIndex(where: { $0.id == id }) {
-            files[j] = File(entry: entries[i], document: files[j].document)
+            files[j] = File(entry: entries[i], document: files[j].document, shapes: files[j].shapes)
         }
         saveIndex()
     }

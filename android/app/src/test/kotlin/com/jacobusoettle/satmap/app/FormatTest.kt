@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.app
 
 import com.jacobusoettle.satmap.core.DistanceUnit
+import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
 import org.junit.After
@@ -58,6 +59,17 @@ class FormatTest {
     @Test
     fun distances() {
         assertEquals(DistanceUnit.metric.format(850.0), Format.distance(850.0))
+    }
+
+    @Test
+    fun whatAFileHolds() {
+        val p = GeoPoint(-33.9, 18.9)
+        val square = listOf(p, GeoPoint(-33.9, 18.91), GeoPoint(-33.91, 18.91))
+        assertEquals("2 shapes · 1 line · 3 points",
+                     Format.fileContents(FileShapes(areas = listOf(square, square), lines = listOf(square), dots = listOf(p, p, p))))
+        assertEquals("1 shape", Format.fileContents(FileShapes(areas = listOf(square))))
+        assertEquals("1 line · 1 point", Format.fileContents(FileShapes(lines = listOf(square), dots = listOf(p))))
+        assertEquals("1,250 points", Format.fileContents(FileShapes(dots = List(1250) { p })))
     }
 
     @Test

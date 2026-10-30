@@ -93,4 +93,14 @@ enum Format {
     static func count(_ n: Int) -> String {
         NumberFormatter.localizedString(from: NSNumber(value: n), number: .decimal)
     }
+
+    /// What a KML or GPX file holds, as Blocks and "Choose a file" show it: "2 shapes · 1 line · 3 points", only the
+    /// kinds it has (a file has at least one). Its shapes are its areas (`FileShapes`).
+    static func fileContents(_ s: FileShapes) -> String {
+        func part(_ n: Int, _ one: String, _ many: String) -> String? {
+            n == 0 ? nil : "\(Format.count(n)) \(n == 1 ? one : many)"
+        }
+        return [part(s.areas.count, "shape", "shapes"), part(s.lines.count, "line", "lines"),
+                part(s.dots.count, "point", "points")].compactMap { $0 }.joined(separator: " · ")
+    }
 }
