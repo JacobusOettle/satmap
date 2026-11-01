@@ -20,10 +20,12 @@ import com.jacobusoettle.satmap.core.OfflineArea.Status
 import com.jacobusoettle.satmap.core.OfflineBackup
 import com.jacobusoettle.satmap.core.Roads
 import com.jacobusoettle.satmap.core.TileCoverage
+import com.jacobusoettle.satmap.core.TileCrypto
 import com.jacobusoettle.satmap.core.TileFetchResult
 import com.jacobusoettle.satmap.core.TileFetching
 import com.jacobusoettle.satmap.core.TileID
 import com.jacobusoettle.satmap.core.WebMercator
+import com.jacobusoettle.satmap.map.ImageTools
 import com.jacobusoettle.satmap.map.TileRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
@@ -36,7 +38,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.OkHttpClient
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,10 +55,11 @@ import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
-/** `OfflineManager`'s list and queue (offline spec §1.1–1.5, §2.14): the runs are real (`TileDownloadJob` into
- *  MBTiles files through `AndroidSqlDriver`) with fake tile servers, and run on the main looper, whose clock the tests
- *  move on. */
+/** `OfflineManager`'s list and queue (offline spec §1.1–1.5, §2.14), and the sealing of files from before tiles were
+ *  encrypted (§1.16): the runs are real (`TileDownloadJob` into MBTiles files through `AndroidSqlDriver`) with fake tile
+ *  servers, and run on the main looper, whose clock the tests move on. */
 @RunWith(AndroidJUnit4::class)
 class OfflineManagerTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
@@ -116,6 +121,10 @@ class OfflineManagerTest {
     /** The threads the free space was measured on. */
     private val measuredOn = Collections.synchronizedList(mutableListOf<Thread>())
 
+    /** How files from before tiles were encrypted are sealed: as the app does, unless a test watches or holds it. */
+    private var encrypt: (MBTiles, (Long, Long) -> Boolean) -> Boolean =
+        { store, progress -> store.encryptPlainTiles(progress = progress) }
+
     /** `io` is the main looper too unless a test passes its own. */
     private fun makeManager(io: CoroutineDispatcher = Dispatchers.Main): OfflineManager {
         manager = OfflineManager(
@@ -137,6 +146,7 @@ class OfflineManagerTest {
                     closed += id
                 }
             },
+            encrypt = { store, progress -> encrypt(store, progress) },
         )
         return manager
     }
@@ -705,6 +715,167 @@ class OfflineManagerTest {
         m.backgroundTimeEnded()
         assertEquals(Status.complete, area(a).status)
         gate.complete(Unit)
+    }
+
+    /** An area an older SatMap downloaded, before tiles were encrypted (its tiles stored plain), as the only one in the
+     *  list. */
+    private fun saveOldArea(imagery: List<Pair<TileID, ByteArray>>, terrain: List<Pair<TileID, ByteArray>> = emptyList(),
+                            status: Status = Status.complete): OfflineArea {
+        val a = OfflineArea(
+            id = UUID.randomUUID(), name = "Old", created = 1_761_000_000.0 - OfflineArea.referenceDate, shape = farm,
+            maxZoom = 16, allowCellular = false, status = status, failedTiles = 0, bytesOnDisk = 0,
+        )
+        File(AppPaths.offline, "areas.json").writeText("[${a.toJson()}]")
+        AndroidSqlDriverTest.saveOldTiles(File(a.directory, "imagery.mbtiles"), imagery)
+        if (terrain.isNotEmpty()) AndroidSqlDriverTest.saveOldTiles(File(a.directory, "terrain.mbtiles"), terrain)
+        return a
+    }
+
+    /** Checks that a file holds `tiles` sealed, and no plain picture: what other apps could show. */
+    private fun assertSealed(file: File, tiles: List<Pair<TileID, ByteArray>>) {
+        val stored = AndroidSqlDriverTest.storedTiles(file)
+        assertTrue(file.name, stored.size >= tiles.size)
+        for (blob in stored) {
+            assertTrue(file.name, TileCrypto.isSealed(blob))
+            assertFalse(file.name, ImageTools.looksLikeImage(blob))
+        }
+        assertFalse(file.name, AndroidSqlDriverTest.holdsAnyOf(file.readBytes(), tiles))
+        val wal = File(file.path + "-wal")
+        assertFalse(file.name, wal.exists() && AndroidSqlDriverTest.holdsAnyOf(wal.readBytes(), tiles))
+        MBTiles(file, create = false).use { store ->
+            assertTrue(file.name, store.isEncrypted)
+            for ((t, data) in tiles) assertArrayEquals("${file.name} $t", data, store.tile(t))
+        }
+    }
+
+    @Test
+    fun anAreaFromBeforeTilesWereEncryptedIsSealedInTheBackground() {
+        val imagery = AndroidSqlDriverTest.plainTiles(40)
+        val terrain = listOf(TileID(z = 12, x = 2390, y = 2342) to
+            File(AndroidSqlDriverTest.fixtures, "terrarium_12_2390_2342.png").readBytes())
+        val old = saveOldArea(imagery, terrain)
+        val sealing = mutableListOf<String>()
+        encrypt = { store, progress ->
+            // The store's SQLite thread (named after its file) too.
+            val sqlite = Thread.getAllStackTraces().keys.filter { it.name == "SatMap SQLite ${store.file.name}" }
+            val sqliteLowest = sqlite.any { it.priority == Thread.MIN_PRIORITY }
+            sealing += "${store.file.name} ${Thread.currentThread().priority} $sqliteLowest"
+            store.encryptPlainTiles(progress = progress)
+        }
+        val priority = Thread.currentThread().priority
+        val m = makeManager()
+        idle()
+        assertFalse(m.isEncrypting)
+        // At launch, on `io` (here the main looper) at the lowest priority; then the thread has its own back.
+        assertEquals(listOf("imagery.mbtiles 1 true", "terrain.mbtiles 1 true"), sealing)
+        assertEquals(priority, Thread.currentThread().priority)
+        assertSealed(File(old.directory, "imagery.mbtiles"), imagery)
+        assertSealed(File(old.directory, "terrain.mbtiles"), terrain)
+
+        // Done: its files aren't opened again, nor are a new area's (created sealed).
+        sealing.clear()
+        add(m, "New")
+        idle()
+        assertEquals(2, m.areas.value.count { it.status == Status.complete })
+        assertEquals(emptyList<String>(), sealing)
+    }
+
+    @Test
+    fun anOldAreaThatDownloadsIsSealedOnceItsRunEnds() {
+        // Left downloading by an older SatMap: it goes on at launch, and is sealed after its run, not during it (its
+        // store keeps long transactions).
+        val tiles = AndroidSqlDriverTest.plainTiles(10)
+        val old = saveOldArea(tiles, status = Status.downloading)
+        val sealing = mutableListOf<String>()
+        encrypt = { store, progress ->
+            sealing += "${store.file.name} during ${manager.activeID.value}"
+            store.encryptPlainTiles(progress = progress)
+        }
+        val m = makeManager()
+        idle()
+        assertEquals(listOf(old.id), runs)
+        assertEquals(Status.complete, area(old.id).status)
+        assertTrue(sealing.toString(), "imagery.mbtiles during null" in sealing)
+        assertTrue(sealing.toString(), sealing.none { it.endsWith("${old.id}") })
+        assertSealed(File(old.directory, "imagery.mbtiles"), tiles)
+        assertFalse(m.isEncrypting)
+    }
+
+    @Test(timeout = 60_000)
+    fun theMapDrawsAnAreaWhileItIsSealed() {
+        val tiles = AndroidSqlDriverTest.plainTiles(40)
+        val old = saveOldArea(tiles)
+        val file = File(old.directory, "imagery.mbtiles")
+        // Held after its first batch.
+        val halfway = CountDownLatch(1)
+        val goOn = CountDownLatch(1)
+        encrypt = { store, progress ->
+            store.encryptPlainTiles(batchSize = 16) { checked, total ->
+                if (checked == 16L) {
+                    halfway.countDown()
+                    goOn.await()
+                }
+                progress(checked, total)
+            }
+        }
+        // The map's reader of the area's files (across the world, so it is asked for every tile), and `io` a thread of
+        // its own, as on the phone.
+        val map = TileRepository(OkHttpClient(), isOnlineNow = { false })
+        map.setAreas(listOf(TileRepository.AreaRef(old.id, old.directory, minX = 0.0, minY = 0.0, maxX = 1.0, maxY = 1.0)))
+        val io = Executors.newSingleThreadExecutor { r -> Thread(r, "test io") }.asCoroutineDispatcher()
+        try {
+            val m = makeManager(io)
+            idle()
+            assertTrue(halfway.await(30, TimeUnit.SECONDS))
+            assertTrue(m.isEncrypting)
+            // Partly sealed: every tile draws, sealed or plain.
+            assertEquals(16, AndroidSqlDriverTest.storedTiles(file).count { TileCrypto.isSealed(it) })
+            for ((t, data) in tiles) assertArrayEquals("$t", data, map.offlineTile(t, TileRepository.Layer.imagery))
+
+            goOn.countDown()
+            idleUntil { !m.isEncrypting }
+            // With the map's reader still open, the file and its log hold no plain picture, and every tile draws.
+            assertSealed(file, tiles)
+            for ((t, data) in tiles) assertArrayEquals("$t", data, map.offlineTile(t, TileRepository.Layer.imagery))
+        } finally {
+            goOn.countDown()
+            map.closeArea(old.id)
+            io.close()
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun aDeletedAreaStopsBeingSealed() {
+        val old = saveOldArea(AndroidSqlDriverTest.plainTiles(40))
+        val halfway = CountDownLatch(1)
+        val goOn = CountDownLatch(1)
+        val answers = Collections.synchronizedList(mutableListOf<Boolean>())
+        encrypt = { store, progress ->
+            store.encryptPlainTiles(batchSize = 16) { checked, total ->
+                if (checked == 16L) {
+                    halfway.countDown()
+                    goOn.await()
+                }
+                progress(checked, total).also { answers += it }
+            }
+        }
+        val io = Executors.newSingleThreadExecutor { r -> Thread(r, "test io") }.asCoroutineDispatcher()
+        try {
+            val m = makeManager(io)
+            idle()
+            assertTrue(halfway.await(30, TimeUnit.SECONDS))
+            val dir = old.directory
+            m.delete(old.id)
+            assertEquals(emptyList<OfflineArea>(), m.areas.value)
+            // Its folder goes once the work on it has stopped (after the batch in hand).
+            assertTrue(dir.exists())
+            goOn.countDown()
+            idleUntil { !m.isEncrypting && !dir.exists() }
+            assertEquals(listOf(false), answers)
+        } finally {
+            goOn.countDown()
+            io.close()
+        }
     }
 
     @Test

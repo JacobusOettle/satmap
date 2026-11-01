@@ -20,6 +20,7 @@ import com.jacobusoettle.satmap.core.OfflineBackup
 import com.jacobusoettle.satmap.core.SqlDatabase
 import com.jacobusoettle.satmap.core.SqlException
 import com.jacobusoettle.satmap.core.SqlResult
+import com.jacobusoettle.satmap.core.TileCrypto
 import com.jacobusoettle.satmap.core.TileID
 import kotlinx.serialization.json.Json
 import org.junit.After
@@ -203,12 +204,18 @@ class AndroidSqlDriverTest {
 
     @Test
     fun readsTheBackupMadeOnTheIPhone() {
-        checkBackup("iphone")
+        checkBackup("iphone-encrypted", sealed = true)
     }
 
     @Test
     fun readsTheBackupMadeOnAndroid() {
-        checkBackup("android")
+        checkBackup("android-encrypted", sealed = true)
+    }
+
+    @Test
+    fun readsTheBackupsMadeBeforeTilesWereEncrypted() {
+        checkBackup("iphone", sealed = false)
+        checkBackup("android", sealed = false)
     }
 
     @Test
@@ -464,8 +471,9 @@ class AndroidSqlDriverTest {
     }
 
     /** Restores a backup as the app does (`OfflineBackup.inspect` of a copy, then the area's JSON) and checks every
-     *  part, as core's `BackupCompatibilityTests` does on sqlite-jdbc. */
-    private fun checkBackup(folder: String) {
+     *  part, as core's `BackupCompatibilityTests` does on sqlite-jdbc. `sealed`: its tiles are stored encrypted (and
+     *  the file marked), as since tiles were encrypted; else plain, as before. */
+    private fun checkBackup(folder: String, sealed: Boolean) {
         val source = File(fixtures, "backup/$folder")
         val layers = HashMap<String, File>()
         for (name in listOf("Fixture farm - satellite.mbtiles", "Fixture farm - elevation.mbtiles")) {
@@ -477,8 +485,12 @@ class AndroidSqlDriverTest {
             val area = OfflineArea.fromJson(Json.parseToJsonElement(String(info.areaJSON, Charsets.UTF_8)))
             assertEquals("$folder: $name", Fixture.area, area)
             layers[info.layerKey] = original
+            val stored = storedTiles(copy)
+            assertTrue("$folder: $name", stored.isNotEmpty())
+            for (blob in stored) assertEquals("$folder: $name", sealed, TileCrypto.isSealed(blob))
             val store = MBTiles(copy, create = false)
             try {
+                assertEquals("$folder: $name", sealed, store.isEncrypted)
                 when (info.layerKey) {
                     "imagery" -> {
                         for ((t, data) in Fixture.imageryTiles) assertArrayEquals("$folder: $t", data, store.tile(t))
@@ -528,5 +540,62 @@ class AndroidSqlDriverTest {
          *  module folder Gradle runs the tests in. */
         val fixtures: File = System.getProperty("satmap.fixtures")?.let(::File)
             ?: File("../../Tests/SatMapCoreTests/Fixtures").canonicalFile
+
+        /** Tiles as an older SatMap stored them, small ones and large ones (on overflow pages), each a plain
+         *  picture. */
+        fun plainTiles(count: Int): List<Pair<TileID, ByteArray>> = (0 until count).map { i ->
+            TileID(z = 16, x = 500 + i, y = 700) to "PLAIN PICTURE $i ".repeat(if (i % 2 == 0) 20 else 600).toByteArray()
+        }
+
+        /** A tile file as an older SatMap wrote it, before tiles were encrypted: `tiles` stored plain, and the file not
+         *  marked (`MBTiles.encryptedKey`). */
+        fun saveOldTiles(file: File, tiles: List<Pair<TileID, ByteArray>>) {
+            MBTiles(file, create = true).close() // the tables
+            val db = AndroidSqlDriver().open(file.path, create = false)
+            try {
+                assertEquals(SqlResult.OK, db.begin())
+                assertEquals(SqlResult.OK, db.exec("DELETE FROM metadata WHERE name = '${MBTiles.encryptedKey}'"))
+                val insert =
+                    db.prepare("INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)")!!
+                try {
+                    for ((t, data) in tiles) {
+                        insert.bindInt(1, t.z)
+                        insert.bindInt(2, t.x)
+                        insert.bindInt(3, (1 shl t.z) - 1 - t.y) // TMS
+                        insert.bindBlob(4, data)
+                        assertEquals(SqlResult.DONE, insert.step())
+                        insert.reset()
+                    }
+                } finally {
+                    insert.close()
+                }
+                assertEquals(SqlResult.OK, db.commit())
+            } finally {
+                db.close()
+            }
+        }
+
+        /** Every tile's bytes as stored (`tile_data`), read through a read-only connection. */
+        fun storedTiles(file: File): List<ByteArray> {
+            val db = AndroidSqlDriver(readOnly = true).open(file.path, create = false)
+            try {
+                val s = db.prepare("SELECT tile_data FROM tiles") ?: throw AssertionError(db.errorMessage)
+                try {
+                    val out = mutableListOf<ByteArray>()
+                    while (s.step() == SqlResult.ROW) out.add(s.columnBlob(0)!!)
+                    return out
+                } finally {
+                    s.close()
+                }
+            } finally {
+                db.close()
+            }
+        }
+
+        /** Whether a piece of any of `tiles` is in `data` (a file's bytes): a plain tile left there. */
+        fun holdsAnyOf(data: ByteArray, tiles: List<Pair<TileID, ByteArray>>): Boolean = tiles.any { (_, tile) ->
+            val piece = tile.copyOfRange(tile.size / 2, minOf(tile.size, tile.size / 2 + 32))
+            (0..data.size - piece.size).any { i -> piece.indices.all { data[i + it] == piece[it] } }
+        }
     }
 }

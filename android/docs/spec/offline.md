@@ -433,8 +433,8 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
 2. If the active area is among those exported, it is paused (`pausedForExport = id`), and the export waits for its run to end.
 3. For each area, in list order:
    - the area's JSON is made with `status = complete` if complete, else `paused`;
-   - for each layer that exists (`imagery.mbtiles` labelled "satellite" with key `imagery`; `terrain.mbtiles` labelled "elevation" with key `terrain`), `OfflineBackup` writes `satmap_area` and `satmap_layer` into the file's metadata and checkpoints the write-ahead log (`TRUNCATE`);
-   - if the checkpoint fails: `"Couldn't prepare <name> for export. Try again in a moment."`;
+   - for each layer that exists (`imagery.mbtiles` labelled "satellite" with key `imagery`; `terrain.mbtiles` labelled "elevation" with key `terrain`), a file that isn't marked as sealed (`MBTiles.isEncrypted`) first has its plain tiles sealed (`MBTiles.encryptPlainTiles`, §1.16), so the backup carries no plain tile; then `OfflineBackup` writes `satmap_area` and `satmap_layer` into the file's metadata and checkpoints the write-ahead log (`TRUNCATE`);
+   - if the sealing or the checkpoint fails: `"Couldn't prepare <name> for export. Try again in a moment."`;
    - files are named `"<fileSafe(name)> - satellite.mbtiles"` and `"… - elevation.mbtiles"`, with `" (2)"`, `" (3)"`… for repeated names (compared case-insensitively);
    - `fileSafe` replaces `/\:?*"<>|` and control characters with `-`, trims whitespace and dots, cuts to 80 characters, and gives `"Offline area"` when empty.
 4. Outcome:
@@ -454,7 +454,7 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
    - one already in SatMap adds `"<name> is already in SatMap."`;
    - otherwise each layer file is moved into `Offline/<UUID>/<layer file>`. A missing layer makes it incomplete;
    - `status = complete` only if both layers came and the saved status was complete, else `paused`; `problem = nil`; `bytesOnDisk = folder size`.
-7. On the main thread: the new areas are appended, then save, `publishToMap`, and `completedRevision += 1` if any were added.
+7. On the main thread: the new areas are appended, then save, `publishToMap`, and `completedRevision += 1` if any were added. Backups with sealed tiles and backups made before tiles were encrypted (plain tiles) restore alike; the plain tiles are then sealed in the background (§1.16).
 8. `backupMessage` is these lines joined with newlines, or `"Nothing to restore."` when there are none:
    - `"Restored <names joined with ", ">."`;
    - `"Tap ↻ on an area marked Paused to download what its backup didn't include."` if any restored area is not complete;
@@ -542,6 +542,16 @@ The library holds GPX files too, read by `KMLParser.parseKMLOrGPX` (GPX when the
 - `AppModel.requestReload()` also reloads the car map's tiles.
 - Each location fix calls `carPlayMap.locationUpdated`.
 
+## 1.16 Files from before tiles were encrypted
+
+Tiles are stored sealed (`TileCrypto`; the format is in `PORTING.md`): `MBTiles.put` seals each tile, and `MBTiles.tile` opens it, so files copied off the phone can't be shown in another app. The app never touches `tile_data` itself. Areas downloaded before tiles were encrypted, and old backups restored, hold plain tiles; the map reads them as they are (a file may hold both), and `encryptOldFiles` seals them in place:
+
+- **When:** at launch (after `startNextIfIdle`), after a restore, after each download run, and when an export or a "Save to a folder" copy stops holding downloads or the last reader of an exported file closes. One run at a time; a call during a run makes it try again, after the area in hand, the areas it couldn't finish so far.
+- **What:** each area not yet found sealed since launch, in list order, except the downloading one (its store keeps long transactions; it is sealed after its run), every area while an export or a copy holds downloads, and an area another app is reading. For each existing file (`imagery.mbtiles`, then `terrain.mbtiles`), a store of its own: nothing to do if it is marked (`MBTiles.isEncrypted`) and its write-ahead log is empty; otherwise `MBTiles.encryptPlainTiles` (on a marked file that only folds the log in: a run whose checkpoint couldn't finish leaves plain pages in the database file). An area is remembered as sealed when all its files are done.
+- **How:** on `io`, at `Thread.MIN_PRIORITY` (set back afterwards); the store is opened at that priority, so its SQLite thread runs at it too. The map draws meanwhile (its own stores read plain and sealed tiles), and other areas download.
+- **Stopping:** `encryptPlainTiles` is told to stop when the job is cancelled (after the batch in hand). An export cancels the job and waits for it, then seals what it shares itself (§1.13); deleting the area being sealed cancels it and deletes the folder once it has stopped, and the job then goes on with the others. A download that starts on the area being sealed waits for the batch in hand; the run on that area then stops (busy).
+- **Again:** a file that couldn't be finished (busy, or storage full) is tried at the next of the calls above; the work carries on where it stopped. Nothing is shown in the screens.
+
 ---
 
 # 2. Android design
@@ -570,6 +580,7 @@ task = scope.launch {
   - The core's `TileDownloadJob.run` must catch the `CancellationException` of its own suspend points and **return** `DownloadOutcome.Cancelled`, as Swift returns `.cancelled`. The finishing part runs under `NonCancellable`.
   - `pause` and the other places that cancel call `task?.cancel()`.
   - `delete` and `export` wait with `running.join()`.
+- The sealing of old files (§1.16) is a second job, `encryption: Job?`, started lazily and set before it starts, as the run is. Each area's files are sealed in `withContext(io)`, the progress callback answering `isActive`, so a cancel stops it after the batch in hand. `export` cancels it and joins it before preparing the files; `delete` of the area being sealed cancels and joins it (with the run, if that area is downloading) before deleting the folder. Its constructor parameter `encrypt` (the real `MBTiles.encryptPlainTiles` by default) lets tests watch or hold the batches; `isEncrypting` (internal) tells them when it has ended.
 - Lifecycle comes from `ProcessLifecycleOwner.get().lifecycle` (`androidx.lifecycle:lifecycle-process` is already a dependency):
   - `ON_START` runs `willEnterForeground()` then `didBecomeActive()`;
   - `ON_STOP` runs `didEnterBackground()`.
@@ -772,7 +783,7 @@ Manifest `<application>`: `android:allowBackup="true"`, `android:fullBackupConte
   - an area with `ExportShares.readers(id) > 0` is not started: `startNextIfIdle` skips it;
   - if a reader opens an area that is downloading, the area is paused like `pausedForExport` and resumed after the last close;
   - the last close calls `startNextIfIdle()`.
-- Safety: after `checkpoint(TRUNCATE)` the main database file holds everything. The map's read-only connections never write, and no writer runs while a reader is open, so a raw copy taken by the receiving app is consistent.
+- Safety: after `checkpoint(TRUNCATE)` the main database file holds everything. The map's read-only connections never write, and no writer runs while a reader is open, so a raw copy taken by the receiving app is consistent. Its tiles are all sealed (the export seals a file still holding plain tiles first, and a file another app still reads is shared again only if it is marked as sealed), so the receiving app can't show them; SatMap on another phone, iPhone or Android, restores them.
 
 **Share intent.** `BackupSharing.share(activity, uris)` is launched by `MainActivity` through `registerForActivityResult(ActivityResultContracts.StartActivityForResult())`. The callback is iOS's `completionWithItemsHandler` and calls `offline.finishExport()`.
 
@@ -803,7 +814,8 @@ val chooser = Intent.createChooser(send, null)
   - the name comes from `DISPLAY_NAME`, or `uri.lastPathSegment`;
   - the copy is `cr.openInputStream(uri)` into `FileOutputStream(Restoring/<i>.mbtiles)` with a 4 MiB buffer and progress;
   - the move is `File.renameTo` (same file system), with copy and delete as a fallback;
-  - work runs on `Dispatchers.IO`, and the result is applied on Main.
+  - work runs on `Dispatchers.IO`, and the result is applied on Main;
+  - then `encryptOldFiles()` (§1.16): an old backup's plain tiles are sealed in the background.
 - Android OfflineSheet backup footer: `"Saves each area as two MBTiles files, satellite and elevation, to Google Drive, a folder or a USB drive, or sends them to a computer. To restore, choose both files of each area. Long-press an area to export only that one."`
 
 ## 2.9 KML and GPX import and "share to SatMap"
@@ -1118,6 +1130,12 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
 - orphaned folders are removed;
 - `downloading` becomes `queued` at load.
 
+**Sealing old files** (§1.16), with files written as an older SatMap wrote them (plain tiles, not marked):
+- an old area is sealed at launch, on `io` at the lowest priority (its SQLite thread too), and the thread's priority is set back; every tile is sealed and none is an image, no plain picture is left in the file or its log, and the map reads the same pictures; a sealed area isn't opened again;
+- an old area left downloading is sealed after its run, never during it;
+- while an area is half sealed (held after its first batch, `io` a thread of its own), a real `TileRepository` reader draws every tile, and afterwards, with that reader still open, the file holds no plain picture;
+- deleting the area being sealed stops the work after the batch in hand, and its folder goes once it has stopped.
+
 **Backup**
 - `export` with the zero-copy share registers display names `"Farm - satellite.mbtiles"` and `"Farm (2) - …"`.
 - An open reader holds the area's download; `finishExport` resumes the paused area.
@@ -1126,7 +1144,11 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
   - with the satellite file only, it is paused and the "Tap ↻" line appears;
   - an area that already exists is reported;
   - a non-backup file gives `"<name> isn't a SatMap backup."`;
-  - the fixture `Tests/SatMapCoreTests/Fixtures/backup/iphone` restores.
+  - the fixture `Tests/SatMapCoreTests/Fixtures/backup/iphone-encrypted` restores, with nothing to seal;
+  - the fixtures made before tiles were encrypted, `…/backup/iphone` and `…/backup/android`, restore, and are then sealed (the backup's own files unchanged).
+- The exported files' tiles are all sealed, and none is an image.
+- An export of an old area that is being sealed in the background stops that work and seals the area itself: the file sent holds no plain picture and restores.
+- `AndroidSqlDriverTest` reads the four backup fixtures on Android's SQLite: the encrypted ones sealed and marked, the old ones plain.
 
 **KMLLibrary**
 - An import writes `.kmz` when the data starts with `PK`, and `.gpx` for a GPX file.
