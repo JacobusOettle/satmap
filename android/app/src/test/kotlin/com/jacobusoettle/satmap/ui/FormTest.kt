@@ -113,6 +113,28 @@ class FormTest {
     }
 
     @Test
+    fun aDisabledRowCantBeSwipedAwayAndOffersNoDelete() {
+        // iOS's `.deleteDisabled`.
+        var deleted = 0
+        compose.setContent {
+            SatMapTheme {
+                FormSection {
+                    FormSwipeToDeleteRow(onDelete = { deleted++ }, enabled = false) { deleteAction ->
+                        FormLinkRow("Kruger", modifier = deleteAction) {}
+                    }
+                }
+            }
+        }
+        val row = compose.onNode(hasText("Kruger") and hasClickAction())
+        row.assert(SemanticsMatcher("offers no Delete") { n ->
+            n.config.getOrNull(SemanticsActions.CustomActions)?.none { it.label == "Delete" } ?: true
+        })
+        row.performTouchInput { swipeLeft() }
+        compose.waitForIdle()
+        assertEquals(0, deleted)
+    }
+
+    @Test
     fun aTextFieldShowsItsPlaceholderUntilTypedInto() {
         var text by mutableStateOf("")
         compose.setContent {

@@ -6,6 +6,7 @@ import android.content.ContentValues
 import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.database.MatrixCursor
+import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.os.CancellationSignal
 import android.os.Looper
@@ -76,7 +77,8 @@ import kotlin.test.assertFailsWith
  *  own files through `AndroidSqlDriver`, its tiles sealed, and shares them through `BackupFileProvider`, as files the
  *  iPhone app reads (`Tests/SatMapCoreTests/BackupCompatibilityTests.swift`); readers hold their area's download; and a
  *  restore takes the iPhone's backup, backups from before tiles were encrypted (sealed afterwards), a satellite file
- *  alone, an area already there and files that aren't backups. */
+ *  alone, an area already there and files that aren't backups. An export seals an old area first ("Encrypting
+ *  <name>…"), trying a busy file again, and no area is deleted while it runs. */
 @RunWith(AndroidJUnit4::class)
 class BackupTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
@@ -593,6 +595,189 @@ class BackupTest {
             idleUntil { !m.isEncrypting }
         } finally {
             goOn.countDown()
+            io.close()
+        }
+    }
+
+    @Test
+    fun anExportSaysItEncryptsAnOldAreaFirstWithAProgressBar() {
+        // An area an older SatMap downloaded, its tiles plain, which the background work hasn't got to: the export seals
+        // it first, saying so with a bar, as on the iPhone (the files are prepared on a thread of their own).
+        val tiles = AndroidSqlDriverTest.plainTiles(40)
+        AndroidSqlDriverTest.saveOldTiles(File(AppPaths.offlineArea(Fixture.area.id), "imagery.mbtiles"), tiles)
+        saveList(listOf(Fixture.area))
+        encrypt = { _, _ -> false }
+        val m = makeManager(io = Dispatchers.IO)
+        idleUntil { !m.isEncrypting }
+        val statuses = mutableListOf<String?>()
+        val progress = mutableListOf<Double?>()
+        val watch = CoroutineScope(Dispatchers.Main.immediate).launch {
+            launch { m.backupStatus.collect { statuses += it } }
+            m.backupProgress.collect { progress += it }
+        }
+        m.export(listOf(Fixture.area.id))
+        idleUntil { SharePresenter.request.value != null || m.backupMessage.value != null }
+        watch.cancel()
+        assertEquals(listOf(null, "Preparing export…", "Encrypting Fixture farm…", "Preparing export…", null), statuses)
+        assertEquals(progress.toString(), listOf(null, 0.0), progress.take(2))
+        assertNull(progress.last())
+        val shown = progress.drop(1).dropLast(1).map { it!! }
+        assertEquals(shown.sorted(), shown)
+        assertTrue(shown.all { it in 0.0..1.0 })
+        val (_, file) = receive(shared().uris.single())
+        for (blob in AndroidSqlDriverTest.storedTiles(file)) assertTrue(TileCrypto.isSealed(blob))
+
+        // Exported again, with nothing left to seal: no such status.
+        SharePresenter.finished()
+        idle()
+        statuses.clear()
+        val again = CoroutineScope(Dispatchers.Main.immediate).launch { m.backupStatus.collect { statuses += it } }
+        m.export(listOf(Fixture.area.id))
+        idleUntil { SharePresenter.request.value != null || m.backupMessage.value != null }
+        again.cancel()
+        assertEquals(listOf(null, "Preparing export…", null), statuses)
+    }
+
+    /** Another connection reading `file` (the map's reader in the middle of a read), on a thread of its own, until
+     *  `close`: its read transaction, begun before the writes to come, keeps a checkpoint from folding them into the
+     *  file meanwhile. */
+    private class Reading(file: File) : AutoCloseable {
+        private val started = CountDownLatch(1)
+        private val done = CountDownLatch(1)
+        private val thread = Thread {
+            val db = SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE or
+                SQLiteDatabase.NO_LOCALIZED_COLLATORS or SQLiteDatabase.ENABLE_WRITE_AHEAD_LOGGING)
+            try {
+                db.beginTransactionReadOnly()
+                try {
+                    db.rawQuery("SELECT COUNT(*) FROM tiles", null).use { it.moveToFirst() }
+                    started.countDown()
+                    done.await()
+                } finally {
+                    db.endTransaction()
+                }
+            } finally {
+                db.close()
+            }
+        }.apply { start() }
+
+        init {
+            assertTrue(started.await(10, TimeUnit.SECONDS))
+        }
+
+        override fun close() {
+            done.countDown()
+            thread.join()
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun anExportTriesTheSealingAgainWhenTheMapKeepsItsFinalCheckpointBusy() {
+        // An old area with both files plain. The map reads the satellite file throughout the first try: every tile is
+        // sealed and the file marked, but the final checkpoint (waiting 0.2 s) can't finish. Tried again, as on the
+        // iPhone, the export goes on.
+        val imagery = AndroidSqlDriverTest.plainTiles(40)
+        val terrain = listOf(Fixture.terrainTile to File(fixtures, "terrarium_12_2390_2342.png").readBytes())
+        val dir = AppPaths.offlineArea(Fixture.area.id)
+        val imageryFile = File(dir, "imagery.mbtiles")
+        val terrainFile = File(dir, "terrain.mbtiles")
+        AndroidSqlDriverTest.saveOldTiles(imageryFile, imagery)
+        AndroidSqlDriverTest.saveOldTiles(terrainFile, terrain)
+        val layers = listOf(
+            OfflineBackup.Layer(fileName = "imagery.mbtiles", key = "imagery", label = "satellite"),
+            OfflineBackup.Layer(fileName = "terrain.mbtiles", key = "terrain", label = "elevation"),
+        )
+        val tries = mutableListOf<String>()
+        val shares = mutableListOf<Double>()
+        val files = OfflineManager.prepareExport(
+            dir, layers, Fixture.area.name, Fixture.area.toJson().toString(), HashSet(),
+            seal = { store, progress ->
+                tries += store.file.name
+                if (tries.size == 1) {
+                    Reading(imageryFile).use {
+                        store.encryptPlainTiles(progress = progress).also { sealed ->
+                            assertFalse(sealed)
+                            assertTrue(store.isEncrypted)
+                        }
+                    }
+                } else {
+                    store.encryptPlainTiles(progress = progress)
+                }
+            },
+            progress = { shares += it },
+        )
+        assertEquals(listOf("imagery.mbtiles", "imagery.mbtiles", "terrain.mbtiles"), tries)
+        assertEquals(
+            listOf(imageryFile to "Fixture farm - satellite.mbtiles", terrainFile to "Fixture farm - elevation.mbtiles"),
+            files,
+        )
+        // The share of the area's plain tiles sealed, over both files: from 0 to 1.
+        assertEquals(listOf(0.0, 40.0 / 41.0, 1.0), shares)
+        for ((file, tiles) in listOf(imageryFile to imagery, terrainFile to terrain)) {
+            assertEquals(file.name, 0L, File(file.path + "-wal").length())
+            for (blob in AndroidSqlDriverTest.storedTiles(file)) assertTrue(file.name, TileCrypto.isSealed(blob))
+            assertFalse(file.name, AndroidSqlDriverTest.holdsAnyOf(file.readBytes(), tiles))
+            val json = String(OfflineBackup.inspect(file).areaJSON)
+            assertEquals(file.name, Fixture.area.id, OfflineArea.fromJson(Json.parseToJsonElement(json)).id)
+        }
+
+        // Read throughout all three tries, the area is busy.
+        val again = File(AppPaths.offlineArea(UUID.randomUUID()), "imagery.mbtiles")
+        AndroidSqlDriverTest.saveOldTiles(again, imagery)
+        var count = 0
+        val busy = Reading(again).use {
+            assertFailsWith<OfflineBackup.Failure.Busy> {
+                OfflineManager.prepareExport(
+                    again.parentFile!!, layers, "Farm", Fixture.area.toJson().toString(), HashSet(),
+                    seal = { store, progress ->
+                        count += 1
+                        store.encryptPlainTiles(progress = progress)
+                    },
+                )
+            }
+        }
+        assertEquals(3, count)
+        assertEquals("Couldn't prepare Farm for export. Try again in a moment.", busy.errorDescription)
+    }
+
+    @Test
+    fun anAreaIsntDeletedWhileItIsExported() {
+        // As on the iPhone: the export may be sealing the area's files through stores of its own, and shares them.
+        saveArea(Fixture.area)
+        saveList(listOf(Fixture.area))
+        val id = Fixture.area.id
+        val dir = AppPaths.offlineArea(id)
+        val executor = Executors.newSingleThreadExecutor { r -> Thread(r, "test io") }
+        val io = executor.asCoroutineDispatcher()
+        val gate = CountDownLatch(1)
+        try {
+            val m = makeManager(io)
+            idleUntil { !m.isEncrypting }
+            // The export waits for `io`, held here: it is preparing the files.
+            executor.execute { gate.await() }
+            m.export(listOf(id))
+            idle()
+            assertEquals("Preparing export…", m.backupStatus.value)
+            m.delete(id)
+            idle()
+            assertEquals(listOf(id), m.areas.value.map { it.id })
+            assertTrue(File(dir, "imagery.mbtiles").exists())
+
+            gate.countDown()
+            idleUntil { SharePresenter.request.value != null || m.backupMessage.value != null }
+            // What was shared can be read.
+            val uris = shared().uris
+            assertEquals(2, uris.size)
+            assertEquals("Fixture farm - satellite.mbtiles", receive(uris[0]).first)
+            SharePresenter.finished()
+            idle()
+
+            // Afterwards it is deleted.
+            m.delete(id)
+            idleUntil { !dir.exists() }
+            assertTrue(m.areas.value.isEmpty())
+        } finally {
+            gate.countDown()
             io.close()
         }
     }

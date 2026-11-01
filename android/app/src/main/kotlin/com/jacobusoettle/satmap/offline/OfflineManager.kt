@@ -113,20 +113,31 @@ class OfflineManager(
         )
 
         /** Core's `OfflineBackup.export` without its copy (offline spec §2.8 asks core for this as
-         *  `OfflineBackup.prepareExport`; until core has it, it is here): seals the tiles of a file still holding plain
-         *  ones (`MBTiles.encryptPlainTiles`), writes the area's settings into its tile files and folds their
-         *  write-ahead logs into them, so each file holds everything by itself, and returns the files with the names
-         *  they are shared under ("Farm - satellite.mbtiles"). Layers not downloaded yet are skipped. `usedNames`
-         *  keeps the names unique (" (2)", compared without case). A file that can't be sealed or folded now makes the
-         *  area busy.
+         *  `OfflineBackup.prepareExport`; until core has it, it is here): seals the tiles the area's files still hold
+         *  plain (`encryptForExport`), writes the area's settings into its tile files and folds their write-ahead logs
+         *  into them, so each file holds everything by itself, and returns the files with the names they are shared
+         *  under ("Farm - satellite.mbtiles"). Layers not downloaded yet are skipped. `usedNames` keeps the names
+         *  unique (" (2)", compared without case). A file that can't be sealed or folded now makes the area busy.
+         *  `progress` is told the share of the plain tiles sealed (0…1) while they are sealed, starting with 0; never
+         *  for an area whose files are all marked as sealed. `seal` seals a file's plain tiles
+         *  (`MBTiles.encryptPlainTiles`); tests pass their own.
          *
          *  `beingRead` (Android only): another app still reads the area's files, from an earlier export. iOS writes
          *  into the area's files and shares clones, which never change under a reader of an earlier export; here the
          *  shared files are the area's own, so nothing is written into them then. They are shared as they are if they
          *  already hold these settings, only sealed tiles and everything is in the file (`isExported`); otherwise the
          *  area is busy. */
-        internal fun prepareExport(areaFolder: File, layers: List<OfflineBackup.Layer>, name: String, areaJSON: String,
-                                   usedNames: MutableSet<String>, beingRead: Boolean = false): List<Pair<File, String>> {
+        internal fun prepareExport(
+            areaFolder: File,
+            layers: List<OfflineBackup.Layer>,
+            name: String,
+            areaJSON: String,
+            usedNames: MutableSet<String>,
+            beingRead: Boolean = false,
+            seal: (store: MBTiles, progress: (checked: Long, total: Long) -> Boolean) -> Boolean =
+                { store, progress -> store.encryptPlainTiles(progress = progress) },
+            progress: (Double) -> Unit = {},
+        ): List<Pair<File, String>> {
             var base = OfflineBackup.fileSafe(name)
             var n = 2
             while (base.lowercase() in usedNames) {
@@ -135,28 +146,59 @@ class OfflineManager(
             }
             usedNames.add(base.lowercase())
 
-            val out = mutableListOf<Pair<File, String>>()
-            for (layer in layers) {
-                val source = File(areaFolder, layer.fileName)
-                if (!source.exists()) continue
-                val ready = if (beingRead) {
-                    isExported(source, layer.key, areaJSON)
-                } else {
-                    val store = MBTiles(source, create = false)
+            val present = layers.filter { File(areaFolder, it.fileName).exists() }
+            if (beingRead) {
+                for (layer in present) {
+                    if (!isExported(File(areaFolder, layer.fileName), layer.key, areaJSON)) {
+                        throw OfflineBackup.Failure.Busy(name)
+                    }
+                }
+            } else {
+                val stores = mutableListOf<MBTiles>()
+                try {
+                    for (layer in present) stores += MBTiles(File(areaFolder, layer.fileName), create = false)
                     // Tiles still plain (stored before tiles were encrypted) are sealed first, or the backup would
                     // carry them.
-                    var done = store.isEncrypted || store.encryptPlainTiles()
-                    if (done) {
+                    encryptForExport(stores, name, seal, progress)
+                    for ((layer, store) in present.zip(stores)) {
                         store.setMetadata(mapOf(OfflineBackup.areaKey to areaJSON, OfflineBackup.layerKey to layer.key))
-                        done = store.checkpoint()
+                        if (!store.checkpoint()) throw OfflineBackup.Failure.Busy(name)
                     }
-                    store.close()
-                    done
+                } finally {
+                    stores.forEach { it.close() }
                 }
-                if (!ready) throw OfflineBackup.Failure.Busy(name)
-                out.add(Pair(source, "$base - ${layer.label}.mbtiles"))
             }
-            return out
+            return present.map { layer -> Pair(File(areaFolder, layer.fileName), "$base - ${layer.label}.mbtiles") }
+        }
+
+        /** Seals the plain tiles an area's files still hold (saved by an earlier version, and not yet sealed in the
+         *  background), telling `progress` the share done (0…1), as iOS's `encryptForExport`: nothing for files
+         *  marked as sealed. Each file is tried up to three times before the area is busy, carrying on where the try
+         *  before stopped: the map reading the file can keep the final checkpoint (which waits only 0.2 s) from
+         *  finishing. */
+        private fun encryptForExport(
+            stores: List<MBTiles>,
+            name: String,
+            seal: (MBTiles, (checked: Long, total: Long) -> Boolean) -> Boolean,
+            progress: (Double) -> Unit,
+        ) {
+            val plain = stores.filter { !it.isEncrypted }
+            if (plain.isEmpty()) return
+            val total = max(1L, plain.sumOf { it.tileCount() })
+            var before = 0L
+            progress(0.0)
+            for (store in plain) {
+                var sealed = false
+                for (attempt in 1..3) {
+                    sealed = seal(store) { checked, _ ->
+                        progress(min(before + checked, total).toDouble() / total.toDouble())
+                        true
+                    }
+                    if (sealed) break
+                }
+                if (!sealed) throw OfflineBackup.Failure.Busy(name)
+                before += store.tileCount()
+            }
         }
 
         /** Whether `file` already holds everything by itself (nothing in a write-ahead log), only sealed tiles, and the
@@ -229,7 +271,8 @@ class OfflineManager(
     private val _backupStatus = MutableStateFlow<String?>(null)
     val backupStatus: StateFlow<String?> = _backupStatus.asStateFlow()
 
-    /** How far it has got (0…1), when it can tell: copying the files of a restore. */
+    /** How far it has got (0…1), when it can tell: copying the files of a restore or into a folder, encrypting an area
+     *  for export. */
     private val _backupProgress = MutableStateFlow<Double?>(null)
     val backupProgress: StateFlow<Double?> = _backupProgress.asStateFlow()
 
@@ -473,7 +516,10 @@ class OfflineManager(
         startNextIfIdle()
     }
 
+    /** Removes an area and its files. Not while a backup task runs (as iOS): an export may be sealing the area's files
+     *  through stores of its own and then shares them, and a copy into a folder reads them. */
     fun delete(id: UUID) {
+        if (_backupStatus.value != null) return
         // Another app may be reading the area's files (an export): forget its shared files, as iOS removes its
         // exported copies, which share the area's storage. (An app reading one keeps its open file; the space is
         // freed when it closes it.)
@@ -521,8 +567,9 @@ class OfflineManager(
         _backupMessage.value = null
     }
 
-    /** Exports areas: pauses a download running in one of them, writes each area's settings into its files (satellite
-     *  and elevation) and opens the share sheet. Its own presentation, so it works even if the Offline maps sheet is
+    /** Exports areas: pauses a download running in one of them, seals the tiles an area saved by an earlier version
+     *  still holds plain ("Encrypting <name>…", with a bar), writes each area's settings into its files (satellite and
+     *  elevation) and opens the share sheet. Its own presentation, so it works even if the Offline maps sheet is
      *  closed meanwhile. iOS shares clones of the files; Android shares the files themselves, read-only, as copying a
      *  15 GB area isn't possible (`BackupFileProvider`). */
     fun export(ids: List<UUID>) {
@@ -532,6 +579,7 @@ class OfflineManager(
         exportHold = hold
         prepareExport(ids) { result ->
             _backupStatus.value = null
+            _backupProgress.value = null
             result.fold(
                 onSuccess = { uris ->
                     if (uris.isNotEmpty()) {
@@ -579,12 +627,39 @@ class OfflineManager(
             val result = withContext(io) {
                 runCatching {
                     val used = HashSet<String>()
+                    // When the sealing's progress was last shown (at most every 0.1 s, as iOS).
+                    var shown: Long? = null
                     items.flatMap { item ->
                         // (No new reader can open meanwhile: the shares were cleared above.)
                         val beingRead = ExportShares.readers(item.id) > 0
-                        prepareExport(item.folder, backupLayers, item.name, item.json, used, beingRead).map { (file, name) ->
-                            ExportShares.Share(area = item.id, file = file, displayName = name)
+                        // An area saved by an earlier version may still hold plain tiles, which its backup would carry:
+                        // they are sealed first, with "Encrypting <name>…" and a bar.
+                        var encrypted = false
+                        val report: (Double) -> Unit = report@{ share ->
+                            encrypted = true
+                            val now = SystemClock.elapsedRealtime()
+                            val last = shown
+                            if (last != null && now - last <= 100) return@report
+                            shown = now
+                            post {
+                                // (Not once the task has ended.)
+                                if (_backupStatus.value != null) {
+                                    _backupStatus.value = "Encrypting ${item.name}…"
+                                    _backupProgress.value = share
+                                }
+                            }
                         }
+                        val files = prepareExport(item.folder, backupLayers, item.name, item.json, used, beingRead,
+                                                  progress = report)
+                        if (encrypted) {
+                            post {
+                                if (_backupStatus.value != null) {
+                                    _backupStatus.value = "Preparing export…"
+                                    _backupProgress.value = null
+                                }
+                            }
+                        }
+                        files.map { (file, name) -> ExportShares.Share(area = item.id, file = file, displayName = name) }
                     }
                 }
             }
@@ -839,13 +914,15 @@ class OfflineManager(
     /** Seals, in the background, the tiles stored plain in areas downloaded before tiles were encrypted, or restored
      *  from a backup made then: one area at a time, each file with `MBTiles.encryptPlainTiles` on a store of its own,
      *  on `io` at the lowest priority (`atLowestPriority`). The map draws and downloads run meanwhile: the map reads
-     *  plain and sealed tiles alike. Called at launch, after a restore, after each download run, and when an export, a
-     *  copy or another app's reading stops holding the files. An area is left while it downloads (its store holds long
-     *  transactions), while an export or a copy holds downloads, and while another app reads its files; an export
-     *  stops the work and seals what it shares itself, and a delete stops it on its area. A download that starts on an
-     *  area being sealed stops the work too, and starts once it has stopped (`startNextIfIdle`). A file that couldn't
-     *  be finished (busy, or storage full) is tried again at the next of these calls, and the work carries on where it
-     *  stopped. */
+     *  plain and sealed tiles alike. Only while SatMap is in the foreground (as iOS): a large area is minutes of work,
+     *  not worth the battery in the background, so going to the background stops the work after the batch in hand
+     *  (`didEnterBackground`) and coming back starts it again (`willEnterForeground`). Called at launch, after a
+     *  restore, after each download run, when an export, a copy or another app's reading stops holding the files, and
+     *  when SatMap comes to the foreground. An area is left while it downloads (its store holds long transactions),
+     *  while an export or a copy holds downloads, and while another app reads its files; an export stops the work and
+     *  seals what it shares itself, and a delete stops it on its area. A download that starts on an area being sealed
+     *  stops the work too, and starts once it has stopped (`startNextIfIdle`). A file that couldn't be finished (busy,
+     *  storage full, or stopped) is tried again at the next of these calls, and the work carries on where it stopped. */
     private fun encryptOldFiles() {
         if (encryption != null) {
             encryptAgain = true
@@ -883,7 +960,7 @@ class OfflineManager(
 
     /** Whether an area's files may be sealed now (see `encryptOldFiles`). */
     private fun mayEncrypt(id: UUID): Boolean =
-        !holdDownloads && _activeID.value != id && startingArea != id && ExportShares.readers(id) == 0
+        inForeground && !holdDownloads && _activeID.value != id && startingArea != id && ExportShares.readers(id) == 0
 
     /** Seals the plain tiles left in an area's files, while `going()`. True when every file holds only sealed tiles,
      *  also in the database file itself: a file that is marked (`MBTiles.isEncrypted`) with an empty write-ahead log
@@ -963,6 +1040,9 @@ class OfflineManager(
 
     override fun didEnterBackground() {
         inForeground = false
+        // The sealing of old files stops after the batch in hand, and goes on where it stopped when SatMap is open
+        // again (`encryptOldFiles`).
+        encryption?.cancel()
         // A running download carries on, in the foreground service.
         if (_activeID.value != null) background.enteredBackground()
     }
@@ -973,6 +1053,8 @@ class OfflineManager(
         background.enteredForeground()
         measureFreeSpace() // space may have been freed meanwhile (see `freeSpace`)
         networkChanged()
+        // After it, so an area that starts downloading is left until its run ends.
+        encryptOldFiles()
     }
 
     /** A download that started or went on while SatMap wasn't fully open gets its background time now. */

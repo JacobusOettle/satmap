@@ -33,6 +33,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -55,6 +56,9 @@ import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.offline.AndroidSqlDriverTest
 import com.jacobusoettle.satmap.offline.OfflineManager
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -70,6 +74,8 @@ import org.robolectric.annotation.Config
 import java.io.File
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 
 /** The Offline maps sheet (UI spec §3.2–3.6, DESIGN.md §8.1): its first screen, the file picker, the areas' rows, the
  *  backup alert, and the back stack keeping each screen's state. */
@@ -294,9 +300,10 @@ class OfflineSheetTest {
     )
 
     /** A manager of the test's own with these areas and no network, so nothing downloads. */
-    private fun managerWith(vararg areas: OfflineArea): OfflineManager {
+    private fun managerWith(vararg areas: OfflineArea, io: CoroutineDispatcher = Dispatchers.IO): OfflineManager {
         File(AppPaths.offline, "areas.json").writeText(areas.joinToString(",", "[", "]") { it.toJson().toString() })
-        return OfflineManager(app, network = MutableStateFlow(Connectivity.State(isOnline = false, isExpensive = false)))
+        val offline = MutableStateFlow(Connectivity.State(isOnline = false, isExpensive = false))
+        return OfflineManager(app, network = offline, io = io)
     }
 
     @Test
@@ -365,6 +372,50 @@ class OfflineSheetTest {
         compose.waitForIdle()
         assertTrue(offline.areas.value.isEmpty())
         compose.onNodeWithText("No offline areas yet.").assertExists()
+    }
+
+    @Test
+    fun anAreaCantBeDeletedWhileABackupTaskRuns() {
+        // As on the iPhone (`.deleteDisabled`): an export may be sealing the area's files and shares them.
+        val farm = area("Demo farm", OfflineArea.Status.complete)
+        val executor = Executors.newSingleThreadExecutor()
+        val io = executor.asCoroutineDispatcher()
+        val gate = CountDownLatch(1)
+        try {
+            val offline = managerWith(farm, io = io)
+            compose.setContent { SatMapTheme { OfflineSheet(model, offline, model.kml, close = {}) } }
+            settle()
+            // The export waits for `io`, held here: it is preparing the files.
+            executor.execute { gate.await() }
+            offline.export(listOf(farm.id))
+            settle()
+            assertEquals("Preparing export…", offline.backupStatus.value)
+            val row = compose.onNode(hasText("Demo farm") and hasClickAction())
+            row.assert(SemanticsMatcher("offers no Delete") { n ->
+                n.config.getOrNull(SemanticsActions.CustomActions)?.none { it.label == "Delete" } ?: true
+            })
+            row.performTouchInput { swipeLeft() }
+            settle()
+            assertEquals(listOf(farm.id), offline.areas.value.map { it.id })
+            compose.onNode(hasText("Demo farm") and hasClickAction()).assertExists()
+
+            // Once the export has ended, it can be.
+            gate.countDown()
+            compose.waitUntil(10_000) {
+                shadowOf(Looper.getMainLooper()).idle()
+                offline.backupStatus.value == null
+            }
+            offline.clearBackupMessage()
+            compose.waitForIdle()
+            compose.runOnIdle {
+                row.fetchSemanticsNode().config[SemanticsActions.CustomActions].single { it.label == "Delete" }.action()
+            }
+            settle()
+            assertTrue(offline.areas.value.isEmpty())
+        } finally {
+            gate.countDown()
+            io.close()
+        }
     }
 
     @Test
