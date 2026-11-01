@@ -5,10 +5,10 @@ import os
 /// made then once it is restored (`MBTiles.encryptPlainTiles`), so copies of the files can't be shown by another app.
 /// One file at a time, on a queue of its own at background priority, through a store of its own: the map draws and
 /// other areas download meanwhile. Only while SatMap is open: a large area is minutes of work, not worth the battery
-/// in the background. An area's files wait while it downloads (its download store holds long transactions) or is
-/// exported (the export seals them itself, sooner). A file that couldn't be finished (busy, storage full) is tried
-/// again a little later, and at the next launch in any case; each run carries on where the last one stopped.
-/// Used on the main thread only.
+/// in the background. An area's files wait while it downloads (its download store holds long transactions; a
+/// download starting on files being sealed waits until the sealing has stopped) or is exported (the export seals them
+/// itself, sooner). A file that couldn't be finished (busy, storage full) is tried again a little later, and at the
+/// next launch in any case; each run carries on where the last one stopped. Used on the main thread only.
 final class OfflineEncryption: @unchecked Sendable {
     private struct File {
         let area: UUID
@@ -50,7 +50,7 @@ final class OfflineEncryption: @unchecked Sendable {
     /// Files that may still hold plain tiles, in the order they are sealed.
     private var pending: [File] = []
     private var current: Run?
-    /// Areas whose files wait: one downloading, ones being exported (counted, as both can hold an area).
+    /// Areas whose files wait: one downloading or about to, ones being exported (counted, as several can hold one).
     private var holds: [UUID: Int] = [:]
     private var wakeScheduled = false
 
@@ -63,7 +63,7 @@ final class OfflineEncryption: @unchecked Sendable {
     }
 
     /// Seals an area's files when their turn comes, if they may still hold plain tiles: a file that is marked as
-    /// sealed (`MBTiles.isEncrypted`), or doesn't exist, is skipped then.
+    /// sealed (`MBTiles.isEncrypted`) and has an empty write-ahead log, or doesn't exist, is skipped then.
     func add(_ area: UUID, files: [URL]) {
         for url in files where !pending.contains(where: { $0.url == url }) {
             pending.append(File(area: area, url: url))
@@ -146,7 +146,7 @@ final class OfflineEncryption: @unchecked Sendable {
     }
 
     private enum Outcome {
-        /// Every tile sealed, or nothing to do: no file, or one that is marked as sealed.
+        /// Every tile sealed, or nothing to do: no file, or one that is marked as sealed with an empty write-ahead log.
         case done
         /// Stopped before it began.
         case notStarted
@@ -160,7 +160,9 @@ final class OfflineEncryption: @unchecked Sendable {
         guard FileManager.default.fileExists(atPath: file.url.path),
               let store = try? MBTiles(url: file.url, create: false) else { return .done }
         defer { store.close() }
-        guard file.unfinished || !store.isEncrypted else { return .done }
+        // A marked file with a write-ahead log may still hold plain pages in the file itself, if the run that sealed
+        // them couldn't fold the log in and SatMap closed before it was tried again: it gets a run that only does that.
+        guard file.unfinished || !store.isEncrypted || walSize(file.url) > 0 else { return .done }
         let name = "\(file.area.uuidString)/\(file.url.lastPathComponent)"
         tileLog.info("encrypting the plain tiles of \(name, privacy: .public)")
         guard store.encryptPlainTiles(progress: { _, _ in !stop.isSet }) else {
@@ -169,5 +171,11 @@ final class OfflineEncryption: @unchecked Sendable {
         }
         tileLog.info("encrypted the plain tiles of \(name, privacy: .public)")
         return .done
+    }
+
+    /// The size of a database file's write-ahead log in bytes (0 if it has none).
+    private static func walSize(_ url: URL) -> Int {
+        let wal = URL(fileURLWithPath: url.path + "-wal")
+        return (try? wal.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
     }
 }

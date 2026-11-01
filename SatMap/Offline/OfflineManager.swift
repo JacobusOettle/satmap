@@ -24,6 +24,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     private var lastRunComplete = false
     /// Seals the plain tiles of areas saved before tiles were encrypted, and of old backups once restored.
     private let encryption = OfflineEncryption()
+    /// The area whose download waits for the sealing to stop on its files before it starts (`startNextIfIdle`); its
+    /// files are held from the sealing meanwhile.
+    private var startingArea: UUID?
 
     private var task: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -587,7 +590,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     private func startNextIfIdle() {
-        guard task == nil else { return }
+        guard task == nil, startingArea == nil else { return }
         guard inForeground || background.allowsBackgroundWork, !holdDownloads else {
             background.end(success: lastRunComplete)
             return
@@ -605,7 +608,29 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             update(a.id) { $0.status = .waitingForNetwork }
         }
         if let next = areas.first(where: { $0.status == .queued }) {
-            run(next)
+            // The area's files are sealed after its download (until `finished`): its stores keep transactions open for
+            // a long time. Held before they open, so a batch being sealed in them is the last. `run` keeps the hold.
+            if let sealing = encryption.hold([next.id]) {
+                // Its files are being sealed, on a store of their own whose batches and final checkpoint hold SQLite's
+                // write lock. The run's stores, opened and given their settings in `run`, would wait for it on the
+                // main thread (up to the 10 s busy timeout, behind a queue at background priority). So the run starts
+                // once the sealing has stopped, after the batch in hand, as a delete waits for it. Meanwhile no other
+                // download starts, and the sealing leaves this area.
+                let id = next.id
+                startingArea = id
+                Task { @MainActor [weak self] in
+                    await sealing.value
+                    guard let self = self else { return }
+                    self.startingArea = nil
+                    self.startNextIfIdle()
+                    // Let go only after that, so the sealing can't take this area back before its run holds it: the
+                    // other areas go on being sealed, and this one too if it didn't start after all (paused meanwhile;
+                    // a deleted area's files have left the sealing already).
+                    self.encryption.release([id])
+                }
+            } else {
+                run(next)
+            }
         } else {
             updateIdleTimer()
             if !inForeground && background.allowsBackgroundWork && areas.contains(where: { $0.status == .waitingForNetwork }) {
@@ -632,9 +657,12 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Starts the area's download. `startNextIfIdle` has held its files from the sealing, with no batch being sealed
+    /// in them; `finished` lets go of that hold, or this does if the run doesn't start.
     private func run(_ area: Area) {
         // Never fall back to the whole area (for a national park, terabytes) if a shipped road list is missing.
         if area.preset != nil && area.roadLines == nil {
+            encryption.release([area.id])
             update(area.id) {
                 $0.status = .incomplete
                 $0.problem = "This version of SatMap doesn't have the road list for this area."
@@ -642,9 +670,6 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             DispatchQueue.main.async { [weak self] in self?.startNextIfIdle() }
             return
         }
-        // The area's files are sealed after its download (until `finished`): its stores keep transactions open for a
-        // long time. Held before they open, so a batch being sealed in them is the last.
-        encryption.hold([area.id])
         let dir = area.directory
         let imagery: MBTiles
         let terrain: MBTiles
