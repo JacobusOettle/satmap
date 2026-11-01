@@ -624,8 +624,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                     self.startingArea = nil
                     self.startNextIfIdle()
                     // Let go only after that, so the sealing can't take this area back before its run holds it: the
-                    // other areas go on being sealed, and this one too if it didn't start after all (paused or deleted
-                    // meanwhile).
+                    // other areas go on being sealed, and this one too if it didn't start after all (paused meanwhile;
+                    // a deleted area's files have left the sealing already).
                     self.encryption.release([id])
                 }
             } else {
