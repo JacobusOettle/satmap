@@ -125,7 +125,8 @@ final class TileCryptoTests: XCTestCase {
         defer { download.close() }
         XCTAssertFalse(store.isEncrypted)
 
-        // Stopped after two batches: those are sealed, the rest still plain, and every tile reads.
+        // Stopped after two batches: those are sealed, the rest still plain, and every tile reads. The file says how
+        // far it got.
         var reports: [[Int]] = []
         XCTAssertFalse(store.encryptPlainTiles(batchSize: 64) { checked, total in
             reports.append([checked, total])
@@ -134,6 +135,8 @@ final class TileCryptoTests: XCTestCase {
         XCTAssertEqual(reports, [[64, 300], [128, 300]])
         XCTAssertEqual(tiles.filter { TileCrypto.isSealed(store.storedTile($0.0) ?? Data()) }.count, 128)
         XCTAssertFalse(store.isEncrypted)
+        XCTAssertEqual(store.metadata(MBTiles.encryptAfterKey), "128")
+        XCTAssertEqual(store.metadata(MBTiles.encryptCheckedKey), "128")
         for (t, data) in tiles { XCTAssertEqual(store.tile(t), data, "\(t)") }
 
         // The download replaces a plain tile and adds one.
@@ -142,13 +145,19 @@ final class TileCryptoTests: XCTestCase {
         XCTAssertTrue(download.put(added, data: Data("added".utf8)))
         XCTAssertTrue(download.flush())
 
-        // Run again, it carries on with the tiles still plain.
+        // Run again on a store of its own (as after the app started again), it carries on where it stopped: the rows
+        // checked before aren't read again (the replaced tile was added after them, sealed).
+        let again = try MBTiles(url: url, create: false)
+        defer { again.close() }
         reports = []
-        XCTAssertTrue(store.encryptPlainTiles(batchSize: 64) { checked, total in
+        XCTAssertTrue(again.encryptPlainTiles(batchSize: 64) { checked, total in
             reports.append([checked, total])
             return true
         })
-        XCTAssertEqual(reports.last, [301, 301])
+        XCTAssertEqual(reports, [[192, 301], [256, 301], [301, 301]])
+        XCTAssertTrue(again.isEncrypted)
+        XCTAssertNil(again.metadata(MBTiles.encryptAfterKey))
+        XCTAssertNil(again.metadata(MBTiles.encryptCheckedKey))
         XCTAssertTrue(store.isEncrypted)
         XCTAssertEqual(store.tileCount(), 301)
         for (i, (t, data)) in tiles.enumerated() {

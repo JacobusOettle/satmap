@@ -19,6 +19,7 @@ import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.OfflineArea.Status
 import com.jacobusoettle.satmap.core.OfflineBackup
 import com.jacobusoettle.satmap.core.Roads
+import com.jacobusoettle.satmap.core.SqlResult
 import com.jacobusoettle.satmap.core.TileCoverage
 import com.jacobusoettle.satmap.core.TileCrypto
 import com.jacobusoettle.satmap.core.TileFetchResult
@@ -56,6 +57,7 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** `OfflineManager`'s list and queue (offline spec §1.1–1.5, §2.14), and the sealing of files from before tiles were
  *  encrypted (§1.16): the runs are real (`TileDownloadJob` into MBTiles files through `AndroidSqlDriver`) with fake tile
@@ -872,6 +874,60 @@ class OfflineManagerTest {
             goOn.countDown()
             idleUntil { !m.isEncrypting && !dir.exists() }
             assertEquals(listOf(false), answers)
+        } finally {
+            goOn.countDown()
+            io.close()
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun aDownloadStartingOnTheAreaBeingSealedNeverWaitsOnTheMainThread() {
+        // An old area paused halfway is being sealed when ↻ resumes it. The sealing holds the file's write lock (here
+        // from a connection of the test's own, as a batch's transaction does): the run starts once the work has
+        // stopped, and the main thread never waits for the lock.
+        val tiles = AndroidSqlDriverTest.plainTiles(40)
+        val old = saveOldArea(tiles, status = Status.paused)
+        val file = File(old.directory, "imagery.mbtiles")
+        val halfway = CountDownLatch(1)
+        val goOn = CountDownLatch(1)
+        val held = AtomicBoolean(false)
+        val checks = Collections.synchronizedList(mutableListOf<Long>())
+        encrypt = { store, progress ->
+            store.encryptPlainTiles(batchSize = 16) { checked, total ->
+                checks += checked
+                if (held.compareAndSet(false, true)) {
+                    val lock = AndroidSqlDriver().open(file.path, create = false)
+                    try {
+                        assertEquals(SqlResult.OK, lock.begin())
+                        halfway.countDown()
+                        goOn.await()
+                        lock.rollback()
+                    } finally {
+                        lock.close()
+                    }
+                }
+                progress(checked, total)
+            }
+        }
+        val io = Executors.newSingleThreadExecutor { r -> Thread(r, "test io") }.asCoroutineDispatcher()
+        try {
+            val m = makeManager(io)
+            idle()
+            assertTrue(halfway.await(30, TimeUnit.SECONDS))
+            val start = System.nanoTime()
+            m.resume(old.id)
+            idle()
+            assertTrue(System.nanoTime() - start < 2_000_000_000L)
+            // It waits for the work to stop.
+            assertNull(m.activeID.value)
+            assertEquals(Status.queued, area(old.id).status)
+
+            goOn.countDown()
+            idleUntil { area(old.id).status == Status.complete && !m.isEncrypting }
+            assertEquals(listOf(old.id), runs)
+            // Sealed after its run, from where the work had stopped.
+            assertEquals(listOf(16L, 32L), checks.take(2))
+            assertSealed(file, tiles)
         } finally {
             goOn.countDown()
             io.close()

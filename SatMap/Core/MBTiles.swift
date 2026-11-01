@@ -270,14 +270,22 @@ final class MBTiles {
     /// `encryptPlainTiles` when it has sealed them all.
     static let encryptedKey = "satmap_encrypted"
 
+    /// Metadata keys recording how far `encryptPlainTiles` got in a file that isn't marked yet: the last rowid checked,
+    /// and the rows checked so far. Each batch sets them and the one that marks the file removes them, so a run that
+    /// stopped (the app closed, the file busy) carries on there without reading the sealed tiles again. Rowids stay as
+    /// they are (nothing renumbers them), and tiles added later get higher ones, sealed.
+    static let encryptAfterKey = "satmap_encrypt_after"
+    static let encryptCheckedKey = "satmap_encrypt_checked"
+
     /// Whether every tile is sealed (the file is marked with `encryptedKey`). Files from before tiles were encrypted,
     /// and backups made then, aren't until `encryptPlainTiles` has run on them.
     var isEncrypted: Bool {
         metadata(Self.encryptedKey) == "1"
     }
 
-    /// Seals the tiles stored plain in place, `batchSize` rows at a time, each batch in a transaction of its own; the
-    /// batch that finds no rows left marks the file (`encryptedKey`). Then a checkpoint (`checkpoint`) folds the sealed
+    /// Seals the tiles stored plain in place, `batchSize` rows at a time in rowid order, each batch in a transaction of
+    /// its own that also records how far it got (`encryptAfterKey`, `encryptCheckedKey`); the batch that finds no rows
+    /// left marks the file (`encryptedKey`) and removes that record. Then a checkpoint (`checkpoint`) folds the sealed
     /// tiles into the database file and empties the write-ahead log: until then the file itself still holds the plain
     /// tiles, and the log earlier copies of their pages. The space a plain tile took is overwritten with zeros
     /// (`secure_delete`), so after the checkpoint its picture isn't left in the file's free space; scraps that SQLite
@@ -290,19 +298,21 @@ final class MBTiles {
     /// the usual 10 s: the store's other calls are held up by little more than a batch, and if the other connection is
     /// still busy it stops.
     ///
-    /// `progress` is told the rows checked so far and the tiles in the file after each batch, and stops the work by
-    /// returning false. Returns true when every tile is sealed, the file is marked and the checkpoint has finished (if
-    /// the file was marked already, only the checkpoint runs); false if it stopped early: asked to, a write failed
-    /// (e.g. storage full), or another connection kept the file busy. It can run again at any time and carries on with
-    /// what is left.
+    /// `progress` is told the rows checked so far (by earlier runs too) and the tiles in the file after each batch, and
+    /// stops the work by returning false. Returns true when every tile is sealed, the file is marked and the checkpoint
+    /// has finished (if the file was marked already, only the checkpoint runs); false if it stopped early: asked to, a
+    /// write failed (e.g. storage full), or another connection kept the file busy. It can run again at any time, also
+    /// on another store after the app has started again, and carries on where it stopped, without reading the rows
+    /// checked before again.
     @discardableResult
     func encryptPlainTiles(batchSize: Int = 64, progress: (_ checked: Int, _ total: Int) -> Bool = { _, _ in true }) -> Bool {
         if !isEncrypted {
             let total = tileCount()
-            var after: Int64 = 0
-            var checked = 0
+            // Where an earlier run stopped, if one did: the rows up to there are sealed.
+            var after = metadata(Self.encryptAfterKey).flatMap { Int64($0) } ?? 0
+            var checked = metadata(Self.encryptCheckedKey).flatMap { Int($0) } ?? 0
             while true {
-                guard let batch = encryptBatch(after: after, limit: max(1, batchSize)) else { return false }
+                guard let batch = encryptBatch(after: after, checked: checked, limit: max(1, batchSize)) else { return false }
                 guard batch.rows > 0 else { break }
                 checked += batch.rows
                 after = batch.lastRowID
@@ -316,10 +326,10 @@ final class MBTiles {
         return waitingBriefly { checkpointLocked() }
     }
 
-    /// Seals the plain tiles among the next `limit` rows after `after` (a rowid) in one transaction, and marks the file
-    /// if there are none. The number of rows checked and the last one's rowid, or nil if it failed (and nothing was
-    /// changed).
-    private func encryptBatch(after: Int64, limit: Int) -> (rows: Int, lastRowID: Int64)? {
+    /// Seals the plain tiles among the next `limit` rows after `after` (a rowid) in one transaction, recording how far
+    /// it got (`checked` rows were checked before these), and marks the file if there are none. The number of rows
+    /// checked and the last one's rowid, or nil if it failed (and nothing was changed).
+    private func encryptBatch(after: Int64, checked: Int, limit: Int) -> (rows: Int, lastRowID: Int64)? {
         lock.lock()
         defer { lock.unlock() }
         // A download's writes still open on this connection are committed first: the batch is a transaction of its own.
@@ -366,9 +376,15 @@ final class MBTiles {
             sqlite3_clear_bindings(update)
             sqlite3_reset(update)
         }
-        // None left: every tile is sealed (a download adds them sealed), so the file is marked in the same transaction.
-        if ok && rows == 0 {
+        if ok && rows > 0 {
+            // How far it got, in the same transaction: a run that stops after it carries on from here.
+            ok = sqlite3_exec(db, "INSERT OR REPLACE INTO metadata (name, value) VALUES ('\(Self.encryptAfterKey)', '\(lastRowID)'), "
+                                  + "('\(Self.encryptCheckedKey)', '\(checked + rows)')", nil, nil, nil) == SQLITE_OK
+        } else if ok {
+            // None left: every tile is sealed (a download adds them sealed), so the file is marked in the same
+            // transaction, and how far it got is no longer needed.
             ok = sqlite3_exec(db, "INSERT OR REPLACE INTO metadata (name, value) VALUES ('\(Self.encryptedKey)', '1')", nil, nil, nil) == SQLITE_OK
+                && sqlite3_exec(db, "DELETE FROM metadata WHERE name IN ('\(Self.encryptAfterKey)', '\(Self.encryptCheckedKey)')", nil, nil, nil) == SQLITE_OK
         }
         guard ok, sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)

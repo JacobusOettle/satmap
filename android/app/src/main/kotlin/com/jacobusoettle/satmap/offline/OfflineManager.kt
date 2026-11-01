@@ -281,6 +281,10 @@ class OfflineManager(
     /** Areas whose files were found to hold only sealed tiles since launch (new tiles are always sealed). */
     private val sealedAreas = HashSet<UUID>()
 
+    /** The area whose download waits for the sealing to stop on its files before it starts (`startNextIfIdle`); the
+     *  sealing leaves it meanwhile. */
+    private var startingArea: UUID? = null
+
     /** Whether old files are being sealed, for tests. */
     internal val isEncrypting: Boolean get() = encryption != null
 
@@ -839,7 +843,7 @@ class OfflineManager(
      *  copy or another app's reading stops holding the files. An area is left while it downloads (its store holds long
      *  transactions), while an export or a copy holds downloads, and while another app reads its files; an export
      *  stops the work and seals what it shares itself, and a delete stops it on its area. A download that starts on an
-     *  area being sealed waits for the batch in hand, and the work on that area then stops (busy). A file that couldn't
+     *  area being sealed stops the work too, and starts once it has stopped (`startNextIfIdle`). A file that couldn't
      *  be finished (busy, or storage full) is tried again at the next of these calls, and the work carries on where it
      *  stopped. */
     private fun encryptOldFiles() {
@@ -878,7 +882,8 @@ class OfflineManager(
     }
 
     /** Whether an area's files may be sealed now (see `encryptOldFiles`). */
-    private fun mayEncrypt(id: UUID): Boolean = !holdDownloads && _activeID.value != id && ExportShares.readers(id) == 0
+    private fun mayEncrypt(id: UUID): Boolean =
+        !holdDownloads && _activeID.value != id && startingArea != id && ExportShares.readers(id) == 0
 
     /** Seals the plain tiles left in an area's files, while `going()`. True when every file holds only sealed tiles,
      *  also in the database file itself: a file that is marked (`MBTiles.isEncrypted`) with an empty write-ahead log
@@ -889,6 +894,8 @@ class OfflineManager(
         for (layer in backupLayers) {
             val file = File(dir, layer.fileName)
             if (!file.exists()) continue
+            // Told to stop during the file before: not one more batch on this one.
+            if (!going()) return@atLowestPriority false
             // Opened here, so its SQLite thread takes this thread's priority (`atLowestPriority`).
             val store = try {
                 MBTiles(file, create = false)
@@ -1000,7 +1007,7 @@ class OfflineManager(
     }
 
     private fun startNextIfIdle() {
-        if (task != null) return
+        if (task != null || startingArea != null) return
         if (!(inForeground || background.allowsBackgroundWork) || holdDownloads) {
             background.end(success = lastRunComplete)
             return
@@ -1031,7 +1038,22 @@ class OfflineManager(
         val next = _areas.value.firstOrNull {
             it.status == OfflineArea.Status.queued && ExportShares.readers(it.id) == 0
         }
-        if (next != null) {
+        val sealing = encryption
+        if (next != null && sealing != null && encryptingArea == next.id) {
+            // Its files are being sealed, on stores of their own whose batches and checkpoint hold SQLite's write lock.
+            // The run's stores, opened and given their settings here, would wait for it on the main thread (up to the
+            // 10 s busy timeout, behind a thread at the lowest priority). So the sealing stops, after the batch in hand,
+            // and the run starts once it has, as a delete waits for it.
+            startingArea = next.id
+            sealing.cancel()
+            scope.launch {
+                sealing.join()
+                startingArea = null
+                startNextIfIdle()
+                // The other areas go on being sealed (and this one, if it didn't start after all).
+                encryptOldFiles()
+            }
+        } else if (next != null) {
             run(next)
         } else if (!inForeground && background.allowsBackgroundWork &&
             _areas.value.any { it.status == OfflineArea.Status.waitingForNetwork }
