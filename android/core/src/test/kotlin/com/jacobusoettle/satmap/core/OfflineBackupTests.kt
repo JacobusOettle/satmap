@@ -2,6 +2,7 @@ package com.jacobusoettle.satmap.core
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -49,6 +50,37 @@ class OfflineBackupTests {
         assertEquals(listOf("Farm- north-south (2) - satellite.mbtiles"), files2.map { it.name })
         reader.close()
         writer.close()
+    }
+
+    @Test
+    fun testExportedTilesAreSealedNotImages() {
+        // Other apps can open an exported file, but its tiles aren't pictures: each starts with TileCrypto's magic.
+        val area = tempDir()
+        val writer = MBTiles(File(area, "terrain.mbtiles"), create = true)
+        val png = fixture("terrarium_12_2390_2342.png")
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()) + "JFIF picture".toByteArray()
+        val tiles = listOf(TileID(z = 12, x = 2390, y = 2342) to png, TileID(z = 12, x = 2391, y = 2342) to jpeg)
+        for ((t, data) in tiles) assertTrue(writer.put(t, data = data))
+        writer.close()
+        val used = mutableSetOf<String>()
+        val files = OfflineBackup.export(areaFolder = area, layers = layers, name = "Farm", areaJSON = "{}",
+                                         into = tempDir(), usedNames = used)
+        assertEquals(listOf("Farm - elevation.mbtiles"), files.map { it.name })
+        val opened = MBTiles(files[0], create = false)
+        try {
+            assertTrue(opened.isEncrypted)
+            for ((t, data) in tiles) {
+                val stored = opened.storedTile(t)!!
+                assertArrayEquals(byteArrayOf(0x53, 0x4D, 0x54, 0x01), stored.copyOf(4))
+                assertFalse(stored[0] == 0xFF.toByte() && stored[1] == 0xD8.toByte())
+                assertFalse(stored[0] == 0x89.toByte() && stored[1] == 0x50.toByte())
+                assertFalse(contains(stored, data.copyOf(8)))
+                assertArrayEquals(data, opened.tile(t))
+            }
+        } finally {
+            opened.close()
+        }
+        assertFalse(contains(files[0].readBytes(), png.copyOf(16)))
     }
 
     @Test

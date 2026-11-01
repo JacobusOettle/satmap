@@ -920,6 +920,33 @@ final class OfflineBackupTests: XCTestCase {
         writer.close()
     }
 
+    func testExportedTilesAreSealedNotImages() throws {
+        // Other apps can open an exported file, but its tiles aren't pictures: each starts with TileCrypto's magic.
+        let area = tempDir()
+        let writer = try MBTiles(url: area.appendingPathComponent("terrain.mbtiles"), create: true)
+        let png = try fixture("terrarium_12_2390_2342.png")
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0] + Array("JFIF picture".utf8))
+        let tiles = [(TileID(z: 12, x: 2390, y: 2342), png), (TileID(z: 12, x: 2391, y: 2342), jpeg)]
+        for (t, data) in tiles { XCTAssertTrue(writer.put(t, data: data)) }
+        writer.close()
+        var used = Set<String>()
+        let files = try OfflineBackup.export(areaFolder: area, layers: layers, name: "Farm", areaJSON: "{}",
+                                             into: tempDir(), usedNames: &used)
+        XCTAssertEqual(files.map(\.lastPathComponent), ["Farm - elevation.mbtiles"])
+        let opened = try MBTiles(url: files[0], create: false)
+        defer { opened.close() }
+        XCTAssertTrue(opened.isEncrypted)
+        for (t, data) in tiles {
+            let stored = try XCTUnwrap(opened.storedTile(t))
+            XCTAssertEqual(stored.prefix(4), Data([0x53, 0x4D, 0x54, 0x01]))
+            XCTAssertNotEqual(stored.prefix(2), Data([0xFF, 0xD8]))
+            XCTAssertNotEqual(stored.prefix(2), Data([0x89, 0x50]))
+            XCTAssertNil(stored.range(of: data.prefix(8)))
+            XCTAssertEqual(opened.tile(t), data)
+        }
+        XCTAssertNil(try Data(contentsOf: files[0]).range(of: png.prefix(16)))
+    }
+
     func testOtherMBTilesAreNotBackups() throws {
         let url = tempDir().appendingPathComponent("other.mbtiles")
         let store = try MBTiles(url: url, create: true)

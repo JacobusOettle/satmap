@@ -3,10 +3,11 @@ import XCTest
 @testable import SatMapCore
 
 /// Offline map backups move between the iPhone and Android apps: both write and read the same files. These tests
-/// pin the format on the iPhone side and read backups made by both apps (Fixtures/backup/iphone, written by
-/// `testWriteIPhoneBackupFixture`, and Fixtures/backup/android, written by the Android export; the Android tests read
-/// the same files). The expected area is `BackupFixture.area`, in
-/// the Android tests too.
+/// pin the format on the iPhone side and read backups made by both apps: Fixtures/backup/iphone-encrypted, written by
+/// `testWriteIPhoneBackupFixture`, and Fixtures/backup/android-encrypted, written by the Android export (their tiles
+/// sealed, `TileCrypto`); and Fixtures/backup/iphone and …/android, written the same way before tiles were encrypted
+/// (plain tiles), which show that old backups still restore. The Android tests read the same files. The expected area
+/// is `BackupFixture.area`, in the Android tests too.
 final class BackupCompatibilityTests: XCTestCase {
     func testAreaJSONIsTheSharedFormat() throws {
         let json = try JSONEncoder().encode(BackupFixture.area)
@@ -57,14 +58,44 @@ final class BackupCompatibilityTests: XCTestCase {
     }
 
     func testReadsBackupsMadeOnTheIPhone() throws {
-        try checkBackup(in: "iphone")
+        try checkBackup(in: "iphone-encrypted", sealed: true)
     }
 
     func testReadsBackupsMadeOnAndroid() throws {
-        try checkBackup(in: "android")
+        try checkBackup(in: "android-encrypted", sealed: true)
     }
 
-    /// Writes the iPhone fixture with the app's own export (run with SATMAP_WRITE_BACKUP_FIXTURES=<folder>).
+    func testReadsBackupsMadeBeforeTilesWereEncrypted() throws {
+        try checkBackup(in: "iphone", sealed: false)
+        try checkBackup(in: "android", sealed: false)
+    }
+
+    func testOldBackupsAreEncryptedAfterRestore() throws {
+        // As the app does with a restored backup that has plain tiles: sealed in place, the settings kept.
+        for folder in ["iphone", "android"] {
+            let dir = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/backup/" + folder, withExtension: nil))
+            let copy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mbtiles")
+            try FileManager.default.copyItem(at: dir.appendingPathComponent("Fixture farm - satellite.mbtiles"), to: copy)
+            defer { try? FileManager.default.removeItem(at: copy) }
+            let store = try MBTiles(url: copy, create: false)
+            XCTAssertFalse(store.isEncrypted, folder)
+            XCTAssertTrue(store.encryptPlainTiles(), folder)
+            XCTAssertTrue(store.isEncrypted, folder)
+            for (t, data) in BackupFixture.imageryTiles {
+                XCTAssertTrue(TileCrypto.isSealed(try XCTUnwrap(store.storedTile(t))), "\(folder): \(t)")
+                XCTAssertEqual(store.tile(t), data, "\(folder): \(t)")
+            }
+            XCTAssertTrue(store.isMissing(BackupFixture.missingImagery), folder)
+            store.close()
+            let info = try OfflineBackup.inspect(copy)
+            XCTAssertEqual(info.layerKey, "imagery", folder)
+            XCTAssertEqual(try JSONDecoder().decode(OfflineArea.self, from: info.areaJSON), BackupFixture.area, folder)
+        }
+    }
+
+    /// Writes the iPhone fixture with the app's own export (run with
+    /// SATMAP_WRITE_BACKUP_FIXTURES=<…/Fixtures/backup/iphone-encrypted>). The Android test of the same name writes
+    /// the Android one.
     func testWriteIPhoneBackupFixture() throws {
         guard let out = ProcessInfo.processInfo.environment["SATMAP_WRITE_BACKUP_FIXTURES"] else {
             throw XCTSkip("Writes the fixture only when asked")
@@ -88,8 +119,9 @@ final class BackupCompatibilityTests: XCTestCase {
         XCTAssertEqual(files.map(\.lastPathComponent), ["Fixture farm - satellite.mbtiles", "Fixture farm - elevation.mbtiles"])
     }
 
-    /// Restores a backup as the app does (`OfflineBackup.inspect`, then the area's JSON) and checks every part.
-    private func checkBackup(in folder: String) throws {
+    /// Restores a backup as the app does (`OfflineBackup.inspect`, then the area's JSON) and checks every part: its
+    /// tiles stored `sealed`, or plain (made before tiles were encrypted).
+    private func checkBackup(in folder: String, sealed: Bool) throws {
         let dir = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/backup/" + folder, withExtension: nil))
         var layers: [String: URL] = [:]
         for name in ["Fixture farm - satellite.mbtiles", "Fixture farm - elevation.mbtiles"] {
@@ -105,12 +137,20 @@ final class BackupCompatibilityTests: XCTestCase {
             layers[info.layerKey] = source
             let store = try MBTiles(url: copy, create: false)
             defer { store.close() }
+            XCTAssertEqual(store.isEncrypted, sealed, "\(folder): \(name)")
+            func checkStored(_ t: TileID) {
+                XCTAssertEqual(store.storedTile(t).map(TileCrypto.isSealed), sealed, "\(folder): \(t)")
+            }
             switch info.layerKey {
             case "imagery":
-                for (t, data) in BackupFixture.imageryTiles { XCTAssertEqual(store.tile(t), data, "\(folder): \(t)") }
+                for (t, data) in BackupFixture.imageryTiles {
+                    checkStored(t)
+                    XCTAssertEqual(store.tile(t), data, "\(folder): \(t)")
+                }
                 XCTAssertTrue(store.isMissing(BackupFixture.missingImagery), folder)
                 XCTAssertEqual(store.tileCount(), BackupFixture.imageryTiles.count, folder)
             case "terrain":
+                checkStored(BackupFixture.terrainTile)
                 XCTAssertEqual(store.tile(BackupFixture.terrainTile), BackupFixture.terrainData, folder)
             default:
                 XCTFail("\(folder): unknown layer \(info.layerKey)")

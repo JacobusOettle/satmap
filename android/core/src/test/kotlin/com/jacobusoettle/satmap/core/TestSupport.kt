@@ -43,3 +43,13 @@ fun <T : Comparable<T>> assertLessThanOrEqual(a: T, b: T, message: String = "") 
 }
 
 private fun describe(message: String, what: String) = if (message.isEmpty()) what else "$what: $message"
+
+/** Whether `needle` occurs in `bytes` (Swift's `Data.range(of:)` isn't nil). */
+fun contains(bytes: ByteArray, needle: ByteArray): Boolean =
+    (0..bytes.size - needle.size).any { i -> needle.indices.all { bytes[i + it] == needle[it] } }
+
+/** The bytes as lower-case hex digits. */
+fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
+
+/** The bytes written as hex digits. */
+fun bytesFromHex(hex: String): ByteArray = ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }

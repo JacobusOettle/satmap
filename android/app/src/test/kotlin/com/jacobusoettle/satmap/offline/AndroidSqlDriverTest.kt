@@ -306,6 +306,66 @@ class AndroidSqlDriverTest {
     }
 
     @Test
+    fun theBusyTimeoutCanBeChangedAgain() {
+        // MBTiles waits only briefly around each batch of encryptPlainTiles, then sets its 10 s back, on every version.
+        for (level in listOf(Build.VERSION_CODES.R, Build.VERSION.SDK_INT)) {
+            val path = File(dir, "t$level.mbtiles").path
+            val first = AndroidSqlDriver().open(path, create = true)
+            val second = asOn(level) { AndroidSqlDriver().open(path, create = true).apply { busyTimeout(10_000) } }
+            try {
+                assertEquals(SqlResult.OK, first.exec("CREATE TABLE t (x INTEGER)"))
+                assertEquals(SqlResult.OK, first.begin())
+                assertEquals(SqlResult.OK, first.exec("INSERT INTO t (x) VALUES (1)"))
+                repeat(3) {
+                    asOn(level) { second.busyTimeout(200) }
+                    val start = System.nanoTime()
+                    assertEquals("$level", SqlResult.BUSY, second.begin())
+                    assertTrue("$level", System.nanoTime() - start < 2_000_000_000L)
+                    asOn(level) { second.busyTimeout(10_000) }
+                }
+                assertEquals(SqlResult.OK, first.commit())
+                assertEquals(SqlResult.OK, second.begin()) // the transaction holds the writing connection
+                assertEquals("$level", listOf("10000"), rows(second, "PRAGMA busy_timeout"))
+                assertEquals(SqlResult.OK, second.rollback())
+            } finally {
+                second.close()
+                first.close()
+            }
+        }
+    }
+
+    @Test
+    fun encryptingOnTheMapsStoreWaitsOnlyBrieflyForADownload() {
+        val file = File(dir, "imagery.mbtiles")
+        val tiles = (0 until 100).map { TileID(z = 18, x = 1000 + it, y = 2000) }
+        val download = MBTiles(file, create = true)
+        val map = MBTiles(file, create = false)
+        try {
+            for (t in tiles) assertTrue(download.put(t, data = "$t".toByteArray()))
+            assertTrue(download.flush())
+            // Not marked, as a file from before tiles were encrypted: it checks every tile.
+            AndroidSqlDriver().open(file.path, create = false).apply {
+                assertEquals(SqlResult.OK, exec("DELETE FROM metadata WHERE name = '${MBTiles.encryptedKey}'"))
+                close()
+            }
+            assertFalse(map.isEncrypted)
+            // The download keeps its transaction open: it gives up soon, and the map reads on.
+            assertTrue(download.put(TileID(z = 18, x = 999, y = 2000), data = "added".toByteArray()))
+            val start = System.nanoTime()
+            assertFalse(map.encryptPlainTiles())
+            assertTrue(System.nanoTime() - start < 2_000_000_000L)
+            assertArrayEquals("${tiles[7]}".toByteArray(), map.tile(tiles[7]))
+            // Once the download has committed, it runs.
+            assertTrue(download.flush())
+            assertTrue(map.encryptPlainTiles())
+            assertTrue(map.isEncrypted)
+        } finally {
+            map.close()
+            download.close()
+        }
+    }
+
+    @Test
     fun aFailureOfAndroidsOwnIsNeverSuccess() {
         // What Android 11 to 12L threw for the busy timeout run per connection, and any version throws for a statement
         // with rows it is asked to execute: code 0, which isn't SQLite's.

@@ -22,9 +22,11 @@ import java.io.File
 import java.util.UUID
 
 /** Offline map backups move between the iPhone and Android apps: both write and read the same files. These tests
- *  pin the format on the Android side and read backups made by both apps (Fixtures/backup/iphone and
- *  Fixtures/backup/android; the Swift tests read the same files). The expected area is `BackupFixture.area`, in the Swift tests too
- *  (Tests/SatMapCoreTests/BackupCompatibilityTests.swift). */
+ *  pin the format on the Android side and read backups made by both apps: Fixtures/backup/iphone-encrypted, written by
+ *  the iPhone export, and Fixtures/backup/android-encrypted, written by `testWriteAndroidBackupFixture` (their tiles
+ *  sealed, `TileCrypto`); and Fixtures/backup/iphone and …/android, written the same way before tiles were encrypted
+ *  (plain tiles), which show that old backups still restore. The Swift tests read the same files. The expected area
+ *  is `BackupFixture.area`, in the Swift tests too (Tests/SatMapCoreTests/BackupCompatibilityTests.swift). */
 class BackupCompatibilityTests {
     init {
         MBTiles.driver = JdbcSqlDriver
@@ -75,12 +77,14 @@ class BackupCompatibilityTests {
     @Test
     fun testAndroidFixtureIsWhatExportWrites() {
         // Numbers as Swift's JSONEncoder writes them ("bufferMeters":150, as in the iPhone's fixture), not "150.0".
-        for (name in listOf("Fixture farm - satellite.mbtiles", "Fixture farm - elevation.mbtiles")) {
-            val copy = File(tempDir(), "copy.mbtiles")
-            File(System.getProperty("satmap.fixtures"), "backup/android/$name").copyTo(copy)
-            val json = String(OfflineBackup.inspect(copy).areaJSON, Charsets.UTF_8)
-            assertEquals(name, BackupFixture.area.toJson().toString(), json)
-            assertTrue(json, json.contains(""""bufferMeters":150}"""))
+        for (folder in listOf("android-encrypted", "android")) {
+            for (name in listOf("Fixture farm - satellite.mbtiles", "Fixture farm - elevation.mbtiles")) {
+                val copy = File(tempDir(), "copy.mbtiles")
+                File(System.getProperty("satmap.fixtures"), "backup/$folder/$name").copyTo(copy)
+                val json = String(OfflineBackup.inspect(copy).areaJSON, Charsets.UTF_8)
+                assertEquals("$folder: $name", BackupFixture.area.toJson().toString(), json)
+                assertTrue(json, json.contains(""""bufferMeters":150}"""))
+            }
         }
     }
 
@@ -175,16 +179,49 @@ class BackupCompatibilityTests {
 
     @Test
     fun testReadsBackupsMadeOnTheIPhone() {
-        checkBackup(folder = "iphone")
+        checkBackup(folder = "iphone-encrypted", sealed = true)
     }
 
     @Test
     fun testReadsBackupsMadeOnAndroid() {
-        checkBackup(folder = "android")
+        checkBackup(folder = "android-encrypted", sealed = true)
     }
 
-    /** Writes the Android fixture with the app's own export (run with SATMAP_WRITE_BACKUP_FIXTURES=<folder>): the
-     *  Swift test of the same name writes the iPhone one. */
+    @Test
+    fun testReadsBackupsMadeBeforeTilesWereEncrypted() {
+        checkBackup(folder = "iphone", sealed = false)
+        checkBackup(folder = "android", sealed = false)
+    }
+
+    @Test
+    fun testOldBackupsAreEncryptedAfterRestore() {
+        // As the app does with a restored backup that has plain tiles: sealed in place, the settings kept.
+        for (folder in listOf("iphone", "android")) {
+            val copy = File(System.getProperty("java.io.tmpdir"), UUID.randomUUID().toString() + ".mbtiles")
+            File(System.getProperty("satmap.fixtures"), "backup/$folder/Fixture farm - satellite.mbtiles").copyTo(copy)
+            try {
+                MBTiles(copy, create = false).use { store ->
+                    assertFalse(folder, store.isEncrypted)
+                    assertTrue(folder, store.encryptPlainTiles())
+                    assertTrue(folder, store.isEncrypted)
+                    for ((t, data) in BackupFixture.imageryTiles) {
+                        assertTrue("$folder: $t", TileCrypto.isSealed(store.storedTile(t)!!))
+                        assertArrayEquals("$folder: $t", data, store.tile(t))
+                    }
+                    assertTrue(folder, store.isMissing(BackupFixture.missingImagery))
+                }
+                val info = OfflineBackup.inspect(copy)
+                assertEquals(folder, "imagery", info.layerKey)
+                assertEquals(folder, BackupFixture.area, OfflineArea.decode(String(info.areaJSON, Charsets.UTF_8)))
+            } finally {
+                copy.delete()
+            }
+        }
+    }
+
+    /** Writes the Android fixture with the app's own export (run with
+     *  SATMAP_WRITE_BACKUP_FIXTURES=<…/Fixtures/backup/android-encrypted>): the Swift test of the same name writes the
+     *  iPhone one. */
     @Test
     fun testWriteAndroidBackupFixture() {
         val out = System.getenv("SATMAP_WRITE_BACKUP_FIXTURES")
@@ -211,8 +248,9 @@ class BackupCompatibilityTests {
         }
     }
 
-    /** Restores a backup as the app does (`OfflineBackup.inspect`, then the area's JSON) and checks every part. */
-    private fun checkBackup(folder: String) {
+    /** Restores a backup as the app does (`OfflineBackup.inspect`, then the area's JSON) and checks every part: its
+     *  tiles stored `sealed`, or plain (made before tiles were encrypted). */
+    private fun checkBackup(folder: String, sealed: Boolean) {
         val dir = File(System.getProperty("satmap.fixtures"), "backup/$folder")
         val layers = HashMap<String, File>()
         for (name in listOf("Fixture farm - satellite.mbtiles", "Fixture farm - elevation.mbtiles")) {
@@ -228,13 +266,21 @@ class BackupCompatibilityTests {
                 layers[info.layerKey] = source
                 val store = MBTiles(copy, create = false)
                 try {
+                    assertEquals("$folder: $name", sealed, store.isEncrypted)
+                    fun checkStored(t: TileID) = assertEquals("$folder: $t", sealed, store.storedTile(t)?.let(TileCrypto::isSealed))
                     when (info.layerKey) {
                         "imagery" -> {
-                            for ((t, data) in BackupFixture.imageryTiles) assertArrayEquals("$folder: $t", data, store.tile(t))
+                            for ((t, data) in BackupFixture.imageryTiles) {
+                                checkStored(t)
+                                assertArrayEquals("$folder: $t", data, store.tile(t))
+                            }
                             assertTrue(folder, store.isMissing(BackupFixture.missingImagery))
                             assertEquals(folder, BackupFixture.imageryTiles.size.toLong(), store.tileCount())
                         }
-                        "terrain" -> assertArrayEquals(folder, BackupFixture.terrainData, store.tile(BackupFixture.terrainTile))
+                        "terrain" -> {
+                            checkStored(BackupFixture.terrainTile)
+                            assertArrayEquals(folder, BackupFixture.terrainData, store.tile(BackupFixture.terrainTile))
+                        }
                         else -> fail("$folder: unknown layer ${info.layerKey}")
                     }
                 } finally {

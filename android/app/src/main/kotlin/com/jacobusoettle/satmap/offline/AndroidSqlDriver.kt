@@ -215,17 +215,23 @@ private class AndroidDatabase(private val db: SQLiteDatabase, private val thread
 
     fun <T> onThread(body: () -> T): T = thread.call(body)
 
-    /** Android gives each of its connections a 2.5 s timeout as it opens them. From API 33 this sets every
+    /** Whether `busyTimeout` has set every connection's timeout (`execPerConnectionSQL`). */
+    private var timeoutOnEveryConnection = false
+
+    /** Android gives each of its connections a 2.5 s timeout as it opens them. From API 33 the first call sets every
      *  connection's, those opened later too. Before, `execPerConnectionSQL` can't take a pragma that returns a row, as
      *  this one does: Android 11 to 12L refuse to execute it ("Queries can be performed using SQLiteDatabase query or
      *  rawQuery methods only."), keep it in the configuration all the same and then fail to open any connection, so
-     *  nothing on the file would work again. There it goes through `rawQuery`: SQLite sets the timeout as it prepares
-     *  the pragma, which Android does on the writing connection, so the writer waits its 10 s, as in C (a reader may
-     *  keep Android's 2.5 s; in WAL mode readers don't wait for the writer). */
+     *  nothing on the file would work again. There, and for later calls (`execPerConnectionSQL` keeps every statement
+     *  it is given, to run on each connection it opens, and `MBTiles` changes the timeout around each batch of
+     *  `encryptPlainTiles`), it goes through `rawQuery`: SQLite sets the timeout as it prepares the pragma, which
+     *  Android does on the writing connection, so the writer waits as long as asked, as in C (a reader may keep another
+     *  timeout; in WAL mode readers don't wait for the writer). */
     override fun busyTimeout(milliseconds: Int) {
         call {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !timeoutOnEveryConnection) {
                 db.execPerConnectionSQL("PRAGMA busy_timeout=$milliseconds", null)
+                timeoutOnEveryConnection = true
             } else {
                 db.rawQuery("PRAGMA busy_timeout=$milliseconds", null).use { it.moveToFirst() }
             }

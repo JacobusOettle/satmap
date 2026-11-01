@@ -111,20 +111,28 @@ are in [docs/screenshots/android](docs/screenshots/android):
   If the phone runs out of space, it stops and tells you.
 - Each area is stored as two MBTiles files under *Application Support/SatMap/Offline* and is excluded
   from iCloud backup. Swipe an area to delete it and free the space.
+- **Encrypted:** the map pictures in those files are encrypted (AES-256-GCM, with a key built into the app), so
+  files copied off the phone can't be shown in QGIS or another map app. It keeps the files from being taken and used
+  elsewhere; it doesn't stop someone who takes the app itself apart. Areas saved by an earlier version of SatMap are
+  encrypted after the update while SatMap is open, area by area; the map and downloads work as usual meanwhile.
 - **Backup:** *Export all offline maps* (or long-press one area → *Export*) opens the share sheet with each
   area's two files, "*name* - satellite.mbtiles" and "*name* - elevation.mbtiles": save them to Files,
   iCloud Drive or a USB drive, or AirDrop them to a computer. Exporting is instant and takes almost no extra space
-  (the iPhone's file system shares the data between the area and its export), and downloads wait until the
-  share sheet closes. *Restore from a backup* adds the areas
+  (the iPhone's file system shares the data between the area and its export); an area saved by an earlier version
+  that isn't encrypted yet is encrypted first, with a progress bar. Downloads wait until the share sheet closes.
+  *Restore from a backup* adds the areas
   back from those files (choose both files of each area), also after reinstalling SatMap. The files carry the
-  area's settings inside, and other map apps (QGIS, for example) can open them as ordinary MBTiles. The Android
-  app writes and reads the same files (see below).
+  area's settings inside. Offline maps are stored encrypted, so only SatMap can show them: other map apps (QGIS,
+  for example) can't show a backup's pictures, and backups move between your own phones, iPhone or Android (the
+  Android app writes and reads the same files, see below). Backups made before offline maps were encrypted still
+  restore, and are encrypted once restored.
 - The size estimate is an upper bound. Most of the space goes into the deepest zoom levels.
 
 ### Offline maps between iPhone and Android
 
 A backup made on an iPhone restores on an Android phone, and the other way round: both apps write the same two
-MBTiles files per area, with the area's settings (its shape, roads, zoom, name) inside. To move your offline maps:
+MBTiles files per area, with the area's settings (its shape, roads, zoom, name) inside and the pictures encrypted
+with the same key. To move your offline maps:
 
 1. On the phone that has them: **Offline** → *Export all offline maps* (or long-press one area → *Export*).
 2. Put the files somewhere the other phone can reach. AirDrop and Quick Share don't work between an iPhone and an
@@ -138,7 +146,8 @@ MBTiles files per area, with the area's settings (its shape, roads, zoom, name) 
 
 An area keeps its name, shape, roads and detail level, and *Going deeper later* carries on from what was saved.
 The format is pinned by tests on both sides (`Tests/SatMapCoreTests/BackupCompatibilityTests.swift` and its
-Kotlin twin), each reading a backup made by the other app (`Tests/SatMapCoreTests/Fixtures/backup`).
+Kotlin twin), each reading a backup made by the other app (`Tests/SatMapCoreTests/Fixtures/backup`): encrypted
+ones, and ones from before offline maps were encrypted.
 
 ### Battery
 
@@ -245,7 +254,8 @@ SatMap/
   KML/        imported KML and GPX files
   UI/         SwiftUI screens
   Core/       platform-independent logic: tile maths, area → tile coverage, PNG/Terrarium decoding,
-              marching-squares contours, KML/KMZ and GPX parsing, MBTiles (SQLite), track log, download engine
+              marching-squares contours, KML/KMZ and GPX parsing, MBTiles (SQLite, tiles encrypted), track log,
+              download engine
 Tests/        unit tests for Core (run with `swift test`, also on Linux)
 android/      the Android app (Gradle): a file-for-file port of the above
   core/       SatMap/Core in Kotlin, with the same tests ported

@@ -22,6 +22,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     @Published private(set) var backgroundStatus: String?
     /// Whether the last run downloaded its whole area, for the system's progress bar as it closes.
     private var lastRunComplete = false
+    /// Seals the plain tiles of areas saved before tiles were encrypted, and of old backups once restored.
+    private let encryption = OfflineEncryption()
 
     private var task: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
@@ -76,7 +78,12 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async { self?.networkChanged() }
             }
             .store(in: &cancellables)
-        DispatchQueue.main.async { self.startNextIfIdle() }
+        encryption.inBackground = !inForeground
+        DispatchQueue.main.async {
+            self.startNextIfIdle()
+            // Areas saved by an earlier version hold plain tiles, sealed in the background (after a download in them).
+            self.areas.forEach(self.encryptPlainTiles)
+        }
     }
 
     // MARK: - Public actions
@@ -178,24 +185,28 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         startNextIfIdle()
     }
 
+    /// Removes an area and its files. Not while a backup task runs: an export may be sealing the area through
+    /// stores of its own, and `exportFolder` holds the copies it has made so far.
     func delete(_ id: UUID) {
+        guard backupStatus == nil else { return }
         // An exported copy shares the area's storage: remove it too, or the space isn't freed.
         try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
-        let wasActive = activeID == id
-        let running = task
+        let running = activeID == id ? task : nil
         areas.removeAll { $0.id == id }
         save()
         publishToMap()
         TileRepository.shared.closeArea(id)
         let dir = AppPaths.offline.appendingPathComponent(id.uuidString, isDirectory: true)
-        if wasActive, let running = running {
-            running.cancel()
+        running?.cancel()
+        // The files are removed once neither its download nor the encryption has them open.
+        let busy = [running, encryption.remove(id)].compactMap { $0 }
+        if busy.isEmpty {
+            try? FileManager.default.removeItem(at: dir)
+        } else {
             Task {
-                await running.value
+                for t in busy { await t.value }
                 try? FileManager.default.removeItem(at: dir)
             }
-        } else {
-            try? FileManager.default.removeItem(at: dir)
         }
     }
 
@@ -223,7 +234,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     /// What a backup task is doing ("Preparing export…"), or nil. One runs at a time.
     @Published private(set) var backupStatus: String?
-    /// How far it has got (0…1), when it can tell: copying the files of a restore.
+    /// How far it has got (0…1), when it can tell: copying the files of a restore, encrypting an area for export.
     @Published private(set) var backupProgress: Double?
     /// The outcome of the last backup task, for an alert; cleared by `clearBackupMessage`.
     @Published private(set) var backupMessage: String?
@@ -237,9 +248,10 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         backupMessage = nil
     }
 
-    /// Exports areas: pauses a download running in one of them, puts each area's files (satellite and elevation,
-    /// with the area's settings inside) into `exportFolder` and opens the share sheet. Its own presentation, so it
-    /// works even if the Offline maps sheet is closed meanwhile.
+    /// Exports areas: pauses a download running in one of them, seals the tiles an area saved by an earlier version
+    /// still holds plain, puts each area's files (satellite and elevation, with the area's settings inside) into
+    /// `exportFolder` and opens the share sheet. Its own presentation, so it works even if the Offline maps sheet is
+    /// closed meanwhile.
     func export(_ ids: [UUID]) {
         guard backupStatus == nil else { return }
         backupStatus = "Preparing export…"
@@ -247,6 +259,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         prepareExport(ids) { [weak self] result in
             guard let self = self else { return }
             self.backupStatus = nil
+            self.backupProgress = nil
             switch result {
             case .success(let urls) where !urls.isEmpty:
                 SharePresenter.present(urls) { [weak self] in self?.finishExport() }
@@ -268,6 +281,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             pausedForExport = active
             waitFor = running
         }
+        // The export seals what is still plain itself, sooner than the background would.
+        let encryption = self.encryption
+        let sealing = encryption.hold(ids)
         let encoder = JSONEncoder()
         let items = chosen.map { a -> (folder: URL, name: String, json: String) in
             var saved = a
@@ -277,16 +293,66 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
         Task.detached(priority: .userInitiated) {
             await waitFor?.value
+            await sealing?.value
+            var shown = Date.distantPast
             let result = Result<[URL], Error> {
                 try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
                 var used = Set<String>()
-                return try items.flatMap { item in
-                    try OfflineBackup.export(areaFolder: item.folder, layers: OfflineManager.backupLayers, name: item.name,
-                                             areaJSON: item.json, into: OfflineManager.exportFolder, usedNames: &used)
+                return try items.flatMap { item -> [URL] in
+                    // An area saved by an earlier version may still hold plain tiles, which its backup would carry.
+                    let encrypted = try OfflineManager.encryptForExport(item.folder, name: item.name) { share in
+                        guard Date().timeIntervalSince(shown) > 0.1 else { return }
+                        shown = Date()
+                        DispatchQueue.main.async {
+                            self.backupStatus = "Encrypting \(item.name)…"
+                            self.backupProgress = share
+                        }
+                    }
+                    if encrypted {
+                        DispatchQueue.main.async {
+                            self.backupStatus = "Preparing export…"
+                            self.backupProgress = nil
+                        }
+                    }
+                    return try OfflineBackup.export(areaFolder: item.folder, layers: OfflineManager.backupLayers,
+                                                    name: item.name, areaJSON: item.json,
+                                                    into: OfflineManager.exportFolder, usedNames: &used)
                 }
             }
-            DispatchQueue.main.async { completion(result) }
+            DispatchQueue.main.async {
+                encryption.release(ids)
+                completion(result)
+            }
         }
+    }
+
+    /// Seals the plain tiles an area's files still hold (saved by an earlier version, and not yet sealed in the
+    /// background), telling `progress` the share done (0…1). Returns whether there were any.
+    private static func encryptForExport(_ folder: URL, name: String, progress: (Double) -> Void) throws -> Bool {
+        let stores = try backupLayers.compactMap { layer -> MBTiles? in
+            let url = folder.appendingPathComponent(layer.fileName)
+            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return try MBTiles(url: url, create: false)
+        }
+        defer { stores.forEach { $0.close() } }
+        let plain = stores.filter { !$0.isEncrypted }
+        guard !plain.isEmpty else { return false }
+        let total = max(1, plain.map { $0.tileCount() }.reduce(0, +))
+        var before = 0
+        progress(0)
+        for store in plain {
+            var sealed = false
+            // The map reading the file can keep the final checkpoint from finishing: tried again, carrying on.
+            for _ in 0..<3 where !sealed {
+                sealed = store.encryptPlainTiles { checked, _ in
+                    progress(Double(min(before + checked, total)) / Double(total))
+                    return true
+                }
+            }
+            guard sealed else { throw OfflineBackup.Failure.busy(name) }
+            before += store.tileCount()
+        }
+        return true
     }
 
     /// The share sheet closed: downloads may run again, including one paused for the export. The exported copies
@@ -303,7 +369,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     /// Adds the areas in exported files (normally both files of each area; the satellite file alone also works,
-    /// and ↻ then downloads the elevation). The summary for the user ends up in `backupMessage`.
+    /// and ↻ then downloads the elevation). Backups made before tiles were encrypted are sealed in the background
+    /// afterwards. The summary for the user ends up in `backupMessage`.
     func restore(_ urls: [URL]) {
         guard backupStatus == nil, !urls.isEmpty else { return }
         backupStatus = "Restoring…"
@@ -394,6 +461,8 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                 self.areas.append(contentsOf: added)
                 self.save()
                 self.publishToMap()
+                // A backup made before tiles were encrypted holds plain ones.
+                added.forEach(self.encryptPlainTiles)
                 if !added.isEmpty { self.completedRevision += 1 }
                 var lines: [String] = []
                 if !added.isEmpty {
@@ -483,12 +552,14 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     @objc private func didEnterBackground() {
         inForeground = false
+        encryption.inBackground = true
         // A running download carries on: as a continued processing task (iOS 26), or for the time iOS gives.
         if activeID != nil { background.enteredBackground() }
     }
 
     @objc private func willEnterForeground() {
         inForeground = true
+        encryption.inBackground = false
         signalWait = nil
         background.enteredForeground()
         networkChanged()
@@ -571,6 +642,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             DispatchQueue.main.async { [weak self] in self?.startNextIfIdle() }
             return
         }
+        // The area's files are sealed after its download (until `finished`): its stores keep transactions open for a
+        // long time. Held before they open, so a batch being sealed in them is the last.
+        encryption.hold([area.id])
         let dir = area.directory
         let imagery: MBTiles
         let terrain: MBTiles
@@ -578,6 +652,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             imagery = try MBTiles(url: dir.appendingPathComponent(TileRepository.Layer.imagery.fileName), create: true)
             terrain = try MBTiles(url: dir.appendingPathComponent(TileRepository.Layer.terrain.fileName), create: true)
         } catch {
+            encryption.release([area.id])
             update(area.id) {
                 $0.status = .incomplete
                 $0.problem = (error as? LocalizedError)?.errorDescription ?? "Couldn't open the tile database."
@@ -645,6 +720,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     private func finished(_ id: UUID, outcome: DownloadOutcome, size: Int64) {
         let storedSomething = (progress?.fetched ?? 0) > 0
+        encryption.release([id])
         if lowSpaceStop == id {
             lowSpaceStop = nil
             update(id) {
@@ -692,6 +768,13 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Has the area's files sealed in the background if they may still hold plain tiles (`OfflineEncryption`): saved
+    /// by an earlier version, or restored from a backup made then. Files already sealed are passed over quickly.
+    private func encryptPlainTiles(_ a: Area) {
+        let layers: [TileRepository.Layer] = [.imagery, .terrain]
+        encryption.add(a.id, files: layers.map { a.directory.appendingPathComponent($0.fileName) })
+    }
 
     private func update(_ id: UUID, persist: Bool = true, _ change: (inout Area) -> Void) {
         guard let i = areas.firstIndex(where: { $0.id == id }) else { return }

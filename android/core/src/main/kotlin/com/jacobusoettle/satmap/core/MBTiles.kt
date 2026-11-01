@@ -3,12 +3,16 @@ package com.jacobusoettle.satmap.core
 import java.io.Closeable
 import java.io.File
 import java.util.concurrent.locks.ReentrantLock
+import java.util.logging.Logger
 import kotlin.concurrent.withLock
 
 /** A tile store in the MBTiles layout (SQLite; tile_row uses the TMS convention, flipped from XYZ).
  *  One file per layer per offline area. Thread-safe: every operation is serialized by a lock.
  *  Also keeps a `missing_tiles` table of tiles the server reported as non-existent, so resumed
  *  downloads don't ask again.
+ *
+ *  Tiles are stored sealed (`TileCrypto`), so other apps can't show them. Files from before tiles were encrypted
+ *  still hold plain ones, which are read as they are until `encryptPlainTiles` seals them.
  *
  *  SQLite comes from `driver` (set once before the first store is opened). Close a store when done with it (the
  *  Swift class also closes when its last reference goes). */
@@ -27,6 +31,7 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
     private val statements = HashMap<String, SqlStatement>()
     private var uncommittedWrites = 0
     private val writesPerTransaction = 256
+    private var loggedUnreadable = false
 
     /** Opens the database. The downloader opens it with `create = true` (creating file and schema);
      *  map readers open their own instance with `create = false`. WAL journaling lets the map read
@@ -40,7 +45,7 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
             throw StoreError.Open(e.message ?: "code ${e.code}")
         }
         db = opened
-        opened.busyTimeout(10_000)
+        opened.busyTimeout(busyTimeout)
         if (create) {
             try {
                 // One statement at a time (the Swift runs them as one script).
@@ -68,7 +73,22 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
 
     // Reading
 
-    fun tile(t: TileID): ByteArray? = lock.withLock {
+    /** The tile's image: opened if it is sealed, as it is if it was stored before tiles were encrypted. A tile that
+     *  doesn't open (damaged, or moved from another place) is treated as missing, and logged once. */
+    fun tile(t: TileID): ByteArray? {
+        val blob = storedTile(t) ?: return null
+        if (!TileCrypto.isSealed(blob)) return blob
+        return try {
+            TileCrypto.open(blob, t)
+        } catch (e: TileCrypto.Failure) {
+            val first = lock.withLock { !loggedUnreadable.also { loggedUnreadable = true } }
+            if (first) log.warning("${file.name}: tile $t doesn't open (${e.message}), treated as missing; others aren't logged")
+            null
+        }
+    }
+
+    /** The tile's bytes as stored: sealed, or plain from before tiles were encrypted. */
+    fun storedTile(t: TileID): ByteArray? = lock.withLock {
         val s = statement("SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?") ?: return null
         try {
             s.bindInt(1, t.z)
@@ -133,22 +153,30 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
 
     // Writing (batched into transactions)
 
-    /** Stores a tile. Returns false if it could not be written (see `writeError`). */
-    fun put(t: TileID, data: ByteArray): Boolean = lock.withLock {
-        if (writeError != null || !beginIfNeeded()) return false
-        val s = statement("INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?,?,?,?)")
-            ?: return false
-        try {
-            s.bindInt(1, t.z)
-            s.bindInt(2, t.x)
-            s.bindInt(3, tmsRow(t))
-            s.bindBlob(4, data)
-            val rc = s.step()
-            s.clearBindings()
-            if (rc != SqlResult.DONE) return failWrite(rc)
-            noteWrite()
-        } finally {
-            s.reset()
+    /** Stores a tile, sealed (`TileCrypto`) unless it already is: a tile server may deliver tiles sealed in the same
+     *  format, and they are stored as they come. Returns false if it could not be written (see `writeError`). */
+    fun put(t: TileID, data: ByteArray): Boolean {
+        val blob = try {
+            if (TileCrypto.isSealed(data)) data else TileCrypto.seal(data, t)
+        } catch (e: TileCrypto.Failure) {
+            return false
+        }
+        return lock.withLock {
+            if (writeError != null || !beginIfNeeded()) return false
+            val s = statement("INSERT OR REPLACE INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?,?,?,?)")
+                ?: return false
+            try {
+                s.bindInt(1, t.z)
+                s.bindInt(2, t.x)
+                s.bindInt(3, tmsRow(t))
+                s.bindBlob(4, blob)
+                val rc = s.step()
+                s.clearBindings()
+                if (rc != SqlResult.DONE) return failWrite(rc)
+                noteWrite()
+            } finally {
+                s.reset()
+            }
         }
     }
 
@@ -199,10 +227,116 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
 
     /** Folds the write-ahead log back into the database file and truncates it (after each downloaded layer, and
      *  before the file is exported). Returns false if it couldn't finish, e.g. because a reader was busy. */
-    fun checkpoint(): Boolean = lock.withLock {
-        val db = db ?: return false
-        val committed = commitLocked()
-        db.checkpointTruncate() == SqlResult.OK && committed
+    fun checkpoint(): Boolean = lock.withLock { checkpointLocked() }
+
+    // Encrypting files from before tiles were encrypted
+
+    /** Whether every tile is sealed (the file is marked with `encryptedKey`). Files from before tiles were encrypted,
+     *  and backups made then, aren't until `encryptPlainTiles` has run on them. */
+    val isEncrypted: Boolean get() = metadata(encryptedKey) == "1"
+
+    /** Seals the tiles stored plain in place, `batchSize` rows at a time, each batch in a transaction of its own; the
+     *  batch that finds no rows left marks the file (`encryptedKey`). Then a checkpoint (`checkpoint`) folds the sealed
+     *  tiles into the database file and empties the write-ahead log: until then the file itself still holds the plain
+     *  tiles, and the log earlier copies of their pages. The space a plain tile took is overwritten with zeros
+     *  (`secure_delete`), so after the checkpoint its picture isn't left in the file's free space; scraps that SQLite
+     *  left in unused parts of pages when the file was written may remain.
+     *
+     *  Meant to run in the background at low priority, on the area's download store while one is open (its pending
+     *  writes are committed before each batch), else on the map's store or one of its own: between batches the map
+     *  reads and a download writes as usual. A batch, and the checkpoint, hold the store's lock while they wait for
+     *  another connection (a download's transaction, a reader in the middle of a read), so they wait only 0.2 s, not
+     *  the usual 10 s: the store's other calls are held up by little more than a batch, and if the other connection is
+     *  still busy it stops.
+     *
+     *  `progress` is told the rows checked so far and the tiles in the file after each batch, and stops the work by
+     *  returning false. Returns true when every tile is sealed, the file is marked and the checkpoint has finished (if
+     *  the file was marked already, only the checkpoint runs); false if it stopped early: asked to, a write failed
+     *  (e.g. storage full), or another connection kept the file busy. It can run again at any time and carries on with
+     *  what is left. */
+    fun encryptPlainTiles(batchSize: Int = 64, progress: (checked: Long, total: Long) -> Boolean = { _, _ -> true }): Boolean {
+        if (!isEncrypted) {
+            val total = tileCount()
+            var after = 0L
+            var checked = 0L
+            while (true) {
+                val batch = encryptBatch(after = after, limit = maxOf(1, batchSize)) ?: return false
+                if (batch.rows == 0) break
+                checked += batch.rows
+                after = batch.lastRowID
+                // Tiles a download adds meanwhile come after the others (and are sealed already).
+                if (!progress(checked, maxOf(total, checked))) return false
+            }
+        }
+        // Also when the file was marked already: an earlier run may have stopped at the checkpoint.
+        return lock.withLock { waitingBriefly { checkpointLocked() } }
+    }
+
+    private class Batch(val rows: Int, val lastRowID: Long)
+
+    private class PlainTile(val rowID: Long, val tile: TileID, val data: ByteArray)
+
+    /** Seals the plain tiles among the next `limit` rows after `after` (a rowid) in one transaction, and marks the file
+     *  if there are none. The number of rows checked and the last one's rowid, or null if it failed (and nothing was
+     *  changed). */
+    private fun encryptBatch(after: Long, limit: Int): Batch? = lock.withLock {
+        // A download's writes still open on this connection are committed first: the batch is a transaction of its own.
+        val db = db ?: return null
+        if (!commitLocked() || waitingBriefly { db.begin() } != SqlResult.OK) return null
+        // Freed space is overwritten with zeros. Set inside the transaction: on Android that runs it on the writing
+        // connection.
+        db.exec("PRAGMA secure_delete=ON")
+        val select = statement("SELECT rowid, zoom_level, tile_column, tile_row, tile_data FROM tiles WHERE rowid > ? ORDER BY rowid LIMIT ?")
+        val update = statement("UPDATE tiles SET tile_data=? WHERE rowid=?")
+        if (select == null || update == null) {
+            db.rollback()
+            return null
+        }
+        var rows = 0
+        var lastRowID = after
+        val plain = ArrayList<PlainTile>()
+        var rc: Int
+        try {
+            select.bindLong(1, after)
+            select.bindInt(2, limit)
+            rc = select.step()
+            while (rc == SqlResult.ROW) {
+                rows += 1
+                lastRowID = select.columnLong(0)
+                val data = select.columnBlob(4) ?: ByteArray(0)
+                if (!TileCrypto.isSealed(data)) {
+                    val z = select.columnInt(1)
+                    plain.add(PlainTile(lastRowID, TileID(z = z, x = select.columnInt(2), y = (1 shl z) - 1 - select.columnInt(3)), data))
+                }
+                rc = select.step()
+            }
+        } finally {
+            select.reset()
+        }
+        var ok = rc == SqlResult.DONE
+        for (p in plain) {
+            if (!ok) break
+            val sealed = try {
+                TileCrypto.seal(p.data, p.tile)
+            } catch (e: TileCrypto.Failure) {
+                ok = false
+                break
+            }
+            update.bindBlob(1, sealed)
+            update.bindLong(2, p.rowID)
+            ok = update.step() == SqlResult.DONE
+            update.clearBindings()
+            update.reset()
+        }
+        // None left: every tile is sealed (a download adds them sealed), so the file is marked in the same transaction.
+        if (ok && rows == 0) {
+            ok = db.exec("INSERT OR REPLACE INTO metadata (name, value) VALUES ('$encryptedKey', '1')") == SqlResult.OK
+        }
+        if (!ok || db.commit() != SqlResult.OK) {
+            db.rollback()
+            return null
+        }
+        Batch(rows, lastRowID)
     }
 
     // Internals (call with lock held)
@@ -220,6 +354,23 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
         uncommittedWrites += 1
         if (uncommittedWrites >= writesPerTransaction) return commitLocked()
         return true
+    }
+
+    private fun checkpointLocked(): Boolean {
+        val db = db ?: return false
+        val committed = commitLocked()
+        return db.checkpointTruncate() == SqlResult.OK && committed
+    }
+
+    /** Runs `body` with the short busy timeout of `encryptPlainTiles` (`briefBusyTimeout`), then sets the usual one back. */
+    private inline fun <T> waitingBriefly(body: () -> T): T {
+        val db = db ?: return body()
+        db.busyTimeout(briefBusyTimeout)
+        try {
+            return body()
+        } finally {
+            db.busyTimeout(busyTimeout)
+        }
     }
 
     private fun commitLocked(): Boolean {
@@ -266,6 +417,20 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
         @Volatile
         lateinit var driver: SqlDriver
 
+        /** Metadata key set to "1" on a file whose tiles are all sealed: on new files as they are created, and by
+         *  `encryptPlainTiles` when it has sealed them all. */
+        const val encryptedKey = "satmap_encrypted"
+
+        /** How long a statement waits for another connection's lock before it gives up. */
+        private const val busyTimeout = 10_000
+
+        /** The same for `encryptPlainTiles`, which waits holding the lock: briefly, so the store's other calls (the
+         *  map's reads, if it runs on the map's store) aren't held up while a download writes through another
+         *  connection. */
+        private const val briefBusyTimeout = 200
+
+        private val log = Logger.getLogger("tiles")
+
         private val schema = listOf(
             "PRAGMA journal_mode=WAL",
             "PRAGMA synchronous=NORMAL",
@@ -276,6 +441,7 @@ class MBTiles(val file: File, create: Boolean) : Closeable {
             "CREATE UNIQUE INDEX IF NOT EXISTS tile_index ON tiles (zoom_level, tile_row, tile_column)",
             """CREATE TABLE IF NOT EXISTS missing_tiles (zoom_level INTEGER NOT NULL, tile_column INTEGER NOT NULL,
                 tile_row INTEGER NOT NULL, PRIMARY KEY (zoom_level, tile_row, tile_column)) WITHOUT ROWID""",
+            "INSERT OR IGNORE INTO metadata (name, value) SELECT '$encryptedKey', '1' WHERE NOT EXISTS (SELECT 1 FROM tiles)",
         )
 
         private fun tmsRow(t: TileID): Int = (1 shl t.z) - 1 - t.y
