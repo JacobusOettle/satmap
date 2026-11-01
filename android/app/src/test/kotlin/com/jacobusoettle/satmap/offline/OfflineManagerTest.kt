@@ -935,6 +935,77 @@ class OfflineManagerTest {
     }
 
     @Test
+    fun oldFilesAreSealedOnlyWhileSatMapIsOpen() {
+        // Started in the background (by a download's service, say), as iOS's sealing only while SatMap is open.
+        val tiles = AndroidSqlDriverTest.plainTiles(40)
+        val old = saveOldArea(tiles)
+        val file = File(old.directory, "imagery.mbtiles")
+        val sealing = mutableListOf<String>()
+        encrypt = { store, progress ->
+            sealing += store.file.name
+            store.encryptPlainTiles(progress = progress)
+        }
+        process.currentState = Lifecycle.State.CREATED
+        val m = makeManager()
+        idle()
+        assertEquals(emptyList<String>(), sealing)
+        assertFalse(m.isEncrypting)
+        MBTiles(file, create = false).use { assertFalse(it.isEncrypted) }
+
+        // Opened: sealed now.
+        process.currentState = Lifecycle.State.RESUMED
+        idle()
+        assertEquals(listOf("imagery.mbtiles"), sealing)
+        assertFalse(m.isEncrypting)
+        assertSealed(file, tiles)
+    }
+
+    @Test(timeout = 60_000)
+    fun theSealingStopsInTheBackgroundAndGoesOnWhereItStoppedWhenSatMapIsOpenAgain() {
+        val tiles = AndroidSqlDriverTest.plainTiles(40)
+        val old = saveOldArea(tiles)
+        val file = File(old.directory, "imagery.mbtiles")
+        // Held after its first batch.
+        val halfway = CountDownLatch(1)
+        val goOn = CountDownLatch(1)
+        val checks = Collections.synchronizedList(mutableListOf<Long>())
+        val answers = Collections.synchronizedList(mutableListOf<Boolean>())
+        encrypt = { store, progress ->
+            store.encryptPlainTiles(batchSize = 16) { checked, total ->
+                checks += checked
+                if (checked == 16L) {
+                    halfway.countDown()
+                    goOn.await()
+                }
+                progress(checked, total).also { answers += it }
+            }
+        }
+        val io = Executors.newSingleThreadExecutor { r -> Thread(r, "test io") }.asCoroutineDispatcher()
+        try {
+            val m = makeManager(io)
+            idle()
+            assertTrue(halfway.await(30, TimeUnit.SECONDS))
+
+            // SatMap goes to the background: the work stops after the batch in hand.
+            process.currentState = Lifecycle.State.CREATED
+            goOn.countDown()
+            idleUntil { !m.isEncrypting }
+            assertEquals(listOf(false), answers)
+            assertEquals(listOf(16L), checks)
+            MBTiles(file, create = false).use { assertFalse(it.isEncrypted) }
+
+            // Open again: it carries on from where it stopped.
+            process.currentState = Lifecycle.State.RESUMED
+            idleUntil { !m.isEncrypting }
+            assertEquals(listOf(16L, 32L, 40L), checks)
+            assertSealed(file, tiles)
+        } finally {
+            goOn.countDown()
+            io.close()
+        }
+    }
+
+    @Test
     fun theProgressTextIsTheSwiftOne() {
         val p = DownloadProgress(layer = "Satellite", zoom = 17, maxZoom = 19, overallDone = 2, overallTotal = 3)
         assertEquals("Satellite · zoom 17 of 19 · 66%", OfflineManager.progressText(p))

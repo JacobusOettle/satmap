@@ -148,7 +148,7 @@ An SF Symbol drawn at text size *X* pt becomes a Material icon of about **1.2·X
 | Value row (`row(title, value)`) | Title Body primary; `Spacer(weight)`; value Body `LabelSecondary` with `tnum`. In the coordinate entry the value wraps and is end-aligned (`weight(1f, fill = false)`, `TextAlign.End`). |
 | Toggle row | Whole row `Modifier.toggleable(value, role = Role.Switch)`, end padding 14 dp; title Body; trailing `IosSwitch(checked)`, which only draws (no semantics or clicks of its own): iOS's `UISwitch` (screenshots 04, 12, 18), a 51 × 31 dp capsule, `SystemGreen` when on and `SecondaryFill` when off, with a 27 dp white knob (a 1 dp shadow) 2 dp in from its ends, its offset and the track colour animated. Its right edge is 14 dp in from the card's. M3's `Switch` can't match it: its track and thumb sizes are fixed (52 × 32, a 16 dp thumb when off). |
 | Text field row | `BasicTextField`, Body white with `LineHeightStyle(Alignment.Center, Trim.None)`, so the line is 22 dp and the cursor as tall as iOS's; `cursorBrush = SolidColor(Accent)`, placeholder in the same style, `LabelTertiary`, row padding. No underline and no outline. |
-| Swipe-to-delete row | M3 `SwipeToDismissBox(state, backgroundContent = { red box, "Delete" Body White SemiBold end-aligned, padding end 20 }, enableDismissFromStartToEnd = false, onDismiss = { delete })`. Also `semantics { customActions = listOf(CustomAccessibilityAction("Delete") { delete(); true }) }`. |
+| Swipe-to-delete row | M3 `SwipeToDismissBox(state, backgroundContent = { red box, "Delete" Body White SemiBold end-aligned, padding end 20 }, enableDismissFromStartToEnd = false, enableDismissFromEndToStart = enabled, onDismiss = { delete })`. Also `semantics { customActions = listOf(CustomAccessibilityAction("Delete") { delete(); true }) }`, only when `enabled`. `enabled` (default true) is iOS's `.deleteDisabled`, inverted. |
 | Pressed state | Default M3 ripple in `CellPressed`. |
 
 ---
@@ -563,7 +563,7 @@ The `Kruger National Park roads` row is gone; its route (`Preset(RoadPresets.kru
 **Section 2**, header `Offline areas`.
 - **Rows:**
   - If no areas: `No offline areas yet.` in Body `LabelSecondary`.
-  - Otherwise one `AreaRow` per area, each a link that pushes `AreaDetail(area.id)` and supports swipe-to-delete (`offline.delete(id)`).
+  - Otherwise one `AreaRow` per area, each a link that pushes `AreaDetail(area.id)` and supports swipe-to-delete (`offline.delete(id)`), with `enabled = offline.backupStatus == null`: while a backup task runs a row can't be swiped and offers no `Delete` action (iOS's `.deleteDisabled(offline.backupStatus != nil)`).
 - **Long press on a row** opens a `DropdownMenu` with one item, `Export` (`Icons.Outlined.IosShare`). It is enabled only when `offline.backupStatus == null` and calls `offline.export(listOf(area.id))`.
 - **Footer:** `offline.backgroundStatus`, when not null (§5.2).
 
@@ -898,7 +898,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
 ### 5.2 Shown here, produced elsewhere (port them with their owners, exactly)
 
 - **`OfflineManager`:**
-  - `backupStatus`: `Preparing export…`, `Restoring…`, `Copying %s of %s…`.
+  - `backupStatus`: `Preparing export…`, `Encrypting <area name>…` (with `backupProgress`, while an export seals an area saved by an earlier version), `Restoring…`, `Copying %s of %s…`.
   - `backupMessage`: `Nothing has been downloaded yet to export.`, `Couldn't export.`, `Restored <names joined ", ">.`, `Tap ↻ on an area marked Paused to download what its backup didn't include.`, `Couldn't copy <file> (is there enough free space?).`, `<file> isn't a SatMap backup.`, `<name> is already in SatMap.`, `Nothing to restore.`, `Couldn't prepare <name> for export. Try again in a moment.`, all joined with `\n`.
   - `backgroundStatus` (the Android counterpart of `BackgroundDownload.status`), suggested: `Downloads keep going in the background, with their progress in a notification.`; with notifications denied, `Downloads keep going in the background. Allow notifications for SatMap to see their progress.`
 - **`PlaceSearch` errors:** `No internet connection. Places are looked up online; try again when connected.`, `The place search didn't answer. Try again in a moment.`

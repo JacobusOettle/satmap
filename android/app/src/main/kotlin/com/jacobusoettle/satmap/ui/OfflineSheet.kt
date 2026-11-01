@@ -250,7 +250,11 @@ private fun OfflineRoot(
                 }
                 // Keyed by the area, as iOS's ForEach: a swipe deletes that area only.
                 for (area in areas) key(area.id) {
-                    FormSwipeToDeleteRow(onDelete = { offline.delete(area.id) }) { deleteAction ->
+                    // Not while a backup task runs, as Export and Restore (see `OfflineManager.delete`).
+                    FormSwipeToDeleteRow(
+                        onDelete = { offline.delete(area.id) },
+                        enabled = backupStatus == null,
+                    ) { deleteAction ->
                         AreaLink(
                             area,
                             progress = if (activeID == area.id) progress else null,

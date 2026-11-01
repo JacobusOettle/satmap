@@ -87,11 +87,12 @@ When the retry fires:
 The retry is needed because Wi-Fi can be up with the internet behind it down, and no change is announced when it recovers.
 
 **Delete.**
+- Not while a backup task runs (`backupStatus` is set: an export, a restore or a "Save to a folder" copy): `delete` does nothing then, as on iOS, since an export may be sealing the area's files through stores of its own and then shares them.
 - The area is removed from the list, saved and `publishToMap()` is called.
 - `TileRepository.closeArea(id)` closes the map's readers.
 - The area's folder is deleted. If the area was downloading, the deletion waits until its run has ended.
 - An export of that area is dropped as well (Android: its share registration, §2.8).
-- In the UI, an area is deleted by swiping its row.
+- In the UI, an area is deleted by swiping its row. While a backup task runs the rows can't be swiped and offer no `Delete` action (iOS's `.deleteDisabled`).
 
 ## 1.3 Queue and run (`startNextIfIdle`, `run`)
 
@@ -376,7 +377,7 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
   - pause-circle (calls `pause`) for downloading, queued or waiting;
   - ↻ circle (calls `resume`) for paused or incomplete;
   - a green filled check for complete.
-- Tapping a row opens `AreaDetailView`. Long-pressing it opens a menu with `"Export"` (share icon), disabled while a backup task runs. Swiping it deletes the area.
+- Tapping a row opens `AreaDetailView`. Long-pressing it opens a menu with `"Export"` (share icon), disabled while a backup task runs. Swiping it deletes the area; not while a backup task runs.
 - Footer: `backgroundStatus`, when set.
 
 **Section "Backup"**
@@ -433,8 +434,10 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
 2. If the active area is among those exported, it is paused (`pausedForExport = id`), and the export waits for its run to end.
 3. For each area, in list order:
    - the area's JSON is made with `status = complete` if complete, else `paused`;
-   - for each layer that exists (`imagery.mbtiles` labelled "satellite" with key `imagery`; `terrain.mbtiles` labelled "elevation" with key `terrain`), a file that isn't marked as sealed (`MBTiles.isEncrypted`) first has its plain tiles sealed (`MBTiles.encryptPlainTiles`, §1.16), so the backup carries no plain tile; then `OfflineBackup` writes `satmap_area` and `satmap_layer` into the file's metadata and checkpoints the write-ahead log (`TRUNCATE`);
-   - if the sealing or the checkpoint fails: `"Couldn't prepare <name> for export. Try again in a moment."`;
+   - the layers that exist are `imagery.mbtiles` (labelled "satellite", key `imagery`) and `terrain.mbtiles` (labelled "elevation", key `terrain`);
+   - files that aren't marked as sealed (`MBTiles.isEncrypted`) first have their plain tiles sealed (`MBTiles.encryptPlainTiles`, §1.16), so the backup carries no plain tile. Meanwhile `backupStatus = "Encrypting <name>…"` and `backupProgress` is the share of the area's plain tiles done (0…1, over both files), updated at most every 0.1 s; afterwards `backupStatus` is `"Preparing export…"` again, with no progress. Each file is tried up to 3 times, carrying on where the try before stopped: the map reading the file can keep the sealing's final checkpoint (which waits only 0.2 s) from finishing. An area whose files are all marked shows no such status;
+   - then `OfflineBackup` writes `satmap_area` and `satmap_layer` into each file's metadata and checkpoints the write-ahead log (`TRUNCATE`);
+   - if the sealing (after 3 tries) or the checkpoint fails: `"Couldn't prepare <name> for export. Try again in a moment."`;
    - files are named `"<fileSafe(name)> - satellite.mbtiles"` and `"… - elevation.mbtiles"`, with `" (2)"`, `" (3)"`… for repeated names (compared case-insensitively);
    - `fileSafe` replaces `/\:?*"<>|` and control characters with `-`, trims whitespace and dots, cuts to 80 characters, and gives `"Offline area"` when empty.
 4. Outcome:
@@ -546,11 +549,12 @@ The library holds GPX files too, read by `KMLParser.parseKMLOrGPX` (GPX when the
 
 Tiles are stored sealed (`TileCrypto`; the format is in `PORTING.md`): `MBTiles.put` seals each tile, and `MBTiles.tile` opens it, so files copied off the phone can't be shown in another app. The app never touches `tile_data` itself. Areas downloaded before tiles were encrypted, and old backups restored, hold plain tiles; the map reads them as they are (a file may hold both), and `encryptOldFiles` seals them in place:
 
-- **When:** at launch (after `startNextIfIdle`), after a restore, after each download run, and when an export or a "Save to a folder" copy stops holding downloads or the last reader of an exported file closes. One run at a time; a call during a run makes it try again, after the area in hand, the areas it couldn't finish so far.
+- **Only while SatMap is open:** in the foreground (an Android Auto screen showing SatMap counts), as on iOS. A large area is minutes of work, not worth the battery in the background. Going to the background (`didEnterBackground`) stops the work after the batch in hand, and coming back (`willEnterForeground`) starts it again, carrying on where it stopped (nothing is lost). Started in the background (a download's service started SatMap), nothing is sealed until SatMap is opened.
+- **When:** at launch (after `startNextIfIdle`), after a restore, after each download run, when an export or a "Save to a folder" copy stops holding downloads or the last reader of an exported file closes, and when SatMap comes to the foreground (after `networkChanged`, so an area that starts downloading is left). In the background these calls seal nothing. One run at a time; a call during a run makes it try again, after the area in hand, the areas it couldn't finish so far.
 - **What:** each area not yet found sealed since launch, in list order, except the downloading one (its store keeps long transactions; it is sealed after its run), every area while an export or a copy holds downloads, and an area another app is reading. For each existing file (`imagery.mbtiles`, then `terrain.mbtiles`), a store of its own: nothing to do if it is marked (`MBTiles.isEncrypted`) and its write-ahead log is empty; otherwise `MBTiles.encryptPlainTiles` (on a marked file that only folds the log in: a run whose checkpoint couldn't finish leaves plain pages in the database file). An area is remembered as sealed when all its files are done.
 - **How:** on `io`, at `Thread.MIN_PRIORITY` (set back afterwards); the store is opened at that priority, so its SQLite thread runs at it too. The map draws meanwhile (its own stores read plain and sealed tiles), and other areas download.
-- **Stopping:** `encryptPlainTiles` is told to stop when the job is cancelled (after the batch in hand). An export cancels the job and waits for it, then seals what it shares itself (§1.13); deleting the area being sealed cancels it and deletes the folder once it has stopped, and the job then goes on with the others. A download that starts on the area being sealed (↻, a deeper level, mobile data allowed, Wi-Fi back) cancels the job too and starts once it has stopped, off the main thread: opening the run's stores and writing their settings takes the file's write lock, which a batch or the checkpoint holds, so done at once it would wait on the main thread (up to the 10 s busy timeout, behind the lowest-priority thread). Meanwhile no other download starts and the job leaves that area; once the run has started, the job goes on with the other areas.
-- **Again:** a file that couldn't be finished (busy, storage full, or the app closed) is tried at the next of the calls above; the work carries on where it stopped, also after the app has started again (the file records the last row checked, `MBTiles.encryptAfterKey`), so the sealed tiles aren't read again. Nothing is shown in the screens.
+- **Stopping:** `encryptPlainTiles` is told to stop when the job is cancelled (after the batch in hand). Going to the background cancels the job. An export cancels the job and waits for it, then seals what it shares itself (§1.13); deleting the area being sealed cancels it and deletes the folder once it has stopped, and the job then goes on with the others. A download that starts on the area being sealed (↻, a deeper level, mobile data allowed, Wi-Fi back) cancels the job too and starts once it has stopped, off the main thread: opening the run's stores and writing their settings takes the file's write lock, which a batch or the checkpoint holds, so done at once it would wait on the main thread (up to the 10 s busy timeout, behind the lowest-priority thread). Meanwhile no other download starts and the job leaves that area; once the run has started, the job goes on with the other areas.
+- **Again:** a file that couldn't be finished (busy, storage full, SatMap gone to the background, or the app closed) is tried at the next of the calls above; the work carries on where it stopped, also after the app has started again (the file records the last row checked, `MBTiles.encryptAfterKey`), so the sealed tiles aren't read again. Nothing is shown in the screens.
 
 ---
 
@@ -580,7 +584,7 @@ task = scope.launch {
   - The core's `TileDownloadJob.run` must catch the `CancellationException` of its own suspend points and **return** `DownloadOutcome.Cancelled`, as Swift returns `.cancelled`. The finishing part runs under `NonCancellable`.
   - `pause` and the other places that cancel call `task?.cancel()`.
   - `delete` and `export` wait with `running.join()`.
-- The sealing of old files (§1.16) is a second job, `encryption: Job?`, started lazily and set before it starts, as the run is. Each area's files are sealed in `withContext(io)`, the progress callback answering `isActive`, so a cancel stops it after the batch in hand. `export` cancels it and joins it before preparing the files; `delete` of the area being sealed cancels and joins it (with the run, if that area is downloading) before deleting the folder; `startNextIfIdle`, choosing the area being sealed, cancels it and calls itself again once it has been joined (`startingArea` keeps it from starting twice, and the job from taking that area again). Its constructor parameter `encrypt` (the real `MBTiles.encryptPlainTiles` by default) lets tests watch or hold the batches; `isEncrypting` (internal) tells them when it has ended.
+- The sealing of old files (§1.16) is a second job, `encryption: Job?`, started lazily and set before it starts, as the run is. Each area's files are sealed in `withContext(io)`, the progress callback answering `isActive`, so a cancel stops it after the batch in hand. `didEnterBackground` cancels it, and `mayEncrypt` lets no area be sealed while `inForeground` is false; `willEnterForeground` calls `encryptOldFiles` again. `export` cancels it and joins it before preparing the files; `delete` of the area being sealed cancels and joins it (with the run, if that area is downloading) before deleting the folder; `startNextIfIdle`, choosing the area being sealed, cancels it and calls itself again once it has been joined (`startingArea` keeps it from starting twice, and the job from taking that area again). Its constructor parameter `encrypt` (the real `MBTiles.encryptPlainTiles` by default) lets tests watch or hold the batches; `isEncrypting` (internal) tells them when it has ended. The export seals through the companion's `prepareExport`, whose `seal` parameter does the same for its tries, and whose `progress` callback the export turns into `"Encrypting <name>…"` and `backupProgress`.
 - Lifecycle comes from `ProcessLifecycleOwner.get().lifecycle` (`androidx.lifecycle:lifecycle-process` is already a dependency):
   - `ON_START` runs `willEnterForeground()` then `didBecomeActive()`;
   - `ON_STOP` runs `didEnterBackground()`.
@@ -1135,7 +1139,9 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
 - an old area left downloading is sealed after its run, never during it;
 - while an area is half sealed (held after its first batch, `io` a thread of its own), a real `TileRepository` reader draws every tile, and afterwards, with that reader still open, the file holds no plain picture;
 - deleting the area being sealed stops the work after the batch in hand, and its folder goes once it has stopped;
-- resuming a paused old area while it is being sealed, with its file's write lock held (by a connection of the test's own, as a batch holds it), returns at once without opening its stores; the run starts once the work has stopped, and afterwards the work carries on from where it stopped (it doesn't check the first batch again).
+- resuming a paused old area while it is being sealed, with its file's write lock held (by a connection of the test's own, as a batch holds it), returns at once without opening its stores; the run starts once the work has stopped, and afterwards the work carries on from where it stopped (it doesn't check the first batch again);
+- started in the background, SatMap seals nothing until it comes to the foreground;
+- going to the background stops the work after the batch in hand, and coming back carries on from where it stopped.
 
 **Backup**
 - `export` with the zero-copy share registers display names `"Farm - satellite.mbtiles"` and `"Farm (2) - …"`.
@@ -1149,6 +1155,9 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
   - the fixtures made before tiles were encrypted, `…/backup/iphone` and `…/backup/android`, restore, and are then sealed (the backup's own files unchanged).
 - The exported files' tiles are all sealed, and none is an image.
 - An export of an old area that is being sealed in the background stops that work and seals the area itself: the file sent holds no plain picture and restores.
+- Exporting an old area shows `"Encrypting <name>…"` with a progress bar, then `"Preparing export…"`; the progress over both files goes from 0 to 1.
+- A sealing whose final checkpoint another connection keeps busy once is tried again, and the export goes on.
+- An area isn't deleted while it is being exported; the files shared can still be read, and the area can be deleted afterwards.
 - `AndroidSqlDriverTest` reads the four backup fixtures on Android's SQLite: the encrypted ones sealed and marked, the old ones plain.
 
 **KMLLibrary**
