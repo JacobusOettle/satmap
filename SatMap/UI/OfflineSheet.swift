@@ -60,6 +60,8 @@ struct OfflineSheet: View {
                                 }
                                 .disabled(offline.backupStatus != nil)
                             }
+                            // Not while a backup task runs, as Export and Restore (see `OfflineManager.delete`).
+                            .deleteDisabled(offline.backupStatus != nil)
                     }
                     .onDelete { offsets in
                         offsets.map { offline.areas[$0].id }.forEach(offline.delete)

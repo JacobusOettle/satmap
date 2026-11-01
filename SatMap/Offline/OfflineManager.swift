@@ -185,7 +185,10 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         startNextIfIdle()
     }
 
+    /// Removes an area and its files. Not while a backup task runs: an export may be sealing the area through
+    /// stores of its own, and `exportFolder` holds the copies it has made so far.
     func delete(_ id: UUID) {
+        guard backupStatus == nil else { return }
         // An exported copy shares the area's storage: remove it too, or the space isn't freed.
         try? FileManager.default.removeItem(at: OfflineManager.exportFolder)
         let running = activeID == id ? task : nil
