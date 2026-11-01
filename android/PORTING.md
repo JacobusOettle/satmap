@@ -93,14 +93,18 @@ writes and reads exactly what the iPhone app does:
   is missing (logged once per store).
 - Metadata `satmap_encrypted` = `1` marks a file whose tiles are all sealed: set when a file is created (a new file,
   or one without tiles), and by `MBTiles.encryptPlainTiles`, which seals an old file's plain tiles in place, in
-  batches (each a transaction; the one that finds no rows left sets the mark), resumable, overwriting the plain tiles'
-  space with zeros (`secure_delete`). It ends with a checkpoint (`wal_checkpoint(TRUNCATE)`): only that takes the plain
-  pages out of the database file (until then the sealed ones are only in the write-ahead log, which also keeps earlier
-  copies of the pages). If the checkpoint can't finish it returns false, to run again later; on a marked file it only
-  checkpoints. A batch's `BEGIN IMMEDIATE` and the checkpoint wait for another connection while holding the store's
-  lock, so with a busy timeout of 200 ms (then 10 s again): a download writing through another connection holds up the
-  store's other calls (the map's reads, if it runs on the map's store) by little more than a batch, and it returns
-  false. It runs best on the area's download store while one is open (its writes are committed before each batch).
+  batches in rowid order (each a transaction; the one that finds no rows left sets the mark), overwriting the plain
+  tiles' space with zeros (`secure_delete`). It is resumable: each batch also writes `satmap_encrypt_after` (the last
+  rowid checked) and `satmap_encrypt_checked` (the rows checked so far), so a run that stopped, also in an earlier
+  launch, carries on there without reading the sealed tiles again; the batch that sets the mark removes both. They
+  hold in a copy of the file too: nothing renumbers rowids, and tiles added later get higher ones, sealed. It ends
+  with a checkpoint (`wal_checkpoint(TRUNCATE)`): only that takes the plain pages out of the database file (until then
+  the sealed ones are only in the write-ahead log, which also keeps earlier copies of the pages). If the checkpoint
+  can't finish it returns false, to run again later; on a marked file it only checkpoints. A batch's `BEGIN IMMEDIATE`
+  and the checkpoint wait for another connection while holding the store's lock, so with a busy timeout of 200 ms
+  (then 10 s again): a download writing through another connection holds up the store's other calls (the map's reads,
+  if it runs on the map's store) by little more than a batch, and it returns false. It runs best on the area's
+  download store while one is open (its writes are committed before each batch).
 - Export: the area's settings go into each file's metadata (`satmap_area`: the area JSON, `satmap_layer`:
   `imagery`/`terrain`), the write-ahead log is folded in (`PRAGMA wal_checkpoint(TRUNCATE)`, no `-wal` file left),
   and the files are shared as "<name> - satellite.mbtiles" and "<name> - elevation.mbtiles"

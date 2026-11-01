@@ -146,7 +146,8 @@ class TileCryptoTests {
         try {
             assertFalse(store.isEncrypted)
 
-            // Stopped after two batches: those are sealed, the rest still plain, and every tile reads.
+            // Stopped after two batches: those are sealed, the rest still plain, and every tile reads. The file says how
+            // far it got.
             val reports = ArrayList<List<Long>>()
             assertFalse(store.encryptPlainTiles(batchSize = 64) { checked, total ->
                 reports.add(listOf(checked, total))
@@ -155,6 +156,8 @@ class TileCryptoTests {
             assertEquals(listOf(listOf(64L, 300L), listOf(128L, 300L)), reports)
             assertEquals(128, tiles.count { TileCrypto.isSealed(store.storedTile(it.first) ?: ByteArray(0)) })
             assertFalse(store.isEncrypted)
+            assertEquals("128", store.metadata(MBTiles.encryptAfterKey))
+            assertEquals("128", store.metadata(MBTiles.encryptCheckedKey))
             for ((t, data) in tiles) assertArrayEquals("$t", data, store.tile(t))
 
             // The download replaces a plain tile and adds one.
@@ -163,13 +166,19 @@ class TileCryptoTests {
             assertTrue(download.put(added, data = "added".toByteArray()))
             assertTrue(download.flush())
 
-            // Run again, it carries on with the tiles still plain.
-            reports.clear()
-            assertTrue(store.encryptPlainTiles(batchSize = 64) { checked, total ->
-                reports.add(listOf(checked, total))
-                true
-            })
-            assertEquals(listOf(301L, 301L), reports.last())
+            // Run again on a store of its own (as after the app started again), it carries on where it stopped: the
+            // rows checked before aren't read again (the replaced tile was added after them, sealed).
+            MBTiles(url, create = false).use { again ->
+                reports.clear()
+                assertTrue(again.encryptPlainTiles(batchSize = 64) { checked, total ->
+                    reports.add(listOf(checked, total))
+                    true
+                })
+                assertEquals(listOf(listOf(192L, 301L), listOf(256L, 301L), listOf(301L, 301L)), reports)
+                assertTrue(again.isEncrypted)
+                assertNull(again.metadata(MBTiles.encryptAfterKey))
+                assertNull(again.metadata(MBTiles.encryptCheckedKey))
+            }
             assertTrue(store.isEncrypted)
             assertEquals(301L, store.tileCount())
             for ((i, pair) in tiles.withIndex()) {

@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.util.AtomicFile
+import android.util.Log
 import com.jacobusoettle.satmap.app.AppLifecycle
 import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Connectivity
@@ -42,6 +43,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -56,7 +59,8 @@ import kotlin.math.min
 
 /** Offline areas: each is a shape (lasso or KML) downloaded as satellite imagery up to `maxZoom` plus elevation tiles
  *  for contours and height differences. Downloads run one at a time, resume where they stopped, wait for the network
- *  (or Wi-Fi) and continue after the app restarts. Also backup export and restore. Used on the main thread only.
+ *  (or Wi-Fi) and continue after the app restarts. Also backup export and restore, and the sealing of tiles stored
+ *  plain before tiles were encrypted (`encryptOldFiles`). Used on the main thread only.
  *
  *  The parameters after `context` are what the manager uses of the phone and the rest of the app; tests pass their
  *  own. */
@@ -72,6 +76,10 @@ class OfflineManager(
     private val io: CoroutineDispatcher = Dispatchers.IO,
     /** The map's readers of the areas' files. */
     private val readers: AreaReaders = TileRepositoryReaders,
+    /** Seals a file's plain tiles (`MBTiles.encryptPlainTiles`), telling `progress` after each batch (see
+     *  `encryptOldFiles`). */
+    private val encrypt: (store: MBTiles, progress: (checked: Long, total: Long) -> Boolean) -> Boolean =
+        { store, progress -> store.encryptPlainTiles(progress = progress) },
 ) : AppLifecycle.Observer {
     /** The map's readers of the areas' files (`TileRepository`): told of the areas, and of one deleted. */
     interface AreaReaders {
@@ -105,15 +113,18 @@ class OfflineManager(
         )
 
         /** Core's `OfflineBackup.export` without its copy (offline spec §2.8 asks core for this as
-         *  `OfflineBackup.prepareExport`; until core has it, it is here): writes the area's settings into its tile
-         *  files and folds their write-ahead logs into them, so each file holds everything by itself, and returns the
-         *  files with the names they are shared under ("Farm - satellite.mbtiles"). Layers not downloaded yet are
-         *  skipped. `usedNames` keeps the names unique (" (2)", compared without case).
+         *  `OfflineBackup.prepareExport`; until core has it, it is here): seals the tiles of a file still holding plain
+         *  ones (`MBTiles.encryptPlainTiles`), writes the area's settings into its tile files and folds their
+         *  write-ahead logs into them, so each file holds everything by itself, and returns the files with the names
+         *  they are shared under ("Farm - satellite.mbtiles"). Layers not downloaded yet are skipped. `usedNames`
+         *  keeps the names unique (" (2)", compared without case). A file that can't be sealed or folded now makes the
+         *  area busy.
          *
          *  `beingRead` (Android only): another app still reads the area's files, from an earlier export. iOS writes
          *  into the area's files and shares clones, which never change under a reader of an earlier export; here the
          *  shared files are the area's own, so nothing is written into them then. They are shared as they are if they
-         *  already hold these settings and everything is in the file (`isExported`); otherwise the area is busy. */
+         *  already hold these settings, only sealed tiles and everything is in the file (`isExported`); otherwise the
+         *  area is busy. */
         internal fun prepareExport(areaFolder: File, layers: List<OfflineBackup.Layer>, name: String, areaJSON: String,
                                    usedNames: MutableSet<String>, beingRead: Boolean = false): List<Pair<File, String>> {
             var base = OfflineBackup.fileSafe(name)
@@ -132,8 +143,13 @@ class OfflineManager(
                     isExported(source, layer.key, areaJSON)
                 } else {
                     val store = MBTiles(source, create = false)
-                    store.setMetadata(mapOf(OfflineBackup.areaKey to areaJSON, OfflineBackup.layerKey to layer.key))
-                    val done = store.checkpoint()
+                    // Tiles still plain (stored before tiles were encrypted) are sealed first, or the backup would
+                    // carry them.
+                    var done = store.isEncrypted || store.encryptPlainTiles()
+                    if (done) {
+                        store.setMetadata(mapOf(OfflineBackup.areaKey to areaJSON, OfflineBackup.layerKey to layer.key))
+                        done = store.checkpoint()
+                    }
                     store.close()
                     done
                 }
@@ -143,9 +159,9 @@ class OfflineManager(
             return out
         }
 
-        /** Whether `file` already holds everything by itself (nothing in a write-ahead log) and the settings `areaJSON`
-         *  and `layerKey`, the size aside (a restore measures it again). Read through a read-only connection, which
-         *  never writes to the file. */
+        /** Whether `file` already holds everything by itself (nothing in a write-ahead log), only sealed tiles, and the
+         *  settings `areaJSON` and `layerKey`, the size aside (a restore measures it again). Read through a read-only
+         *  connection, which never writes to the file. */
         private fun isExported(file: File, layerKey: String, areaJSON: String): Boolean {
             if (File(file.path + "-wal").length() > 0) return false
             val db = try {
@@ -155,11 +171,12 @@ class OfflineManager(
             }
             try {
                 db.busyTimeout(10_000)
-                val s = db.prepare("SELECT name, value FROM metadata WHERE name IN (?, ?)") ?: return false
+                val s = db.prepare("SELECT name, value FROM metadata WHERE name IN (?, ?, ?)") ?: return false
                 val stored = HashMap<String, String?>()
                 try {
                     s.bindText(1, OfflineBackup.areaKey)
                     s.bindText(2, OfflineBackup.layerKey)
+                    s.bindText(3, MBTiles.encryptedKey)
                     while (s.step() == SqlResult.ROW) {
                         val key = s.columnText(0) ?: continue
                         stored[key] = s.columnText(1)
@@ -167,7 +184,7 @@ class OfflineManager(
                 } finally {
                     s.close()
                 }
-                if (stored[OfflineBackup.layerKey] != layerKey) return false
+                if (stored[MBTiles.encryptedKey] != "1" || stored[OfflineBackup.layerKey] != layerKey) return false
                 val old = stored[OfflineBackup.areaKey] ?: return false
                 return try {
                     val a = OfflineArea.fromJson(Json.parseToJsonElement(old))
@@ -255,6 +272,22 @@ class OfflineManager(
     @Volatile
     private var freeSpace: Long? = null
 
+    /** The background work sealing the plain tiles of files from before tiles were encrypted (`encryptOldFiles`), the
+     *  area it is working on, and whether it was asked to look at every area again. */
+    private var encryption: Job? = null
+    private var encryptingArea: UUID? = null
+    private var encryptAgain = false
+
+    /** Areas whose files were found to hold only sealed tiles since launch (new tiles are always sealed). */
+    private val sealedAreas = HashSet<UUID>()
+
+    /** The area whose download waits for the sealing to stop on its files before it starts (`startNextIfIdle`); the
+     *  sealing leaves it meanwhile. */
+    private var startingArea: UUID? = null
+
+    /** Whether old files are being sealed, for tests. */
+    internal val isEncrypting: Boolean get() = encryption != null
+
     init {
         val data = try {
             AtomicFile(indexFile).readFully()
@@ -306,6 +339,8 @@ class OfflineManager(
             }
         }
         post { startNextIfIdle() }
+        // After it, so an area that starts downloading is left until its run ends.
+        post { encryptOldFiles() }
     }
 
     // Public actions
@@ -444,20 +479,25 @@ class OfflineManager(
         // freed when it closes it.)
         ExportShares.forget(id)
         pausedForReaders.remove(id)
+        sealedAreas.remove(id) // (a backup of it may be restored again, with plain tiles)
         val wasActive = _activeID.value == id
         val running = task
+        // The work sealing its tiles stops too, and goes on with the other areas once the folder is gone.
+        val sealing = encryption?.takeIf { encryptingArea == id }
         _areas.value = _areas.value.filter { it.id != id }
         save()
         publishToMap()
         readers.closeArea(id)
         val dir = File(AppPaths.offline, id.toString().uppercase())
         // The space it held is free now (see `freeSpace`).
-        if (wasActive && running != null) {
-            running.cancel()
+        val waitFor = listOfNotNull(running?.takeIf { wasActive }, sealing)
+        if (waitFor.isNotEmpty()) {
+            waitFor.forEach { it.cancel() }
             scope.launch {
-                running.join()
+                waitFor.joinAll()
                 dir.deleteRecursively()
                 measureFreeSpace()
+                if (sealing != null) encryptOldFiles()
             }
         } else {
             dir.deleteRecursively()
@@ -523,6 +563,9 @@ class OfflineManager(
             pausedForExport = active
             waitFor = running
         }
+        // Sealing old files in the background stops while downloads are held: the export seals what it shares itself.
+        val sealing = encryption
+        sealing?.cancel()
         class Item(val id: UUID, val folder: File, val name: String, val json: String)
         val items = chosen.map { a ->
             val saved = a.copy(status = if (a.status == OfflineArea.Status.complete) OfflineArea.Status.complete else OfflineArea.Status.paused)
@@ -532,6 +575,7 @@ class OfflineManager(
         ExportShares.clear()
         scope.launch {
             waitFor?.join()
+            sealing?.join()
             val result = withContext(io) {
                 runCatching {
                     val used = HashSet<String>()
@@ -564,7 +608,8 @@ class OfflineManager(
         releaseHold()
     }
 
-    /** Neither an export nor a copy holds downloads any more: they may run again, including one paused for them. */
+    /** Neither an export nor a copy holds downloads any more: they may run again, including one paused for them, and
+     *  old files are sealed again. */
     private fun releaseHold() {
         if (holdDownloads) return
         val id = pausedForExport
@@ -574,6 +619,7 @@ class OfflineManager(
         } else {
             startNextIfIdle()
         }
+        encryptOldFiles()
     }
 
     /** "Save to a folder" in the share sheet (Android only: stock Android has no "Save to Files"): copies the export's
@@ -627,6 +673,8 @@ class OfflineManager(
             save()
             publishToMap()
             if (added.isNotEmpty()) _completedRevision.value += 1
+            // A backup made before tiles were encrypted holds plain tiles: they are sealed in the background.
+            encryptOldFiles()
             val lines = mutableListOf<String>()
             if (added.isNotEmpty()) lines += "Restored ${added.joinToString(", ") { it.name }}."
             if (added.any { it.status != OfflineArea.Status.complete }) {
@@ -774,7 +822,8 @@ class OfflineManager(
         }
     }
 
-    /** The last reader of these areas closed: a download paused for them goes on, and the queue moves. */
+    /** The last reader of these areas closed: a download paused for them goes on, and the queue moves (and the sealing
+     *  of old files, which leaves them alone while they are read). */
     private fun readersClosed(ids: Set<UUID>) {
         for (id in ids) {
             if (pausedForReaders.remove(id) && _areas.value.any { it.id == id && it.status == OfflineArea.Status.paused }) {
@@ -782,6 +831,93 @@ class OfflineManager(
             }
         }
         startNextIfIdle()
+        encryptOldFiles()
+    }
+
+    // Sealing files from before tiles were encrypted
+
+    /** Seals, in the background, the tiles stored plain in areas downloaded before tiles were encrypted, or restored
+     *  from a backup made then: one area at a time, each file with `MBTiles.encryptPlainTiles` on a store of its own,
+     *  on `io` at the lowest priority (`atLowestPriority`). The map draws and downloads run meanwhile: the map reads
+     *  plain and sealed tiles alike. Called at launch, after a restore, after each download run, and when an export, a
+     *  copy or another app's reading stops holding the files. An area is left while it downloads (its store holds long
+     *  transactions), while an export or a copy holds downloads, and while another app reads its files; an export
+     *  stops the work and seals what it shares itself, and a delete stops it on its area. A download that starts on an
+     *  area being sealed stops the work too, and starts once it has stopped (`startNextIfIdle`). A file that couldn't
+     *  be finished (busy, or storage full) is tried again at the next of these calls, and the work carries on where it
+     *  stopped. */
+    private fun encryptOldFiles() {
+        if (encryption != null) {
+            encryptAgain = true
+            return
+        }
+        encryptAgain = false
+        // Set before it starts, so its end always finds it.
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            try {
+                var tried = HashSet<UUID>()
+                while (true) {
+                    if (encryptAgain) {
+                        encryptAgain = false
+                        tried = HashSet()
+                    }
+                    val a = _areas.value.firstOrNull { it.id !in sealedAreas && it.id !in tried && mayEncrypt(it.id) }
+                        ?: break
+                    tried += a.id
+                    encryptingArea = a.id
+                    val dir = a.directory
+                    val done = withContext(io) { encryptFiles(dir) { isActive } }
+                    encryptingArea = null
+                    if (done) sealedAreas += a.id
+                }
+            } finally {
+                encryptingArea = null
+                encryption = null
+                // Asked again while it was being stopped (by an export or a delete).
+                if (encryptAgain) encryptOldFiles()
+            }
+        }
+        encryption = job
+        job.start()
+    }
+
+    /** Whether an area's files may be sealed now (see `encryptOldFiles`). */
+    private fun mayEncrypt(id: UUID): Boolean =
+        !holdDownloads && _activeID.value != id && startingArea != id && ExportShares.readers(id) == 0
+
+    /** Seals the plain tiles left in an area's files, while `going()`. True when every file holds only sealed tiles,
+     *  also in the database file itself: a file that is marked (`MBTiles.isEncrypted`) with an empty write-ahead log
+     *  needs nothing; one with a log may hold the plain pages in the file still, if the run that sealed them couldn't
+     *  fold the log in (a run on a marked file only does that). Blocking: on `io`. */
+    private fun encryptFiles(dir: File, going: () -> Boolean): Boolean = atLowestPriority {
+        var done = true
+        for (layer in backupLayers) {
+            val file = File(dir, layer.fileName)
+            if (!file.exists()) continue
+            // Told to stop during the file before: not one more batch on this one.
+            if (!going()) return@atLowestPriority false
+            // Opened here, so its SQLite thread takes this thread's priority (`atLowestPriority`).
+            val store = try {
+                MBTiles(file, create = false)
+            } catch (e: Exception) {
+                done = false
+                continue
+            }
+            try {
+                if (store.isEncrypted && File(file.path + "-wal").length() == 0L) continue
+                val finished = try {
+                    encrypt(store) { _, _ -> going() }
+                } catch (e: RuntimeException) {
+                    // Swift's can't throw: a failure leaves the file to be tried again, never stops the app.
+                    Log.e("offline", "sealing ${file.path} failed", e)
+                    false
+                }
+                if (!finished) done = false
+            } finally {
+                store.close()
+            }
+        }
+        done
     }
 
     /** Deletes area folders that no longer belong to an area (e.g. the app was closed while deleting one). */
@@ -871,7 +1007,7 @@ class OfflineManager(
     }
 
     private fun startNextIfIdle() {
-        if (task != null) return
+        if (task != null || startingArea != null) return
         if (!(inForeground || background.allowsBackgroundWork) || holdDownloads) {
             background.end(success = lastRunComplete)
             return
@@ -902,7 +1038,22 @@ class OfflineManager(
         val next = _areas.value.firstOrNull {
             it.status == OfflineArea.Status.queued && ExportShares.readers(it.id) == 0
         }
-        if (next != null) {
+        val sealing = encryption
+        if (next != null && sealing != null && encryptingArea == next.id) {
+            // Its files are being sealed, on stores of their own whose batches and checkpoint hold SQLite's write lock.
+            // The run's stores, opened and given their settings here, would wait for it on the main thread (up to the
+            // 10 s busy timeout, behind a thread at the lowest priority). So the sealing stops, after the batch in hand,
+            // and the run starts once it has, as a delete waits for it.
+            startingArea = next.id
+            sealing.cancel()
+            scope.launch {
+                sealing.join()
+                startingArea = null
+                startNextIfIdle()
+                // The other areas go on being sealed (and this one, if it didn't start after all).
+                encryptOldFiles()
+            }
+        } else if (next != null) {
             run(next)
         } else if (!inForeground && background.allowsBackgroundWork &&
             _areas.value.any { it.status == OfflineArea.Status.waitingForNetwork }
@@ -1013,6 +1164,9 @@ class OfflineManager(
                     AppPaths.size(dir)
                 }
                 finished(id, outcome, size)
+                // Plain tiles from before tiles were encrypted are sealed now, if the area has any: they were left
+                // while it downloaded.
+                encryptOldFiles()
             }
         }
         task = run
@@ -1135,6 +1289,21 @@ val OfflineArea.directory: File get() = AppPaths.offlineArea(id)
 /** The roads imagery is downloaded along, or null for the whole area. */
 val OfflineArea.roadLines: List<List<GeoPoint>>?
     get() = roads ?: preset?.let { RoadPresets.load(it) }?.roads
+
+/** Runs `body` at the lowest priority (`Thread.MIN_PRIORITY`, as iOS's background QoS), then sets this thread's own
+ *  back: `io`'s threads are shared. Java's priority rather than `Process.setThreadPriority`: a new thread inherits it,
+ *  and Android sets the thread's nice value from it as it starts, so the SQLite thread of a store opened in `body`
+ *  (`AndroidSqlDriver`) runs at it too. */
+private inline fun <T> atLowestPriority(body: () -> T): T {
+    val thread = Thread.currentThread()
+    val before = thread.priority
+    thread.priority = Thread.MIN_PRIORITY
+    try {
+        return body()
+    } finally {
+        thread.priority = before
+    }
+}
 
 /** A download's fetcher: over any network, or, Wi-Fi only, bound to the network the run starts on (so its requests
  *  fail when Wi-Fi goes, instead of moving to mobile data). */

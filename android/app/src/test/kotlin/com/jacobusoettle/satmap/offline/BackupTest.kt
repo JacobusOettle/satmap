@@ -31,9 +31,11 @@ import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.OfflineArea.Status
 import com.jacobusoettle.satmap.core.OfflineBackup
 import com.jacobusoettle.satmap.core.SqlResult
+import com.jacobusoettle.satmap.core.TileCrypto
 import com.jacobusoettle.satmap.core.TileFetchResult
 import com.jacobusoettle.satmap.core.TileFetching
 import com.jacobusoettle.satmap.core.TileID
+import com.jacobusoettle.satmap.map.ImageTools
 import com.jacobusoettle.satmap.map.TileRepository
 import com.jacobusoettle.satmap.offline.AndroidSqlDriverTest.Fixture
 import com.jacobusoettle.satmap.ui.SharePresenter
@@ -42,6 +44,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
@@ -62,13 +65,18 @@ import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 import java.io.File
 import java.io.FileNotFoundException
+import java.util.Collections
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertFailsWith
 
-/** Backups through the real Android path (offline spec §1.13, §2.8, §2.14): the export writes the area into its own
- *  files through `AndroidSqlDriver` and shares them through `BackupFileProvider`, as files the iPhone app reads
- *  (`Tests/SatMapCoreTests/BackupCompatibilityTests.swift`); readers hold their area's download; and a restore takes the
- *  iPhone's backup, a satellite file alone, an area already there and files that aren't backups. */
+/** Backups through the real Android path (offline spec §1.13, §1.16, §2.8, §2.14): the export writes the area into its
+ *  own files through `AndroidSqlDriver`, its tiles sealed, and shares them through `BackupFileProvider`, as files the
+ *  iPhone app reads (`Tests/SatMapCoreTests/BackupCompatibilityTests.swift`); readers hold their area's download; and a
+ *  restore takes the iPhone's backup, backups from before tiles were encrypted (sealed afterwards), a satellite file
+ *  alone, an area already there and files that aren't backups. */
 @RunWith(AndroidJUnit4::class)
 class BackupTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
@@ -117,6 +125,10 @@ class BackupTest {
         downloads.deleteRecursively()
     }
 
+    /** How files from before tiles were encrypted are sealed: as the app does, unless a test watches or holds it. */
+    private var encrypt: (MBTiles, (Long, Long) -> Boolean) -> Boolean =
+        { store, progress -> store.encryptPlainTiles(progress = progress) }
+
     /** `io` is the main looper unless a test passes its own. */
     private fun makeManager(io: CoroutineDispatcher = Dispatchers.Main): OfflineManager {
         manager = OfflineManager(
@@ -133,6 +145,7 @@ class BackupTest {
 
                 override fun closeArea(id: UUID) {}
             },
+            encrypt = { store, progress -> encrypt(store, progress) },
         )
         idle()
         return manager
@@ -248,6 +261,13 @@ class BackupTest {
             assertEquals(name, emptyList<String?>(), rows(file, "SELECT name FROM sqlite_master WHERE name = 'android_metadata'"))
             assertEquals(name, listOf("metadata", "tiles", "missing_tiles"),
                          rows(file, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY rowid"))
+            // Its tiles are sealed: none is a picture another app could show.
+            val stored = AndroidSqlDriverTest.storedTiles(file)
+            assertTrue(name, stored.isNotEmpty())
+            for (blob in stored) {
+                assertTrue(name, TileCrypto.isSealed(blob))
+                assertFalse(name, ImageTools.looksLikeImage(blob))
+            }
 
             val info = OfflineBackup.inspect(file)
             layers[info.layerKey] = file
@@ -434,8 +454,13 @@ class BackupTest {
         val m = makeManager(io = Dispatchers.IO)
         val before = m.completedRevision.value
         // Picked in Files from Google Drive: the provider tells the names and sizes.
-        val satellite = File(fixtures, "backup/iphone/Fixture farm - satellite.mbtiles")
-        val elevation = File(fixtures, "backup/iphone/Fixture farm - elevation.mbtiles")
+        val satellite = File(fixtures, "backup/iphone-encrypted/Fixture farm - satellite.mbtiles")
+        val elevation = File(fixtures, "backup/iphone-encrypted/Fixture farm - elevation.mbtiles")
+        val sealing = Collections.synchronizedList(mutableListOf<String>())
+        encrypt = { store, progress ->
+            sealing += store.file.name
+            store.encryptPlainTiles(progress = progress)
+        }
         Drive.files = mapOf("1" to satellite, "2" to elevation)
         Robolectric.buildContentProvider(Drive::class.java).create("com.example.drive")
         val statuses = mutableListOf<String?>()
@@ -466,6 +491,9 @@ class BackupTest {
         assertFalse(AppPaths.restoreFolder.exists())
         val saved = Json.parseToJsonElement(File(AppPaths.offline, "areas.json").readText()).jsonArray.map(OfflineArea::fromJson)
         assertEquals(m.areas.value, saved)
+        // Its tiles are sealed already: there is nothing to seal.
+        idleUntil { !m.isEncrypting }
+        assertEquals(emptyList<String>(), sealing)
         // The files in place, read as the map reads them.
         val imagery = MBTiles(File(dir, "imagery.mbtiles"), create = false)
         for ((t, data) in Fixture.imageryTiles) assertArrayEquals(data, imagery.tile(t))
@@ -483,6 +511,90 @@ class BackupTest {
         assertEquals("Fixture farm is already in SatMap.", m.backupMessage.value)
         assertEquals(1, m.areas.value.size)
         assertEquals(before + 1, m.completedRevision.value)
+    }
+
+    @Test
+    fun aBackupFromBeforeTilesWereEncryptedIsSealedOnceRestored() {
+        // Made by either app before tiles were encrypted: restored as it is, then sealed in the background (on a thread
+        // of its own, as on the phone).
+        val m = makeManager(io = Dispatchers.IO)
+        val terrainTile = listOf(Fixture.terrainTile to File(fixtures, "terrarium_12_2390_2342.png").readBytes())
+        for (folder in listOf("iphone", "android")) {
+            val files = listOf("satellite", "elevation").map { File(fixtures, "backup/$folder/Fixture farm - $it.mbtiles") }
+            val copies = files.map { f -> File(downloads, f.name).also { f.copyTo(it, overwrite = true) } }
+            m.clearBackupMessage()
+            m.restore(copies.map { Uri.fromFile(it) })
+            idleUntil { m.backupMessage.value != null }
+            assertEquals(folder, "Restored Fixture farm.", m.backupMessage.value)
+            idleUntil { !m.isEncrypting }
+            val dir = AppPaths.offlineArea(Fixture.area.id)
+            for ((name, tiles) in listOf("imagery.mbtiles" to Fixture.imageryTiles, "terrain.mbtiles" to terrainTile)) {
+                val file = File(dir, name)
+                val stored = AndroidSqlDriverTest.storedTiles(file)
+                assertEquals("$folder $name", tiles.size, stored.size)
+                for (blob in stored) {
+                    assertTrue("$folder $name", TileCrypto.isSealed(blob))
+                    assertFalse("$folder $name", ImageTools.looksLikeImage(blob))
+                }
+                assertFalse("$folder $name", AndroidSqlDriverTest.holdsAnyOf(file.readBytes(), tiles))
+                MBTiles(file, create = false).use { store ->
+                    assertTrue("$folder $name", store.isEncrypted)
+                    for ((t, data) in tiles) assertArrayEquals("$folder $name $t", data, store.tile(t))
+                    if (name == "imagery.mbtiles") assertTrue(store.isMissing(Fixture.missingImagery))
+                }
+            }
+            // The backup's own files aren't changed.
+            for ((f, copy) in files.zip(copies)) assertArrayEquals(f.readBytes(), copy.readBytes())
+            m.delete(Fixture.area.id)
+            idle()
+        }
+    }
+
+    @Test(timeout = 60_000)
+    fun anExportSealsAnAreaFromBeforeTilesWereEncrypted() {
+        // An area an older SatMap downloaded, its tiles plain, exported while they are being sealed in the background.
+        val tiles = AndroidSqlDriverTest.plainTiles(40)
+        AndroidSqlDriverTest.saveOldTiles(File(AppPaths.offlineArea(Fixture.area.id), "imagery.mbtiles"), tiles)
+        saveList(listOf(Fixture.area))
+        val halfway = CountDownLatch(1)
+        val goOn = CountDownLatch(1)
+        val answers = Collections.synchronizedList(mutableListOf<Boolean>())
+        encrypt = { store, progress ->
+            store.encryptPlainTiles(batchSize = 16) { checked, total ->
+                if (checked == 16L) {
+                    halfway.countDown()
+                    goOn.await()
+                }
+                progress(checked, total).also { answers += it }
+            }
+        }
+        val io = Executors.newSingleThreadExecutor { r -> Thread(r, "test io") }.asCoroutineDispatcher()
+        try {
+            val m = makeManager(io)
+            assertTrue(halfway.await(30, TimeUnit.SECONDS))
+            // The export stops the background work (after the batch in hand) and seals the rest itself.
+            m.export(listOf(Fixture.area.id))
+            goOn.countDown()
+            idleUntil { SharePresenter.request.value != null || m.backupMessage.value != null }
+            assertEquals(listOf(false), answers)
+            val (name, file) = receive(shared().uris.single())
+            assertEquals("Fixture farm - satellite.mbtiles", name)
+            val stored = AndroidSqlDriverTest.storedTiles(file)
+            assertEquals(tiles.size, stored.size)
+            for (blob in stored) assertTrue(TileCrypto.isSealed(blob))
+            // Not a plain picture in the file sent, and it is still a backup that restores.
+            assertFalse(AndroidSqlDriverTest.holdsAnyOf(file.readBytes(), tiles))
+            assertEquals("imagery", OfflineBackup.inspect(file).layerKey)
+            MBTiles(file, create = false).use { store ->
+                assertTrue(store.isEncrypted)
+                for ((t, data) in tiles) assertArrayEquals("$t", data, store.tile(t))
+            }
+            SharePresenter.finished()
+            idleUntil { !m.isEncrypting }
+        } finally {
+            goOn.countDown()
+            io.close()
+        }
     }
 
     @Test

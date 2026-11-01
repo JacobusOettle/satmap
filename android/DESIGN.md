@@ -42,6 +42,7 @@ other, and how the work is ordered and tested.
 | D19 | Network errors in map tiles | The interceptor never fails a request with an exception, except when MapLibre cancels it. Every outcome is a 200 or a 204 with `Cache-Control`. `MapLibre.setConnected(true)` is set once at startup and never toggled. |
 | D20 | Car map surface | A `Presentation` on a `VirtualDisplay` with a `MapView` in `textureMode(true)` (offline spec §2.12). |
 | D21 | WorkManager | It is not used: downloads run in a foreground service. Remove the dependency in M0. |
+| D22 | Encrypted tiles | Offline tiles are stored sealed by core (`TileCrypto`, `MBTiles.put`/`tile`; the format is in `PORTING.md`), so files copied off the phone can't be shown in another app. The app never reads or writes `tile_data` itself: the map reads through `MBTiles.tile`, downloads write through `MBTiles.put`, and export, restore and "Save to a folder" move whole files. Files from before tiles were encrypted (old areas, restored old backups) are sealed in place by `OfflineManager.encryptOldFiles` with `MBTiles.encryptPlainTiles`: in the process, not in WorkManager (D21) or a service; one area at a time, a store of its own per file, on `io` at `Thread.MIN_PRIORITY` (Java's priority, which the store's SQLite thread inherits as it is made; iOS uses the background QoS). It runs at launch, after a restore, after each download run and when an export, a copy or another app's reading ends; it skips the downloading area, every area while an export or copy holds downloads, and areas another app reads; an export stops it and seals what it shares first (`prepareExport`), and a download starting on the area being sealed stops it and starts once it has stopped, so the main thread never waits for the sealing's write lock as it opens the run's stores. A file counts as done when it is marked (`MBTiles.isEncrypted`) and its write-ahead log is empty: a marked file with a log may still hold plain pages in the file itself if the run couldn't fold the log in, so it gets another run (only the checkpoint). |
 
 ---
 
@@ -94,7 +95,7 @@ package owns the file (§7). Only the owner edits a file.
 
 | File | iOS counterpart | Contents | WP |
 | --- | --- | --- | --- |
-| `offline/OfflineManager.kt` | `OfflineManager.swift` | The area list, the queue, runs, backup export and restore. Main thread only. | E |
+| `offline/OfflineManager.kt` | `OfflineManager.swift` | The area list, the queue, runs, backup export and restore, and the sealing of files from before tiles were encrypted (D22). Main thread only. | E |
 | `offline/BackgroundDownload.kt` | `BackgroundDownload.swift` | The same API as Swift, backed by `OfflineDownloadService`. Owns the progress notification and `status`. | E |
 | `offline/OfflineDownloadService.kt` | `BGContinuedProcessingTask` | Foreground service of type `dataSync`, with a wake lock, Stop and `onTimeout`. | E |
 | `offline/DownloadHttp.kt` | `OfflineManager.makeSession` | The OkHttp clients for downloads (any network or Wi-Fi only) and for roads and places. | E |
@@ -1208,9 +1209,9 @@ filesDir/SatMap/                          (credential-encrypted: readable after 
   KML/index.json, KML/<UUID>.kml|.kmz|.gpx KMLLibrary (AtomicFile)                     backed up
   Offline/                                excluded from backup and device transfer
     areas.json                            AtomicFile; an unreadable file is renamed areas.json.unreadable-<unix s>
-    <UUID upper-case>/imagery.mbtiles, terrain.mbtiles (+ -wal, -shm while open)
+    <UUID upper-case>/imagery.mbtiles, terrain.mbtiles (+ -wal, -shm while open); tiles sealed (D22)
     Restoring/                            restore staging, removed at start and after each restore
-cacheDir/tiles-http/                      OkHttp disk cache, 1 GiB
+cacheDir/tiles-http/                      OkHttp disk cache, 1 GiB (tiles as the server sent them, as iOS's URLCache)
 getExternalFilesDir("screenshots")        androidTest only
 ```
 
@@ -1264,7 +1265,7 @@ class Connectivity private constructor(context: Context) {
   - it does nothing for an intent replayed from Recents (`FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY`, `MainActivity.isReplay`): clearing the action doesn't change the task's base intent, which Recents relaunches with on API 26–30 after Back finished the activity.
 - **Export:**
   1. `OfflineManager.export(ids)` holds downloads and pauses an exported area that is downloading.
-  2. `OfflineBackup.prepareExport` (core) writes the metadata and checkpoints.
+  2. `OfflineManager.prepareExport` (offline spec §2.8 asks core for it as `OfflineBackup.prepareExport`) seals a file that still holds plain tiles, writes the metadata and checkpoints. A file another app still reads is shared as it is only if it is already sealed and up to date.
   3. The files are registered in `ExportShares` (URI → area, file, display name).
   4. `SharePresenter.present(ShareRequest(uris) { finishExport() })`.
   5. `ShareHost` launches `Intent.createChooser(ACTION_SEND_MULTIPLE, …)` with `FLAG_GRANT_READ_URI_PERMISSION`, plus "Save to a folder" (`EXTRA_CHOOSER_CUSTOM_ACTIONS` on API 34+, `EXTRA_INITIAL_INTENTS` with `SaveToFolderActivity` below).
@@ -1274,7 +1275,7 @@ class Connectivity private constructor(context: Context) {
     - while a provider reader or the "Save to a folder" copy has an area's files open, that area is not started, and it is paused if it is downloading;
     - the last close resumes it and calls `startNextIfIdle()`;
     - the registry is cleared on the next export and when the area is deleted.
-- **Restore:** `OpenMultipleDocuments(arrayOf("*/*"))` → `offline.restore(uris)`. Each file is copied through `ContentResolver` in 4 MiB pieces into `Restoring/`, with progress.
+- **Restore:** `OpenMultipleDocuments(arrayOf("*/*"))` → `offline.restore(uris)`. Each file is copied through `ContentResolver` in 4 MiB pieces into `Restoring/`, with progress. Backups with sealed tiles and old ones with plain tiles restore alike; the plain tiles are then sealed in the background (D22).
 
 ---
 
@@ -1378,7 +1379,7 @@ classes that don't touch `MapLibreMap`. `org.maplibre.geojson` types are plain J
 | map tiles (B) | `TileLevels` against iOS's formulas (zoom 0–21; pixel ratios 1, 2, 2.625, 3, 3.5; tolerances in rendering spec §2.13); `contourMinZoom`; `TileUrls` round trip; `RequestLimiter` order and cancellation; `TileRepository.nearestImagery` with a fake fetcher and fake offline stores (beyond depth, failure → offline ancestors only, the network pause after 8 failures); the interceptor answer table through a real `OkHttpClient` (codes, `Cache-Control`, the 1×1 blank, cancellation); contour colour ints and widths; `colourPng` edge pixels. |
 | map interaction (C) | `PointAdjuster.place`, `fingerGround`, the 5 m clamp and scroll step; `MapController.entry` (the aim line's entry and dash phase); camera string round trip; `BlockLayers.shapes` (every style case, width clamp, white when colours are off); `AviationLayer` selection (km filter, 15 % padding, cap of 140); `AviationCard.text`; the lasso's 3 dp step + Douglas–Peucker; `MeasureMode.label`. |
 | ui (D) | Compose tests under Robolectric with `MapScreen(map = null)`: panel texts for each measure state; `HeightBar` semantics (`above sea level`, ` ft `, ` m `); `CoordinateBar` "Copied" for 2.5 s; terrain toast 1.8 s; `NewAreaView` chosen zoom (`deepestFitting`, `rememberedZoom`) and size texts; `AreaDetailView` button titles; the back stack keeping route state. |
-| offline, kml (E) | The `OfflineManager` state machine (offline spec §2.14): queue order, pause winning, re-queue during a run, Wi-Fi-only waiting, retry delay 15→600, low-space stop, the preset guard, unreadable `areas.json`, orphan folders, `downloading` → `queued` at load. Export display names and the reader hold; restore of `Tests/SatMapCoreTests/Fixtures/backup/iphone`, a satellite-only file, a duplicate, a non-backup. `KMLLibrary`: `.kmz` when the data starts with `PK`, `.gpx` for a GPX file, `hidden` round trip, the `kmlFileColours` default, delete, an import during the initial load. `RoadFetcher` and `PlaceSearch` with `MockWebServer`: the 12 s stagger, the first answer winning, the error texts, percent-encoding, `lat`/`lon` with a point under a German locale. |
+| offline, kml (E) | The `OfflineManager` state machine (offline spec §2.14): queue order, pause winning, re-queue during a run, Wi-Fi-only waiting, retry delay 15→600, low-space stop, the preset guard, unreadable `areas.json`, orphan folders, `downloading` → `queued` at load. Export display names and the reader hold, and exported tiles sealed (none an image); restore of `Tests/SatMapCoreTests/Fixtures/backup/iphone-encrypted`, a satellite-only file, a duplicate, a non-backup. Sealing files from before tiles were encrypted (D22): an old area at launch (at the lowest priority, no plain picture left in the file), an old area that downloads only after its run, the map drawing every tile from its own reader while an area is half sealed, a delete stopping it, a download resumed on the area being sealed starting once the work has stopped (the main thread not waiting for the file's write lock) and the work carrying on where it stopped after the run, the old backups `…/backup/iphone` and `…/backup/android` sealed once restored, and an export sealing an old area itself. `AndroidSqlDriverTest` reads all four backup fixtures on Android's SQLite. `KMLLibrary`: `.kmz` when the data starts with `PK`, `.gpx` for a GPX file, `hidden` round trip, the `kmlFileColours` default, delete, an import during the initial load. `RoadFetcher` and `PlaceSearch` with `MockWebServer`: the 12 s stagger, the first answer winning, the error texts, percent-encoding, `lat`/`lon` with a point under a German locale. |
 | car (B) | `app-testing`: `ScreenController(CarMapScreen)` → one `NavigationTemplate` titled `Contours`; after a click, `Contours + colours`; the map strip has 4 actions, the last `TYPE_PAN`. `CarMapController` camera logic against a fake map. |
 
 ### 8.2 Instrumented screenshot walkthrough (emulator in GitHub Actions)
@@ -1446,3 +1447,4 @@ videos.
 - **Device and OEM differences:** Settings paths in the hints, battery killers, GL drivers, `onTrimMemory` under real pressure, Android 12–13 refusing exact alarms.
 - **Visual parity.** It is judged by eye against `docs/screenshots/*.jpg` (M6), not by pixel diff: fonts (Roboto against SF), materials (the loupe rim) and the status bar differ.
 - **A backup made on a real iPhone, restored on a real phone, and the reverse.** The fixtures cover the format only.
+- **Sealing a large old area on a real phone** (D22): how long a 15 GB area takes, the battery it uses, and that the map stays smooth and a download of another area keeps its speed meanwhile.
