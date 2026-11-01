@@ -54,6 +54,7 @@ the system properties `satmap.resources` and `satmap.fixtures`.
 | zlib / own `Inflate` | `java.util.zip.Inflater` |
 | own `ZipArchive` | `java.util.zip` (same API as the Swift type exposes) |
 | SQLite C API (MBTiles) | a small `SqlDriver` interface in core: sqlite-jdbc in the core tests, `android.database.sqlite` in the app |
+| CryptoKit `AES.GCM` (`TileCrypto`) | `javax.crypto.Cipher` `"AES/GCM/NoPadding"` with `GCMParameterSpec(128, nonce)` and `updateAAD` |
 | `JSONSerialization`/`Codable` | `org.json` is Android-only, so in core: a small JSON reader/writer of our own (or kotlinx-serialization if it keeps the code simpler) |
 | `UserDefaults` | `SharedPreferences` (same keys) |
 | `@Published` / `ObservableObject` | `StateFlow` (`MutableStateFlow` private, `asStateFlow()` public) |
@@ -77,6 +78,22 @@ writes and reads exactly what the iPhone app does:
 - An area's folder holds `imagery.mbtiles` and `terrain.mbtiles` (MBTiles: tables `metadata`, `tiles`,
   `missing_tiles`, as `MBTiles.swift` creates them, WAL journaling). On Android, open them with
   `SQLiteDatabase.NO_LOCALIZED_COLLATORS`, so no `android_metadata` table is added.
+- Tiles are stored encrypted (`TileCrypto`), so files copied off the phone can't be shown in another app.
+  A sealed tile (`tile_data`) is the bytes `S` `M` `T` `0x01` (magic and format version 1), a 12-byte random nonce,
+  the AES-256-GCM ciphertext and its 16-byte tag. The associated data is the UTF-8 text `satmap/{z}/{x}/{y}` with the
+  XYZ tile (`TileID`'s, not the TMS `tile_row`), so a tile can't be moved to another place. The key is the app's one
+  256-bit key, the same bytes in both apps (in `TileCrypto.swift` and `TileCrypto.kt`, two 32-byte halves XORed), so
+  backups restore on either. Swift uses CryptoKit (OpenSSL's EVP on Linux, for the tests), Kotlin `javax.crypto`;
+  both give the same bytes for the same nonce (`TileCryptoTests`, with a fixed nonce through the internal
+  `seal(data, tile, nonce)`).
+- `MBTiles.put` seals every tile, imagery and elevation, unless it already starts with the magic (a tile server may
+  deliver tiles sealed in this format; they are stored as they come). `MBTiles.tile` opens sealed tiles and returns
+  plain ones as they are: files from before tiles were encrypted hold plain tiles, and a file may hold both, as no
+  image format starts with the magic (JPEG `FF D8`, PNG `89 50`, WebP `RIFF`, GIF `GIF8`). A tile that doesn't open
+  is missing (logged once per store).
+- Metadata `satmap_encrypted` = `1` marks a file whose tiles are all sealed: set when a file is created (a new file,
+  or one without tiles), and by `MBTiles.encryptPlainTiles`, which seals an old file's plain tiles in place, in
+  batches (each a transaction), resumable, overwriting the plain tiles' space with zeros (`secure_delete`).
 - Export: the area's settings go into each file's metadata (`satmap_area`: the area JSON, `satmap_layer`:
   `imagery`/`terrain`), the write-ahead log is folded in (`PRAGMA wal_checkpoint(TRUNCATE)`, no `-wal` file left),
   and the files are shared as "<name> - satellite.mbtiles" and "<name> - elevation.mbtiles"
@@ -95,10 +112,13 @@ writes and reads exactly what the iPhone app does:
   Reading accepts any key order, lower-case UUIDs, numbers with or without decimals, and `null` for a value not set,
   and is otherwise as strict as Swift's `JSONDecoder`: restore reads the text with `OfflineArea.decode`.
 - Restore accepts the files from any app or folder (they may have been through Google Drive, a computer, e-mail …):
-  any file name, chosen together in one pick; the files say which area and layer they are.
-- Tests on both sides read a backup made by the other app: `Tests/SatMapCoreTests/Fixtures/backup/iphone` (made by
-  the iPhone code) and `…/backup/android` (made by the Android code), and write a file's shape as the same text
-  (`…/Fixtures/file-area-shape.json`, keys sorted: Swift's `JSONEncoder` puts them in a different order each run).
+  any file name, chosen together in one pick; the files say which area and layer they are. Backups from before tiles
+  were encrypted (plain tiles) restore as they are, and are then sealed in place (`encryptPlainTiles`).
+- Tests on both sides read a backup made by the other app: `Tests/SatMapCoreTests/Fixtures/backup/iphone-encrypted`
+  (made by the iPhone code) and `…/backup/android-encrypted` (made by the Android code), with sealed tiles; and
+  `…/backup/iphone` and `…/backup/android`, made the same way before tiles were encrypted (plain tiles), which show
+  that old backups still restore (and are sealed by `encryptPlainTiles`). They also write a file's shape as the same
+  text (`…/Fixtures/file-area-shape.json`, keys sorted: Swift's `JSONEncoder` puts them in a different order each run).
 
 ## The map on Android
 

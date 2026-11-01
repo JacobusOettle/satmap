@@ -36,9 +36,10 @@ struct OfflineArea: Codable, Identifiable, Equatable {
     var alongRoads: Bool { roads != nil || preset != nil }
 }
 
-/// Backups of offline areas as plain MBTiles files, one per layer ("<area> - satellite.mbtiles" and
+/// Backups of offline areas as MBTiles files, one per layer ("<area> - satellite.mbtiles" and
 /// "<area> - elevation.mbtiles"). Each file carries the area's settings in its metadata, so the files can be
-/// restored into the app later, and other map apps can open them meanwhile.
+/// restored into the app later, on this phone or another, iPhone or Android. Their tiles are sealed (`TileCrypto`),
+/// so other apps can't show the pictures; backups made before tiles were encrypted hold plain tiles and restore too.
 enum OfflineBackup {
     struct Layer {
         /// File name inside the area's folder.

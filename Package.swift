@@ -9,11 +9,14 @@ let package = Package(
     targets: [
         .systemLibrary(name: "CSQLite", path: "Tests/Shims/CSQLite"),
         .systemLibrary(name: "CZlib", path: "Tests/Shims/CZlib"),
+        .systemLibrary(name: "COpenSSL", path: "Tests/Shims/COpenSSL"),
         .target(
             name: "SatMapCore",
             dependencies: [
                 .target(name: "CSQLite", condition: .when(platforms: [.linux])),
                 .target(name: "CZlib", condition: .when(platforms: [.linux])),
+                // AES-GCM for TileCrypto (CryptoKit on Apple platforms).
+                .target(name: "COpenSSL", condition: .when(platforms: [.linux])),
             ],
             path: "SatMap/Core"
         ),
