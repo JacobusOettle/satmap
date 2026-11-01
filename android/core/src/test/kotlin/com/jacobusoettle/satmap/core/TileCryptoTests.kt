@@ -10,6 +10,7 @@ import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
 import java.sql.DriverManager
+import kotlin.concurrent.thread
 
 /** Offline tiles are stored sealed (`TileCrypto`), the same bytes on Android and on the iPhone: the Swift tests
  *  (Tests/SatMapCoreTests/TileCryptoTests.swift) are the same, with the same values. */
@@ -191,21 +192,87 @@ class TileCryptoTests {
 
     @Test
     fun testNoPlainPictureIsLeftInTheFile() {
-        // Small tiles, and large ones that spill onto overflow pages: the space each took is overwritten.
+        // Small tiles, and large ones that spill onto overflow pages: the space each took is overwritten, and the
+        // sealed pages are folded into the database file, while the map's store stays open.
         val url = File(tempDir(), "old.mbtiles")
         val tiles = (0 until 40).map { i ->
             TileID(z = 16, x = 500 + i, y = 700) to "PLAIN PICTURE $i ".repeat(if (i % 2 == 0) 20 else 600).toByteArray()
         }
         writePlainStore(url, tiles)
         val picture = "PLAIN PICTURE".toByteArray()
+        val wal = File(url.path + "-wal")
         assertTrue(contains(url.readBytes(), picture))
+        val map = MBTiles(url, create = false)
         val store = MBTiles(url, create = false)
-        assertTrue(store.encryptPlainTiles(batchSize = 16))
-        assertTrue(store.checkpoint())
-        store.close()
-        assertFalse(contains(url.readBytes(), picture))
-        MBTiles(url, create = false).use { reopened ->
-            for ((t, data) in tiles) assertArrayEquals(data, reopened.tile(t))
+        try {
+            assertArrayEquals(tiles[0].second, map.tile(tiles[0].first))
+
+            // A reader in the middle of a read keeps the checkpoint from finishing: it stops soon, the tiles sealed and
+            // the file marked, but the plain pages still in the database file.
+            DriverManager.getConnection("jdbc:sqlite:${url.path}").use { reader ->
+                reader.autoCommit = false
+                reader.createStatement().use { s -> s.executeQuery("SELECT COUNT(*) FROM tiles").use { it.next() } }
+                val start = System.nanoTime()
+                assertFalse(store.encryptPlainTiles(batchSize = 16))
+                assertTrue(System.nanoTime() - start < 5_000_000_000L)
+                assertTrue(store.isEncrypted)
+                assertTrue(contains(url.readBytes(), picture))
+                reader.commit()
+            }
+
+            // Run again, only the checkpoint is left. Then neither the file nor its log holds a plain picture.
+            assertTrue(store.encryptPlainTiles(batchSize = 16) { _, _ ->
+                fail("checked again")
+                true
+            })
+            assertFalse(contains(url.readBytes(), picture))
+            assertFalse(wal.exists() && contains(wal.readBytes(), picture))
+            for ((t, data) in tiles) assertArrayEquals(data, map.tile(t))
+        } finally {
+            store.close()
+            map.close()
+        }
+    }
+
+    @Test
+    fun testADownloadKeepingTheFileBusyDoesntHoldUpTheMap() {
+        val url = File(tempDir(), "old.mbtiles")
+        val tiles = plainTiles(300)
+        writePlainStore(url, tiles)
+        // Run on the map's store while a download, through a connection of its own, keeps its transaction open (as it
+        // does for 256 tiles at a time).
+        val store = MBTiles(url, create = false)
+        val download = MBTiles(url, create = true)
+        try {
+            assertTrue(download.put(TileID(z = 18, x = 999, y = 2000), data = "added".toByteArray()))
+
+            var encrypted: Boolean? = null
+            val start = System.nanoTime()
+            val worker = thread { encrypted = store.encryptPlainTiles(batchSize = 64) }
+            // Meanwhile the map's reads wait for it no longer than about a batch.
+            var longestRead = 0L
+            var i = 0
+            while (worker.isAlive) {
+                val readStart = System.nanoTime()
+                assertArrayEquals(tiles[i % tiles.size].second, store.tile(tiles[i % tiles.size].first))
+                longestRead = maxOf(longestRead, System.nanoTime() - readStart)
+                i += 1
+            }
+            worker.join()
+            // It stops soon, to run again later.
+            assertEquals(false, encrypted)
+            assertTrue(System.nanoTime() - start < 5_000_000_000L)
+            assertTrue("${longestRead / 1_000_000} ms", longestRead < 1_000_000_000L)
+            assertFalse(store.isEncrypted)
+
+            // Once the download has committed, it runs.
+            assertTrue(download.flush())
+            assertTrue(store.encryptPlainTiles())
+            assertTrue(store.isEncrypted)
+            for ((t, data) in tiles) assertArrayEquals("$t", data, store.tile(t))
+        } finally {
+            download.close()
+            store.close()
         }
     }
 

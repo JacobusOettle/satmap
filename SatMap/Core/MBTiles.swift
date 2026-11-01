@@ -39,6 +39,11 @@ final class MBTiles {
     private var uncommittedWrites = 0
     private let writesPerTransaction = 256
     private var loggedUnreadable = false
+    /// How long a statement waits for another connection's lock before it gives up.
+    private static let busyTimeout: Int32 = 10_000
+    /// The same for `encryptPlainTiles`, which waits holding the lock: briefly, so the store's other calls (the map's
+    /// reads, if it runs on the map's store) aren't held up while a download writes through another connection.
+    private static let briefBusyTimeout: Int32 = 200
 
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
@@ -60,7 +65,7 @@ final class MBTiles {
             throw StoreError.open(msg)
         }
         db = opened
-        sqlite3_busy_timeout(opened, 10_000)
+        sqlite3_busy_timeout(opened, Self.busyTimeout)
         guard create else { return }
         try exec("""
             PRAGMA journal_mode=WAL;
@@ -256,15 +261,13 @@ final class MBTiles {
     func checkpoint() -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard let db = db else { return false }
-        let committed = commitLocked()
-        return sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil) == SQLITE_OK && committed
+        return checkpointLocked()
     }
 
     // MARK: - Encrypting files from before tiles were encrypted
 
     /// Metadata key set to "1" on a file whose tiles are all sealed: on new files as they are created, and by
-    /// `encryptPlainTiles` when it is done.
+    /// `encryptPlainTiles` when it has sealed them all.
     static let encryptedKey = "satmap_encrypted"
 
     /// Whether every tile is sealed (the file is marked with `encryptedKey`). Files from before tiles were encrypted,
@@ -273,41 +276,55 @@ final class MBTiles {
         metadata(Self.encryptedKey) == "1"
     }
 
-    /// Seals the tiles stored plain in place, `batchSize` rows at a time, each batch in a transaction of its own,
-    /// then marks the file (`encryptedKey`). Meant to run in the background at low priority: between batches the map
-    /// reads and a download writes as usual, also through other connections to the file. The space a plain tile took
-    /// is overwritten with zeros (`secure_delete`), so its picture isn't left in the file's free space; scraps that
-    /// SQLite left in unused parts of pages when the file was written may remain.
+    /// Seals the tiles stored plain in place, `batchSize` rows at a time, each batch in a transaction of its own; the
+    /// batch that finds no rows left marks the file (`encryptedKey`). Then a checkpoint (`checkpoint`) folds the sealed
+    /// tiles into the database file and empties the write-ahead log: until then the file itself still holds the plain
+    /// tiles, and the log earlier copies of their pages. The space a plain tile took is overwritten with zeros
+    /// (`secure_delete`), so after the checkpoint its picture isn't left in the file's free space; scraps that SQLite
+    /// left in unused parts of pages when the file was written may remain.
+    ///
+    /// Meant to run in the background at low priority, on the area's download store while one is open (its pending
+    /// writes are committed before each batch), else on the map's store or one of its own: between batches the map
+    /// reads and a download writes as usual. A batch, and the checkpoint, hold the store's lock while they wait for
+    /// another connection (a download's transaction, a reader in the middle of a read), so they wait only 0.2 s, not
+    /// the usual 10 s: the store's other calls are held up by little more than a batch, and if the other connection is
+    /// still busy it stops.
     ///
     /// `progress` is told the rows checked so far and the tiles in the file after each batch, and stops the work by
-    /// returning false. Returns true when every tile is sealed and the file is marked (at once if it already was);
-    /// false if it stopped early: asked to, a write failed (e.g. storage full), or another connection kept the file
-    /// busy past the busy timeout. It can run again at any time and carries on with the tiles still plain.
+    /// returning false. Returns true when every tile is sealed, the file is marked and the checkpoint has finished (if
+    /// the file was marked already, only the checkpoint runs); false if it stopped early: asked to, a write failed
+    /// (e.g. storage full), or another connection kept the file busy. It can run again at any time and carries on with
+    /// what is left.
     @discardableResult
     func encryptPlainTiles(batchSize: Int = 64, progress: (_ checked: Int, _ total: Int) -> Bool = { _, _ in true }) -> Bool {
-        if isEncrypted { return true }
-        let total = tileCount()
-        var after: Int64 = 0
-        var checked = 0
-        while true {
-            guard let batch = encryptBatch(after: after, limit: max(1, batchSize)) else { return false }
-            guard batch.rows > 0 else { break }
-            checked += batch.rows
-            after = batch.lastRowID
-            // Tiles a download adds meanwhile come after the others (and are sealed already).
-            guard progress(checked, max(total, checked)) else { return false }
+        if !isEncrypted {
+            let total = tileCount()
+            var after: Int64 = 0
+            var checked = 0
+            while true {
+                guard let batch = encryptBatch(after: after, limit: max(1, batchSize)) else { return false }
+                guard batch.rows > 0 else { break }
+                checked += batch.rows
+                after = batch.lastRowID
+                // Tiles a download adds meanwhile come after the others (and are sealed already).
+                guard progress(checked, max(total, checked)) else { return false }
+            }
         }
-        setMetadata([Self.encryptedKey: "1"])
-        return flush()
+        // Also when the file was marked already: an earlier run may have stopped at the checkpoint.
+        lock.lock()
+        defer { lock.unlock() }
+        return waitingBriefly { checkpointLocked() }
     }
 
-    /// Seals the plain tiles among the next `limit` rows after `after` (a rowid) in one transaction. The number of
-    /// rows checked and the last one's rowid, or nil if it failed (and nothing was changed).
+    /// Seals the plain tiles among the next `limit` rows after `after` (a rowid) in one transaction, and marks the file
+    /// if there are none. The number of rows checked and the last one's rowid, or nil if it failed (and nothing was
+    /// changed).
     private func encryptBatch(after: Int64, limit: Int) -> (rows: Int, lastRowID: Int64)? {
         lock.lock()
         defer { lock.unlock() }
         // A download's writes still open on this connection are committed first: the batch is a transaction of its own.
-        guard let db = db, commitLocked(), sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return nil }
+        guard let db = db, commitLocked(),
+              waitingBriefly({ sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) }) == SQLITE_OK else { return nil }
         // Freed space is overwritten with zeros. Set inside the transaction: on Android that runs it on the writing
         // connection.
         sqlite3_exec(db, "PRAGMA secure_delete=ON", nil, nil, nil)
@@ -349,6 +366,10 @@ final class MBTiles {
             sqlite3_clear_bindings(update)
             sqlite3_reset(update)
         }
+        // None left: every tile is sealed (a download adds them sealed), so the file is marked in the same transaction.
+        if ok && rows == 0 {
+            ok = sqlite3_exec(db, "INSERT OR REPLACE INTO metadata (name, value) VALUES ('\(Self.encryptedKey)', '1')", nil, nil, nil) == SQLITE_OK
+        }
         guard ok, sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
             return nil
@@ -371,6 +392,20 @@ final class MBTiles {
         uncommittedWrites += 1
         if uncommittedWrites >= writesPerTransaction { return commitLocked() }
         return true
+    }
+
+    private func checkpointLocked() -> Bool {
+        guard let db = db else { return false }
+        let committed = commitLocked()
+        return sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, nil, nil) == SQLITE_OK && committed
+    }
+
+    /// Runs `body` with the short busy timeout of `encryptPlainTiles` (`briefBusyTimeout`), then sets the usual one back.
+    private func waitingBriefly<T>(_ body: () -> T) -> T {
+        guard let db = db else { return body() }
+        sqlite3_busy_timeout(db, Self.briefBusyTimeout)
+        defer { sqlite3_busy_timeout(db, Self.busyTimeout) }
+        return body()
     }
 
     private func commitLocked() -> Bool {

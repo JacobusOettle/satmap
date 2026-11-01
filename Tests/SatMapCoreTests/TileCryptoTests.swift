@@ -165,22 +165,85 @@ final class TileCryptoTests: XCTestCase {
     }
 
     func testNoPlainPictureIsLeftInTheFile() throws {
-        // Small tiles, and large ones that spill onto overflow pages: the space each took is overwritten.
+        // Small tiles, and large ones that spill onto overflow pages: the space each took is overwritten, and the
+        // sealed pages are folded into the database file, while the map's store stays open.
         let url = tempDir().appendingPathComponent("old.mbtiles")
         let tiles = (0..<40).map { i in
             (TileID(z: 16, x: 500 + i, y: 700), Data(String(repeating: "PLAIN PICTURE \(i) ", count: i % 2 == 0 ? 20 : 600).utf8))
         }
         try writePlainStore(url, tiles: tiles)
         let picture = Data("PLAIN PICTURE".utf8)
+        let wal = URL(fileURLWithPath: url.path + "-wal")
         XCTAssertNotNil(try Data(contentsOf: url).range(of: picture))
+        let map = try MBTiles(url: url, create: false)
+        defer { map.close() }
+        XCTAssertEqual(map.tile(tiles[0].0), tiles[0].1)
         let store = try MBTiles(url: url, create: false)
-        XCTAssertTrue(store.encryptPlainTiles(batchSize: 16))
-        XCTAssertTrue(store.checkpoint())
-        store.close()
+        defer { store.close() }
+
+        // A reader in the middle of a read keeps the checkpoint from finishing: it stops soon, the tiles sealed and the
+        // file marked, but the plain pages still in the database file.
+        var reader: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(url.path, &reader), SQLITE_OK)
+        XCTAssertEqual(sqlite3_exec(reader, "BEGIN; SELECT COUNT(*) FROM tiles;", nil, nil, nil), SQLITE_OK)
+        let start = Date()
+        XCTAssertFalse(store.encryptPlainTiles(batchSize: 16))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+        XCTAssertTrue(store.isEncrypted)
+        XCTAssertNotNil(try Data(contentsOf: url).range(of: picture))
+        sqlite3_exec(reader, "COMMIT", nil, nil, nil)
+        sqlite3_close(reader)
+
+        // Run again, only the checkpoint is left. Then neither the file nor its log holds a plain picture.
+        XCTAssertTrue(store.encryptPlainTiles(batchSize: 16) { _, _ in
+            XCTFail("checked again")
+            return true
+        })
         XCTAssertNil(try Data(contentsOf: url).range(of: picture))
-        let reopened = try MBTiles(url: url, create: false)
-        defer { reopened.close() }
-        for (t, data) in tiles { XCTAssertEqual(reopened.tile(t), data) }
+        XCTAssertNil((try? Data(contentsOf: wal))?.range(of: picture))
+        for (t, data) in tiles { XCTAssertEqual(map.tile(t), data) }
+    }
+
+    func testADownloadKeepingTheFileBusyDoesntHoldUpTheMap() throws {
+        let url = tempDir().appendingPathComponent("old.mbtiles")
+        let tiles = plainTiles(300)
+        try writePlainStore(url, tiles: tiles)
+        // Run on the map's store while a download, through a connection of its own, keeps its transaction open (as it
+        // does for 256 tiles at a time).
+        let store = try MBTiles(url: url, create: false)
+        defer { store.close() }
+        let download = try MBTiles(url: url, create: true)
+        defer { download.close() }
+        XCTAssertTrue(download.put(TileID(z: 18, x: 999, y: 2000), data: Data("added".utf8)))
+
+        final class Outcome: @unchecked Sendable { var encrypted: Bool? }
+        let outcome = Outcome()
+        let done = DispatchSemaphore(value: 0)
+        let start = Date()
+        DispatchQueue.global(qos: .utility).async {
+            outcome.encrypted = store.encryptPlainTiles(batchSize: 64)
+            done.signal()
+        }
+        // Meanwhile the map's reads wait for it no longer than about a batch.
+        var longestRead: TimeInterval = 0
+        var i = 0
+        while done.wait(timeout: .now()) == .timedOut {
+            let readStart = Date()
+            XCTAssertEqual(store.tile(tiles[i % tiles.count].0), tiles[i % tiles.count].1)
+            longestRead = max(longestRead, Date().timeIntervalSince(readStart))
+            i += 1
+        }
+        // It stops soon, to run again later.
+        XCTAssertEqual(outcome.encrypted, false)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5)
+        XCTAssertLessThan(longestRead, 1)
+        XCTAssertFalse(store.isEncrypted)
+
+        // Once the download has committed, it runs.
+        XCTAssertTrue(download.flush())
+        XCTAssertTrue(store.encryptPlainTiles())
+        XCTAssertTrue(store.isEncrypted)
+        for (t, data) in tiles { XCTAssertEqual(store.tile(t), data, "\(t)") }
     }
 
     // MARK: - Helpers
