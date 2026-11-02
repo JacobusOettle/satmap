@@ -1,0 +1,1185 @@
+{
+  "about": "Shared group test vectors. Made by docs/groups/vectors.py; see docs/groups/SPEC.md §3.6 and §4.8.",
+  "inputs": {
+    "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "groupKey": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+    "groupId": "oKGio6SlpqeoqaqrrK2urw",
+    "memberIdHex": "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "memberId": "sLGys7S1tre4ubq7vL2-vw",
+    "pinIdHex": "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf",
+    "pinId": "0NHS09TV1tfY2drb3N3e3w",
+    "inviteSecretHex": "e0e1e2e3e4e5e6e7e8e9eaebecedeeef",
+    "passHex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+    "pass": "QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW1xdXl8",
+    "windowStart": 1793613600
+  },
+  "subkeyInfo": {
+    "group": "satmap.group.v1|key|group",
+    "member": "satmap.group.v1|key|member",
+    "pin": "satmap.group.v1|key|pin",
+    "join": "satmap.group.v1|key|join",
+    "trail": "satmap.group.v1|key|trail|sLGys7S1tre4ubq7vL2-vw",
+    "live": "satmap.group.v1|key|live|sLGys7S1tre4ubq7vL2-vw"
+  },
+  "subkeys": {
+    "group": "7dd4b0a7e0a2cefccb0f0e734c673fb2fc605ab955f871da137b40ece87980cf",
+    "member": "91ac506b12998b583cb40e899b49dd814408b28b78d6593879e0dea1db8288dd",
+    "pin": "c49315f92ea6fe8ecd88afec5346f585d57a4ba38e506b24b52f5bc4bbc562c7",
+    "join": "7cf4d18070d73e26d64b14c97bfc03cba723888c1c980a1bee270eb5f8634ce2",
+    "trail": "3b8d33d35ce4291d14512ed4435b72a34928b93780c2dc51d5e54c53bf4e2ec3",
+    "live": "425ce23999dfd28543a3e88c87d43efd1a78943915984c42ba2d792bf1c17ab9"
+  },
+  "hashes": {
+    "passSha256Hex": "ca2a4fe727faaecf16ecd130a86e0885c5540c05375340445071c0657555fd42",
+    "joinProof": "fPTRgHDXPibWSxTJe_wDy6cjiIwcmAob7icOtfhjTOI",
+    "joinProofSha256Hex": "a4fb0217ad539dacce35fd9c3ad6b28a498c2f6fe592b62ce32ed46f67048869",
+    "inviteSecretSha256Hex": "c8cdc84b0dd9cec0f179823b70bd226598e888b45adc8dc8b8301e734be7965d"
+  },
+  "invite": {
+    "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+    "domain": "example.invalid",
+    "url": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+    "schemeUrl": "satmap://join/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+  },
+  "records": {
+    "groupProfile": {
+      "key": "group",
+      "aad": "satmap.group.v1|group|oKGio6SlpqeoqaqrrK2urw",
+      "nonceHex": "111111111111111111111111",
+      "plainHex": "7b226e616d65223a224b72756765722074726970222c2276223a317d",
+      "envelopeHex": "011111111111111111111111115ff24f0b02e4b203cc6eec4bab16fe271094fe9d2b30b585990f4c7ebf6eb4392802050b06e66f5b4e51e99c",
+      "envelope": "AREREREREREREREREV_yTwsC5LIDzG7sS6sW_icQlP6dKzC1hZkPTH6_brQ5KAIFCwbmb1tOUemc"
+    },
+    "groupProfilePadded": {
+      "key": "group",
+      "aad": "satmap.group.v1|group|oKGio6SlpqeoqaqrrK2urw",
+      "nonceHex": "131313131313131313131313",
+      "plainHex": "7b226e616d65223a224b72756765722074726970222c22706164223a22202020202020202020202020202020202020202020202020202020222c2276223a317d",
+      "envelopeHex": "01131313131313131313131313d4a412286180e4305c4d47be01cbab8da4bfd4481945aaaeb5ed1e30741935c0bcc215d23ec9fcd80411c780332ade9513b786cf4f4b6272db755caccd33485588cf6f532c72a84bdfce056ce0b9e80e",
+      "envelope": "ARMTExMTExMTExMTE9SkEihhgOQwXE1HvgHLq42kv9RIGUWqrrXtHjB0GTXAvMIV0j7J_NgEEceAMyrelRO3hs9PS2Jy23VcrM0zSFWIz29TLHKoS9_OBWzguegO"
+    },
+    "memberProfile": {
+      "key": "member",
+      "aad": "satmap.group.v1|member|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw",
+      "nonceHex": "212121212121212121212121",
+      "plainHex": "7b22636f6c6f7572223a332c226e616d65223a225468616e6469222c2276223a317d",
+      "envelopeHex": "0121212121212121212121212189307f9db79814f2043e655a0196b6161a3ce4437f736691c825175b5aed565595421f32d93297cbce41377c7cf65017afd0",
+      "envelope": "ASEhISEhISEhISEhIYkwf523mBTyBD5lWgGWthYaPORDf3NmkcglF1ta7VZVlUIfMtkyl8vOQTd8fPZQF6_Q"
+    },
+    "memberProfileUnicode": {
+      "key": "member",
+      "aad": "satmap.group.v1|member|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw",
+      "nonceHex": "222222222222222222222222",
+      "plainHex": "7b22636f6c6f7572223a302c226e616d65223a225a6fc3ab20f09fa68f222c2276223a317d",
+      "envelopeHex": "01222222222222222222222222710dc47a34c726a2421621f5a976478d8a5fa9c4ff9efdd97457fb8856fa1047807e286caa49571d5be20d9eaef726a6c04e24e4b4",
+      "envelope": "ASIiIiIiIiIiIiIiInENxHo0xyaiQhYh9al2R42KX6nE_5792XRX-4hW-hBHgH4obKpJVx1b4g2ervcmpsBOJOS0"
+    },
+    "memberProfilePadded": {
+      "key": "member",
+      "aad": "satmap.group.v1|member|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw",
+      "nonceHex": "232323232323232323232323",
+      "plainHex": "7b22636f6c6f7572223a332c226e616d65223a225468616e6469222c22706164223a22202020202020202020202020202020202020202020222c2276223a317d",
+      "envelopeHex": "0123232323232323232323232310583e8b5ece25a63c73299581b87c6952ae96fa8ea624c4a0b323bafaae2039cb47d5f3023e7eba0a1df9acd7b8b5a18d5c94e61c0cfbb0933218d6692c63313f62d377fd0f0b9b1503a06f7d6e11ea",
+      "envelope": "ASMjIyMjIyMjIyMjIxBYPoteziWmPHMplYG4fGlSrpb6jqYkxKCzI7r6riA5y0fV8wI-froKHfms17i1oY1clOYcDPuwkzIY1mksYzE_YtN3_Q8LmxUDoG99bhHq"
+    },
+    "trailChunk": {
+      "key": "trail",
+      "aad": "satmap.group.v1|trail|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw|1793613600",
+      "nonceHex": "313131313131313131313131",
+      "plainHex": "0100050bffa7eb17b2be901e085470086e8a010e82015481059c229f27",
+      "envelopeHex": "01313131313131313131313131c3b4b12a898fda7607e1946f15d1f1a0d63040637e8e1565ee2f14e7d8a03394589acc5bb946e8cc1c000850d7",
+      "envelope": "ATExMTExMTExMTExMcO0sSqJj9p2B-GUbxXR8aDWMEBjfo4VZe4vFOfYoDOUWJrMW7lG6MwcAAhQ1w"
+    },
+    "trailChunkDeflated": {
+      "key": "trail",
+      "aad": "satmap.group.v1|trail|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw|1793613600",
+      "nonceHex": "323232323232323232323232",
+      "plainHex": "01017fd360fcbffcb5f8a67d13e444bc82e88f00",
+      "envelopeHex": "01323232323232323232323232a5ad17ba943493782d2218c9511858fbe4a6fd178ccab6a3fbdc8db6ff275dd7600dc550",
+      "envelope": "ATIyMjIyMjIyMjIyMqWtF7qUNJN4LSIYyVEYWPvkpv0XjMq2o_vcjbb_J13XYA3FUA"
+    },
+    "live": {
+      "key": "live",
+      "aad": "satmap.group.v1|live|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw|1793613620",
+      "nonceHex": "414141414141414141414141",
+      "plainHex": "0107345fe86a00000000a29682fe4010e201050057003801",
+      "envelopeHex": "0141414141414141414141414173bdd266ed77e25669aa194d9a7c152f40b5ec00a0e0d6abbbb18034e72bfdcdfc21e0f4f8ee32f3",
+      "envelope": "AUFBQUFBQUFBQUFBQXO90mbtd-JWaaoZTZp8FS9AtewAoODWq7uxgDTnK_3N_CHg9PjuMvM"
+    },
+    "liveUnknowns": {
+      "key": "live",
+      "aad": "satmap.group.v1|live|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw|1793613625",
+      "nonceHex": "424242424242424242424242",
+      "plainHex": "0100395fe86a00000000ca9682fe7010e201000000000000",
+      "envelopeHex": "01424242424242424242424242fd4af2eadbdec095fdb67d60206505174a100c53b0d5dc72f25220053f155eec6fb7d84e2636c733",
+      "envelope": "AUJCQkJCQkJCQkJCQv1K8urb3sCV_bZ9YCBlBRdKEAxTsNXccvJSIAU_FV7sb7fYTiY2xzM"
+    },
+    "pinAnimal": {
+      "key": "pin",
+      "aad": "satmap.group.v1|pin|oKGio6SlpqeoqaqrrK2urw|0NHS09TV1tfY2drb3N3e3w|sLGys7S1tre4ubq7vL2-vw|1793613900|1793657100",
+      "nonceHex": "515151515151515151515151",
+      "plainHex": "7b22616e696d616c223a225268696e6f222c226c6174223a2d32343939363335322c226c6f6e223a33313539323334352c226e6f7465223a2254776f206164756c7473206e6561722074686520776174657220686f6c65222c2274797065223a22616e696d616c222c2276223a317d",
+      "envelopeHex": "0151515151515151515151515174813a5752f7fae28f2344ff143d8b1b2c987dc066810e255104e4eb905f93c3c49f8bfb4afb9898ff0ed5c0ede7a7f71e1f26a97de4fefa479b8ac058555fad50836376e7b6cc6737bc1f5eb6a39b721cd52da3417137be8352d299e7dbb3106b88aa980d27684c146cc3632044b39de7185c7d4fbef09890f43e1d2606f0",
+      "envelope": "AVFRUVFRUVFRUVFRUXSBOldS9_rijyNE_xQ9ixssmH3AZoEOJVEE5OuQX5PDxJ-L-0r7mJj_DtXA7een9x4fJql95P76R5uKwFhVX61Qg2N257bMZze8H162o5tyHNUto0FxN76DUtKZ59uzEGuIqpgNJ2hMFGzDYyBEs53nGFx9T77wmJD0Ph0mBvA"
+    },
+    "pinWater": {
+      "key": "pin",
+      "aad": "satmap.group.v1|pin|oKGio6SlpqeoqaqrrK2urw|0NHS09TV1tfY2drb3N3e3w|sLGys7S1tre4ubq7vL2-vw|1793613900|-",
+      "nonceHex": "525252525252525252525252",
+      "plainHex": "7b226c6174223a2d32343939303030312c226c6f6e223a33313630303030302c2274797065223a227761746572222c2276223a317d",
+      "envelopeHex": "01525252525252525252525252ad9f306e27a2cdba2324821b033681ea3cd2e188b07df6337bf34342f43aeca62ebf1c85315438e1a43ac336a4577dd09b10fddf82936f75b9f704071a27d3be03e98b81a4",
+      "envelope": "AVJSUlJSUlJSUlJSUq2fMG4nos26IySCGwM2geo80uGIsH32M3vzQ0L0OuymLr8chTFUOOGkOsM2pFd90JsQ_d-Ck291ufcEBxon074D6YuBpA"
+    },
+    "pinAnimalPadded": {
+      "key": "pin",
+      "aad": "satmap.group.v1|pin|oKGio6SlpqeoqaqrrK2urw|0NHS09TV1tfY2drb3N3e3w|sLGys7S1tre4ubq7vL2-vw|1793613900|1793657100",
+      "nonceHex": "535353535353535353535353",
+      "plainHex": "7b22616e696d616c223a225268696e6f222c226c6174223a2d32343939363335322c226c6f6e223a33313539323334352c22706164223a22202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020222c2274797065223a22616e696d616c222c2276223a317d",
+      "envelopeHex": "01535353535353535353535353217fec53e325206c8ffe0a7b7ecdb662fb2f8686acb5d6a8e0a7941c8128c36be8392c8a67fa9b4033088c7d6a1a8fed4618d0450e43e68ebf5b789b5f5369a84da4e87af3930fb60ae431493a34a1c1527102d4d1daa47cd60a1fc9ae3ec272ddbd701f891950fa81b166a8c61357ac8c504e0697e7b0e0cf03e6e2c0bd3845b4ff79c44babba9fb5e3d9e3c8cba8a2",
+      "envelope": "AVNTU1NTU1NTU1NTUyF_7FPjJSBsj_4Ke37NtmL7L4aGrLXWqOCnlByBKMNr6Dksimf6m0AzCIx9ahqP7UYY0EUOQ-aOv1t4m19TaahNpOh685MPtgrkMUk6NKHBUnEC1NHapHzWCh_Jrj7Cct29cB-JGVD6gbFmqMYTV6yMUE4Gl-ew4M8D5uLAvThFtP95xEurup-149njyMuoog"
+    }
+  },
+  "jsonWriters": {
+    "about": "What a writer must produce (padded, §4.5–4.7). The unpadded records are reader tests only.",
+    "groupProfile": {
+      "name": "Kruger trip",
+      "json": "{\"name\":\"Kruger trip\",\"pad\":\"                           \",\"v\":1}"
+    },
+    "memberProfile": {
+      "name": "Thandi",
+      "colour": 3,
+      "json": "{\"colour\":3,\"name\":\"Thandi\",\"pad\":\"                     \",\"v\":1}"
+    },
+    "pinAnimal": {
+      "type": "animal",
+      "animal": "Rhino",
+      "lat": -24996352,
+      "lon": 31592345,
+      "json": "{\"animal\":\"Rhino\",\"lat\":-24996352,\"lon\":31592345,\"pad\":\"                                                \",\"type\":\"animal\",\"v\":1}"
+    }
+  },
+  "trailChunk": {
+    "windowStart": 1793613600,
+    "points": [
+      {
+        "time": 1793613605,
+        "lat": -24996352,
+        "lon": 31592345,
+        "startsSegment": true
+      },
+      {
+        "time": 1793613609,
+        "lat": -24996310,
+        "lon": 31592401,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613613,
+        "lat": -24996255,
+        "lon": 31592470,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613620,
+        "lat": -24996190,
+        "lon": 31592512,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613940,
+        "lat": -24994000,
+        "lon": 31590000,
+        "startsSegment": true
+      }
+    ],
+    "plainHex": "0100050bffa7eb17b2be901e085470086e8a010e82015481059c229f27"
+  },
+  "trailChunkDeflated": {
+    "windowStart": 1793613600,
+    "points": [
+      {
+        "time": 1793613600,
+        "lat": -24996352,
+        "lon": 31592345,
+        "startsSegment": true
+      },
+      {
+        "time": 1793613610,
+        "lat": -24996315,
+        "lon": 31592386,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613620,
+        "lat": -24996278,
+        "lon": 31592427,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613630,
+        "lat": -24996241,
+        "lon": 31592468,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613640,
+        "lat": -24996204,
+        "lon": 31592509,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613650,
+        "lat": -24996167,
+        "lon": 31592550,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613660,
+        "lat": -24996130,
+        "lon": 31592591,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613670,
+        "lat": -24996093,
+        "lon": 31592632,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613680,
+        "lat": -24996056,
+        "lon": 31592673,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613690,
+        "lat": -24996019,
+        "lon": 31592714,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613700,
+        "lat": -24995982,
+        "lon": 31592755,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613710,
+        "lat": -24995945,
+        "lon": 31592796,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613720,
+        "lat": -24995908,
+        "lon": 31592837,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613730,
+        "lat": -24995871,
+        "lon": 31592878,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613740,
+        "lat": -24995834,
+        "lon": 31592919,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613750,
+        "lat": -24995797,
+        "lon": 31592960,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613760,
+        "lat": -24995760,
+        "lon": 31593001,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613770,
+        "lat": -24995723,
+        "lon": 31593042,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613780,
+        "lat": -24995686,
+        "lon": 31593083,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613790,
+        "lat": -24995649,
+        "lon": 31593124,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613800,
+        "lat": -24995612,
+        "lon": 31593165,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613810,
+        "lat": -24995575,
+        "lon": 31593206,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613820,
+        "lat": -24995538,
+        "lon": 31593247,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613830,
+        "lat": -24995501,
+        "lon": 31593288,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613840,
+        "lat": -24995464,
+        "lon": 31593329,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613850,
+        "lat": -24995427,
+        "lon": 31593370,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613860,
+        "lat": -24995390,
+        "lon": 31593411,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613870,
+        "lat": -24995353,
+        "lon": 31593452,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613880,
+        "lat": -24995316,
+        "lon": 31593493,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613890,
+        "lat": -24995279,
+        "lon": 31593534,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613900,
+        "lat": -24995242,
+        "lon": 31593575,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613910,
+        "lat": -24995205,
+        "lon": 31593616,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613920,
+        "lat": -24995168,
+        "lon": 31593657,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613930,
+        "lat": -24995131,
+        "lon": 31593698,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613940,
+        "lat": -24995094,
+        "lon": 31593739,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613950,
+        "lat": -24995057,
+        "lon": 31593780,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613960,
+        "lat": -24995020,
+        "lon": 31593821,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613970,
+        "lat": -24994983,
+        "lon": 31593862,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613980,
+        "lat": -24994946,
+        "lon": 31593903,
+        "startsSegment": false
+      },
+      {
+        "time": 1793613990,
+        "lat": -24994909,
+        "lon": 31593944,
+        "startsSegment": false
+      }
+    ],
+    "bodyHex": "2801ffa7eb17b2be901e144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52144a52",
+    "plainHex": "01017fd360fcbffcb5f8a67d13e444bc82e88f00",
+    "note": "Readers must decode plainHex to the points. Writers need not produce the same DEFLATE bytes."
+  },
+  "live": {
+    "time": 1793613620,
+    "lat": -24996190,
+    "lon": 31592512,
+    "accuracy": 5,
+    "heading": 87,
+    "speed": 312,
+    "plainHex": "0107345fe86a00000000a29682fe4010e201050057003801"
+  },
+  "liveUnknowns": {
+    "time": 1793613625,
+    "lat": -24996150,
+    "lon": 31592560,
+    "plainHex": "0100395fe86a00000000ca9682fe7010e201000000000000"
+  },
+  "pin": {
+    "pinCreatedAt": 1793613900,
+    "pinExpiresAt": 1793657100,
+    "json": "{\"animal\":\"Rhino\",\"lat\":-24996352,\"lon\":31592345,\"note\":\"Two adults near the water hole\",\"type\":\"animal\",\"v\":1}"
+  },
+  "mustFail": {
+    "tamperedTrailEnvelopeHex": "01313131313131313131313131c3b4b12a898fda7607e1946f15d1f1a0d63040637e8e1565ee2f14e7d8a03394589acc5bb946e8cc1c000850d6",
+    "trailWrongWindowAad": "satmap.group.v1|trail|oKGio6SlpqeoqaqrrK2urw|sLGys7S1tre4ubq7vL2-vw|1793614200",
+    "unknownVersionEnvelopeHex": "02313131313131313131313131c3b4b12a898fda7607e1946f15d1f1a0d63040637e8e1565ee2f14e7d8a03394589acc5bb946e8cc1c000850d7",
+    "shortEnvelopeHex": "01000000000000000000000000000000000000000000000000000000",
+    "badBase64url": [
+      "oKGio6SlpqeoqaqrrK2urw==",
+      "oKGio6Slpqeo+aqrrK2urw",
+      "oKGio6Slpqeo/aqrrK2urw",
+      "oKGio6SlpqeoqaqrrK2ur",
+      "oKGio6Slpqeo aqrrK2urw"
+    ],
+    "nonCanonicalIds": [
+      "oKGio6SlpqeoqaqrrK2urx",
+      "sLGys7S1tre4ubq7vL2-vx"
+    ],
+    "chunkPlainHex": {
+      "deflateLongerThanDeclared": "01017fd360fcbffcb5f8a67d13e444bc82e88f1800",
+      "deflateTrailingInput": "01017fd360fcbffcb5f8a67d13e444bc82e88f0000",
+      "deflateShorterThanDeclared": "01018001d360fcbffcb5f8a67d13e444bc82e88f00"
+    }
+  },
+  "coordinates": [
+    {
+      "deg": -24.996352,
+      "e6": -24996352
+    },
+    {
+      "deg": 31.592345,
+      "e6": 31592345
+    },
+    {
+      "deg": -33.918292,
+      "e6": -33918292
+    },
+    {
+      "deg": 18.921204,
+      "e6": 18921204
+    },
+    {
+      "deg": 5e-07,
+      "e6": 1
+    },
+    {
+      "deg": -5e-07,
+      "e6": -1
+    },
+    {
+      "deg": 1.5e-06,
+      "e6": 2
+    },
+    {
+      "deg": -2.5e-06,
+      "e6": -3
+    },
+    {
+      "deg": 89.9999995,
+      "e6": 90000000
+    },
+    {
+      "deg": -179.9999995,
+      "e6": -180000000
+    },
+    {
+      "deg": 180.0,
+      "e6": 180000000
+    },
+    {
+      "deg": -90.0,
+      "e6": -90000000
+    },
+    {
+      "deg": 0.0,
+      "e6": 0
+    }
+  ],
+  "varints": [
+    {
+      "value": 0,
+      "hex": "00"
+    },
+    {
+      "value": 1,
+      "hex": "01"
+    },
+    {
+      "value": 127,
+      "hex": "7f"
+    },
+    {
+      "value": 128,
+      "hex": "8001"
+    },
+    {
+      "value": 300,
+      "hex": "ac02"
+    },
+    {
+      "value": 16383,
+      "hex": "ff7f"
+    },
+    {
+      "value": 16384,
+      "hex": "808001"
+    },
+    {
+      "value": 4294967295,
+      "hex": "ffffffff0f"
+    }
+  ],
+  "zigzag": [
+    {
+      "value": 0,
+      "zigzag": 0
+    },
+    {
+      "value": -1,
+      "zigzag": 1
+    },
+    {
+      "value": 1,
+      "zigzag": 2
+    },
+    {
+      "value": -2,
+      "zigzag": 3
+    },
+    {
+      "value": 2,
+      "zigzag": 4
+    },
+    {
+      "value": -64,
+      "zigzag": 127
+    },
+    {
+      "value": 64,
+      "zigzag": 128
+    },
+    {
+      "value": 2147483647,
+      "zigzag": 4294967294
+    },
+    {
+      "value": -2147483648,
+      "zigzag": 4294967295
+    }
+  ],
+  "inviteParse": {
+    "domain": "example.invalid",
+    "cases": [
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "invite",
+        "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      {
+        "text": "Join \"Kruger trip\" on SatMap: https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "invite",
+        "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      {
+        "text": "https://EXAMPLE.Invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "invite",
+        "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8/#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "invite",
+        "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      {
+        "text": "satmap://join/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "invite",
+        "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      {
+        "text": "https://other.example/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "notInvite"
+      },
+      {
+        "text": "https://other.example/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8 then https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "invite",
+        "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8 then https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "invite",
+        "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+        "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+      },
+      {
+        "text": "http://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "notInvite"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "result": "missingKey"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8/",
+        "result": "missingKey"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh",
+        "result": "missingKey"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8A",
+        "result": "missingKey"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8?x=1#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "missingKey"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8A#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "notInvite"
+      },
+      {
+        "text": "https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "result": "notInvite"
+      },
+      {
+        "text": "satmap://join/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "result": "missingKey"
+      },
+      {
+        "text": "https://other.example/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
+        "result": "notInvite"
+      },
+      {
+        "text": "https://example.invalid/",
+        "result": "notInvite"
+      },
+      {
+        "text": "Kudu at the bridge",
+        "result": "notInvite"
+      },
+      {
+        "text": "",
+        "result": "notInvite"
+      }
+    ]
+  },
+  "groupText": [
+    {
+      "field": "groupName",
+      "input": "  Kruger trip \t",
+      "output": "Kruger trip"
+    },
+    {
+      "field": "groupName",
+      "input": " Kruger　trip　",
+      "output": "Kruger　trip"
+    },
+    {
+      "field": "groupName",
+      "input": "Zoë",
+      "output": "Zoë"
+    },
+    {
+      "field": "groupName",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "output": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "field": "groupName",
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "output": null
+    },
+    {
+      "field": "groupName",
+      "input": "🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏",
+      "output": "🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏"
+    },
+    {
+      "field": "groupName",
+      "input": "🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏🦏",
+      "output": null
+    },
+    {
+      "field": "groupName",
+      "input": "   ",
+      "output": null
+    },
+    {
+      "field": "groupName",
+      "input": "\u001fKruger",
+      "output": null
+    },
+    {
+      "field": "groupName",
+      "input": "Kru\u0000ger",
+      "output": null
+    },
+    {
+      "field": "groupName",
+      "input": "Kruger trip",
+      "output": null
+    },
+    {
+      "field": "groupName",
+      "input": "Kruger\ntrip",
+      "output": null
+    },
+    {
+      "field": "groupName",
+      "input": " Kruger ",
+      "output": "Kruger"
+    },
+    {
+      "field": "groupName",
+      "input": "​Kruger",
+      "output": "​Kruger"
+    },
+    {
+      "field": "displayName",
+      "input": "Zoë 🦏",
+      "output": "Zoë 🦏"
+    },
+    {
+      "field": "displayName",
+      "input": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "output": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "field": "displayName",
+      "input": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "output": null
+    },
+    {
+      "field": "displayName",
+      "input": "éééééééééééééééééééééééééééééé",
+      "output": "éééééééééééééééééééééééééééééé"
+    },
+    {
+      "field": "animal",
+      "input": " Rhino ",
+      "output": "Rhino"
+    },
+    {
+      "field": "animal",
+      "input": "",
+      "output": null
+    },
+    {
+      "field": "note",
+      "input": "",
+      "output": ""
+    },
+    {
+      "field": "note",
+      "input": "   ",
+      "output": ""
+    },
+    {
+      "field": "note",
+      "input": "a\nb\nc\nd",
+      "output": "a\nb\nc\nd"
+    },
+    {
+      "field": "note",
+      "input": "a\nb\nc\nd\ne",
+      "output": null
+    },
+    {
+      "field": "note",
+      "input": "a\r\nb",
+      "output": null
+    },
+    {
+      "field": "note",
+      "input": "\n\nTwo adults\n",
+      "output": "Two adults"
+    },
+    {
+      "field": "note",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "output": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "field": "note",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "output": null
+    },
+    {
+      "field": "note",
+      "input": "note",
+      "output": "note"
+    },
+    {
+      "field": "reportComment",
+      "input": "line one\nline two",
+      "output": "line one\nline two"
+    }
+  ],
+  "wordFilter": {
+    "list": "# test list\nbadword\nworse*\n*nasty*\n\n",
+    "cases": [
+      {
+        "text": "Badword",
+        "allows": false,
+        "masked": "•••"
+      },
+      {
+        "text": "b4dw0rd!",
+        "allows": false,
+        "masked": "•••!"
+      },
+      {
+        "text": "worsening",
+        "allows": false,
+        "masked": "•••"
+      },
+      {
+        "text": "supernastything",
+        "allows": false,
+        "masked": "•••"
+      },
+      {
+        "text": "n.a.s.t.y",
+        "allows": false,
+        "masked": "•••"
+      },
+      {
+        "text": "bad word",
+        "allows": true,
+        "masked": "bad word"
+      },
+      {
+        "text": "Scunthorpe",
+        "allows": true,
+        "masked": "Scunthorpe"
+      },
+      {
+        "text": "Kudu at the bridge",
+        "allows": true,
+        "masked": "Kudu at the bridge"
+      },
+      {
+        "text": "Ｂａｄｗｏｒｄ",
+        "allows": false,
+        "masked": "•••"
+      },
+      {
+        "text": "İbadword",
+        "allows": false,
+        "masked": "İ•••"
+      },
+      {
+        "text": "Sipho's badword.",
+        "allows": false,
+        "masked": "Sipho's •••."
+      },
+      {
+        "text": "Two badwords",
+        "allows": true,
+        "masked": "Two badwords"
+      },
+      {
+        "text": "WORSE badword",
+        "allows": false,
+        "masked": "••• •••"
+      },
+      {
+        "text": "a nasty-ish road",
+        "allows": false,
+        "masked": "a •••-ish road"
+      },
+      {
+        "text": "n4sty",
+        "allows": false,
+        "masked": "•••"
+      },
+      {
+        "text": "Zoë 🦏",
+        "allows": true,
+        "masked": "Zoë 🦏"
+      }
+    ]
+  },
+  "ago": [
+    {
+      "seconds": -5,
+      "text": "just now"
+    },
+    {
+      "seconds": 0,
+      "text": "just now"
+    },
+    {
+      "seconds": 59,
+      "text": "just now"
+    },
+    {
+      "seconds": 60,
+      "text": "1 min ago"
+    },
+    {
+      "seconds": 119,
+      "text": "1 min ago"
+    },
+    {
+      "seconds": 3599,
+      "text": "59 min ago"
+    },
+    {
+      "seconds": 3600,
+      "text": "1 h ago"
+    },
+    {
+      "seconds": 7199,
+      "text": "1 h ago"
+    },
+    {
+      "seconds": 172799,
+      "text": "47 h ago"
+    },
+    {
+      "seconds": 172800,
+      "text": "2 d ago"
+    },
+    {
+      "seconds": 259199,
+      "text": "2 d ago"
+    },
+    {
+      "seconds": 1000000,
+      "text": "11 d ago"
+    }
+  ],
+  "initials": [
+    {
+      "name": "Thandi",
+      "initials": "T"
+    },
+    {
+      "name": "Pieter van der Merwe",
+      "initials": "PM"
+    },
+    {
+      "name": "zoë",
+      "initials": "Z"
+    },
+    {
+      "name": "Zoë 🦏",
+      "initials": "Z"
+    },
+    {
+      "name": "🦏 Rhino",
+      "initials": "🦏"
+    },
+    {
+      "name": "🇿🇦 Sam",
+      "initials": "🇿🇦"
+    },
+    {
+      "name": "👍🏽",
+      "initials": "👍🏽"
+    },
+    {
+      "name": "❤️ Love",
+      "initials": "❤️"
+    },
+    {
+      "name": "👨‍👩‍👧 family",
+      "initials": "👨‍👩‍👧"
+    },
+    {
+      "name": "ßen",
+      "initials": "SS"
+    },
+    {
+      "name": "élan vital",
+      "initials": "ÉV"
+    },
+    {
+      "name": "123 Go",
+      "initials": "1G"
+    },
+    {
+      "name": "(Sam) - Jones",
+      "initials": "SJ"
+    },
+    {
+      "name": "- -",
+      "initials": "?"
+    }
+  ],
+  "liveRounding": [
+    {
+      "fix": {
+        "lat": -24.99619,
+        "lon": 31.592512,
+        "accuracy": 4.6,
+        "course": 87.4,
+        "speed": 3.12,
+        "heading": 10.0,
+        "time": 1793613620.9
+      },
+      "live": {
+        "time": 1793613620,
+        "lat": -24996190,
+        "lon": 31592512,
+        "accuracy": 5,
+        "heading": 87,
+        "speed": 312
+      }
+    },
+    {
+      "fix": {
+        "lat": -24.99619,
+        "lon": 31.592512,
+        "accuracy": 4.5,
+        "course": 359.6,
+        "speed": 0.5,
+        "heading": null,
+        "time": 1793613620.0
+      },
+      "live": {
+        "time": 1793613620,
+        "lat": -24996190,
+        "lon": 31592512,
+        "accuracy": 5,
+        "heading": 0,
+        "speed": 50
+      }
+    },
+    {
+      "fix": {
+        "lat": -24.99619,
+        "lon": 31.592512,
+        "accuracy": null,
+        "course": 120.0,
+        "speed": 0.49,
+        "heading": 200.5,
+        "time": 1793613621.2
+      },
+      "live": {
+        "time": 1793613621,
+        "lat": -24996190,
+        "lon": 31592512,
+        "accuracy": null,
+        "heading": 201,
+        "speed": 49
+      }
+    },
+    {
+      "fix": {
+        "lat": -24.99619,
+        "lon": 31.592512,
+        "accuracy": -1.0,
+        "course": -1.0,
+        "speed": -1.0,
+        "heading": -1.0,
+        "time": 1793613622.5
+      },
+      "live": {
+        "time": 1793613622,
+        "lat": -24996190,
+        "lon": 31592512,
+        "accuracy": null,
+        "heading": null,
+        "speed": null
+      }
+    },
+    {
+      "fix": {
+        "lat": -24.99619,
+        "lon": 31.592512,
+        "accuracy": 70000.0,
+        "course": null,
+        "speed": 700.0,
+        "heading": 359.5,
+        "time": 1793613623.0
+      },
+      "live": {
+        "time": 1793613623,
+        "lat": -24996190,
+        "lon": 31592512,
+        "accuracy": 65535,
+        "heading": 0,
+        "speed": 65535
+      }
+    },
+    {
+      "fix": {
+        "lat": -24.99619,
+        "lon": 31.592512,
+        "accuracy": 0.4,
+        "course": 0.4,
+        "speed": 0.005,
+        "heading": null,
+        "time": 1793613624.0
+      },
+      "live": {
+        "time": 1793613624,
+        "lat": -24996190,
+        "lon": 31592512,
+        "accuracy": 0,
+        "heading": null,
+        "speed": 1
+      }
+    }
+  ]
+}
