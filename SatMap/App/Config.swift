@@ -75,11 +75,7 @@ enum LocationPolicy {
 enum GroupConfig {
     /// The invite domain: the build setting `GROUPS_DOMAIN`, through the Info.plist key `SatMapGroupsDomain`. The
     /// placeholder `example.invalid` until the domain is chosen (§13.4).
-    static let domain: String = {
-        let value = (Bundle.main.object(forInfoDictionaryKey: "SatMapGroupsDomain") as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return value.isEmpty || value.hasPrefix("$(") ? "example.invalid" : value
-    }()
+    static let domain = GroupEndpoints.domain(infoPlistValue: Bundle.main.object(forInfoDictionaryKey: "SatMapGroupsDomain") as? String)
 
     /// `https://{domain}`: invite links, the terms and the privacy notice.
     static var publicBaseURL: String { "https://" + domain }
@@ -87,11 +83,7 @@ enum GroupConfig {
     /// The API and WebSocket base: `https://{domain}`, or for tests the launch argument `-groupsBaseURL <url>` (read
     /// only, never saved). Invite links always use `domain`.
     static var apiBaseURL: URL {
-        if let text = UserDefaults.standard.string(forKey: "groupsBaseURL"), let url = URL(string: text),
-           url.scheme == "http" || url.scheme == "https", url.host != nil {
-            return url
-        }
-        return URL(string: publicBaseURL)!
+        GroupEndpoints.apiBase(override: UserDefaults.standard.string(forKey: "groupsBaseURL"), domain: domain)
     }
 
     static var termsURL: URL { URL(string: publicBaseURL + "/terms")! }

@@ -481,7 +481,12 @@ final class ScreenshotTests: XCTestCase {
         sleep(1)
         snap("34-join-group")
 
-        // 35: consent after joining, then sharing.
+        // 35: consent after joining, then sharing. (The name is prefilled with the one typed in step 31.)
+        if !app.buttons["joinGroup"].isEnabled {
+            let name = app.textFields["displayName"]
+            name.tap()
+            name.typeText("Sam\n")
+        }
         tap("joinGroup")
         guard app.buttons["consentShare"].waitForExistence(timeout: 15) else { return XCTFail("No consent screen after joining") }
         sleep(1)
@@ -532,8 +537,9 @@ final class ScreenshotTests: XCTestCase {
         // 38: the Kudu pin.
         let kudu = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Kudu")).firstMatch
         if kudu.waitForExistence(timeout: 10) {
+            // The pin's circle is the top 30 pt of its view (its label is under it).
             let f = kudu.frame
-            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.midY)).tap()
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.minY + min(15, f.height / 2))).tap()
             if app.navigationBars["Animal sighting"].waitForExistence(timeout: 10) {
                 sleep(1)
                 snap("38-pin-detail")

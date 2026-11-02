@@ -14,18 +14,6 @@ final class GroupSocketFactoryImpl: GroupSocketFactory {
         self.baseURL = baseURL
     }
 
-    /// The socket URL for a base URL: https → wss, http → ws (tests against a local server).
-    static func url(base: URL, groupId: String) -> URL? {
-        guard var c = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
-        c.scheme = c.scheme == "http" ? "ws" : "wss"
-        var path = c.path
-        while path.hasSuffix("/") { path.removeLast() }
-        c.path = path + "/v1/groups/\(groupId)/ws"
-        c.query = nil
-        c.fragment = nil
-        return c.url
-    }
-
     func open(groupId: String, pass: String) -> GroupSocket {
         current?.closeQuietly()
         let socket = URLSessionGroupSocket(groupId: groupId)
@@ -40,7 +28,7 @@ final class GroupSocketFactoryImpl: GroupSocketFactory {
                 hub.socketDidClose(groupId: groupId, code: code)
             }
         }
-        if let url = Self.url(base: baseURL, groupId: groupId) {
+        if let url = GroupEndpoints.socketURL(base: baseURL, groupId: groupId) {
             socket.connect(url: url, pass: pass)
         } else {
             DispatchQueue.main.async { socket.report(.closed(1006)) }
@@ -147,18 +135,7 @@ final class URLSessionGroupSocket: NSObject, GroupSocket, URLSessionWebSocketDel
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         // A refused upgrade is an HTTP answer before the upgrade (§8.7).
         let status = (task.response as? HTTPURLResponse)?.statusCode
-        report(.closed(Self.closeCode(httpStatus: status, socketCloseCode: (task as? URLSessionWebSocketTask)?.closeCode.rawValue)))
-    }
-
-    /// The close code to report when the task ended: the server's close code if it sent one, else the refused
-    /// upgrade's status as a close code. `401` and `404` become 4401 (the hub checks with E2). A `410` is reported as
-    /// 4401 too: URLSession doesn't hand over the body that says "removed" or "group_deleted", and E2 then answers with
-    /// the code, so the right alert shows. Anything else (or no answer) is 1006, which reconnects with backoff.
-    static func closeCode(httpStatus: Int?, socketCloseCode: Int?) -> Int {
-        if let c = socketCloseCode, c != URLSessionWebSocketTask.CloseCode.invalid.rawValue { return c }
-        switch httpStatus {
-        case 401, 404, 410: return 4401
-        default: return 1006
-        }
+        report(.closed(GroupEndpoints.closeCode(httpStatus: status,
+                                                socketCloseCode: (task as? URLSessionWebSocketTask)?.closeCode.rawValue)))
     }
 }

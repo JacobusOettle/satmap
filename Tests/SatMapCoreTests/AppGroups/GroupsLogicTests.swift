@@ -195,6 +195,55 @@ final class GroupsLogicTests: XCTestCase {
         XCTAssertEqual(InviteLink.parse(braai.schemeURL, domain: GroupDemo.domain), .invite(braai))
     }
 
+    // MARK: Endpoints
+
+    func testDomainFromInfoPlist() {
+        XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: "groups.satmap.app"), "groups.satmap.app")
+        XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: " example.invalid\n"), "example.invalid")
+        XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: nil), "example.invalid")
+        XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: ""), "example.invalid")
+        XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: "$(GROUPS_DOMAIN)"), "example.invalid") // not filled in
+    }
+
+    func testAPIBase() {
+        XCTAssertEqual(GroupEndpoints.apiBase(override: nil, domain: "example.invalid").absoluteString, "https://example.invalid")
+        XCTAssertEqual(GroupEndpoints.apiBase(override: "http://localhost:8787", domain: "x.y").absoluteString, "http://localhost:8787")
+        XCTAssertEqual(GroupEndpoints.apiBase(override: "ftp://host", domain: "x.y").absoluteString, "https://x.y")
+        XCTAssertEqual(GroupEndpoints.apiBase(override: "nonsense", domain: "x.y").absoluteString, "https://x.y")
+    }
+
+    func testRequestAndSocketURLs() {
+        let base = URL(string: "https://example.invalid")!
+        XCTAssertEqual(GroupEndpoints.apiURL(base: base, path: "/v1/groups/abc/changes?since=4&limit=200")?.absoluteString,
+                       "https://example.invalid/v1/groups/abc/changes?since=4&limit=200")
+        XCTAssertEqual(GroupEndpoints.apiURL(base: URL(string: "http://10.0.2.2:8787/")!, path: "/v1/health")?.absoluteString,
+                       "http://10.0.2.2:8787/v1/health")
+        XCTAssertEqual(GroupEndpoints.socketURL(base: base, groupId: "oKGio6SlpqeoqaqrrK2urw")?.absoluteString,
+                       "wss://example.invalid/v1/groups/oKGio6SlpqeoqaqrrK2urw/ws")
+        XCTAssertEqual(GroupEndpoints.socketURL(base: URL(string: "http://localhost:8787")!, groupId: "g")?.absoluteString,
+                       "ws://localhost:8787/v1/groups/g/ws")
+    }
+
+    func testSocketCloseCodes() {
+        // The server's own close code wins.
+        XCTAssertEqual(GroupEndpoints.closeCode(httpStatus: nil, socketCloseCode: 4403), 4403)
+        XCTAssertEqual(GroupEndpoints.closeCode(httpStatus: 101, socketCloseCode: 1000), 1000)
+        // A refused upgrade: the hub checks the membership with E2.
+        XCTAssertEqual(GroupEndpoints.closeCode(httpStatus: 401, socketCloseCode: 0), 4401)
+        XCTAssertEqual(GroupEndpoints.closeCode(httpStatus: 404, socketCloseCode: nil), 4401)
+        XCTAssertEqual(GroupEndpoints.closeCode(httpStatus: 410, socketCloseCode: 0), 4401)
+        // Anything else reconnects.
+        XCTAssertEqual(GroupEndpoints.closeCode(httpStatus: 503, socketCloseCode: 0), 1006)
+        XCTAssertEqual(GroupEndpoints.closeCode(httpStatus: nil, socketCloseCode: nil), 1006)
+    }
+
+    func testOfflineErrors() {
+        XCTAssertTrue(GroupEndpoints.isOffline(.notConnectedToInternet))
+        XCTAssertTrue(GroupEndpoints.isOffline(.networkConnectionLost))
+        XCTAssertFalse(GroupEndpoints.isOffline(.timedOut))
+        XCTAssertFalse(GroupEndpoints.isOffline(.cannotFindHost))
+    }
+
     func testColours() {
         let c = GroupColour.rgb("#E5484D")
         XCTAssertEqual(c?.red ?? 0, 229.0 / 255, accuracy: 1e-9)

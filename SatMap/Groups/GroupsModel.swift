@@ -454,7 +454,7 @@ final class GroupsModel: ObservableObject {
         case .authorizedWhenInUse, .authorizedAlways:
             return true
         case .notDetermined:
-            recorder.start() // asks for When In Use
+            recorder.start() // asks for When In Use (§9.9: Android runs its PermissionFlow)
             for await status in recorder.$authorization.values where status != .notDetermined {
                 return allowed(status)
             }

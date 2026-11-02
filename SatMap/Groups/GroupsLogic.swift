@@ -438,6 +438,68 @@ struct ProCache: Codable, Equatable {
     }
 }
 
+// MARK: - Endpoints (§5.1, §6.1, §6.6, §8.7)
+
+enum GroupEndpoints {
+    /// The invite domain from the Info.plist value (the `GROUPS_DOMAIN` build setting); the placeholder
+    /// `example.invalid` when it is missing or wasn't filled in.
+    static func domain(infoPlistValue: String?) -> String {
+        let value = infoPlistValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        guard !value.isEmpty, value.unicodeScalars.allSatisfy(allowed.contains) else { return "example.invalid" }
+        return value
+    }
+
+    /// The API base: `https://{domain}`, or the `-groupsBaseURL` launch argument when it is an http(s) URL with a host.
+    static func apiBase(override: String?, domain: String) -> URL {
+        if let text = override, let url = URL(string: text), url.scheme == "http" || url.scheme == "https", url.host != nil {
+            return url
+        }
+        return URL(string: "https://" + domain)!
+    }
+
+    /// A request's URL: the base and a path such as "/v1/groups/abc/changes?since=4".
+    static func apiURL(base: URL, path: String) -> URL? {
+        var text = base.absoluteString
+        while text.hasSuffix("/") { text.removeLast() }
+        return URL(string: text + path)
+    }
+
+    /// The group's WebSocket: https → wss, http → ws (a local test server).
+    static func socketURL(base: URL, groupId: String) -> URL? {
+        guard var c = URLComponents(url: base, resolvingAgainstBaseURL: false) else { return nil }
+        c.scheme = c.scheme == "http" ? "ws" : "wss"
+        var path = c.path
+        while path.hasSuffix("/") { path.removeLast() }
+        c.path = path + "/v1/groups/\(groupId)/ws"
+        c.query = nil
+        c.fragment = nil
+        return c.url
+    }
+
+    /// The close code the app reports when a socket's task ended (§8.7): the server's close code if it sent one (0 means
+    /// none), else the refused upgrade's status as a close code. `401` and `404` become 4401 (the hub checks with E2).
+    /// A `410` is 4401 too: URLSession doesn't hand over the body that says "removed" or "group_deleted", and E2 then
+    /// answers with the code, so the right alert shows. Anything else (or no answer) is 1006, which reconnects.
+    static func closeCode(httpStatus: Int?, socketCloseCode: Int?) -> Int {
+        if let c = socketCloseCode, c != 0 { return c }
+        switch httpStatus {
+        case 401, 404, 410: return 4401
+        default: return 1006
+        }
+    }
+
+    /// The URLSession errors that mean there is no connection (everything else is "something went wrong", §8.14).
+    static func isOffline(_ code: URLError.Code) -> Bool {
+        switch code {
+        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff, .callIsActive:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 // MARK: - Colours
 
 enum GroupColour {

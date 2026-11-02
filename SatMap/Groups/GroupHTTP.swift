@@ -21,15 +21,8 @@ final class GroupHTTP: GroupTransport {
         session = URLSession(configuration: config)
     }
 
-    /// The full URL of a path such as "/v1/groups/abc/changes?since=4".
-    static func url(base: URL, path: String) -> URL? {
-        var text = base.absoluteString
-        while text.hasSuffix("/") { text.removeLast() }
-        return URL(string: text + path)
-    }
-
     func request(method: String, path: String, pass: String?, json: Data?) async throws -> (status: Int, body: Data) {
-        guard let url = Self.url(base: baseURL, path: path) else { throw GroupTransportError.failed }
+        guard let url = GroupEndpoints.apiURL(base: baseURL, path: path) else { throw GroupTransportError.failed }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -46,21 +39,11 @@ final class GroupHTTP: GroupTransport {
             guard let http = response as? HTTPURLResponse else { throw GroupTransportError.failed }
             return (http.statusCode, data)
         } catch let e as URLError {
-            throw Self.isOffline(e) || !Connectivity.shared.isOnlineNow ? GroupTransportError.offline : GroupTransportError.failed
+            throw GroupEndpoints.isOffline(e.code) || !Connectivity.shared.isOnlineNow ? GroupTransportError.offline : GroupTransportError.failed
         } catch let e as GroupTransportError {
             throw e
         } catch {
             throw GroupTransportError.failed
-        }
-    }
-
-    /// The errors that mean there is no connection (everything else is "something went wrong", §8.14).
-    static func isOffline(_ e: URLError) -> Bool {
-        switch e.code {
-        case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed, .internationalRoamingOff, .callIsActive:
-            return true
-        default:
-            return false
         }
     }
 }

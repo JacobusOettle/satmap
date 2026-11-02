@@ -40,6 +40,7 @@ struct InviteView: View {
                 }
                 Section {
                     Button {
+                        // §9.9: the system share sheet (Android adds a text share to its ShareHost).
                         SharePresenter.present([GroupTexts.inviteShareText(group: d.name, link: link)]) {}
                     } label: {
                         Label("Share link", systemImage: "square.and.arrow.up")

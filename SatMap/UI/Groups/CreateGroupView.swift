@@ -38,6 +38,8 @@ struct CreateGroupView: View {
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("displayName")
+                    // The last name typed prefills the next create or join (`groupsDisplayName`, §8.3).
+                    .onChange(of: displayName) { groups.rememberDisplayName($0) }
             } header: {
                 Text("Your name in the group")
             } footer: {
