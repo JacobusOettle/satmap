@@ -494,6 +494,53 @@ class GroupHubTests {
     }
 
     @Test
+    fun testHTTPSendsLiveAndChunksTogether() = test {
+        val (_, member, gid) = ownerAndMember()
+        share(member, gid)
+        server.clearLog()
+        val sends = mutableListOf<Pair<Long, JsonObject>>()
+        // Stop and go in the background: 4 min moving (a point and a fix at every step), 2.5 min still (fixes only).
+        // The app ticks on every fix.
+        suspend fun stopAndGo(seconds: Long, step: Long) {
+            val start = clock.now
+            while (clock.now < start + seconds) {
+                val lat = -24.99619 + (clock.now - start) * 0.00001
+                fix(member, lat = lat)
+                if ((clock.now - start) % 390 < 240) point(member, lat = lat)
+                val before = uploads().size
+                member.hub.tick(foreground = false)
+                uploads().drop(before).forEach { sends.add(clock.now to it) }
+                clock.advance(step)
+            }
+        }
+        fun gaps(from: Int) = sends.drop(from).zipWithNext { a, b -> b.first - a.first }
+
+        // Nobody watches: one E18 a minute, carrying the live position and the changed chunks together.
+        stopAndGo(seconds = 1800, step = 10)
+        assertTrue("one E18 a minute, not more: ${gaps(0)}", gaps(0).all { it >= 60 })
+        assertTrue(sends.size in 29..31)
+        val withChunks = sends.filter { (it.second.chunkCount() ?: 0) > 0 }
+        assertTrue(withChunks.size > 10)
+        assertTrue("chunks go with the live position", withChunks.all { it.second["live"] is JsonObject })
+
+        // Someone watches: live every 15 s; the chunks ride along with every fourth.
+        server.setWatchers(1, groupId = gid)
+        val watched = sends.size
+        stopAndGo(seconds = 900, step = 5)
+        assertTrue("one E18 per 15 s, not more: ${gaps(watched)}", gaps(watched).all { it >= 15 })
+        assertTrue(sends.size - watched >= 55)
+        val chunkTimes = sends.drop(watched).filter { (it.second.chunkCount() ?: 0) > 0 }.map { it.first }
+        assertTrue(chunkTimes.size > 5)
+        assertTrue("chunks every 60 s: $chunkTimes", chunkTimes.zipWithNext { a, b -> b - a }.all { it >= 60 })
+        assertTrue(sends.drop(watched).filter { (it.second.chunkCount() ?: 0) > 0 }.all { it.second["live"] is JsonObject })
+
+        // Nothing is left behind.
+        clock.advance(60)
+        member.hub.tick(foreground = false)
+        assertTrue(member.store.ownWindows(gid).none { it.version > it.sentVersion })
+    }
+
+    @Test
     fun testWindowAcknowledgedWhileOpenIsDeletedOnceClosed() = test {
         val (_, member, gid) = ownerAndMember()
         share(member, gid)
@@ -625,6 +672,42 @@ class GroupHubTests {
         fix(member, lat = -24.99400)
         member.hub.tick(foreground = false)
         assertEquals(1, uploads().size)
+    }
+
+    @Test
+    fun testSocketWithoutWatchersSendsTheLiveWithTheChunks() = test {
+        val sockets = FakeSockets()
+        val owner = phone()
+        val gid = owner.hub.createGroup(name = "Trip", displayName = "Sam", pro = pro)
+        val link = link(owner.hub.createInvite(gid))
+        val member = phone(sockets = sockets)
+        member.hub.join(link, displayName = "Thandi")
+        share(member, gid)
+        member.hub.becameActive()
+        val socket = sockets.opened.last()
+        member.hub.socketDidOpen(gid)
+        val status = GroupAPI(server).status(gid, pass = member.secrets.loadAll().first().pass)
+        member.hub.socketDidReceive(gid, "{\"type\":\"welcome\",\"v\":1,\"status\":${status.json()},\"live\":[]}")
+        server.clearLog()
+        fun socketUploads() = socket.messages.filter { it["type"]?.jsonPrimitive?.content == "upload" }
+        // becameActive's flush used the live slot over HTTP. Points start 20 s later: their chunk waits for the next
+        // live slot, and from then on both go in one message a minute.
+        val sends = mutableListOf<Pair<Long, JsonObject>>()
+        clock.advance(20)
+        val end = clock.now + 400
+        while (clock.now < end) {
+            val lat = -24.99619 + (end - clock.now) * 0.00001
+            fix(member, lat = lat)
+            point(member, lat = lat)
+            val before = socketUploads().size
+            member.hub.tick(foreground = true)
+            socketUploads().drop(before).forEach { sends.add(clock.now to it) }
+            clock.advance(5)
+        }
+        assertTrue(uploads().isEmpty())
+        assertTrue(sends.size >= 6)
+        assertTrue("one upload a minute: ${sends.map { it.first }}", sends.zipWithNext { a, b -> b.first - a.first }.all { it >= 60 })
+        assertTrue(sends.all { (it.second.chunkCount() ?: 0) > 0 && it.second["live"] is JsonObject })
     }
 
     @Test

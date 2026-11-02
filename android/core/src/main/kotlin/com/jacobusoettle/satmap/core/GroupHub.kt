@@ -2183,20 +2183,22 @@ class GroupHub(
         }
         val windows = if (paused || clearing) emptyList() else store.ownWindows(groupId).filter { it.version > it.sentVersion && !st.badTimeHold.contains(it.start) }
         val viaSocket = isSocketReady(groupId)
-        val chunkDue = windows.isNotEmpty() && (st.lastChunkUpload?.let { now - it >= GroupPolicy.uploadInterval } ?: true)
+        val chunkTime = windows.isNotEmpty() && (st.lastChunkUpload?.let { now - it >= GroupPolicy.uploadInterval } ?: true)
         var liveDue = false
+        // Whether the live position goes in fixed slots: every row of §8.6 but the watched socket's. The chunks then
+        // wait for a slot and go in the same request ("live and chunks together"): on two clocks, chunks falling due
+        // at the first point after a stop would go between two heartbeats from then on, two requests a minute.
+        var slotted = false
         if (sharing) {
             val since = st.lastLiveSlot?.let { now - it } ?: Long.MAX_VALUE
-            liveDue = if (viaSocket && st.watchers > 0) {
-                (since >= GroupPolicy.liveWatchedForeground && movedEnough(st)) || since >= GroupPolicy.liveHeartbeat
-            } else if (viaSocket) {
-                since >= GroupPolicy.uploadInterval
-            } else if (st.watchers > 0) {
-                since >= GroupPolicy.liveWatchedBackground
+            if (viaSocket && st.watchers > 0) {
+                liveDue = (since >= GroupPolicy.liveWatchedForeground && movedEnough(st)) || since >= GroupPolicy.liveHeartbeat
             } else {
-                since >= GroupPolicy.uploadInterval
+                slotted = true
+                liveDue = since >= if (!viaSocket && st.watchers > 0) GroupPolicy.liveWatchedBackground else GroupPolicy.uploadInterval
             }
         }
+        val chunkDue = chunkTime && (!slotted || liveDue)
         val stopDue = st.stopLivePending && !sharing
         if (!chunkDue && !liveDue && !stopDue) return
 
