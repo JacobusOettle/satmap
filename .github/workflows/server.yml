@@ -1,0 +1,31 @@
+name: Server
+
+# Tests the groups Worker (server/, docs/groups/SPEC.md §12.4) offline: typecheck, unit and integration tests, the
+# WebSocket tests, and a dry-run bundle. Nothing is deployed from this repository.
+on:
+  workflow_dispatch:
+  push:
+    branches: ["**"]
+    paths: ["server/**", "Tests/SatMapCoreTests/Fixtures/groups/**", ".github/workflows/server.yml"]
+  pull_request:
+    paths: ["server/**", "Tests/SatMapCoreTests/Fixtures/groups/**", ".github/workflows/server.yml"]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:ws
+      - run: npm run build          # wrangler deploy --dry-run: checks that the Worker bundles; deploys nothing
