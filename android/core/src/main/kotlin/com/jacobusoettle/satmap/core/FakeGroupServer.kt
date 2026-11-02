@@ -510,8 +510,10 @@ class FakeGroupServer(now: () -> Long) : GroupTransport {
             val forced = chunkRejections[c.start]
             when {
                 forced != null -> rejected.add(UploadRejection(c.start, forced))
-                c.start % 600 != 0L || c.start > now + 600 -> rejected.add(UploadRejection(c.start, "bad_time"))
+                // In the real server's order; a start off the 600 s grid can never be accepted, so it is bad_record.
+                c.start % 600 != 0L -> rejected.add(UploadRejection(c.start, "bad_record"))
                 c.start + 600 <= joinedAt -> rejected.add(UploadRejection(c.start, "before_join"))
+                c.start > now + 600 -> rejected.add(UploadRejection(c.start, "bad_time"))
                 size !in 32..12_288 || version != 1.toByte() -> rejected.add(UploadRejection(c.start, "bad_record"))
                 g.pauseLog.any { c.start >= it.from && c.start + 600 <= (it.to ?: Long.MAX_VALUE) } -> rejected.add(UploadRejection(c.start, "window_paused"))
                 else -> {

@@ -539,10 +539,13 @@ final class FakeGroupServer: GroupTransport {
             let version = Base64URL.decode(c.rec)?.first
             if let forced = chunkRejections[c.start] {
                 rejected.append(UploadRejection(start: c.start, error: forced))
-            } else if c.start % 600 != 0 || c.start > now + 600 {
-                rejected.append(UploadRejection(start: c.start, error: "bad_time"))
+            } else if c.start % 600 != 0 {
+                // In the real server's order; a start off the 600 s grid can never be accepted, so it is bad_record.
+                rejected.append(UploadRejection(start: c.start, error: "bad_record"))
             } else if c.start + 600 <= joinedAt {
                 rejected.append(UploadRejection(start: c.start, error: "before_join"))
+            } else if c.start > now + 600 {
+                rejected.append(UploadRejection(start: c.start, error: "bad_time"))
             } else if !(32...12_288).contains(size) || version != 1 {
                 rejected.append(UploadRejection(start: c.start, error: "bad_record"))
             } else if g.pauseLog.contains(where: { c.start >= $0.from && c.start + 600 <= ($0.to ?? .max) }) {
