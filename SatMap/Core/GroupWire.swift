@@ -267,6 +267,10 @@ enum GroupPolicy {
 
     /// Trail windows are 10 minutes, aligned to UTC (§4.1).
     static let windowSeconds: Int64 = 600
+    /// An acknowledged window stays in `own_points` until it has been closed this long, so a point the recorder
+    /// delivers a little late still joins its whole window instead of starting a new one that would replace the
+    /// server's copy with that point alone.
+    static let lateWindowGrace: Int64 = 60
     static let maxPointsPerChunk = 600
     static let maxChunkBody = 8192
     /// Writers try DEFLATE for bodies of at least this many bytes (§4.2).

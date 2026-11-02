@@ -420,10 +420,23 @@ final class GroupStore {
 
     // MARK: - Own points (the outbox)
 
+    private static func ownWindow(_ s: OpaquePointer) -> OwnWindow {
+        OwnWindow(start: int(s, 0), points: blob(s, 1), version: int(s, 2), sentVersion: int(s, 3), badTimeTries: Int(int(s, 4)))
+    }
+
     func ownWindows(_ groupId: String) -> [OwnWindow] {
-        rows("SELECT start, points, version, sent_version, bad_time_tries FROM own_points WHERE group_id = ? ORDER BY start", [.text(groupId)]) { s in
-            OwnWindow(start: int(s, 0), points: blob(s, 1), version: int(s, 2), sentVersion: int(s, 3), badTimeTries: Int(int(s, 4)))
-        }
+        rows("SELECT start, points, version, sent_version, bad_time_tries FROM own_points WHERE group_id = ? ORDER BY start", [.text(groupId)],
+             Self.ownWindow)
+    }
+
+    func ownWindow(_ groupId: String, start: Int64) -> OwnWindow? {
+        rows("SELECT start, points, version, sent_version, bad_time_tries FROM own_points WHERE group_id = ? AND start = ?",
+             [.text(groupId), .int(start)], Self.ownWindow).first
+    }
+
+    /// Whether a window holds points that were never acknowledged.
+    func hasUnsentOwnWindows(_ groupId: String) -> Bool {
+        (scalar("SELECT COUNT(*) FROM own_points WHERE group_id = ? AND version > sent_version", [.text(groupId)]) ?? 0) > 0
     }
 
     /// Adds a point to its window (`version + 1`). A point earlier than the window's last one, or past 600 points, is
@@ -431,7 +444,7 @@ final class GroupStore {
     @discardableResult
     func addOwnPoint(_ groupId: String, _ point: TrailPoint) -> Bool {
         let start = TrailChunk.windowStart(point.time)
-        let existing = ownWindows(groupId).first { $0.start == start }
+        let existing = ownWindow(groupId, start: start)
         var points: [TrailPoint] = []
         if let e = existing {
             guard let decoded = try? TrailChunk.decode(e.points, windowStart: start) else { return false }
@@ -459,6 +472,13 @@ final class GroupStore {
         if closed {
             run("DELETE FROM own_points WHERE group_id = ? AND start = ? AND sent_version >= version", [.text(groupId), .int(start)])
         }
+    }
+
+    /// Deletes the windows that ended at or before `time` and whose latest version was acknowledged (§4.3), such as
+    /// one whose last upload went while it was still open.
+    func deleteSentOwnWindows(_ groupId: String, endedBy time: Int64) {
+        run("DELETE FROM own_points WHERE group_id = ? AND sent_version >= version AND start + ? <= ?",
+            [.text(groupId), .int(GroupPolicy.windowSeconds), .int(time)])
     }
 
     func deleteOwnWindow(_ groupId: String, start: Int64) {
@@ -502,6 +522,10 @@ final class GroupStore {
         return db.map { sqlite3_last_insert_rowid($0) } ?? 0
     }
 
+    private static func queuedOp(_ s: OpaquePointer) -> QueuedOp {
+        QueuedOp(id: int(s, 0), groupId: text(s, 1), kind: text(s, 2), body: text(s, 3), createdAt: int(s, 4))
+    }
+
     /// The queued ops, in the order they were queued.
     func ops(_ groupId: String? = nil) -> [QueuedOp] {
         var sql = "SELECT id, group_id, kind, body, created_at FROM ops"
@@ -510,9 +534,18 @@ final class GroupStore {
             sql += " WHERE group_id = ?"
             args.append(.text(g))
         }
-        return rows(sql + " ORDER BY id", args) { s in
-            QueuedOp(id: int(s, 0), groupId: text(s, 1), kind: text(s, 2), body: text(s, 3), createdAt: int(s, 4))
-        }
+        return rows(sql + " ORDER BY id", args, Self.queuedOp)
+    }
+
+    /// The op as it is stored now; nil once it was deleted.
+    func op(_ id: Int64) -> QueuedOp? {
+        rows("SELECT id, group_id, kind, body, created_at FROM ops WHERE id = ?", [.int(id)], Self.queuedOp).first
+    }
+
+    /// The group's first queued op after `id` that is not an archive download, as it is stored now.
+    func nextOp(_ groupId: String, after id: Int64) -> QueuedOp? {
+        rows("SELECT id, group_id, kind, body, created_at FROM ops WHERE group_id = ? AND id > ? AND kind != 'archive' ORDER BY id LIMIT 1",
+             [.text(groupId), .int(id)], Self.queuedOp).first
     }
 
     func deleteOp(_ id: Int64) {

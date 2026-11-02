@@ -206,6 +206,27 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertTrue(store.ownWindows(gid).isEmpty)
     }
 
+    func testAcknowledgedWindowsAreSweptOnceClosed() throws {
+        let w: Int64 = 1_793_613_600
+        for k in 0..<3 { store.addOwnPoint(gid, TrailPoint(time: w + Int64(k) * 600 + 5, lat: 1, lon: 2, startsSegment: false)) }
+        store.addOwnPoint("other", TrailPoint(time: w + 5, lat: 1, lon: 2, startsSegment: false))
+        XCTAssertTrue(store.hasUnsentOwnWindows(gid))
+        XCTAssertEqual(store.ownWindow(gid, start: w + 600)?.version, 1)
+        XCTAssertNil(store.ownWindow(gid, start: w + 1800))
+        // All three acknowledged while open.
+        for k in 0..<3 { store.markOwnWindowSent(gid, start: w + Int64(k) * 600, version: 1, closed: false) }
+        XCTAssertFalse(store.hasUnsentOwnWindows(gid))
+        XCTAssertEqual(store.ownWindows(gid).count, 3)
+        // A window changed since its acknowledgement stays until it is acknowledged again.
+        store.addOwnPoint(gid, TrailPoint(time: w + 605, lat: 1, lon: 2, startsSegment: false))
+        XCTAssertTrue(store.hasUnsentOwnWindows(gid))
+        store.deleteSentOwnWindows(gid, endedBy: w + 1199)
+        XCTAssertEqual(store.ownWindows(gid).map(\.start), [w + 600, w + 1200])
+        store.deleteSentOwnWindows(gid, endedBy: w + 1800)
+        XCTAssertEqual(store.ownWindows(gid).map(\.start), [w + 600])
+        XCTAssertEqual(store.ownWindows("other").count, 1, "other groups are untouched")
+    }
+
     func testOpsKeepTheirOrder() {
         let a = store.addOp(gid, kind: "pin", body: "a", createdAt: 3)
         let b = store.addOp(gid, kind: "unpin", body: "b", createdAt: 1)
@@ -219,6 +240,16 @@ final class GroupStoreTests: XCTestCase {
         store.deleteOp(b)
         XCTAssertEqual(store.ops(gid).map(\.body), ["a2", ""])
         XCTAssertFalse(store.hasOp(gid, kind: "unpin"))
+        // One at a time, as stored now: archive downloads are skipped, a deleted op is gone.
+        XCTAssertEqual(store.op(a)?.body, "a2")
+        XCTAssertNil(store.op(b))
+        let archive = store.addOp(gid, kind: "archive", body: "{}", createdAt: 4)
+        let d = store.addOp(gid, kind: "profile", body: "p", createdAt: 5)
+        XCTAssertEqual(store.nextOp(gid, after: 0)?.id, a)
+        XCTAssertEqual(store.nextOp(gid, after: a)?.id, c)
+        XCTAssertEqual(store.nextOp(gid, after: c)?.id, d)
+        XCTAssertNil(store.nextOp(gid, after: d))
+        XCTAssertNotNil(store.op(archive))
     }
 
     func testBlockListAndInvites() {

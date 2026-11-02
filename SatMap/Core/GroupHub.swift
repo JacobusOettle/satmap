@@ -370,6 +370,9 @@ final class GroupHub {
     private var states: [String: GroupState] = [:]
     /// Secrets with no local group yet: a reinstall's restore (§8.3), or a create or join whose answer was lost.
     private var pendingSecrets: [String: GroupSecret] = [:]
+    /// The membership of the last create whose answer was lost, while it is still pending: a new create sends E1
+    /// again with its group id and pass (§6.7), so the server makes at most one group.
+    private var pendingCreate: GroupSecret?
     private var foreground = false
     private var locationAuthorised = false
     private var locationPrecise = false
@@ -506,8 +509,7 @@ final class GroupHub {
         for st in states.values {
             if isEffectivelySharing(st) {
                 delay = min(delay ?? .max, st.watchers > 0 ? GroupPolicy.liveWatchedBackground : GroupPolicy.uploadInterval)
-            } else if st.stopLivePending || store.ops(st.id).contains(where: { $0.kind != "archive" })
-                        || store.ownWindows(st.id).contains(where: { $0.version > $0.sentVersion }) {
+            } else if st.stopLivePending || store.nextOp(st.id, after: 0) != nil || store.hasUnsentOwnWindows(st.id) {
                 delay = min(delay ?? .max, GroupPolicy.uploadInterval)
             }
         }
@@ -731,14 +733,27 @@ final class GroupHub {
     func createGroup(name: String, displayName: String, pro: ProProof) async throws -> String {
         let groupName = try checked(name, .groupName)
         let myName = try checked(displayName, .displayName)
+        // A create whose answer was lost, and that no E2 has settled since, is sent again with the same group id and
+        // pass: if the server made the group it answers 200 with it (§6.7) instead of a second group being made. The
+        // profiles are sealed from the names typed now; the server keeps the first ones if the group exists.
+        var retry = pendingCreate.flatMap { pendingSecrets[$0.groupId] == $0 && states[$0.groupId] == nil ? $0 : nil }
+        pendingCreate = nil
         var clashes = 0
         while true {
-            let groupIdBytes = GroupRandom.bytes(16)
-            let groupKey = GroupRandom.bytes(32)
-            let keys = GroupKeys(groupKey: groupKey, groupId: groupIdBytes)
-            let gid = keys.groupId
-            let secret = GroupSecret(groupId: gid, memberId: GroupRandom.id(), pass: Base64URL.encode(GroupRandom.bytes(32)),
+            let keys: GroupKeys
+            let secret: GroupSecret
+            if let s = retry, let key = Base64URL.decode(s.groupKey, count: 32), let gidBytes = Base64URL.decode(s.groupId, count: 16) {
+                keys = GroupKeys(groupKey: key, groupId: gidBytes)
+                secret = s
+                // Taken over: a restore running meanwhile leaves it to this create (§8.3).
+                pendingSecrets[s.groupId] = nil
+            } else {
+                let groupKey = GroupRandom.bytes(32)
+                keys = GroupKeys(groupKey: groupKey, groupId: GroupRandom.bytes(16))
+                secret = GroupSecret(groupId: keys.groupId, memberId: GroupRandom.id(), pass: Base64URL.encode(GroupRandom.bytes(32)),
                                      groupKey: Base64URL.encode(groupKey))
+            }
+            let gid = keys.groupId
             let body: CreateGroupRequest
             do {
                 body = CreateGroupRequest(groupId: gid, memberId: secret.memberId, pass: secret.pass, joinProof: Base64URL.encode(keys.joinProof),
@@ -761,9 +776,11 @@ final class GroupHub {
                 return gid
             } catch let e as GroupAPIError where e.status == 409 && e.code == "group_exists" && clashes == 0 {
                 secrets.delete(groupId: gid)
+                retry = nil
                 clashes += 1
             } catch {
                 forgetSecretIfDefinite(secret, error)
+                if pendingSecrets[gid] == secret { pendingCreate = secret }
                 throw actionError(error)
             }
         }
@@ -904,6 +921,13 @@ final class GroupHub {
                                        key: st.keys.member, aad: GroupAAD.member(groupId, me))
         } catch {
             throw GroupActionError(.server)
+        }
+        // The rename must reach the server last: no queued profile change (a colour fix, §4.6) goes while it is on
+        // its way, and one already on its way is answered first.
+        st.renaming += 1
+        defer { st.renaming -= 1 }
+        while st.sendingOp?.kind == "profile" {
+            await withCheckedContinuation { st.opWaiters.append($0) }
         }
         do {
             let seq = try await api.updateMyProfile(groupId, pass: st.secret.pass, profile: Base64URL.encode(env)).seq
@@ -1123,15 +1147,16 @@ final class GroupHub {
         background { hub in await hub.flush(groupId, now: hub.clock(), force: true) }
     }
 
-    /// Deletes a pin for everyone: gone from the map at once; the request is queued.
+    /// Deletes a pin for everyone: gone from the map at once; the request is queued. A pin still queued never goes,
+    /// unless its E23 is already on its way: then E24 follows it.
     func deletePin(_ pinId: String, groupId: String) {
-        guard states[groupId] != nil else { return }
-        let unsent = store.ops(groupId).first { $0.kind == "pin" && PinOp(json: $0.body)?.pinId == pinId }
+        guard let st = states[groupId] else { return }
+        let queued = store.ops(groupId).first { $0.kind == "pin" && PinOp(json: $0.body)?.pinId == pinId }
+        let onItsWay = queued != nil && queued?.id == st.sendingOp?.id
         try? store.transaction {
             store.deletePin(groupId, pinId)
-            if let op = unsent {
-                store.deleteOp(op.id)
-            } else {
+            if let op = queued { store.deleteOp(op.id) }
+            if queued == nil || onItsWay {
                 store.addOp(groupId, kind: "unpin", body: pinId, createdAt: clock())
             }
         }
@@ -1332,6 +1357,11 @@ final class GroupHub {
         var pulling = false
         var pullAgain = false
         var flushing = false
+        /// The queued op whose request is on its way, and who waits for its answer.
+        var sendingOp: GroupStore.QueuedOp?
+        var opWaiters: [CheckedContinuation<Void, Never>] = []
+        /// Renames (E15 from `setDisplayName`) on their way; queued profile changes wait for them.
+        var renaming = 0
 
         init(secret: GroupSecret, keys: GroupKeys, row: GroupStore.StoredGroup) {
             self.secret = secret
@@ -1392,6 +1422,7 @@ final class GroupHub {
             store.putGroup(row)
         }
         pendingSecrets[secret.groupId] = nil
+        if pendingCreate?.groupId == secret.groupId { pendingCreate = nil }
         let st = GroupState(secret: secret, keys: keys, row: store.group(secret.groupId) ?? row)
         st.status = status
         st.watchers = status.watchers ?? 0
@@ -1740,19 +1771,23 @@ final class GroupHub {
     }
 
     /// A membership with no local copy: E2, then the changes from 0 (§8.3). Only E2's 401, 404 or 410 deletes it.
+    /// Either answer counts only while the secret is still pending: a create or join that took it over while E2 was
+    /// on its way (its retry, §6.7) decides about it instead.
     @MainActor
     private func restore(_ groupId: String) async {
         guard let s = pendingSecrets[groupId], let key = Base64URL.decode(s.groupKey, count: 32),
               let gidBytes = Base64URL.decode(s.groupId, count: 16) else { return }
         do {
             let status = try await api.status(groupId, pass: s.pass)
-            guard pendingSecrets[groupId] != nil, states[groupId] == nil else { return }
+            guard pendingSecrets[groupId] == s, states[groupId] == nil else { return }
             addGroup(s, keys: GroupKeys(groupKey: key, groupId: gidBytes), status: status)
             notify(groupId)
             await pull(groupId)
         } catch let e as GroupAPIError where e.status == 401 || e.status == 410 || (e.status == 404 && e.code == "group_not_found") {
+            guard pendingSecrets[groupId] == s, states[groupId] == nil else { return }
             secrets.delete(groupId: groupId)
             pendingSecrets[groupId] = nil
+            if pendingCreate == s { pendingCreate = nil }
         } catch {
             // Offline or a server error: try again later.
         }
@@ -1968,63 +2003,88 @@ final class GroupHub {
     }
 
     /// Sends the queued ops in order. Returns false when it had to stop (offline, a server error, or the group gone).
+    ///
+    /// Each op is read from the store just before it goes, so one deleted meanwhile (a pin deleted before it went, a
+    /// colour fix a rename replaced) is skipped, and one queued meanwhile still goes in this pass.
     @MainActor
     private func sendOps(_ groupId: String, now: Int64) async -> Bool {
-        for op in store.ops(groupId) where op.kind != "archive" {
+        var after: Int64 = 0
+        while let op = store.nextOp(groupId, after: after) {
+            after = op.id
             guard let st = states[groupId] else { return false }
             if op.kind == "pin" && st.isPaused { continue } // waits for the resume; deletes and the rest still go
+            if op.kind == "profile" && st.renaming > 0 { continue } // the rename replaces it
+            st.sendingOp = op
+            let failure: Error?
             do {
-                switch op.kind {
-                case "pin":
-                    try await sendPin(st, op)
-                case "unpin":
-                    do {
-                        try await api.deletePin(groupId, pass: st.secret.pass, pinId: op.body)
-                    } catch let e as GroupAPIError where e.status == 404 && e.code == "not_found" {
-                        // Already deleted.
-                    }
-                    store.deleteOp(op.id)
-                case "profile":
-                    let seq = try await api.updateMyProfile(groupId, pass: st.secret.pass, profile: op.body).seq
-                    store.deleteOp(op.id)
-                    if var m = states[groupId]?.members.first(where: { $0.memberId == st.secret.memberId }), let env = Base64URL.decode(op.body) {
-                        m.profile = env
-                        m.seq = seq
-                        store.putMember(groupId, m)
-                        reload(groupId)
-                        notify(groupId)
-                    }
-                case "cleartrail":
-                    do {
-                        try await api.clearTrail(groupId, pass: st.secret.pass)
-                    } catch let e as GroupAPIError where e.status == 404 && e.code == "not_found" {
-                        // Nothing to clear.
-                    }
-                    store.deleteOp(op.id)
-                default:
-                    store.deleteOp(op.id)
-                }
-                st.retryStep = 0
+                try await send(st, op)
+                failure = nil
             } catch {
-                if isRetryable(error) {
-                    noteRetry(st, now: now, error: error)
-                    return false
-                }
-                if await handleFailure(error, groupId) { return false }
-                if let a = error as? GroupAPIError, a.status == 409, a.code == "group_paused" {
-                    continue
-                }
-                // A definite refusal: the op can never succeed.
-                GroupLog.note("a queued \(op.kind) was refused (\((error as? GroupAPIError)?.code ?? "?")); dropped")
-                store.deleteOp(op.id)
-                if op.kind == "pin", let pin = PinOp(json: op.body) {
-                    store.deletePin(groupId, pin.pinId)
-                    reload(groupId)
-                    notify(groupId)
-                }
+                failure = error
+            }
+            st.sendingOp = nil
+            let waiters = st.opWaiters
+            st.opWaiters = []
+            for w in waiters { w.resume() }
+            guard let error = failure else {
+                st.retryStep = 0
+                continue
+            }
+            if isRetryable(error) {
+                noteRetry(st, now: now, error: error)
+                return false
+            }
+            if await handleFailure(error, groupId) { return false }
+            if let a = error as? GroupAPIError, a.status == 409, a.code == "group_paused" {
+                continue
+            }
+            // A definite refusal: the op can never succeed. A pin's id may have changed on the way (`pin_exists`).
+            GroupLog.note("a queued \(op.kind) was refused (\((error as? GroupAPIError)?.code ?? "?")); dropped")
+            let current = store.op(op.id)
+            store.deleteOp(op.id)
+            if op.kind == "pin", let pin = PinOp(json: (current ?? op).body) {
+                store.deletePin(groupId, pin.pinId)
+                reload(groupId)
+                notify(groupId)
             }
         }
         return true
+    }
+
+    /// The request of one queued op; the op is deleted once it is done.
+    @MainActor
+    private func send(_ st: GroupState, _ op: GroupStore.QueuedOp) async throws {
+        let groupId = st.id
+        switch op.kind {
+        case "pin":
+            try await sendPin(st, op)
+        case "unpin":
+            do {
+                try await api.deletePin(groupId, pass: st.secret.pass, pinId: op.body)
+            } catch let e as GroupAPIError where e.status == 404 && e.code == "not_found" {
+                // Already deleted.
+            }
+            store.deleteOp(op.id)
+        case "profile":
+            let seq = try await api.updateMyProfile(groupId, pass: st.secret.pass, profile: op.body).seq
+            store.deleteOp(op.id)
+            if var m = states[groupId]?.members.first(where: { $0.memberId == st.secret.memberId }), let env = Base64URL.decode(op.body) {
+                m.profile = env
+                m.seq = seq
+                store.putMember(groupId, m)
+                reload(groupId)
+                notify(groupId)
+            }
+        case "cleartrail":
+            do {
+                try await api.clearTrail(groupId, pass: st.secret.pass)
+            } catch let e as GroupAPIError where e.status == 404 && e.code == "not_found" {
+                // Nothing to clear.
+            }
+            store.deleteOp(op.id)
+        default:
+            store.deleteOp(op.id)
+        }
     }
 
     /// E23 for a queued pin. `pin_exists` gives it a new id once; `pin_deleted`, `pin_expired` and other refusals drop it.
@@ -2052,6 +2112,12 @@ final class GroupHub {
                 notify(gid)
                 return
             } catch let e as GroupAPIError where e.status == 409 && e.code == "pin_exists" && !pin.retried {
+                guard store.op(op.id) != nil else {
+                    // Deleted while its E23 was on its way: the server holds no pin of ours under this id, so the E24
+                    // queued to follow it is dropped (the id is another member's pin).
+                    for o in store.ops(gid) where o.kind == "unpin" && o.body == pin.pinId { store.deleteOp(o.id) }
+                    return
+                }
                 let oldId = pin.pinId
                 pin.pinId = GroupRandom.id()
                 pin.retried = true
@@ -2072,6 +2138,8 @@ final class GroupHub {
     @MainActor
     private func upload(_ groupId: String, now: Int64) async {
         guard let st = states[groupId] else { return }
+        // A window whose last upload went while it was open is deleted once it has closed (§4.3).
+        store.deleteSentOwnWindows(groupId, endedBy: now - GroupPolicy.lateWindowGrace)
         let paused = st.isPaused
         guard !paused || st.stopLivePending else { return }
         let sharing = isEffectivelySharing(st)
@@ -2202,12 +2270,13 @@ final class GroupHub {
         let versions = Dictionary(sent.windows.map { ($0.start, $0.version) }, uniquingKeysWith: { a, _ in a })
         for start in result.accepted {
             guard let version = versions[start] else { continue }
-            store.markOwnWindowSent(gid, start: start, version: version, closed: start + GroupPolicy.windowSeconds <= now)
+            store.markOwnWindowSent(gid, start: start, version: version,
+                                    closed: start + GroupPolicy.windowSeconds + GroupPolicy.lateWindowGrace <= now)
         }
         for r in result.rejected {
             switch r.error {
             case "bad_time":
-                let tries = store.ownWindows(gid).first { $0.start == r.start }?.badTimeTries ?? 0
+                let tries = store.ownWindow(gid, start: r.start)?.badTimeTries ?? 0
                 if tries >= 1 {
                     store.deleteOwnWindow(gid, start: r.start)
                 } else {

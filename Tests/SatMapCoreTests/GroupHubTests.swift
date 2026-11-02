@@ -49,6 +49,72 @@ final class FakeSockets: GroupSocketFactory {
     }
 }
 
+/// The fake server behind a flaky network: a request that matches a rule is delayed on its way (`holdRequest`), or
+/// reaches the server and then has its answer held back (`holdAnswer`) or lost (`loseAnswer`, as
+/// `GroupTransportError.failed`). Each rule applies once. Held requests wait for `release()`.
+final class FlakyTransport: GroupTransport {
+    enum Fate {
+        case holdRequest, holdAnswer, loseAnswer
+    }
+
+    let server: FakeGroupServer
+    private let lock = NSLock()
+    private var rules: [(method: String, pathContains: String, fate: Fate)] = []
+    private var held: [CheckedContinuation<Void, Never>] = []
+
+    init(server: FakeGroupServer) {
+        self.server = server
+    }
+
+    func next(_ method: String, _ pathContains: String, _ fate: Fate) {
+        lock.lock()
+        rules.append((method, pathContains, fate))
+        lock.unlock()
+    }
+
+    var heldCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return held.count
+    }
+
+    func release() {
+        lock.lock()
+        let waiting = held
+        held = []
+        lock.unlock()
+        for c in waiting { c.resume() }
+    }
+
+    /// The fate of a request, taking its rule.
+    private func fate(_ method: String, _ path: String) -> Fate? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = rules.firstIndex(where: { $0.method == method && path.contains($0.pathContains) }) else { return nil }
+        return rules.remove(at: index).fate
+    }
+
+    func request(method: String, path: String, pass: String?, json: Data?) async throws -> (status: Int, body: Data) {
+        let fate = fate(method, path)
+        if fate == .holdRequest { await hold() }
+        let answer = try server.handle(method: method, path: path, pass: pass, json: json)
+        switch fate {
+        case .holdAnswer?: await hold()
+        case .loseAnswer?: throw GroupTransportError.failed
+        default: break
+        }
+        return answer
+    }
+
+    private func hold() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            held.append(c)
+            lock.unlock()
+        }
+    }
+}
+
 /// One phone: a hub with its own store and secrets, on the shared fake server.
 final class Phone {
     let store: GroupStore
@@ -56,10 +122,11 @@ final class Phone {
     let hub: GroupHub
     var events: [GroupHubEvent] = []
 
-    init(server: FakeGroupServer, clock: TestClock, sockets: FakeSockets? = nil, words: String = "badword\n") throws {
+    init(server: FakeGroupServer, clock: TestClock, sockets: FakeSockets? = nil, words: String = "badword\n",
+         transport: GroupTransport? = nil) throws {
         store = try GroupStore(path: ":memory:")
         secrets = MemoryGroupSecrets()
-        hub = GroupHub(store: store, secrets: secrets, transport: server, sockets: sockets, words: WordFilter(list: words),
+        hub = GroupHub(store: store, secrets: secrets, transport: transport ?? server, sockets: sockets, words: WordFilter(list: words),
                        domain: "example.invalid", clock: { clock.now })
         hub.onChange = { [weak self] in self?.events.append($0) }
         hub.setLocationAccess(authorised: true, precise: true)
@@ -86,12 +153,13 @@ final class GroupHubTests: XCTestCase {
 
     // MARK: Helpers
 
-    func phone(sockets: FakeSockets? = nil) throws -> Phone {
-        try Phone(server: server, clock: clock, sockets: sockets)
+    func phone(sockets: FakeSockets? = nil, transport: GroupTransport? = nil) throws -> Phone {
+        try Phone(server: server, clock: clock, sockets: sockets, transport: transport)
     }
 
     /// An owner with a group, and a second phone that joined it through an invite.
-    func ownerAndMember(name: String = "Kruger trip") async throws -> (owner: Phone, member: Phone, groupId: String) {
+    func ownerAndMember(name: String = "Kruger trip", memberTransport: GroupTransport? = nil) async throws
+        -> (owner: Phone, member: Phone, groupId: String) {
         let owner = try phone()
         let gid = try await owner.hub.createGroup(name: name, displayName: "Sam", pro: pro)
         let made = try await owner.hub.createInvite(groupId: gid)
@@ -99,7 +167,7 @@ final class GroupHubTests: XCTestCase {
             XCTFail("not a link: \(made.link)")
             throw XCTSkip("no link")
         }
-        let member = try phone()
+        let member = try phone(transport: memberTransport)
         clock.advance(10)
         _ = try await member.hub.join(link, displayName: "Thandi")
         await member.hub.waitForBackgroundWork()
@@ -128,6 +196,36 @@ final class GroupHubTests: XCTestCase {
 
     func point(_ p: Phone, lat: Double = -24.99619, lon: Double = 31.592512, at time: Int64? = nil, segment: Bool = false) {
         p.hub.trackPoint(TrackPoint(lat: lat, lon: lon, time: Double(time ?? clock.now) + 0.7, startsSegment: segment))
+    }
+
+    /// Waits (up to 5 s) until the flaky network holds `count` requests.
+    func waitUntilHeld(_ net: FlakyTransport, _ count: Int = 1, file: StaticString = #filePath, line: UInt = #line) async throws {
+        var waited = 0
+        while net.heldCount < count && waited < 500 {
+            try await Task.sleep(nanoseconds: 10_000_000)
+            waited += 1
+        }
+        XCTAssertEqual(net.heldCount, count, "requests held", file: file, line: line)
+    }
+
+    func bodies<T: Decodable>(_ method: String, _ pathPart: String, as type: T.Type) -> [T] {
+        requests(method, pathPart).compactMap { $0.body.flatMap { try? JSONDecoder().decode(T.self, from: $0) } }
+    }
+
+    /// A member profile envelope, sealed as the member's own phone seals it.
+    func sealedProfile(_ secret: GroupSecret, name: String, colour: Int) throws -> String {
+        let keys = GroupKeys(groupKey: try XCTUnwrap(Base64URL.decode(secret.groupKey, count: 32)),
+                             groupId: try XCTUnwrap(Base64URL.decode(secret.groupId, count: 16)))
+        return Base64URL.encode(try GroupCrypto.seal(MemberProfile(name: name, colour: colour).json(), key: keys.member,
+                                                     aad: GroupAAD.member(secret.groupId, secret.memberId)))
+    }
+
+    /// The profile the server holds for the member, opened.
+    func serverProfile(_ secret: GroupSecret) throws -> MemberProfile {
+        let keys = GroupKeys(groupKey: try XCTUnwrap(Base64URL.decode(secret.groupKey, count: 32)),
+                             groupId: try XCTUnwrap(Base64URL.decode(secret.groupId, count: 16)))
+        let env = try XCTUnwrap(server.memberProfile(groupId: secret.groupId, memberId: secret.memberId).flatMap { Base64URL.decode($0) })
+        return try MemberProfile.decode(GroupCrypto.open(env, key: keys.member, aad: GroupAAD.member(secret.groupId, secret.memberId)))
     }
 
     // MARK: - Create, invite, join, see each other
@@ -285,6 +383,65 @@ final class GroupHubTests: XCTestCase {
         XCTAssertTrue(p.hub.groups.isEmpty)
     }
 
+    func testRetriedCreateAfterALostAnswerMakesOneGroup() async throws {
+        let net = FlakyTransport(server: server)
+        let p = try phone(transport: net)
+        func creates() -> [CreateGroupRequest] {
+            server.log.filter { $0.method == "POST" && $0.path == "/v1/groups" }
+                .compactMap { $0.body.flatMap { try? JSONDecoder().decode(CreateGroupRequest.self, from: $0) } }
+        }
+        // E1 went through, but its answer was lost: the person taps Create again.
+        net.next("POST", "/v1/groups", .loseAnswer)
+        do {
+            _ = try await p.hub.createGroup(name: "Trip", displayName: "Sam", pro: pro)
+            XCTFail("created without an answer")
+        } catch let e as GroupActionError {
+            XCTAssertEqual(e.kind, .server)
+        }
+        let first = try XCTUnwrap(creates().first)
+        XCTAssertEqual(server.status(groupId: first.groupId), "active")
+        let gid = try await p.hub.createGroup(name: "Trip", displayName: "Sam", pro: pro)
+        // The same group id and pass again: the server answers with the group it made (§6.7).
+        XCTAssertEqual(gid, first.groupId)
+        XCTAssertEqual(creates().map(\.groupId), [gid, gid])
+        XCTAssertEqual(Set(creates().map(\.pass)).count, 1)
+        XCTAssertEqual(creates().map(\.memberId), [first.memberId, first.memberId])
+        XCTAssertEqual(p.hub.groups.map(\.groupId), [gid])
+        XCTAssertEqual(p.hub.detail(gid)?.yourRole, .owner)
+        await p.hub.becameActive()
+        XCTAssertEqual(p.hub.groups.map(\.groupId), [gid])
+        XCTAssertEqual(p.secrets.loadAll().map(\.groupId), [gid])
+
+        // An E1 that never reached the server: the retry makes the group with the names typed now.
+        clock.advance(10)
+        server.offline = true
+        do {
+            _ = try await p.hub.createGroup(name: "Trip 2", displayName: "Sam", pro: pro)
+            XCTFail("created offline")
+        } catch let e as GroupActionError {
+            XCTAssertEqual(e.kind, .offline)
+        }
+        let offlineTry = try XCTUnwrap(creates().last)
+        XCTAssertNil(server.status(groupId: offlineTry.groupId))
+        server.offline = false
+        let second = try await p.hub.createGroup(name: "Second trip", displayName: "Sammy", pro: pro)
+        XCTAssertEqual(second, offlineTry.groupId)
+        XCTAssertEqual(p.hub.groups.map(\.name), ["Trip", "Second trip"])
+        XCTAssertEqual(p.hub.detail(second)?.members.map(\.name), ["Sammy"])
+
+        // Once E2 found the group, a new create is a new group.
+        clock.advance(10)
+        net.next("POST", "/v1/groups", .loseAnswer)
+        _ = try? await p.hub.createGroup(name: "Third", displayName: "Sam", pro: pro)
+        let lost = try XCTUnwrap(creates().last)
+        await p.hub.becameActive()
+        XCTAssertEqual(p.hub.groups.map(\.groupId), [gid, second, lost.groupId])
+        clock.advance(10)
+        let fourth = try await p.hub.createGroup(name: "Fourth", displayName: "Sam", pro: pro)
+        XCTAssertNotEqual(fourth, lost.groupId)
+        XCTAssertEqual(p.hub.groups.map(\.name), ["Trip", "Second trip", "Third", "Fourth"])
+    }
+
     func testReinstallRestoresMembershipsFromSecrets() async throws {
         let (owner, member, gid) = try await ownerAndMember()
         _ = owner
@@ -313,7 +470,8 @@ final class GroupHubTests: XCTestCase {
         let gid = try await owner.hub.createGroup(name: "Trip", displayName: "Sam", pro: pro)
         let made = try await owner.hub.createInvite(groupId: gid)
         guard case .invite(let link) = InviteLink.parse(made.link, domain: "example.invalid") else { return XCTFail("no link") }
-        let member = try phone()
+        let net = FlakyTransport(server: server)
+        let member = try phone(transport: net)
         // A damaged key: the server refuses the proof.
         var bad = Data(link.groupKey)
         bad[0] ^= 1
@@ -324,9 +482,7 @@ final class GroupHubTests: XCTestCase {
         } catch let e as GroupActionError {
             XCTAssertEqual(e.kind, .inviteNotFound)
         }
-        // A member id clash makes a new id once.
-        server.fail("POST", "/invites/redeem", status: 409, code: "member_exists")
-        // A lost answer: the retry uses the same pass and the server answers it again.
+        // Offline: the membership saved before the request stays.
         server.offline = true
         do {
             _ = try await member.hub.join(link, displayName: "Thandi")
@@ -334,10 +490,72 @@ final class GroupHubTests: XCTestCase {
         } catch let e as GroupActionError {
             XCTAssertEqual(e.kind, .offline)
         }
+        XCTAssertEqual(member.secrets.loadAll().map(\.groupId), [gid])
         server.offline = false
+        // A lost answer: the redeem went through but the phone never heard. The retry sends the same member id and
+        // pass, which the server answers again (§6.7); a new pass would find the invite used.
+        net.next("POST", "/invites/redeem", .loseAnswer)
+        do {
+            _ = try await member.hub.join(link, displayName: "Thandi")
+            XCTFail("joined without an answer")
+        } catch let e as GroupActionError {
+            XCTAssertEqual(e.kind, .server)
+        }
+        XCTAssertEqual(server.memberIds(groupId: gid).count, 2)
+        XCTAssertTrue(member.hub.groups.isEmpty)
         _ = try await member.hub.join(link, displayName: "Thandi")
         XCTAssertEqual(member.hub.groups.map(\.groupId), [gid])
         XCTAssertEqual(server.memberIds(groupId: gid).count, 2)
+        let redeems = bodies("POST", "/invites/redeem", as: RedeemRequest.self)
+        XCTAssertEqual(redeems.count, 3)
+        XCTAssertEqual(Set(redeems.map(\.pass)).count, 1)
+        XCTAssertEqual(Set(redeems.map(\.memberId)).count, 1)
+        XCTAssertEqual(member.secrets.loadAll().map(\.memberId), [redeems[0].memberId])
+        XCTAssertEqual(member.hub.detail(gid)?.yourMemberId, redeems[0].memberId)
+
+        // A member id clash makes a new id once.
+        let next = try await owner.hub.createInvite(groupId: gid)
+        guard case .invite(let link2) = InviteLink.parse(next.link, domain: "example.invalid") else { return XCTFail("no link") }
+        let third = try phone()
+        server.clearLog()
+        server.fail("POST", "/invites/redeem", status: 409, code: "member_exists")
+        _ = try await third.hub.join(link2, displayName: "Pieter")
+        let tries = bodies("POST", "/invites/redeem", as: RedeemRequest.self)
+        XCTAssertEqual(tries.count, 2)
+        XCTAssertNotEqual(tries[0].memberId, tries[1].memberId)
+        XCTAssertNotEqual(tries[0].pass, tries[1].pass)
+        XCTAssertEqual(third.secrets.loadAll().map(\.memberId), [tries[1].memberId])
+        XCTAssertEqual(server.memberIds(groupId: gid).count, 3)
+    }
+
+    func testRestoreLeavesASecretARetriedJoinTookOver() async throws {
+        let owner = try phone()
+        let gid = try await owner.hub.createGroup(name: "Trip", displayName: "Sam", pro: pro)
+        let made = try await owner.hub.createInvite(groupId: gid)
+        guard case .invite(let link) = InviteLink.parse(made.link, domain: "example.invalid") else { return XCTFail("no link") }
+        let net = FlakyTransport(server: server)
+        let member = try phone(transport: net)
+        clock.advance(10)
+        server.offline = true
+        _ = try? await member.hub.join(link, displayName: "Thandi")
+        server.offline = false
+        // Back online, E2 for the pending membership is answered 401 (it isn't a member yet), but the answer is
+        // slow; meanwhile the person taps Join again, which takes the secret over and succeeds.
+        net.next("GET", "/v1/groups/\(gid)", .holdAnswer)
+        let online = Task { await member.hub.connectivityChanged(online: true) }
+        try await waitUntilHeld(net)
+        _ = try await member.hub.join(link, displayName: "Thandi")
+        net.release()
+        await online.value
+        await member.hub.waitForBackgroundWork()
+        XCTAssertEqual(member.hub.groups.map(\.groupId), [gid])
+        XCTAssertEqual(member.secrets.loadAll().map(\.groupId), [gid], "the late 401 belongs to the old try")
+        // The membership survives a restart.
+        let again = GroupHub(store: member.store, secrets: member.secrets, transport: server, sockets: nil, words: WordFilter(list: ""),
+                             domain: "example.invalid", clock: { [clock] in clock!.now })
+        await again.start()
+        XCTAssertEqual(again.groups.map(\.groupId), [gid])
+        XCTAssertEqual(again.detail(gid)?.members.map(\.name), ["Sam", "Thandi"])
     }
 
     // MARK: - Sharing and the map
@@ -681,6 +899,10 @@ final class GroupHubTests: XCTestCase {
             total += chunks.count
         }
         XCTAssertEqual(total, 60)
+        // Acknowledged windows go once they have been closed for a minute; the newest waits for late points.
+        XCTAssertEqual(member.store.ownWindows(gid).map(\.start), [first + 59 * 600])
+        clock.advance(GroupPolicy.lateWindowGrace)
+        await member.hub.tick(foreground: false)
         XCTAssertTrue(member.store.ownWindows(gid).isEmpty, "closed and acknowledged windows are deleted")
         // Oldest first.
         let firstBody = (try? JSONSerialization.jsonObject(with: bodies[0])) as? [String: Any]
@@ -762,6 +984,42 @@ final class GroupHubTests: XCTestCase {
         XCTAssertNotEqual(recs[0], recs[1])
         XCTAssertEqual(server.chunkRecord(groupId: gid, memberId: memberId, start: w), recs[1])
         XCTAssertEqual(member.store.ownWindows(gid).count, 1, "the open window stays")
+    }
+
+    func testWindowsAcknowledgedWhileOpenAreDeletedOnceClosed() async throws {
+        let (_, member, gid) = try await ownerAndMember()
+        share(member, gid)
+        let secret = try XCTUnwrap(member.secrets.loadAll().first)
+        let w = TrailChunk.windowStart(clock.now) + 600
+        // One point per window, each window sent while it is still open and never changed after.
+        for k in 0..<6 {
+            clock.now = w + Int64(k) * 600 + 10
+            point(member)
+            await member.hub.tick(foreground: false)
+        }
+        XCTAssertEqual(server.chunkStarts(groupId: gid, memberId: secret.memberId).count, 6)
+        // Each goes once it has been closed for a minute; the last closed one and the open one are left.
+        let left = member.store.ownWindows(gid)
+        XCTAssertEqual(left.map(\.start), [w + 2400, w + 3000])
+        XCTAssertTrue(left.allSatisfy { $0.sentVersion == $0.version })
+
+        // A point the recorder delivers a few seconds late joins its whole window, which goes again with all its
+        // points instead of replacing the server's copy with that point alone: the window stays for a minute after
+        // it closed, even through an upload pass.
+        clock.now = w + 3600 + 2
+        await member.hub.tick(foreground: false)
+        XCTAssertEqual(member.store.ownWindows(gid).map(\.start), [w + 3000])
+        clock.now = w + 3600 + 5
+        point(member, at: w + 3599)
+        XCTAssertEqual(member.store.ownWindow(gid, start: w + 3000)?.version, 2)
+        clock.advance(60)
+        await member.hub.tick(foreground: false)
+        let keys = GroupKeys(groupKey: try XCTUnwrap(Base64URL.decode(secret.groupKey, count: 32)),
+                             groupId: try XCTUnwrap(Base64URL.decode(gid, count: 16)))
+        let rec = try XCTUnwrap(server.chunkRecord(groupId: gid, memberId: secret.memberId, start: w + 3000).flatMap { Base64URL.decode($0) })
+        let plain = try GroupCrypto.open(rec, key: keys.trail(secret.memberId), aad: GroupAAD.trail(gid, secret.memberId, start: w + 3000))
+        XCTAssertEqual(try TrailChunk.decode(plain, windowStart: w + 3000).map(\.time), [w + 3010, w + 3599])
+        XCTAssertTrue(member.store.ownWindows(gid).isEmpty)
     }
 
     // MARK: - Clearing the trail (§8.10)
@@ -897,6 +1155,7 @@ final class GroupHubTests: XCTestCase {
         server.offline = true
         try member.hub.dropPin(groupId: gid, type: .police, animal: nil, note: nil, lat: -24.98, lon: 31.6)
         let unsent = try XCTUnwrap(member.store.pins(gid).first { $0.seq == 0 }?.pinId)
+        await member.hub.waitForBackgroundWork()
         member.hub.deletePin(unsent, groupId: gid)
         await member.hub.waitForBackgroundWork()
         XCTAssertTrue(member.store.ops(gid).isEmpty)
@@ -916,6 +1175,121 @@ final class GroupHubTests: XCTestCase {
         XCTAssertThrowsError(try member.hub.dropPin(groupId: gid, type: .water, animal: nil, note: "badword", lat: 0, lon: 0)) { e in
             XCTAssertEqual((e as? GroupActionError)?.message, "Please use different words.")
         }
+    }
+
+    @MainActor
+    func testPinDeletedWhileItsDropIsOnItsWay() async throws {
+        let net = FlakyTransport(server: server)
+        let (owner, member, gid) = try await ownerAndMember(memberTransport: net)
+        // The E23 reaches the server, but its answer is slow; the rhino pin is deleted meanwhile.
+        net.next("POST", "/pins", .holdAnswer)
+        try member.hub.dropPin(groupId: gid, type: .animal, animal: "Rhino", note: nil, lat: -24.98, lon: 31.6)
+        try await waitUntilHeld(net)
+        let pinId = try XCTUnwrap(server.pinIds(groupId: gid).first)
+        member.hub.deletePin(pinId, groupId: gid)
+        XCTAssertTrue(member.hub.mapContent(now: clock.now)?.pins.isEmpty ?? false)
+        net.release()
+        await member.hub.waitForBackgroundWork()
+        // E24 followed the E23: the pin is gone for everyone, and stays gone on the dropper's map.
+        XCTAssertTrue(server.pinIds(groupId: gid).isEmpty)
+        XCTAssertEqual(requests("DELETE", "/pins/\(pinId)").count, 1)
+        XCTAssertTrue(member.store.ops(gid).isEmpty)
+        XCTAssertTrue(member.store.pins(gid).isEmpty)
+        await member.hub.becameActive()
+        XCTAssertTrue(member.store.pins(gid).isEmpty)
+        owner.hub.setShown(gid)
+        await owner.hub.tick(foreground: true)
+        XCTAssertTrue(owner.store.pins(gid).isEmpty)
+
+        // An id clash answer for a pin deleted on its way: it isn't sent again under a new id, and no E24 goes for
+        // the clashing id (another member's pin).
+        server.fail("POST", "/pins", status: 409, code: "pin_exists")
+        net.next("POST", "/pins", .holdAnswer)
+        try member.hub.dropPin(groupId: gid, type: .water, animal: nil, note: nil, lat: -24.98, lon: 31.6)
+        try await waitUntilHeld(net)
+        let clashed = try XCTUnwrap(member.store.pins(gid).first?.pinId)
+        member.hub.deletePin(clashed, groupId: gid)
+        server.clearLog()
+        net.release()
+        await member.hub.waitForBackgroundWork()
+        XCTAssertTrue(requests("POST", "/pins").isEmpty)
+        XCTAssertTrue(requests("DELETE", "/pins").isEmpty)
+        XCTAssertTrue(server.pinIds(groupId: gid).isEmpty)
+        XCTAssertTrue(member.store.pins(gid).isEmpty)
+        XCTAssertTrue(member.store.ops(gid).isEmpty)
+    }
+
+    @MainActor
+    func testPinDeletedLaterInTheSamePassNeverGoes() async throws {
+        let net = FlakyTransport(server: server)
+        let (_, member, gid) = try await ownerAndMember(memberTransport: net)
+        server.offline = true
+        try member.hub.dropPin(groupId: gid, type: .water, animal: nil, note: nil, lat: -24.99, lon: 31.6)
+        clock.advance(1)
+        try member.hub.dropPin(groupId: gid, type: .police, animal: nil, note: nil, lat: -24.98, lon: 31.6)
+        await member.hub.waitForBackgroundWork()
+        let queued = member.store.pins(gid).map(\.pinId)
+        XCTAssertEqual(queued.count, 2)
+        // Back online: the first E23 is on its way when the second pin is deleted.
+        server.offline = false
+        server.clearLog()
+        net.next("POST", "/pins", .holdAnswer)
+        let online = Task { await member.hub.connectivityChanged(online: true) }
+        try await waitUntilHeld(net)
+        member.hub.deletePin(queued[1], groupId: gid)
+        net.release()
+        await online.value
+        await member.hub.waitForBackgroundWork()
+        XCTAssertEqual(server.pinIds(groupId: gid), [queued[0]])
+        XCTAssertEqual(bodies("POST", "/pins", as: PinRequest.self).map(\.pinId), [queued[0]])
+        XCTAssertTrue(requests("DELETE", "/pins").isEmpty)
+        XCTAssertEqual(member.store.pins(gid).map(\.pinId), [queued[0]])
+        XCTAssertTrue(member.store.ops(gid).isEmpty)
+    }
+
+    @MainActor
+    func testRenameIsNotOverwrittenByAQueuedColourFix() async throws {
+        let net = FlakyTransport(server: server)
+        let (_, member, gid) = try await ownerAndMember(memberTransport: net)
+        let secret = try XCTUnwrap(member.secrets.loadAll().first)
+        let colourFix = try sealedProfile(secret, name: "Thandi", colour: 3)
+        func profilePuts() -> Int { requests("PUT", "/members/me/profile").count }
+
+        // A colour fix on its way when the person renames: the rename goes after its answer, so it lands last.
+        member.store.addOp(gid, kind: "profile", body: colourFix, createdAt: clock.now)
+        server.clearLog()
+        net.next("PUT", "/members/me/profile", .holdRequest)
+        let flush = Task { await member.hub.tick(foreground: false) }
+        try await waitUntilHeld(net)
+        let rename = Task { try await member.hub.setDisplayName("Thandi M", colour: 5, groupId: gid) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(profilePuts(), 0, "the rename waits for the colour fix's answer")
+        net.release()
+        await flush.value
+        try await rename.value
+        XCTAssertEqual(profilePuts(), 2)
+        XCTAssertEqual(try serverProfile(secret), MemberProfile(name: "Thandi M", colour: 5))
+        XCTAssertEqual(member.hub.detail(gid)?.members.last?.name, "Thandi M")
+        XCTAssertTrue(member.store.ops(gid).isEmpty)
+
+        // A colour fix queued behind a pin on its way, replaced by a rename meanwhile: it never goes.
+        server.offline = true
+        try member.hub.dropPin(groupId: gid, type: .water, animal: nil, note: nil, lat: -24.99, lon: 31.6)
+        await member.hub.waitForBackgroundWork()
+        member.store.addOp(gid, kind: "profile", body: colourFix, createdAt: clock.now)
+        server.offline = false
+        server.clearLog()
+        net.next("POST", "/pins", .holdAnswer)
+        let online = Task { await member.hub.connectivityChanged(online: true) }
+        try await waitUntilHeld(net)
+        try await member.hub.setDisplayName("Thandi K", colour: 7, groupId: gid)
+        net.release()
+        await online.value
+        await member.hub.waitForBackgroundWork()
+        XCTAssertEqual(profilePuts(), 1)
+        XCTAssertEqual(try serverProfile(secret), MemberProfile(name: "Thandi K", colour: 7))
+        XCTAssertTrue(member.store.ops(gid).isEmpty)
+        XCTAssertEqual(server.pinIds(groupId: gid).count, 1)
     }
 
     // MARK: - Pause (§8.10)
