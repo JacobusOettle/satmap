@@ -235,6 +235,30 @@ class GroupStoreTests {
     }
 
     @Test
+    fun testAcknowledgedClosedWindowsAreDeleted() {
+        val w = 1_793_613_600L
+        for (k in 0 until 3) assertTrue(store.addOwnPoint(gid, TrailPoint(time = w + k * 600 + 5, lat = 1, lon = 2, startsSegment = false)))
+        store.addOwnPoint("other", TrailPoint(time = w + 5, lat = 1, lon = 2, startsSegment = false))
+        // w: acknowledged while open, no point after. w + 600: acknowledged while open, then one more point.
+        // w + 1200: acknowledged, still open. "other": another group's.
+        store.markOwnWindowSent(gid, start = w, version = 1, closed = false)
+        store.markOwnWindowSent(gid, start = w + 600, version = 1, closed = false)
+        assertTrue(store.addOwnPoint(gid, TrailPoint(time = w + 609, lat = 3, lon = 4, startsSegment = false)))
+        store.markOwnWindowSent(gid, start = w + 1200, version = 1, closed = false)
+        store.markOwnWindowSent("other", start = w, version = 1, closed = false)
+        assertEquals(3, store.ownWindows(gid).size)
+        store.deleteAcknowledgedClosedWindows(gid, now = w + 1205)
+        assertEquals(listOf(w + 600, w + 1200), store.ownWindows(gid).map { it.start })
+        assertEquals(1, store.ownWindows("other").size)
+        store.deleteAcknowledgedClosedWindows(gid, now = w + 1800)
+        assertEquals(listOf(w + 600), store.ownWindows(gid).map { it.start })
+        // One window by its start.
+        assertEquals(2L, store.ownWindow(gid, start = w + 600)?.version)
+        assertEquals(listOf(w + 605, w + 609), TrailChunk.decode(store.ownWindow(gid, start = w + 600)!!.points, windowStart = w + 600).map { it.time })
+        assertNull(store.ownWindow(gid, start = w))
+    }
+
+    @Test
     fun testOpsKeepTheirOrder() {
         val a = store.addOp(gid, kind = "pin", body = "a", createdAt = 3)
         val b = store.addOp(gid, kind = "unpin", body = "b", createdAt = 1)

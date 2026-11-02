@@ -375,16 +375,21 @@ class GroupStore(path: String, driver: SqlDriver = MBTiles.driver) : Closeable {
     // Own points (the outbox)
 
     fun ownWindows(groupId: String): List<OwnWindow> =
-        rows("SELECT start, points, version, sent_version, bad_time_tries FROM own_points WHERE group_id = ? ORDER BY start", listOf(groupId)) { s ->
-            OwnWindow(start = s.columnLong(0), points = blob(s, 1), version = s.columnLong(2), sentVersion = s.columnLong(3),
-                      badTimeTries = s.columnLong(4).toInt())
-        }
+        rows("SELECT start, points, version, sent_version, bad_time_tries FROM own_points WHERE group_id = ? ORDER BY start", listOf(groupId), ::readOwnWindow)
+
+    fun ownWindow(groupId: String, start: Long): OwnWindow? =
+        rows("SELECT start, points, version, sent_version, bad_time_tries FROM own_points WHERE group_id = ? AND start = ?", listOf(groupId, start),
+             ::readOwnWindow).firstOrNull()
+
+    private fun readOwnWindow(s: SqlStatement): OwnWindow =
+        OwnWindow(start = s.columnLong(0), points = blob(s, 1), version = s.columnLong(2), sentVersion = s.columnLong(3),
+                  badTimeTries = s.columnLong(4).toInt())
 
     /** Adds a point to its window (`version + 1`). A point earlier than the window's last one, or past 600 points, is
      *  not added. Returns whether it was added. */
     fun addOwnPoint(groupId: String, point: TrailPoint): Boolean = lock.withLock {
         val start = TrailChunk.windowStart(point.time)
-        val existing = ownWindows(groupId).firstOrNull { it.start == start }
+        val existing = ownWindow(groupId, start)
         val points = mutableListOf<TrailPoint>()
         if (existing != null) {
             val decoded = try {
@@ -422,6 +427,13 @@ class GroupStore(path: String, driver: SqlDriver = MBTiles.driver) : Closeable {
                 run("DELETE FROM own_points WHERE group_id = ? AND start = ? AND sent_version >= version", listOf(groupId, start))
             }
         }
+    }
+
+    /** Deletes the closed windows whose latest version was accepted (§4.3). A window acknowledged while it was still
+     *  open, and given no point after, gets no answer that would delete it. */
+    fun deleteAcknowledgedClosedWindows(groupId: String, now: Long) {
+        run("DELETE FROM own_points WHERE group_id = ? AND start + ? <= ? AND sent_version >= version",
+            listOf(groupId, GroupPolicy.windowSeconds, now))
     }
 
     fun deleteOwnWindow(groupId: String, start: Long) {

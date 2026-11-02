@@ -494,6 +494,33 @@ class GroupHubTests {
     }
 
     @Test
+    fun testWindowAcknowledgedWhileOpenIsDeletedOnceClosed() = test {
+        val (_, member, gid) = ownerAndMember()
+        share(member, gid)
+        point(member)
+        fix(member)
+        member.hub.tick(foreground = false)
+        val w = member.store.ownWindows(gid).single()
+        assertEquals("acknowledged while open", w.version, w.sentVersion)
+        // A stop: no point after that. The open window stays for the points still to come, then closes.
+        clock.now = w.start + 599
+        fix(member)
+        member.hub.tick(foreground = false)
+        assertEquals(listOf(w.start), member.store.ownWindows(gid).map { it.start })
+        clock.now = w.start + 600 + 60
+        fix(member)
+        member.hub.tick(foreground = false)
+        assertTrue("closed and acknowledged: deleted", member.store.ownWindows(gid).isEmpty())
+        assertEquals(listOf(w.start), server.chunkStarts(gid, memberId(member, gid)))
+        // A closed window that is not acknowledged yet stays.
+        point(member)
+        server.offline = true
+        clock.now = TrailChunk.windowStart(clock.now) + 600 + 120
+        member.hub.tick(foreground = false)
+        assertEquals(1, member.store.ownWindows(gid).size)
+    }
+
+    @Test
     fun testHeartbeatWithoutANewFixHasNoLiveKey() = test {
         val (_, member, gid) = ownerAndMember()
         share(member, gid)

@@ -2172,6 +2172,7 @@ class GroupHub(
      *  group in the foreground, otherwise over HTTP; packed by 50 chunks or 192 KiB. */
     private suspend fun upload(groupId: String, now: Long) {
         val st = states[groupId] ?: return
+        store.deleteAcknowledgedClosedWindows(groupId, now = now)
         val paused = st.isPaused
         if (paused && !st.stopLivePending) return
         val sharing = isEffectivelySharing(st)
@@ -2322,7 +2323,7 @@ class GroupHub(
         for (r in result.rejected) {
             when (r.error) {
                 "bad_time" -> {
-                    val tries = store.ownWindows(gid).firstOrNull { it.start == r.start }?.badTimeTries ?: 0
+                    val tries = store.ownWindow(gid, start = r.start)?.badTimeTries ?: 0
                     if (tries >= 1) {
                         store.deleteOwnWindow(gid, start = r.start)
                     } else {
