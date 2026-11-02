@@ -73,17 +73,21 @@ enum LocationPolicy {
 
 /// Groups (docs/groups/SPEC.md §5.1): the invite domain and the other fixed values of the groups feature.
 enum GroupConfig {
-    /// The invite domain: the build setting `GROUPS_DOMAIN`, through the Info.plist key `SatMapGroupsDomain`. The
+    /// The configured domain: the build setting `GROUPS_DOMAIN`, through the Info.plist key `SatMapGroupsDomain`. The
     /// placeholder `example.invalid` until the domain is chosen (§13.4).
-    static let domain = GroupEndpoints.domain(infoPlistValue: Bundle.main.object(forInfoDictionaryKey: "SatMapGroupsDomain") as? String)
+    static let configuredDomain = GroupEndpoints.domain(infoPlistValue: Bundle.main.object(forInfoDictionaryKey: "SatMapGroupsDomain") as? String)
 
-    /// `https://{domain}`: invite links, the terms and the privacy notice.
-    static var publicBaseURL: String { "https://" + domain }
+    /// The invite domain: links are made and read with it. The configured domain, except in demo mode, where it is the
+    /// demo's (`GroupDemo.domain`), which the fake server's links use, so the walkthrough works whatever the setting.
+    static let domain = GroupEndpoints.inviteDomain(configured: configuredDomain, demo: isDemo)
 
-    /// The API and WebSocket base: `https://{domain}`, or for tests the launch argument `-groupsBaseURL <url>` (read
-    /// only, never saved). Invite links always use `domain`.
+    /// `https://{configuredDomain}`: the terms and the privacy notice.
+    static var publicBaseURL: String { "https://" + configuredDomain }
+
+    /// The API and WebSocket base: `https://{configuredDomain}`, or for tests the launch argument
+    /// `-groupsBaseURL <url>` (read only, never saved). Invite links always use `domain`.
     static var apiBaseURL: URL {
-        GroupEndpoints.apiBase(override: UserDefaults.standard.string(forKey: "groupsBaseURL"), domain: domain)
+        GroupEndpoints.apiBase(override: UserDefaults.standard.string(forKey: "groupsBaseURL"), domain: configuredDomain)
     }
 
     static var termsURL: URL { URL(string: publicBaseURL + "/terms")! }

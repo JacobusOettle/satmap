@@ -59,8 +59,11 @@ final class URLSessionGroupSocket: NSObject, GroupSocket, URLSessionWebSocketDel
     func connect(url: URL, pass: String) {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(pass)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 30
+        // Not 30 s, the ping interval: if URLSession timed out a socket with no frame for that long, a quiet group's
+        // socket would drop and download the whole welcome again about every 30 s.
+        request.timeoutInterval = GroupEndpoints.socketTimeout
         let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = GroupEndpoints.socketTimeout
         config.httpCookieStorage = nil
         config.urlCache = nil
         let session = URLSession(configuration: config, delegate: self, delegateQueue: .main)

@@ -48,6 +48,20 @@ final class GroupsLogicTests: XCTestCase {
         XCTAssertEqual(GroupsFlow.pop(path).count, 3)
     }
 
+    func testAnAlertWaitsForAScreenThatIsClosing() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        // Nothing closed: at once.
+        XCTAssertEqual(GroupsFlow.alertWait(screensClosedAt: nil, now: now), 0)
+        // A sheet told to close just now (by this event or the `.groups` one before it): the whole close time.
+        XCTAssertEqual(GroupsFlow.alertWait(screensClosedAt: now, now: now), GroupsFlow.sheetCloseTime)
+        XCTAssertEqual(GroupsFlow.alertWait(screensClosedAt: now.addingTimeInterval(-0.25), now: now),
+                       GroupsFlow.sheetCloseTime - 0.25, accuracy: 0.0001)
+        // Long gone: at once.
+        XCTAssertEqual(GroupsFlow.alertWait(screensClosedAt: now.addingTimeInterval(-5), now: now), 0)
+        // A clock that went back never makes it wait longer than a close.
+        XCTAssertEqual(GroupsFlow.alertWait(screensClosedAt: now.addingTimeInterval(30), now: now), GroupsFlow.sheetCloseTime)
+    }
+
     func testRouteGroupIds() {
         XCTAssertNil(GroupsRoute.create.groupId)
         XCTAssertNil(GroupsRoute.paywall(.create).groupId)
@@ -203,6 +217,24 @@ final class GroupsLogicTests: XCTestCase {
         XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: nil), "example.invalid")
         XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: ""), "example.invalid")
         XCTAssertEqual(GroupEndpoints.domain(infoPlistValue: "$(GROUPS_DOMAIN)"), "example.invalid") // not filled in
+    }
+
+    func testDemoModeReadsTheDemosLinksWhateverTheDomain() {
+        XCTAssertEqual(GroupEndpoints.inviteDomain(configured: "groups.satmap.app", demo: false), "groups.satmap.app")
+        let demo = GroupEndpoints.inviteDomain(configured: "groups.satmap.app", demo: true)
+        XCTAssertEqual(demo, GroupDemo.domain)
+        // The walkthrough pastes the demo's link (step 34) and the demo's S6 shows links of the same domain.
+        guard case .invite = InviteLink.parse(GroupDemo.inviteLink, domain: demo) else {
+            return XCTFail("demo mode doesn't read the demo's invite link")
+        }
+        XCTAssertEqual(InviteLink.parse(GroupDemo.inviteLink, domain: "groups.satmap.app"), .notInvite)
+    }
+
+    func testTheSocketTimeoutOutlastsAQuietSocket() {
+        // A quiet socket's only frames are the pongs to pings sent every 30 s on the 5 s tick grid; the timeout must
+        // allow two of those gaps, so a lost pong doesn't drop it either.
+        let gap = TimeInterval(GroupPolicy.socketPing + GroupPolicy.liveWatchedForeground)
+        XCTAssertGreaterThan(GroupEndpoints.socketTimeout, 2 * gap)
     }
 
     func testAPIBase() {

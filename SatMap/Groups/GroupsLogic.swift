@@ -142,6 +142,16 @@ enum GroupsFlow {
     static func pop(_ path: [GroupsRoute]) -> [GroupsRoute] {
         Array(path.dropLast())
     }
+
+    /// How long SwiftUI takes to close a sheet (and anything over it) once told to.
+    static let sheetCloseTime: TimeInterval = 0.65
+
+    /// How long an alert waits so that a screen told to close at `closedAt` is gone first: an alert presented over a
+    /// screen on its way out would go with it.
+    static func alertWait(screensClosedAt closedAt: Date?, now: Date) -> TimeInterval {
+        guard let closedAt = closedAt else { return 0 }
+        return min(sheetCloseTime, max(0, sheetCloseTime - now.timeIntervalSince(closedAt)))
+    }
 }
 
 // MARK: - Texts (§9.3)
@@ -449,6 +459,18 @@ enum GroupEndpoints {
         guard !value.isEmpty, value.unicodeScalars.allSatisfy(allowed.contains) else { return "example.invalid" }
         return value
     }
+
+    /// The domain invite links are made and read with: the configured one, or in demo mode the demo's
+    /// (`GroupDemo.domain`), which the fake server's links (S6, the walkthrough's pasted link) use whatever
+    /// `GROUPS_DOMAIN` is.
+    static func inviteDomain(configured: String, demo: Bool) -> String {
+        demo ? GroupDemo.domain : configured
+    }
+
+    /// The WebSocket request's timeout, in seconds. URLSession may use it as an idle timer on the open socket, so it is
+    /// well above the time between two frames of a quiet socket: the "pong" to a "ping" sent every 30 s on the 5 s
+    /// tick grid (§8.7), with one of them allowed to go missing.
+    static let socketTimeout: TimeInterval = 75
 
     /// The API base: `https://{domain}`, or the `-groupsBaseURL` launch argument when it is an http(s) URL with a host.
     static func apiBase(override: String?, domain: String) -> URL {
