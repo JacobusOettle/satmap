@@ -67,7 +67,10 @@ the file with the change. WebSocket frames are recorded with method `WS` and sta
 `python3 test/fixtures/make_apple_test_chain.py` (Python `cryptography`) writes a root, intermediates and leaves
 valid 2026–2046 carrying the two Apple OIDs, the leaf key, and `example-jws.json`. The tests trust the test root
 through `APPLE_ROOT_OVERRIDE_B64`, which the Worker honours only under `TEST_MODE=1`. After regenerating, rerun
-`npm test` and commit the fixtures and `api-examples.json` (its signed transactions change).
+`npm test` and commit the fixtures and `api-examples.json` (its signed transactions change). It also writes
+`forged_inter.pem` and `forged_leaf.pem`, which copy the chain's names but are signed by an unrelated key, so the
+tests reach the certificate signature checks; `--forged-only` rewrites just those two from the committed chain and
+leaves everything else as it is.
 
 ### Notes on the test runtime
 

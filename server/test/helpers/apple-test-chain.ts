@@ -1,6 +1,8 @@
 // Signs App Store–style JWS with the committed test chain (test/fixtures/make_apple_test_chain.py). The Worker
 // trusts the test root through APPLE_ROOT_OVERRIDE_B64 (vitest.config.ts), honoured only under TEST_MODE=1.
 
+import forgedInterPem from "../fixtures/apple/forged_inter.pem?raw";
+import forgedLeafPem from "../fixtures/apple/forged_leaf.pem?raw";
 import interPem from "../fixtures/apple/inter.pem?raw";
 import interNoOidPem from "../fixtures/apple/inter_no_oid.pem?raw";
 import interNotCaPem from "../fixtures/apple/inter_not_ca.pem?raw";
@@ -29,6 +31,8 @@ export const CERTS = {
   leafOidInName: pemB64(leafOidInNamePem),
   leafUnderNotCa: pemB64(leafUnderNotCaPem),
   leafUnderNoOid: pemB64(leafUnderNoOidPem),
+  forgedInter: pemB64(forgedInterPem),
+  forgedLeaf: pemB64(forgedLeafPem),
 };
 
 export const DEFAULT_X5C = [CERTS.leaf, CERTS.inter, CERTS.root];

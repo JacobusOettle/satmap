@@ -4,6 +4,8 @@
 Run once from server/: python3 test/fixtures/make_apple_test_chain.py
 It writes PEM files into test/fixtures/apple/, which are committed. Nothing here is a real Apple certificate: the
 tests pass test root's DER to the Worker through APPLE_ROOT_OVERRIDE_B64 (honoured only under TEST_MODE=1).
+With --forged-only it writes just the two forged_*.pem files, from the committed root.pem, inter.pem and leaf.pem,
+and leaves everything else (and so example-jws.json and api-examples.json) as it is.
 
 Files:
   root.pem                test root CA (P-384), the pinned root in tests
@@ -16,6 +18,11 @@ Files:
   inter_no_oid.pem        an intermediate CA without the intermediate OID
   leaf_under_no_oid.pem   the same leaf key, issued by inter_no_oid
   other_root.pem          another self-signed root (the "wrong root" case)
+  forged_inter.pem        an intermediate CA with the intermediate OID whose subject and issuer copy inter.pem's, so
+                          its names match the root, but signed by an unrelated key instead of the root's
+  forged_leaf.pem         the leaf key with the leaf OID, subject and issuer copied from leaf.pem, signed by the same
+                          unrelated key: under inter.pem its names match but its signature doesn't; under
+                          forged_inter.pem it is properly issued, so only the intermediate's signature is wrong
   example-jws.json        two fixed signed transactions for api-examples.json (ECDSA signatures are random, so the
                           integration tests use these to keep the examples file stable): an active yearly purchase
                           and an expired one
@@ -26,6 +33,7 @@ import base64
 import datetime
 import json
 import os
+import sys
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -67,6 +75,21 @@ def cert(subject, issuer, public_key, signing_key, ca, oid=None, serial=1):
 def write_cert(file_name, certificate):
     with open(os.path.join(OUT, file_name), "wb") as f:
         f.write(certificate.public_bytes(serialization.Encoding.PEM))
+
+
+def read_cert(file_name):
+    with open(os.path.join(OUT, file_name), "rb") as f:
+        return x509.load_pem_x509_certificate(f.read())
+
+
+def write_forged(root, inter, leaf):
+    """Copies of the chain's names, signed by a key that is neither the root's nor the intermediate's."""
+    forger_key = ec.generate_private_key(ec.SECP384R1())
+    forged_inter = cert(inter.subject, root.subject, forger_key.public_key(), forger_key, ca=True, oid=INTER_OID,
+                        serial=40)
+    forged_leaf = cert(leaf.subject, inter.subject, leaf.public_key(), forger_key, ca=False, oid=LEAF_OID, serial=41)
+    write_cert("forged_inter.pem", forged_inter)
+    write_cert("forged_leaf.pem", forged_leaf)
 
 
 def b64url(data):
@@ -141,6 +164,7 @@ def main():
     with open(os.path.join(OUT, "leaf.key"), "wb") as f:
         f.write(leaf_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                        serialization.NoEncryption()))
+    write_forged(root, inter, leaf)
 
     x5c = [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode() for c in (leaf, inter, root)]
     examples = {
@@ -153,4 +177,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--forged-only"]:
+        write_forged(read_cert("root.pem"), read_cert("inter.pem"), read_cert("leaf.pem"))
+    elif sys.argv[1:]:
+        sys.exit("usage: make_apple_test_chain.py [--forged-only]")
+    else:
+        main()

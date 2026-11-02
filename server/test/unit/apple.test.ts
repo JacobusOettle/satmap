@@ -1,5 +1,6 @@
 // The Apple JWS verifier and the transaction and notification checks (SPEC §7.6, §12.1), with the test chain.
 
+import { X509Certificate } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   appleApiToken,
@@ -92,6 +93,28 @@ describe("verifyJws", () => {
 
   it("refuses a leaf that the intermediate didn't issue", async () => {
     const jws = await signJws(appleTransaction(NOW), { x5c: [CERTS.leafUnderNotCa, CERTS.inter, CERTS.root] });
+    expect(await failure(verifyJws(jws, rootDer()))).toBe("leaf");
+  });
+
+  // The forged certificates copy Apple-style names, so the name checks pass and only the signatures give them away.
+  const x509 = (b64: string) => new X509Certificate(b64Decode(b64)!);
+
+  it("refuses an intermediate with the root's issuer name but not the root's signature", async () => {
+    const [root, forgedInter, forgedLeaf] = [x509(CERTS.root), x509(CERTS.forgedInter), x509(CERTS.forgedLeaf)];
+    expect(forgedInter.ca).toBe(true);
+    expect(forgedInter.checkIssued(root)).toBe(true);
+    expect(forgedInter.verify(root.publicKey)).toBe(false);
+    // The rest of this chain is sound: the leaf is properly issued by the forged intermediate.
+    expect(forgedLeaf.checkIssued(forgedInter) && forgedLeaf.verify(forgedInter.publicKey)).toBe(true);
+    const jws = await signJws(appleTransaction(NOW), { x5c: [CERTS.forgedLeaf, CERTS.forgedInter, CERTS.root] });
+    expect(await failure(verifyJws(jws, rootDer()))).toBe("intermediate");
+  });
+
+  it("refuses a leaf with the intermediate's issuer name but not the intermediate's signature", async () => {
+    const [inter, forgedLeaf] = [x509(CERTS.inter), x509(CERTS.forgedLeaf)];
+    expect(forgedLeaf.checkIssued(inter)).toBe(true);
+    expect(forgedLeaf.verify(inter.publicKey)).toBe(false);
+    const jws = await signJws(appleTransaction(NOW), { x5c: [CERTS.forgedLeaf, CERTS.inter, CERTS.root] });
     expect(await failure(verifyJws(jws, rootDer()))).toBe("leaf");
   });
 
