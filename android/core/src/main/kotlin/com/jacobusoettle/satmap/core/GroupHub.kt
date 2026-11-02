@@ -1472,9 +1472,20 @@ class GroupHub(
         if (states[groupId]?.row?.shown == true) emit(GroupHubEvent.Map)
     }
 
+    /** Starts work in `scope` (queued behind what already waits there, as a Swift `Task` on the main actor is). The
+     *  work handles its own failures; anything else is logged rather than let through to the scope's handler, which
+     *  would end the app. */
     private fun background(work: suspend (GroupHub) -> Unit) {
         backgroundWork.removeAll { it.isCompleted }
-        backgroundWork.add(scope.launch { work(this@GroupHub) })
+        backgroundWork.add(scope.launch {
+            try {
+                work(this@GroupHub)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                GroupLog.note("background work failed (${e.javaClass.simpleName})")
+            }
+        })
     }
 
     // Internals: names and decoding
