@@ -277,6 +277,7 @@ final class ScreenshotTests: XCTestCase {
             field.tap()
             field.typeText("33°55'10\"S 18°55'20\"E")
             sleep(1)
+            dismissTypingTip()
             snap("21-go-to-coordinates")
             tap("Show and measure from here")
             sleep(3)
@@ -594,6 +595,18 @@ final class ScreenshotTests: XCTestCase {
         if open.waitForExistence(timeout: 5) { open.tap() }
         XCTAssertTrue(app.buttons["joinGroup"].waitForExistence(timeout: 10), "The invite link didn't open the join sheet")
         XCTAssertTrue(text(containing: "Braai club").exists, "The join sheet doesn't name Braai club")
+    }
+
+    /// The keyboard shows a one-time "slide to type" tip in place of its keys on some runs: it goes, so the screenshot
+    /// shows the keyboard as on other runs.
+    private func dismissTypingTip() {
+        let tip = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Speed up your typing")).firstMatch
+        guard tip.exists else { return }
+        let continueButton = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Continue", "continueJoin")).firstMatch
+        if continueButton.exists {
+            continueButton.tap()
+            sleep(1)
+        }
     }
 
     /// Any element whose label holds the text (a row's texts may be one button's label).
