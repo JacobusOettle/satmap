@@ -556,7 +556,13 @@ final class ScreenshotTests: XCTestCase {
         // 39: a member.
         openGroups()
         tapRow(startingWith: "Kruger trip")
-        tapRow(startingWith: "Thandi")
+        // The member row, not Thandi's dot on the map under the sheet (its label starts with the name too).
+        let thandi = app.buttons.matching(identifier: "memberRow").matching(NSPredicate(format: "label BEGINSWITH %@", "Thandi")).firstMatch
+        if thandi.waitForExistence(timeout: 10) {
+            thandi.tap()
+        } else {
+            XCTFail("No member row for Thandi")
+        }
         if app.navigationBars["Thandi"].waitForExistence(timeout: 10) {
             sleep(1)
             snap("39-member-detail")
