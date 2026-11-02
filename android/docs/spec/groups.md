@@ -50,10 +50,11 @@ Kotlin package root: `com.jacobusoettle.satmap`.
   (`GroupLayers.fitBounds`), pads them by the safe area and 60 dp, centres them in the safe area and stops following.
 - **Navigation.** `open(routes)` sets `navigation` and shows `ActiveSheet.groups`; the sheet replaces its stack with
   them and calls `navigationTaken`. `openInvite(parsed)` (links, scans, pastes) opens S8 (`pendingInvite`), or, for a
-  group you are in, `[List, Detail]` with the toast "You're already in {group}." (§5.6). `openItem(route)` opens the
-  map's sheet (`groupItem`).
+  group you are in, S5 alone (`[Detail]`, with Done) and the alert "You're already in {group}." with OK (`notice`,
+  shown by `GroupsSheet`; §5.6). `openItem(route)` opens the map's sheet (`groupItem`).
 - **Terms and names** (§8.13, §8.3 preferences): `groupsTermsAccepted` (`acceptTerms`, `needsTerms`, kept equal to
-  `hub.acceptedTermsVersion`), `groupsDisplayName` (written after a create or a join).
+  `hub.acceptedTermsVersion`), `groupsDisplayName` ("the last display name typed, to prefill": `rememberDisplayName`,
+  from S4's field as it is typed, after a join and after S15's Save, when the name is a valid one).
 - **Stop everywhere** (§11.6): `stopSharingEverywhere()` switches sharing off in every group (the notification's Stop).
 
 ## 2. Launch arguments and demo mode
@@ -157,15 +158,30 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
   replaces the stack (a new `RouteStack`, so the root can change) and replaces the top screen.
 - Flows: Create → `[List, Consent(gid, afterCreate)]` → `[List, Detail(gid)]`; Join → `open([List, Consent])` (the join
   sheet closes); switching sharing on without consent pushes `Consent(gid, false)`, which pops back; the paywall is
-  pushed for Create, Renew and Accept and, on success, is replaced by S4 or pops after E5 / E17.
+  pushed for Create, Renew and Accept and, on success, is replaced by S4 or pops after E5 / E17. S5 opened from
+  outside the list (the paused banner, an invite to a group you are in, S8's "Open group") is `[Detail]` alone, so its
+  leading button is Done (`leading()`: Back only with a screen below).
 - Files: `TermsScreen.kt` (S1), `GroupListScreen.kt` (S2), `PaywallScreen.kt` (S3), `CreateGroupScreen.kt` (S4),
   `GroupDetailScreen.kt` (S5, with `SwitchRow`, the Trails menu and its alerts), `InviteScreen.kt` (S6),
   `JoinScreens.kt` (S7, S8, S17), `ConsentScreen.kt` (S9), `PinScreens.kt` (S10, S11, `BlockAlert`),
   `MemberScreens.kt` (S12, S14, S15, S16), `ReportScreen.kt` (S13).
 - House style (`Form.kt`): sections with upper-case headers and plain footers, link rows with chevrons, button rows in
-  the accent colour (red when destructive, white when disabled, a spinner and its text while working), iOS switches,
-  choice rows with a check, alerts driven by an optional message (`MessageAlert`, `AlertBox` with "Cancel" or "Keep"
-  as the spec says), a toast capsule for "Link copied", "Support code copied" and "You're already in {group}.".
+  the accent colour (red when destructive, white when disabled; while working, a spinner and a text at the start when
+  the spec has one, as S4's "Creating…", otherwise the row dimmed with a spinner at the end, as iOS's label, spacer
+  and `ProgressView`; a form's main button, `PrimaryButtonRow`, keeps its title with the spinner at the end: S3's
+  Subscribe, S8's "Join group"), iOS switches, choice rows with a check, alerts driven by an optional message
+  (`MessageAlert`, `AlertBox` with "Cancel" or "Keep" as the spec says), a toast capsule for "Link copied" and
+  "Support code copied" only.
+- S5 "Invite someone" makes the invite (E6) on S5, the row dimmed with its spinner, then pushes
+  `Invite(gid, made)`; a failure is the alert "Couldn't make an invite. Check your connection and try again." on S5.
+  S6 only shows an invite it is given (the one just made, or a pending one this phone made).
+- S5 "Share my location" with consent recorded checks location as S9 does: allowed, sharing goes on; never asked,
+  the permission is asked (fine and coarse) and sharing goes on only if it is given; refused, denied before or
+  location off, the alert "Location is off for SatMap. …" (`LOCATION_OFF`) and sharing stays off (§8.13).
+- S13: "Thanks for reporting" offers Block only for someone who can still be blocked (`blockable`: a pin whose
+  dropper can be, a member who can be and isn't yet); otherwise it has OK only.
+- S10: "Drop pin" is enabled once a type is chosen and, for Animal, something is typed; a name that is too long is
+  the hub's "Type the animal, up to 40 characters." under the button on the tap.
 - S6 Share link goes through `ShareHost` (`SharePresenter.presentText`: a plain-text chooser); Copy link puts a
   `ClipData` labelled "Invite link" with `EXTRA_IS_SENSITIVE` (the string key below API 33) in its description's
   extras (§9.9).
@@ -175,20 +191,23 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
 - S17 asks for `CAMERA` when it opens; without it, "Camera access is off for SatMap. Turn it on in Settings to scan a
   code." with "Open Settings" (the app's details page). `QRScannerView`: CameraX preview and an `ImageAnalysis`
   (latest frame only) decoding the Y plane with ZXing (`PlanarYUVLuminanceSource`); the first invite found replaces
-  the scanner with S8.
+  the scanner with S8. A code that is an incomplete invite link or no invite link shows S7's text for it
+  (`GroupTexts.linkProblem`) in orange above "Point the camera at the invite QR code.", and scanning goes on (as iOS;
+  the spec is silent).
 - Texts built from data are in `GroupTexts` (tested); fixed texts are written where they show. Dates "9 Nov" (with the
   year when it isn't this year), times in the phone's 12- or 24-hour form (`DateFormat.is24HourFormat`).
 
 ## 8. Map screen (§9.1)
 
-- **Groups button**: a `MapButton` (`SatIcons.Person3`, "Groups", testTag `groupsButton`), active while a group is
-  shown. `MapOverlay`'s bottom `Row` is wrapped in a `Box`; the button is `Modifier.align(Alignment.TopStart)` in it, so
+- **Groups button**: a `MapButton` (`SatIcons.Person3`, drawn at 38 dp to be as big as iOS's `person.3.fill`,
+  DESIGN.md D30; "Groups", testTag `groupsButton`), active while a group is shown. `MapOverlay`'s bottom `Row` is wrapped in a `Box`; the button is `Modifier.align(Alignment.TopStart)` in it, so
   its top is the row's top (the compass slot) and it adds no height. Shown whenever the row is (not while drawing).
 - **Paused banner**: `Hint` (now with `closeLabel` and `modifier`) under the location hints, tag `groupPausedHint`,
-  texts from `GroupTexts.pausedBanner`; a tap opens `[List, Detail]`, its close hides it for that group until the next
-  launch.
-- **Drop pin**: over a tapped spot, beside the name capsule, while the shown group is active (`dropPin`); opens S10 at
-  the spot in the map sheet. Dropping clears the tapped spot.
+  texts from `GroupTexts.pausedBanner`; a tap opens S5 alone (`[Detail]`, Done), its close button ("Hide" to
+  TalkBack, as VoiceOver reads it) hides it for that group until the next launch.
+- **Drop pin**: over a tapped spot, beside the name capsule, while the shown group is active (`dropPin`): a capsule
+  with a 1 dp white outline at 30 % (iOS's `Capsule().stroke`), so it reads as a button; opens S10 at the spot in the
+  map sheet. Dropping clears the tapped spot.
 - **Alerts**: `GroupAlerts` over everything.
 
 ## 9. Map drawing (`GroupLayers`, §9.5)
@@ -206,8 +225,8 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
 - Images (app-drawn, the map's density): a member's dot (`group-member/{colour}/{initials}/{live|stale}`: 26 dp, a 2 dp
   white ring, white bold 11 sp initials; stale: grey fill, ring in their colour), the heading's triangle
   (`group-member-arrow`, 8 × 6 dp just outside the ring, the image centred on the dot), a pin
-  (`group-pin/{type|unknown}`: 30 dp disc in the type's colour, 2 dp white ring, 16 dp white glyph drawn from the
-  icon's vector paths) and an animal pin's label (`group-pin-label/{text}`: white bold 12 sp on black 65 %, removed
+  (`group-pin/{type|unknown}`: 30 dp disc in the type's colour, 2 dp white ring, the white glyph drawn from the icon's
+  vector paths in a 20 dp box, so about 16 dp shows, as SF's 16 pt symbol; DESIGN.md D30) and an animal pin's label (`group-pin-label/{text}`: white bold 12 sp on black 65 %, removed
   when no longer shown).
 - Binding (`MapController.bind`): `groups.mapRevision` and a minute's timer (the "… ago" labels, expiring pins) call
   `groupsChanged`: `hub.mapContent(now)` read on the main thread, features and images made on `Dispatchers.Default`
@@ -229,11 +248,13 @@ again when it changes. Stop also calls `groups.stopSharingEverywhere()` (an Andr
 
 | Test | What |
 | --- | --- |
-| `groups/GroupsModelTest` | Demo mode: rows, the shown group, the camera fit, the notification's groups and Stop, invites (in already, another, incomplete), joining, terms, the demo store, hidden banners, alerts, location access kept for a later hub |
-| `groups/GroupPartsTest` | `GroupTexts`, `GroupLayers` features, images and fit, QR codes round trip, `KeystoreSecrets`, `ProStore` decisions, `GroupConfig.baseURL` |
+| `groups/GroupsModelTest` | Demo mode: rows, the shown group, the camera fit, the notification's groups and Stop, invites (in already: S5 alone and the alert; another; incomplete), joining, the name kept, whom a report offers to block, terms, the demo store, hidden banners, alerts, location access kept for a later hub |
+| `groups/GroupPartsTest` | `GroupTexts` (with a pasted or scanned link's problem), `GroupLayers` features, images and fit, QR codes round trip, `KeystoreSecrets`, `ProStore` decisions, `GroupConfig.baseURL` |
 | `groups/GroupHttpTest` | MockWebServer: the request and its Bearer pass, status and body as they are, offline and failed, the socket's URL and header, refused upgrades, only the latest socket |
 | `ui/ScreenRendersGroupsTest` | Renders 28–40 at `IPHONE_SCREEN` (36 and 40: overlays only) |
-| `ui/MapScreenGroupsTest` | The Groups button's place, its sheet, the paused banner, the drop-pin capsule |
+| `ui/GroupScreensTest` | S4's name kept and prefilled in S8; S5's "Invite someone" making the invite, then S6, and its failure alert; S5's sharing switch with location off, then allowed; S10's animal checked on the tap |
+| `groups/GroupIconsTest` | The map pins' glyphs about 16 dp as drawn; the solid drop, the house's door and chimney, person.3's proportions |
+| `ui/MapScreenGroupsTest` | The Groups button's place, its sheet, the paused banner (S5 alone with Done; "Hide"), the drop-pin capsule |
 | `MainActivityTest` | The https and satmap filters resolve to MainActivity; a link opens S8 once (not from Recents) and never joins; the `intent://` form with `groupKey` |
 | `location/LocationServiceTest` | The big-text lines; Stop ends sharing everywhere |
 | `map/MapStyleTest` | The overlay stack with the group's layers |
