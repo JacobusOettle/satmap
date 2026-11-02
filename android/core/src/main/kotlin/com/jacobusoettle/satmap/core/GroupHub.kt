@@ -2035,10 +2035,13 @@ class GroupHub(
         return error.status == 429 || error.status >= 500
     }
 
-    /** Sends the queued ops in order. Returns false when it had to stop (offline, a server error, or the group gone). */
+    /** Sends the queued ops in order, including those queued while it runs (such as the `unpin` for a pin deleted while
+     *  its E23 was in flight). Returns false when it had to stop (offline, a server error, or the group gone). */
     private suspend fun sendOps(groupId: String, now: Long): Boolean {
-        for (op in store.ops(groupId)) {
-            if (op.kind == "archive") continue
+        var after = 0L
+        while (true) {
+            val op = store.nextOp(groupId, after = after, except = "archive") ?: break
+            after = op.id
             val st = states[groupId] ?: return false
             if (op.kind == "pin" && st.isPaused) continue // waits for the resume; deletes and the rest still go
             try {
@@ -2102,7 +2105,9 @@ class GroupHub(
         return true
     }
 
-    /** E23 for a queued pin. `pin_exists` gives it a new id once; `pin_deleted`, `pin_expired` and other refusals drop it. */
+    /** E23 for a queued pin. `pin_exists` gives it a new id once; `pin_deleted`, `pin_expired` and other refusals drop it.
+     *  `deletePin` may remove the op while the E23 is in flight: if the server may then hold the pin (it said yes, or
+     *  the answer never came), an `unpin` follows, so it doesn't stay for everyone; after a refusal nothing does. */
     private suspend fun sendPin(st: GroupState, op: GroupStore.QueuedOp) {
         var pin = PinOp.decode(op.body) ?: run {
             store.deleteOp(op.id)
@@ -2119,6 +2124,7 @@ class GroupHub(
             try {
                 val seq = api.dropPin(gid, st.secret.pass, PinRequest(pinId = pin.pinId, createdAt = pin.createdAt, expiresAt = pin.expiresAt,
                                                                        rec = Base64URL.encode(env))).seq
+                if (unpinIfDeletedMeanwhile(st, op, pin.pinId)) return
                 store.deleteOp(op.id)
                 val sentId = pin.pinId
                 val stored = store.pins(gid).firstOrNull { it.pinId == sentId }
@@ -2128,8 +2134,12 @@ class GroupHub(
                 reload(gid)
                 notify(gid)
                 return
-            } catch (e: GroupAPIError) {
-                if (!(e.status == 409 && e.code == "pin_exists" && !pin.retried)) throw e
+            } catch (e: Exception) {
+                // A refusal (a 4xx) stored nothing; any other outcome (a 5xx, no answer, cancelled) may have.
+                if (!(e is GroupAPIError && e.status < 500)) unpinIfDeletedMeanwhile(st, op, pin.pinId)
+                if (!(e is GroupAPIError && e.status == 409 && e.code == "pin_exists" && !pin.retried)) throw e
+                // Deleted meanwhile: the id is another member's, so there is nothing to delete and nothing to resend.
+                if (!store.opExists(op.id)) return
                 val oldId = pin.pinId
                 val renamed = pin.copy(pinId = GroupRandom.id(), retried = true)
                 pin = renamed
@@ -2148,6 +2158,14 @@ class GroupHub(
                 reload(gid)
             }
         }
+    }
+
+    /** After an E23 that may have stored the pin: if `deletePin` removed its op meanwhile (and the group is still
+     *  here), queues an `unpin` for the id that was sent (a `404` counts as done, §6.7). Returns whether it did. */
+    private fun unpinIfDeletedMeanwhile(st: GroupState, op: GroupStore.QueuedOp, sentId: String): Boolean {
+        if (states[st.id] !== st || store.opExists(op.id)) return false
+        store.addOp(st.id, kind = "unpin", body = sentId, createdAt = clock())
+        return true
     }
 
     /** Uploads the due trail chunks and live position (§4.3, §8.6), over the socket when it is open for the shown

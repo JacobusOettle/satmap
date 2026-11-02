@@ -1,7 +1,9 @@
 package com.jacobusoettle.satmap.core
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -53,12 +55,40 @@ class FakeSockets : GroupSocketFactory {
     override fun open(groupId: String, pass: String): GroupSocket = FakeSocket(groupId).also { opened.add(it) }
 }
 
-/** One phone: a hub with its own store and secrets, on the shared fake server. `scope` is the test's (its work runs
- *  on the test's thread, as the app's runs on the main thread). */
-class Phone(server: FakeGroupServer, clock: TestClock, scope: CoroutineScope, sockets: FakeSockets? = null, words: String = "badword\n") {
+/** The fake server, with each E23 (drop a pin) held in flight while `hold` is on, until `release`: the request reaches
+ *  the server at once, and its answer comes back when let go, or is lost on the way (`loseAnswers`). */
+class HeldPins(private val server: FakeGroupServer) : GroupTransport {
+    var hold = false
+    var loseAnswers = false
+    private val gates = mutableListOf<CompletableDeferred<Unit>>()
+
+    /** The E23s waiting for their answer. */
+    val held: Int get() = gates.count { !it.isCompleted }
+
+    /** Lets every held E23 answer, and stops holding. */
+    fun release() {
+        hold = false
+        for (g in gates) g.complete(Unit)
+    }
+
+    override suspend fun request(method: String, path: String, pass: String?, json: ByteArray?): GroupResponse {
+        if (!hold || method != "POST" || !path.endsWith("/pins")) return server.request(method, path, pass, json)
+        val gate = CompletableDeferred<Unit>()
+        gates.add(gate)
+        val response = server.handle(method, path, pass, json)
+        gate.await()
+        if (loseAnswers) throw GroupTransportError.Offline()
+        return response
+    }
+}
+
+/** One phone: a hub with its own store and secrets, on the shared fake server (or a `transport` in front of it).
+ *  `scope` is the test's (its work runs on the test's thread, as the app's runs on the main thread). */
+class Phone(server: FakeGroupServer, clock: TestClock, scope: CoroutineScope, sockets: FakeSockets? = null, words: String = "badword\n",
+            transport: GroupTransport = server) {
     val store = GroupStore(":memory:", JdbcSqlDriver)
     val secrets = MemoryGroupSecrets()
-    val hub = GroupHub(store = store, secrets = secrets, transport = server, sockets = sockets, words = WordFilter(words),
+    val hub = GroupHub(store = store, secrets = secrets, transport = transport, sockets = sockets, words = WordFilter(words),
                        domain = "example.invalid", clock = { clock.now }, scope = scope)
     val events = mutableListOf<GroupHubEvent>()
 
@@ -93,8 +123,8 @@ class GroupHubTests {
 
     // Helpers
 
-    private fun phone(sockets: FakeSockets? = null, words: String = "badword\n"): Phone =
-        Phone(server, clock, scope, sockets, words).also { phones.add(it) }
+    private fun phone(sockets: FakeSockets? = null, words: String = "badword\n", transport: GroupTransport = server): Phone =
+        Phone(server, clock, scope, sockets, words, transport).also { phones.add(it) }
 
     private fun link(made: MadeInvite): InviteLink {
         val parsed = InviteLink.parse(made.link, domain = "example.invalid")
@@ -102,12 +132,12 @@ class GroupHubTests {
         return parsed.link
     }
 
-    /** An owner with a group, and a second phone that joined it through an invite. */
-    private suspend fun ownerAndMember(name: String = "Kruger trip"): Triple<Phone, Phone, String> {
+    /** An owner with a group, and a second phone that joined it through an invite (over `memberTransport`). */
+    private suspend fun ownerAndMember(name: String = "Kruger trip", memberTransport: GroupTransport = server): Triple<Phone, Phone, String> {
         val owner = phone()
         val gid = owner.hub.createGroup(name = name, displayName = "Sam", pro = pro)
         val made = owner.hub.createInvite(gid)
-        val member = phone()
+        val member = phone(transport = memberTransport)
         clock.advance(10)
         member.hub.join(link(made), displayName = "Thandi")
         member.hub.waitForBackgroundWork()
@@ -993,6 +1023,81 @@ class GroupHubTests {
             member.hub.dropPin(groupId = gid, type = PinType.water, animal = null, note = "badword", lat = 0.0, lon = 0.0)
         }
         assertEquals("Please use different words.", rude.message)
+    }
+
+    /** Lets the hubs' background work run until an E23 is held in flight. */
+    private suspend fun untilHeld(transport: HeldPins) {
+        repeat(1000) {
+            if (transport.held > 0) return
+            yield()
+        }
+        fail("no E23 was sent")
+    }
+
+    @Test
+    fun testPinDeletedWhileItsDropIsInFlightIsDeletedOnTheServer() = test {
+        val held = HeldPins(server)
+        val (owner, member, gid) = ownerAndMember(memberTransport = held)
+        held.hold = true
+        member.hub.dropPin(groupId = gid, type = PinType.pothole, animal = null, note = null, lat = -24.98, lon = 31.6)
+        untilHeld(held)
+        val pinId = member.store.pins(gid).single().pinId
+        // "Oops": deleted while the server already holds it and its answer is on the way.
+        member.hub.deletePin(pinId, groupId = gid)
+        assertTrue(member.hub.mapContent(now = clock.now)?.pins?.isEmpty() ?: false)
+        held.release()
+        member.hub.waitForBackgroundWork()
+        assertEquals("deleted on the server in the same flush", 1, requests("DELETE", "/pins/$pinId").size)
+        assertTrue(server.pinIds(gid).isEmpty())
+        assertTrue(member.store.ops(gid).isEmpty())
+        assertTrue(member.store.pins(gid).isEmpty())
+        // Nobody gets it back.
+        member.hub.becameActive()
+        owner.hub.becameActive()
+        assertTrue(member.store.pins(gid).isEmpty())
+        assertTrue(owner.store.pins(gid).isEmpty())
+    }
+
+    @Test
+    fun testPinDeletedWhileItsDropsAnswerIsLostIsDeletedOnTheServer() = test {
+        val held = HeldPins(server)
+        val (_, member, gid) = ownerAndMember(memberTransport = held)
+        held.hold = true
+        held.loseAnswers = true
+        member.hub.dropPin(groupId = gid, type = PinType.police, animal = null, note = null, lat = -24.98, lon = 31.6)
+        untilHeld(held)
+        val pinId = member.store.pins(gid).single().pinId
+        member.hub.deletePin(pinId, groupId = gid)
+        held.release()
+        member.hub.waitForBackgroundWork()
+        // The E23 may have reached the server (here it did): an E24 is queued, and goes after the backoff.
+        assertEquals(listOf("unpin"), member.store.ops(gid).map { it.kind })
+        assertEquals(listOf(pinId), server.pinIds(gid))
+        held.loseAnswers = false
+        clock.advance(2)
+        member.hub.tick(foreground = false)
+        assertTrue(server.pinIds(gid).isEmpty())
+        assertTrue(member.store.ops(gid).isEmpty())
+        assertTrue(member.store.pins(gid).isEmpty())
+    }
+
+    @Test
+    fun testPinDeletedWhileItsIdClashesIsNotSentAgain() = test {
+        val held = HeldPins(server)
+        val (_, member, gid) = ownerAndMember(memberTransport = held)
+        held.hold = true
+        server.fail("POST", "/pins", status = 409, code = "pin_exists")
+        member.hub.dropPin(groupId = gid, type = PinType.shelter, animal = null, note = null, lat = -24.98, lon = 31.6)
+        untilHeld(held)
+        member.hub.deletePin(member.store.pins(gid).single().pinId, groupId = gid)
+        held.release()
+        member.hub.waitForBackgroundWork()
+        // The server stored nothing under that id (another member's), so there is nothing to delete, and no new id.
+        assertEquals(1, requests("POST", "/pins").size)
+        assertTrue(requests("DELETE", "/pins").isEmpty())
+        assertTrue(server.pinIds(gid).isEmpty())
+        assertTrue(member.store.ops(gid).isEmpty())
+        assertTrue(member.store.pins(gid).isEmpty())
     }
 
     // Pause (§8.10)

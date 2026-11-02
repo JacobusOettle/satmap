@@ -486,10 +486,21 @@ class GroupStore(path: String, driver: SqlDriver = MBTiles.driver) : Closeable {
             sql += " WHERE group_id = ?"
             args.add(groupId)
         }
-        return rows("$sql ORDER BY id", args) { s ->
-            QueuedOp(id = s.columnLong(0), groupId = text(s, 1), kind = text(s, 2), body = text(s, 3), createdAt = s.columnLong(4))
-        }
+        return rows("$sql ORDER BY id", args, ::readOp)
     }
+
+    /** The group's first op queued after op `after` (ids only grow) that is not of kind `except`, so a sender walking
+     *  the queue also reaches ops queued while it runs. */
+    fun nextOp(groupId: String, after: Long, except: String): QueuedOp? =
+        rows("SELECT id, group_id, kind, body, created_at FROM ops WHERE group_id = ? AND id > ? AND kind != ? ORDER BY id LIMIT 1",
+             listOf(groupId, after, except), ::readOp).firstOrNull()
+
+    private fun readOp(s: SqlStatement): QueuedOp =
+        QueuedOp(id = s.columnLong(0), groupId = text(s, 1), kind = text(s, 2), body = text(s, 3), createdAt = s.columnLong(4))
+
+    /** Whether the op is still queued. */
+    fun opExists(id: Long): Boolean =
+        (scalar("SELECT COUNT(*) FROM ops WHERE id = ?", listOf(id)) ?: 0) > 0
 
     fun deleteOp(id: Long) {
         run("DELETE FROM ops WHERE id = ?", listOf(id))

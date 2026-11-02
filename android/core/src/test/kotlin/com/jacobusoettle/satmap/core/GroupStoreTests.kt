@@ -248,6 +248,17 @@ class GroupStoreTests {
         store.deleteOp(b)
         assertEquals(listOf("a2", ""), store.ops(gid).map { it.body })
         assertFalse(store.hasOp(gid, kind = "unpin"))
+        assertTrue(store.opExists(a))
+        assertFalse(store.opExists(b))
+        // Walking the queue reaches an op queued meanwhile, skipping a kind; ids are never reused.
+        val archive = store.addOp(gid, kind = "archive", body = "{}", createdAt = 4)
+        assertEquals(a, store.nextOp(gid, after = 0, except = "archive")?.id)
+        assertEquals(c, store.nextOp(gid, after = a, except = "archive")?.id)
+        assertNull(store.nextOp(gid, after = c, except = "archive"))
+        store.deleteOp(archive)
+        val d = store.addOp(gid, kind = "unpin", body = "d", createdAt = 5)
+        assertTrue(d > archive)
+        assertEquals(d, store.nextOp(gid, after = c, except = "archive")?.id)
     }
 
     @Test
