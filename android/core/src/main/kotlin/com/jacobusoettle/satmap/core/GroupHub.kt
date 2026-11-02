@@ -47,6 +47,8 @@ interface GroupSocket {
 
 /** Where the memberships live (Keystore on Android, Keychain on iPhone; never backed up). */
 interface GroupSecretStore {
+    /** Throws when the memberships can't be read now (a Keystore or Keychain error): the hub then deletes nothing and
+     *  reads again at the next `becameActive` (§8.3). An empty list means there are none. */
     fun loadAll(): List<GroupSecret>
 
     /** Throws if the secret can't be saved. */
@@ -427,6 +429,9 @@ class GroupHub(
     /** The membership of the last create whose answer was lost, while it is still pending: a new create sends E1
      *  again with its group id and pass (§6.7), so the server makes at most one group. */
     private var pendingCreate: GroupSecret? = null
+
+    /** Whether `start` couldn't read the memberships; `becameActive` tries again. */
+    private var secretsUnread = false
     private var foreground = false
     private var locationAuthorised = false
     private var locationPrecise = false
@@ -571,13 +576,25 @@ class GroupHub(
 
     /** At launch: loads the memberships and the store, then restores any membership with no local copy (§8.3). */
     suspend fun start() {
-        val all = secrets.loadAll()
+        val all = try {
+            secrets.loadAll()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Nothing is deleted on a read that failed: the store's rows wait for the next try (§8.3).
+            GroupLog.note("couldn't read the stored memberships; trying again later")
+            secretsUnread = true
+            return
+        }
+        secretsUnread = false
         val ids = all.map { it.groupId }.toSet()
         for (row in store.groups()) {
             if (!ids.contains(row.groupId)) store.deleteGroup(row.groupId)
         }
         store.deleteExpiredMadeInvites(now = clock())
+        // A group made or joined while the memberships couldn't be read is already here.
         for (s in all) {
+            if (states.containsKey(s.groupId) || pendingSecrets.containsKey(s.groupId)) continue
             val key = Base64URL.decode(s.groupKey, count = 32)
             val gid = Base64URL.decode(s.groupId, count = 16)
             if (key == null || gid == null || Base64URL.decode(s.pass, count = 32) == null || Base64URL.decode(s.memberId, count = 16) == null) {
@@ -607,6 +624,7 @@ class GroupHub(
      *  group the live positions and the socket (§8.4). */
     suspend fun becameActive() {
         foreground = true
+        if (secretsUnread) start()
         restorePending()
         for (st in orderedStates) {
             refreshStatus(st.id)

@@ -128,6 +128,20 @@ class FlakyTransport(private val server: FakeGroupServer) : GroupTransport {
     }
 }
 
+/** Memberships that can't be read while `unreadable` is on, as a Keystore error looks to the hub. */
+class UnreadableSecrets(private val inner: MemoryGroupSecrets) : GroupSecretStore {
+    var unreadable = true
+
+    override fun loadAll(): List<GroupSecret> {
+        if (unreadable) throw IllegalStateException("can't read the memberships")
+        return inner.loadAll()
+    }
+
+    override fun save(secret: GroupSecret) = inner.save(secret)
+
+    override fun delete(groupId: String) = inner.delete(groupId)
+}
+
 /** One phone: a hub with its own store and secrets, on the shared fake server (or a `transport` in front of it).
  *  `scope` is the test's (its work runs on the test's thread, as the app's runs on the main thread). */
 class Phone(server: FakeGroupServer, clock: TestClock, scope: CoroutineScope, sockets: FakeSockets? = null, words: String = "badword\n",
@@ -372,6 +386,34 @@ class GroupHubTests {
         assertTrue(p.secrets.loadAll().isEmpty())
         assertTrue(p.hub.groups.isEmpty())
         assertNull(p.hub.nextTickDelay(foreground = false))
+    }
+
+    @Test
+    fun testUnreadableSecretsDeleteNothing() = test {
+        val (_, member, gid) = ownerAndMember()
+        // Something queued that must survive: a pin dropped offline.
+        server.offline = true
+        member.hub.dropPin(groupId = gid, type = PinType.water, animal = null, note = null, lat = -24.99, lon = 31.6)
+        member.hub.waitForBackgroundWork()
+        server.offline = false
+        assertEquals(1, member.store.ops(gid).size)
+        // A restart while the memberships can't be read (a Keystore error): nothing is deleted, and no group shows yet.
+        val secrets = UnreadableSecrets(member.secrets)
+        val again = GroupHub(store = member.store, secrets = secrets, transport = server, sockets = null, words = WordFilter(""),
+                             domain = "example.invalid", clock = { clock.now }, scope = scope)
+        again.start()
+        assertTrue(again.groups.isEmpty())
+        assertNotNull(member.store.group(gid))
+        assertEquals(1, member.store.ops(gid).size)
+        assertEquals(listOf(gid), member.secrets.loadAll().map { it.groupId })
+        // Readable again at the next activation: the group is back with its store, and the queued pin goes.
+        secrets.unreadable = false
+        again.becameActive()
+        again.waitForBackgroundWork()
+        assertEquals(listOf(gid), again.groups.map { it.groupId })
+        assertEquals(listOf("Sam", "Thandi"), again.detail(gid)?.members?.map { it.name })
+        assertEquals(1, server.pinIds(gid).size)
+        assertTrue(member.store.ops(gid).isEmpty())
     }
 
     @Test

@@ -27,7 +27,9 @@ protocol GroupSocket: AnyObject {
 
 /// Where the memberships live (Keychain on iPhone, Keystore on Android; never backed up).
 protocol GroupSecretStore: AnyObject {
-    func loadAll() -> [GroupSecret]
+    /// Throws when the memberships can't be read now (a Keychain or Keystore error): the hub then deletes nothing and
+    /// reads again at the next `becameActive` (§8.3). An empty list means there are none.
+    func loadAll() throws -> [GroupSecret]
     func save(_ secret: GroupSecret) throws
     func delete(groupId: String)
 }
@@ -373,6 +375,8 @@ final class GroupHub {
     /// The membership of the last create whose answer was lost, while it is still pending: a new create sends E1
     /// again with its group id and pass (§6.7), so the server makes at most one group.
     private var pendingCreate: GroupSecret?
+    /// Whether `start` couldn't read the memberships; `becameActive` tries again.
+    private var secretsUnread = false
     private var foreground = false
     private var locationAuthorised = false
     private var locationPrecise = false
@@ -521,13 +525,23 @@ final class GroupHub {
     /// At launch: loads the memberships and the store, then restores any membership with no local copy (§8.3).
     @MainActor
     func start() async {
-        let all = secrets.loadAll()
+        let all: [GroupSecret]
+        do {
+            all = try secrets.loadAll()
+        } catch {
+            // Nothing is deleted on a read that failed: the store's rows wait for the next try (§8.3).
+            GroupLog.note("couldn't read the stored memberships; trying again later")
+            secretsUnread = true
+            return
+        }
+        secretsUnread = false
         let ids = Set(all.map(\.groupId))
         for row in store.groups() where !ids.contains(row.groupId) {
             store.deleteGroup(row.groupId)
         }
         store.deleteExpiredMadeInvites(now: clock())
-        for s in all {
+        // A group made or joined while the memberships couldn't be read is already here.
+        for s in all where states[s.groupId] == nil && pendingSecrets[s.groupId] == nil {
             guard let key = Base64URL.decode(s.groupKey, count: 32), let gid = Base64URL.decode(s.groupId, count: 16),
                   Base64URL.decode(s.pass, count: 32) != nil, Base64URL.decode(s.memberId, count: 16) != nil else {
                 GroupLog.note("a stored membership is damaged; deleted")
@@ -556,6 +570,7 @@ final class GroupHub {
     @MainActor
     func becameActive() async {
         foreground = true
+        if secretsUnread { await start() }
         await restorePending()
         for st in orderedStates {
             await refreshStatus(st.id)

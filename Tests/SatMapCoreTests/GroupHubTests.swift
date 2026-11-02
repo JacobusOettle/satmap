@@ -115,6 +115,31 @@ final class FlakyTransport: GroupTransport {
     }
 }
 
+/// Memberships that can't be read while `unreadable` is on, as a Keychain error looks to the hub.
+final class UnreadableSecrets: GroupSecretStore {
+    struct ReadError: Error {}
+
+    let inner: MemoryGroupSecrets
+    var unreadable = true
+
+    init(_ inner: MemoryGroupSecrets) {
+        self.inner = inner
+    }
+
+    func loadAll() throws -> [GroupSecret] {
+        if unreadable { throw ReadError() }
+        return inner.loadAll()
+    }
+
+    func save(_ secret: GroupSecret) throws {
+        try inner.save(secret)
+    }
+
+    func delete(groupId: String) {
+        inner.delete(groupId: groupId)
+    }
+}
+
 /// One phone: a hub with its own store and secrets, on the shared fake server.
 final class Phone {
     let store: GroupStore
@@ -440,6 +465,33 @@ final class GroupHubTests: XCTestCase {
         let fourth = try await p.hub.createGroup(name: "Fourth", displayName: "Sam", pro: pro)
         XCTAssertNotEqual(fourth, lost.groupId)
         XCTAssertEqual(p.hub.groups.map(\.name), ["Trip", "Second trip", "Third", "Fourth"])
+    }
+
+    func testUnreadableSecretsDeleteNothing() async throws {
+        let (_, member, gid) = try await ownerAndMember()
+        // Something queued that must survive: a pin dropped offline.
+        server.offline = true
+        try member.hub.dropPin(groupId: gid, type: .water, animal: nil, note: nil, lat: -24.99, lon: 31.6)
+        await member.hub.waitForBackgroundWork()
+        server.offline = false
+        XCTAssertEqual(member.store.ops(gid).count, 1)
+        // A restart while the memberships can't be read (a Keychain error): nothing is deleted, and no group shows yet.
+        let secrets = UnreadableSecrets(member.secrets)
+        let again = GroupHub(store: member.store, secrets: secrets, transport: server, sockets: nil, words: WordFilter(list: ""),
+                             domain: "example.invalid", clock: { [clock] in clock!.now })
+        await again.start()
+        XCTAssertTrue(again.groups.isEmpty)
+        XCTAssertNotNil(member.store.group(gid))
+        XCTAssertEqual(member.store.ops(gid).count, 1)
+        XCTAssertEqual(member.secrets.loadAll().map(\.groupId), [gid])
+        // Readable again at the next activation: the group is back with its store, and the queued pin goes.
+        secrets.unreadable = false
+        await again.becameActive()
+        await again.waitForBackgroundWork()
+        XCTAssertEqual(again.groups.map(\.groupId), [gid])
+        XCTAssertEqual(again.detail(gid)?.members.map(\.name), ["Sam", "Thandi"])
+        XCTAssertEqual(server.pinIds(groupId: gid).count, 1)
+        XCTAssertTrue(member.store.ops(gid).isEmpty)
     }
 
     func testReinstallRestoresMembershipsFromSecrets() async throws {
