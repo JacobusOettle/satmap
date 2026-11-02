@@ -189,8 +189,11 @@ Group payloads carry coordinates as Int32 micro-degrees (SD19): latitude in −9
      not use Kotlin `trim()` (it also strips U+001C–U+001F) or `Character.isWhitespace`. U+200B (zero-width space)
      is not in the set.
   3. The result is invalid if it has a control character (general category Cc) or U+2028/U+2029 anywhere; notes
-     and report comments may contain U+000A (newline), at most 3 of them.
-  4. Then the limits below apply. An empty note or report comment is valid and cleans to `""` (sent as absent).
+     and report comments may contain U+000A (newline), at most 3 of them. Text holding half a surrogate pair (a
+     Kotlin or JS string can, a Swift string can't) is invalid too, and JSON readers refuse such strings.
+  4. Then the limits below apply. An empty note or report comment is valid and cleans to `""`. An empty note is
+     left out of the pin record (§4.5); an empty report comment is sent as `"comment": ""` (the server reads an
+     absent comment the same way, §6.5 E25).
 - Vectors: `vectors.json` `groupText` (`output` null means invalid).
 
 | Field | Min | Max code points | Max UTF-8 bytes |
@@ -208,9 +211,13 @@ Display names are not unique. The word filter (§8.12) runs after cleaning.
 - UTF-8, no byte-order mark.
 - Encrypted record plaintexts (§4.5–4.7) are compact JSON with keys sorted by code point and no spaces; non-ASCII
   characters are written as themselves, not `\u` escapes; `/` is not escaped.
-  - Swift: `JSONEncoder` with `[.sortedKeys, .withoutEscapingSlashes]`.
-  - Kotlin: build the `JsonObject` with keys in sorted order.
+  - Both cores write the three records with a small canonical writer (`GroupJSON`): keys sorted by code point,
+    strings escaped as Python's `json.dumps(ensure_ascii=False)` escapes them (`\"`, `\\`, `\n`, `\r`, `\t`, `\b`,
+    `\f`, other control characters as `\u00xx`). Swift's `JSONEncoder` is not used for them, so the bytes can't
+    vary between Foundation versions on Linux and Darwin. The output equals every `jsonWriters` vector.
   - Readers accept any key order and ignore unknown keys, but reject wrong types.
+  - Readers drop a record whose `v` is not 1 (quietly, as an envelope of another version), and one whose texts
+    break their §2.5 limits: an empty or too long display, group or animal name, or a too long note.
 - **Padding (SD25).** Writers of the three JSON records (group profile, member profile, pin) always add the key
   `pad`, a string of ASCII spaces, chosen so the encoded JSON's byte length is a multiple of the record's block:
   32 for both profiles, 64 for pins. Rule: encode the record with `"pad":""`, giving length L; then
@@ -504,11 +511,16 @@ recorded only while sharing is on for that group and the group is active. Each p
 - **Packing.** An upload (E18 or a WebSocket `upload`) takes chunks oldest first until it holds 50 chunks or its
   JSON body would pass 192 KiB (196 608 bytes), whichever comes first; the rest go in the next upload, at once.
 - **Answers,** per window in `own_points` (§8.3):
-  - in `accepted`: set `sent_version` to the `version` that was sent. A closed window whose
-    `sent_version == version` is deleted from `own_points`.
+  - in `accepted`: set `sent_version` to the `version` that was sent.
   - rejected `before_join`, `window_paused` or `bad_record`: delete the row (it can never be accepted).
   - rejected `bad_time`: keep the row, retry it once after the next E2 (which refreshes `serverTime`), then delete
     it if it is rejected again.
+- **Acknowledged windows** (`sent_version ≥ version`) are deleted from `own_points` once they have been closed for
+  `GroupPolicy.lateWindowGrace` (60 s): `start + 600 + 60 ≤ now`. This is checked when an acceptance arrives and in
+  a sweep at the start of every upload pass, because a window whose last upload went while it was still open gets
+  no later answer. The grace lets a point the recorder delivers a moment late (or a fix whose time is a little
+  behind the phone's clock) still join its whole window: a point for a window already deleted would start a new
+  one-point row, whose upload replaces the server's whole chunk with that point alone.
 - **Clearing.** While an E22 (clear my trail) for a group waits in `ops`, no chunks are uploaded for that group, so
   a chunk recorded after the clear can't reach the server first and be deleted by it. Points keep collecting in
   `own_points` and go after E22 succeeds.
@@ -557,9 +569,10 @@ The rest of a pin is in plain fields that the AAD binds, not repeated inside the
 - `createdAt` (the dropper's phone time when the pin was dropped)
 - `expiresAt`: `createdAt + 43200` for `animal`, `null` for every other type
 
-Readers drop a pin whose `expiresAt` breaks that rule. A pin with a `type` this version doesn't know is shown as a
-plain pin titled "Pin" (not dropped), so older apps cope with newer types. The type labels shown in the UI are in
-§9.4.
+Readers drop a pin whose `expiresAt` breaks that rule; a pin whose `type` this version doesn't know must have
+`expiresAt` null (a future type that expires needs a new record version). Otherwise a pin with an unknown `type` is
+shown as a plain pin titled "Pin" (not dropped), so older apps cope with newer types. The type labels shown in the
+UI are in §9.4.
 
 ### 4.6 Member profile
 
@@ -584,6 +597,8 @@ How a colour is chosen:
 - A joiner sends a random index at redeem. After its first pull of changes, if another current member has the same
   colour and a free index exists, it sends a new profile with the lowest free index.
 - A member can change colour in "Your name and colour" (§9.3 S15).
+- That change (E12 at once, `setDisplayName`) must land last: it waits for a queued profile change (the colour fix
+  above) already on its way, and no queued profile change goes while it is on its way; it replaces them.
 
 ### 4.7 Group profile
 
@@ -713,8 +728,9 @@ Swift uses `NSRegularExpression`, Kotlin `Regex`; both give the same matches for
 
 ### 5.4 Landing page (served by the Worker)
 
-`GET /j/{token}`: if the token doesn't match `^[A-Za-z0-9_-]{43}$`, the answer is a 404 page with the same look and
-the text "This isn't a valid invite link." Otherwise it is a 200 HTML page.
+`GET /j/{token}`: if the token doesn't match `^[A-Za-z0-9_-]{43}$` (one trailing `/` after it is accepted), the
+answer is a 404 page with the same look and the text "This isn't a valid invite link." Otherwise it is a 200 HTML
+page.
 
 The page never looks the token up and never consumes it. Link-preview robots (WhatsApp, iMessage) fetch it without
 the fragment and learn nothing.
@@ -838,7 +854,8 @@ Exact content:
 - **Response headers:** `Cache-Control: no-store` on every response. No CORS headers: the API is for the apps only.
 - **Errors:** `{"error":"<code>","message":"<English sentence for logs>"}`. Apps choose their text from the code and
   never show `message`. `429` and `503` carry `Retry-After` (seconds).
-- **Unknown JSON keys** are ignored. Wrong types are `400 bad_request`.
+- **Unknown JSON keys** are ignored. Wrong types are `400 bad_request`. The body is validated before the role
+  check (§1.3): a malformed body answers `400` even from a role that may not do the action.
 
 ### 6.2 Error codes
 
@@ -870,7 +887,7 @@ Exact content:
 | 422 | `bad_time` | A time is out of range (future, or too old) | Drop that item |
 | 422 | `pin_expired` | An animal pin's expiry has already passed | Drop the queued pin |
 | 426 | `upgrade_required` | `/ws` without `Upgrade: websocket` | Log |
-| 429 | `rate_limited` | Too many requests (§6.8) | Wait `Retry-After`, then retry |
+| 429 | `rate_limited` | Too many requests (§6.8) | Wait, then retry (the core waits a fixed 60 s, §6.7) |
 | 500 | `internal` | Also: a required binding is missing (§7.8) | Retry with backoff |
 | 503 | `store_unavailable` | Apple or Google could not be asked, or the server has no credentials for it | "Store isn't available" text; retry later |
 
@@ -944,7 +961,9 @@ Exact content:
 | `removed` `member` | Delete the member, their chunks, archives, pins and live position |
 | `archive` | If, before this page, the client's cursor was at or above `maxChunkSeq` **and** that cursor was reached at a `serverTime` earlier than `archivedAt` (§8.8), it already holds every chunk the archive contains: it relabels its stored chunks of that member and month with the archive item's `seq` and downloads nothing. Otherwise it downloads E20 for that member and month and stores its chunks under the archive item's `seq`. |
 
-`seq` values rise but have gaps (a replaced row takes a new number). Applying an item twice does no harm.
+`seq` values rise but have gaps (a replaced row takes a new number). Clients skip items whose `seq` is at or below
+their cursor: a tick computed before a later HTTP page can arrive after it, and the client keeps no tombstones, so
+an old pin or member item would bring back what a removal deleted.
 
 In an `archive` item, `maxChunkSeq` is the largest of: the `seq` of every chunk row merged into that object in any
 pass, and the `seq` the archive item had before this pass (if any). `archivedAt` is the server time of the pass's
@@ -1011,8 +1030,8 @@ Request:
 - **201:** GroupStatus. The caller is the owner, `joinedAt = now`. The group profile becomes change `seq` 1 and the
   owner's member item `seq` 2.
 - **Retry:** if the group exists and SHA-256(`pass`) is its owner's pass hash, answer 200 with the status.
-- **Errors:** `400 bad_request`/`bad_record`, `402 pro_invalid`/`pro_inactive`, `409 group_exists`,
-  `409 too_many_groups`, `409 terms_outdated`, `429`, `503 store_unavailable`.
+- **Errors:** `400 bad_request`/`bad_record`, `402 pro_invalid`/`pro_inactive`, `409 group_exists` (also for the id
+  of a deleted group), `409 too_many_groups`, `409 terms_outdated`, `429`, `503 store_unavailable`.
 - **Order of work:**
   1. The Worker applies `RL_CREATE` (§6.8).
   2. Validate the body, including `termsVersion ≥ TERMS_VERSION` and, for Google, the purchase token's shape
@@ -1030,9 +1049,9 @@ paused.
 
 1. detaches the group from its ProDO
 2. closes every socket with code 4404
-3. in one transaction, deletes all rows, keeps only `grp.status = 'deleted'` and `deleted_at` (so requests answer
-   `410 group_deleted`), and inserts the prefix `g/{groupId}/` into `r2_deletes`; the `r2_delete` job then empties
-   it (§7.5)
+3. in one transaction, deletes all rows, keeps only `grp.status = 'deleted'`, `deleted_at` (so requests answer
+   `410 group_deleted`) and `pro_name` (so the 30-day purge can retry the ProDO detach), and inserts the prefix
+   `g/{groupId}/` into `r2_deletes`; the `r2_delete` job then empties it (§7.5)
 4. after 30 days, the `purge` job and `deleteAll()` (§7.4)
 
 **E5 New Pro proof:** `{"pro": ProProof}`. 200 GroupStatus. Used:
@@ -1071,9 +1090,11 @@ Request: `{"token": "…", "joinProof": "…"}`.
 {"groupId": "…", "status": "active", "profile": "<envelope>", "memberCount": 5, "inviter": {"memberId": "…", "profile": "<envelope>"}, "expiresAt": 1794217800}
 ```
 
-- `inviter` is null if that member has left.
+- `inviter` is null if that member has left (defensive: SD23 cancels the pending invites of a member who leaves or
+  loses admin, so it doesn't arise in practice).
 - Does not use up the invite.
-- `404 invite_not_found` for every failure: unknown token, used, cancelled, expired, wrong proof, deleted group.
+- `404 invite_not_found` for every failure: unknown token, used, cancelled, expired, wrong proof, deleted group. A
+  `token` or `joinProof` that isn't 43 base64url characters can't be routed (§7.2) and answers `400 bad_request`.
 - The Worker applies `RL_INVITE` first (`429`).
 
 **E10 Redeem an invite**
@@ -1089,8 +1110,9 @@ Request:
   used, with `used_by` and `used_pass_hash`, and the member row is inserted.
 - **Retry:** if the invite is used and `used_pass_hash` equals SHA-256(`pass`), and that member still exists,
   answer 200 with the same status.
-- **Errors:** `404 invite_not_found`, `409 member_exists` (the id is a current member's, or appears in `removals`
-  as a member, SD24), `409 terms_outdated`, `429` (`RL_INVITE`).
+- **Errors:** `400 bad_request` (also a malformed `token` or `joinProof`, as E9), `404 invite_not_found`,
+  `409 member_exists` (the id is a current member's, or appears in `removals` as a member, SD24),
+  `409 terms_outdated`, `429` (`RL_INVITE`).
 - Works while paused.
 
 **E11 Members:** 200 `{"members": [Member…]}`, ordered by `joinedAt`.
@@ -1112,6 +1134,8 @@ Who may remove whom:
 - The owner may remove anyone but themself.
 - An admin may remove only members (`403` for an admin or the owner).
 - `me`: any role but the owner leaves (`409 owner_must_hand_over`).
+- Your own `memberId` instead of `me`: the same as leaving for an admin or member; the owner gets `409 not_allowed`
+  (removing the owner).
 
 Effects, in one transaction:
 
@@ -1169,9 +1193,9 @@ Request:
 ```
 
 A chunk is accepted (and replaces any stored chunk for that member and window, with a new `seq`) only if all of
-these hold:
+these hold, checked in this order:
 
-- `start % 600 == 0`
+- `start % 600 == 0` (otherwise `bad_record`: it can never be accepted)
 - `start + 600 > you.joinedAt` (otherwise `before_join`)
 - `start ≤ now + 600` (otherwise `bad_time`)
 - the envelope is 32–12 288 bytes with version 1 (otherwise `bad_record`)
@@ -1186,7 +1210,7 @@ A live record is accepted only if all of these hold:
 - `at` is newer than the stored live record
 - at least 2 s passed since this member's last accepted live record
 
-A rejected live record makes `liveAccepted` false, not an error.
+A rejected live record makes `liveAccepted` false, not an error. So does a request with no `live` key.
 
 While paused, the whole request answers `409 group_paused`, unless it has no chunks and `"live": null`.
 
@@ -1259,20 +1283,24 @@ Request:
 
 - `targetKind`: `pin`, `member` or `group` (the group name; `targetId` is the `groupId`).
 - `reason`: `offensive`, `harassment`, `spam`, `dangerous` or `other`.
-- `comment`: cleaned text, up to 500 code points (§2.5).
+- `comment`: cleaned text, up to 500 code points (§2.5). Apps send `""` when there is none; an absent comment is
+  read as `""`.
 - `content` is the reporter's decrypted copy (SD28: the reporter's claim, which the server can't check):
   - for a pin: `type`, `animal`, `note`, and `name` (the dropper's display name)
   - for a member: `name`
   - for the group: `name` (the group name)
 - The server keeps only those keys and drops any others. Each must be a string within its §2.5 limits (`name` of a
   group 40 code points, of a member 30; `animal` 40; `note` 140; `type` at most 20 characters), otherwise
-  `400 bad_request`. Positions are never sent (SD10).
+  `400 bad_request`. Positions are never sent (SD10). The server checks each text's code points and UTF-8 bytes
+  but doesn't clean it again: the phone sends `GroupText.clean` output.
 - **Target check.** The server looks the target up: a current member or pin, or a `removals` row for one already
   gone (or, for `group`, this group). A target that never existed answers `404 not_found`.
 - **Facts.** With the report, the server stores what it knows itself: whether the target still exists, the member
   it belongs to (the pin's dropper, or the member), the pin's `createdAt` or the member's `joinedAt`, and the
   stored envelope's length (for a pin, member or group profile). §7.7 shows them to the developer.
 - **202:** `{"reportId": "…"}`.
+- **Errors:** `400 bad_request`, `403 forbidden` for a group-name report from the owner (§1.3: the owner renames
+  instead), `404 not_found`, `429`.
 - **Limit:** 20 reports per member per day. Allowed while paused.
 
 **E27 Apple notifications:** body `{"signedPayload": "<JWS>"}`.
@@ -1298,7 +1326,9 @@ Request:
 - The DO checks the pass:
   - an HTTP error before the upgrade: 401, 410 or 404 as in §6.2
   - otherwise `ctx.acceptWebSocket(server, [memberId])`, with the attachment
-    `{memberId, watching: false, cursor: 0, helloAt: 0}`
+    `{memberId, watching: false, cursor: 0, helloAt: 0, openedAt, w: -1, st: "", more: false}` (`openedAt` for
+    the 10 s `hello` timeout; `w` the watcher count, `st` a fingerprint of the status and `more` the backlog flag
+    last sent to this socket, §7.3)
 - A member may have at most 4 sockets. A fifth closes the oldest with code 4409.
 
 **Frames.**
@@ -1308,6 +1338,8 @@ Request:
   `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"))`, without waking the DO.
 - Clients send `ping` every 30 s.
 - Frames are at most 256 KiB from client to server and at most 512 KiB from server to client.
+- Client messages count toward the 120 requests per member per minute (§6.8); `ping` doesn't. Over the limit the
+  socket closes with 4429.
 
 **Client to server:**
 
@@ -1340,7 +1372,7 @@ Request:
     At most 200 items or 256 KiB; `from` is the cursor they follow. The DO then sets the socket's cursor to
     `changes.cursor`.
   - `watchers`: when the socket's count changed
-  - `status`: when the status changed
+  - `status`: when the recipient's status changed (it includes `you`, so a role change reaches that member)
 - A socket whose backlog is more than one page gets `"more": true` and no further `changes` until it sends `ack`.
   Meanwhile the client pulls over HTTP (E19).
 - If `changes.from` is greater than the client's own cursor, the client ignores those items and pulls over HTTP.
@@ -1365,21 +1397,23 @@ Senders use it to choose their pace (§8.6). HTTP uploads learn it from the E18 
 | 4409 | Replaced by a newer socket |
 | 4429 | Rate limited |
 
-On 4401, 4403 or 4404 the client stops reconnecting and runs §8.10. Otherwise it reconnects with backoff 1, 2, 4,
-8, 16, 32, 60 s (plus or minus 20 % jitter) while the connect conditions in §8.7 still hold.
+On 4401, 4403 or 4404 the client stops reconnecting and runs §8.10 (4401 checks with E2 first). Otherwise it
+reconnects with backoff 1, 2, 4, 8, 16, 32, 60 s (plus or minus 20 % jitter) while the connect conditions in §8.7
+still hold. How the app reports a refused upgrade is in §8.7.
 
 ### 6.7 Idempotency and retries
 
 | Request | Safe retry |
 | --- | --- |
-| Create (E1) | Same `groupId` and `pass` gives 200 |
+| Create (E1) | Same `groupId` and `pass` gives 200. A create that got no answer is resent with the same `groupId`, `memberId` and `pass` by the next Create (§8.3), so a retry can't make a second group. |
 | Redeem (E10) | Same token and `pass` gives 200 |
 | Drop a pin (E23) | Same `pinId` gives 200, or `410 pin_deleted` if it was deleted meanwhile |
 | Uploads (E18) | Replace by member and window |
 | Deletes (E8, E14, E16, E22, E24) | Clients treat `404` as done |
 
-Clients retry network failures and `5xx` with backoff 2, 4, 8 … 300 s. They never retry `4xx`, except `429` (after
-`Retry-After`), the id clashes in §6.2, and `409 terms_outdated` (once, after S1, §8.13).
+Clients retry network failures and `5xx` with backoff 2, 4, 8 … 300 s. They never retry `4xx`, except `429`, the
+id clashes in §6.2, and `409 terms_outdated` (once, after S1, §8.13). The core's transport returns only the status
+and body (§8.2), so after a `429` the hub waits a fixed 60 s rather than `Retry-After`.
 
 ### 6.8 Rate and size limits
 
@@ -1388,7 +1422,7 @@ Clients retry network failures and `5xx` with backoff 2, 4, 8 … 300 s. They ne
 | E1 create | 3 per IP per minute (key `create:{ip}`) | Worker, Rate Limiting binding `RL_CREATE` (required, §7.8) |
 | E9 preview / E10 redeem | 10 per IP per minute each (keys `preview:{ip}`, `redeem:{ip}`) | Worker, binding `RL_INVITE` (required) |
 | Store calls for a junk Google token | A token with the wrong shape never reaches Google; a token Google refused is answered from memory for 10 min | ProDO (§7.6) |
-| Authenticated requests | 120 per member per minute | DO, in memory |
+| Authenticated requests | 120 per member per minute, WebSocket messages included (`ping` is not); over it HTTP answers `429` and a socket closes with 4429 | DO, in memory |
 | Live records | 1 per member per 2 s (extras ignored) | DO |
 | Invites | 100 pending and 200 created per group per day | DO, `counters` table |
 | Pins | 60 per member per hour; 2000 unexpired per group | DO, `counters` table |
@@ -1419,10 +1453,13 @@ server/
   src/pro/apple.ts          JWS verification, App Store Server API, notification decoding
   src/pro/apple-root-g3.ts  Apple Root CA - G3 (DER, base64) pinned
   src/pro/google.ts         service-account token, subscriptionsv2 / productsv2, RTDN decoding
+  src/pro/der.ts  src/pro/types.ts   DER reader for the certificate extensions; shared Pro types
   src/admin/AdminDO.ts      class AdminDO: reports
-  src/web/landing.ts  src/web/wellknown.ts  src/web/pages.ts   (/j, AASA, assetlinks, /terms, /privacy, /)
-  src/lib/b64url.ts  errors.ts  envelope.ts  ids.ts  limits.ts  log.ts  time.ts
-  test/unit/*.test.ts  test/integration/*.test.ts  test/ws/*.test.ts  test/helpers/{client,crypto,apple-test-chain}.ts
+  src/web/landing.ts  src/web/wellknown.ts  src/web/pages.ts  src/web/html.ts   (/j, AASA, assetlinks, /terms, /privacy, /)
+  src/lib/b64url.ts  config.ts  errors.ts  envelope.ts  hash.ts  ids.ts  jobs.ts  limits.ts  log.ts  time.ts
+  src/types/*.d.ts          the few Node APIs used (no @types/node, §13.2)
+  test/unit/*.test.ts  test/integration/*.test.ts  test/ws/*.test.ts
+  test/helpers/{client,crypto,apple-test-chain,google,ws,examples,examples-reporter}.ts  test/types/*.d.ts
 ```
 
 **Versions** (checked 2 November 2026; pin exact versions in `package.json`):
@@ -1435,9 +1472,12 @@ server/
   Tests import `env` and `exports` from `cloudflare:workers` (use `exports.default.fetch()`, not `SELF`), and
   `runInDurableObject`, `runDurableObjectAlarm` and `evictDurableObject` from `cloudflare:test`.
 - wrangler: exactly the version that plugin release pins
-- **[Unconfirmed]** The newest releases (plugin 1.4.12, wrangler 4.156.1) were published 1 November 2026. Use the
-  newest plugin release that is at least 14 days old (`npm view @cloudflare/vitest-plugin time`) and the wrangler
-  version it pins.
+- **Chosen** (2 November 2026): `@cloudflare/vitest-plugin` 1.4.4, the newest release at least 14 days old (1.4.5
+  was 13 days 22 h old), which pins wrangler 4.151.1; vitest 4.1.12; TypeScript 6.0.3.
+- The lockfile: Node 22's own npm 10.9.4 crashes building this tree from scratch (an arborist error on vite's
+  optional peers), so `package-lock.json` was made with `npx npm@11.21.0 install --before=2026-10-19`; `npm ci` with
+  npm 10 installs from it. `package.json` `overrides` pin undici 7.30.1 and zod 4.6.7 (both at least 14 days old)
+  to clear `npm audit` advisories in miniflare and the plugin.
 - Types come from `wrangler types`, which writes `worker-configuration.d.ts` (committed), plus
   `@cloudflare/vitest-plugin/types` in tsconfig.
 
@@ -1450,10 +1490,12 @@ server/
 | `typecheck` | `tsc --noEmit` |
 | `build` | `wrangler deploy --dry-run --outdir dist` |
 | `dev` | `wrangler dev` |
-| `types` | `wrangler types` |
+| `types` | `wrangler types --strict-vars=false` |
 
-The WebSocket tests run separately because WebSockets with Durable Objects don't work under per-file storage
-isolation.
+Plain `wrangler types` types each variable as its literal default (for example `TEST_MODE: "0"`), which the code
+can't compare against other values. The WebSocket tests run separately, without isolation: under per-file storage
+isolation a Durable Object that holds open WebSockets doesn't answer RPC (`stub.method()`) until its sockets are
+gone.
 
 `wrangler.jsonc`:
 
@@ -1490,8 +1532,8 @@ Notes on the config:
 - Rate limiting: wrangler's schema allows only `period` 10 or 60, and one limit per binding, hence two bindings.
   `namespace_id` is any positive integer string chosen in the config, unique per account; nothing is created in
   the dashboard. When a binding is missing, E1, E9 and E10 answer `500 internal` and log
-  `{"t":"cfg","missing":"RL_CREATE"}`, except under `TEST_MODE=1`, where a missing binding means "no limit".
-  **[Unconfirmed]** that the test runtime supports the binding (§14 U3).
+  `{"t":"cfg","missing":"RL_CREATE"}`, except under `TEST_MODE=1`, where a missing binding means "no limit". The
+  test runtime supports the bindings, and the tests exercise both for real (§14 U3, closed).
 
 ### 7.2 Worker routing
 
@@ -1501,8 +1543,8 @@ Notes on the config:
 | `POST /v1/groups` | Read the body, take `groupId`, then `env.GROUP.get(env.GROUP.idFromName(groupId), {locationHint: "afr"})` |
 | `/v1/groups/{groupId}/…` (including `/ws`) | The same DO, `stub.fetch(request)` with the original request (headers and body) |
 | `POST /v1/invites/preview`, `/redeem` | Decode `token` (43 chars → 32 bytes); its first 16 bytes are the `groupId`; that DO |
-| `POST /v1/store/apple` | Verify the JWS in the Worker, take `originalTransactionId`, then `env.PRO.idFromName("apple:" + id)` → `notify()` |
-| `POST /v1/store/google` | Check the token, decode, then `env.PRO.idFromName("google:" + b64url(sha256(purchaseToken)))` → `notify()` |
+| `POST /v1/store/apple` | Verify the JWS in the Worker, take `originalTransactionId`, then `env.PRO.idFromName("apple:" + id)` → `notifyApple()` |
+| `POST /v1/store/google` | Check the token, decode, then `env.PRO.idFromName("google:" + b64url(sha256(purchaseToken)))` → `notifyGoogle()` |
 | `/v1/admin/*` | Check `ADMIN_TOKEN`, then the AdminDO (`idFromName("admin")`) or the group's DO (admin RPC methods) |
 | `GET /v1/health` | Worker |
 | anything else | `404 not_found` |
@@ -1514,9 +1556,11 @@ Notes on the config:
 ### 7.3 GroupDO
 
 **State.** Each group is one DO named by its `groupId` text. A DO with no `grp` row has never been created; any
-request but E1, E9 or E10 to it answers `404 group_not_found` (and E9/E10 answer `invite_not_found`).
+request but E1, E9 or E10 to it answers `404 group_not_found` (and E9/E10 answer `invite_not_found`). The tables are
+created by E1; the constructor runs migrations (inside `ctx.blockConcurrencyWhile`) only when a group exists, so a
+request to an unknown id never leaves a stored object behind.
 
-**Schema** (`schema_version` 1; the constructor runs it inside `ctx.blockConcurrencyWhile`):
+**Schema** (`schema_version` 1):
 
 ```sql
 CREATE TABLE IF NOT EXISTS grp (
@@ -1552,7 +1596,7 @@ CREATE TABLE IF NOT EXISTS invites (
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   state TEXT NOT NULL CHECK (state IN ('pending','used','cancelled')),
-  used_by TEXT, used_pass_hash BLOB, used_at INTEGER
+  used_by TEXT, used_pass_hash BLOB, used_at INTEGER     -- used_at: when it left 'pending' (used or cancelled)
 );
 CREATE TABLE IF NOT EXISTS chunks (
   member_id TEXT NOT NULL, start INTEGER NOT NULL, rec BLOB NOT NULL,
@@ -1579,6 +1623,7 @@ CREATE TABLE IF NOT EXISTS removals (
   seq INTEGER PRIMARY KEY, what TEXT NOT NULL CHECK (what IN ('pin','member','trail')),
   id TEXT NOT NULL, at INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS removals_id ON removals(what, id);   -- SD24 and report look-ups
 CREATE TABLE IF NOT EXISTS live (member_id TEXT PRIMARY KEY, at INTEGER NOT NULL, rec BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS pause_log (paused_at INTEGER PRIMARY KEY, resumed_at INTEGER, reason TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS transfer (
@@ -1605,7 +1650,7 @@ CREATE TABLE IF NOT EXISTS counters (key TEXT PRIMARY KEY, window_start INTEGER 
   the same way. ProDO has the same two fields.
 - **Live positions** are held in a memory map. They are written to the `live` table at most once per 60 s per
   member, and always when deleted, so an evicted DO comes back at most 60 s stale. `members.last_live_at` is
-  updated at the same moments.
+  updated at the same moments; when the live record is deleted it keeps the last persisted time (up to 60 s old).
 - **Pause** (one transaction), then a broadcast of the status and live `rec: null` for everyone:
   - `status='paused'`, `paused_reason`, `paused_at=now`, `delete_at=now+2592000`
   - insert into `pause_log`
@@ -1613,8 +1658,8 @@ CREATE TABLE IF NOT EXISTS counters (key TEXT PRIMARY KEY, window_start INTEGER 
   - delete all live rows and the memory map
 - **Resume:** `status='active'`, clear the pause fields, set `resumed_at` in `pause_log`, delete the `purge` job,
   broadcast.
-- **Socket attachments** (≤ 16 KiB): `{memberId, watching, cursor, helloAt}`. On wake from hibernation the DO
-  rebuilds watcher counts from `ctx.getWebSockets()`.
+- **Socket attachments** (≤ 16 KiB): `{memberId, watching, cursor, helloAt, openedAt, w, st, more}` (§6.6). On
+  wake from hibernation the DO rebuilds watcher counts from `ctx.getWebSockets()`.
 
 ### 7.4 Alarms
 
@@ -1625,26 +1670,29 @@ A DO with no `alarm()` method cannot set an alarm, so GroupDO, ProDO and AdminDO
 **Errors.** The platform retries a throwing `alarm()` only a few times, then drops it, which would silently stop a
 deletion (R8). So `alarm()` runs each due job inside its own `try`/`catch` and never throws:
 
-- A failed `purge`, `r2_delete` or `pro_check` stays in `jobs` with `tries + 1` and `at` = now + 15 min after the
-  first failure, then now + 1 h after each later one. It logs `{"t":"job","kind":…,"err":…}` without ids.
+- A failed `purge`, `r2_delete`, `pro_check` or archive pass (`archive_more`) stays in `jobs` with `tries + 1` and
+  `at` = now + 15 min after the first failure, then now + 1 h after each later one. It logs
+  `{"t":"job","kind":…,"err":…}` without ids.
+- `r2_delete`, the archive pass and `purge` run only inside `alarm()` (the platform never runs two `alarm()` calls
+  of one object at once); requests only queue prefixes in `r2_deletes` and never write to R2.
 - A job that succeeds resets `tries` to 0.
 - `alarm()` always sets the next alarm before it returns, in a `finally`.
 
 | Job | When | What it does |
 | --- | --- | --- |
 | pin expiry | `MIN(pins.expires_at)` | Delete expired pins; add `removed pin` items; broadcast |
-| `pro_check` | `pro_expires_at` (subscriptions, and Sandbox or test purchases, SD20) | Ask the ProDO `check()`. **Active with an expiry after now + 60:** store it and reschedule at that expiry. **Active with an expiry at or before now + 60** (Google at the renewal instant still says ACTIVE with the old `expiryTime`): check again in 10 min, up to 6 times, then pause `pro_unverified`. **Inactive:** pause with its reason. **Unknown** (the store failed): pause `pro_unverified` (SD8) and set `pro_retry`. |
+| `pro_check` | `pro_expires_at` (subscriptions, and Sandbox or test purchases, SD20) | Ask the ProDO `check()`. **Active with an expiry after now + 60:** store it and reschedule at that expiry. **Active with an expiry at or before now + 60** (Google at the renewal instant still says ACTIVE with the old `expiryTime`): check again every 10 min, up to 6 re-checks; if the 7th check still says so, pause `pro_unverified`. **Inactive:** pause with its reason. **Unknown** (the store failed): pause `pro_unverified` (SD8) and set `pro_retry`. |
 | `pro_retry` | every 30 min for 24 h after a `pro_unverified` pause, then every 6 h | `check()` again; active resumes |
 | `transfer` | `transfer.expires_at` | Delete the expired offer; broadcast the status |
 | `r2_delete` | at once after a row is added to `r2_deletes`, then as rescheduled | For each `r2_deletes` row: list the prefix and delete in batches of up to 1000 keys; remove the row only when a list of the prefix comes back empty |
 | `purge` | `delete_at` (paused), or `deleted_at + 2592000` (deleted) | List and delete every R2 object under `g/{groupId}/` until a list comes back empty; only then detach from the ProDO, `ctx.storage.deleteAlarm()`, then `ctx.storage.deleteAll()`. An R2 error leaves SQLite untouched and the job rescheduled (above). |
-| `daily` | once a day at a random minute between 01:00 and 04:00 UTC (fixed per group at creation) | The archive pass (§7.5). Delete `removals` older than 400 days and set `min_cursor` to the largest deleted `seq`. Delete `gone_passes` older than 30 days. Delete used, cancelled and expired invites older than 30 days. Delete `pause_log` rows that ended more than 30 days ago. Delete `live` rows older than 30 days (and clear `last_live_at` for them). For a lifetime entitlement, ask `check()` on the 1st of each month. |
+| `daily` | once a day at a minute between 01:00 and 04:00 UTC fixed per group: 01:00 + (FNV-1a of the `groupId` text mod 180) minutes (the id is random, so the minutes spread evenly; a retried run finds the same minute without a column) | First the retention deletes, in SQLite: `removals` older than 400 days (set `min_cursor` to the largest deleted `seq`); `gone_passes` older than 30 days; used and cancelled invites 30 days after `used_at`, pending ones 30 days after `expires_at`; `pause_log` rows that ended more than 30 days ago; `live` rows older than 30 days (and clear `last_live_at` for them). Then the archive pass (§7.5); its R2 errors never delay the retention deletes (R8) and are retried through `archive_more` under the error rule above. For a lifetime entitlement, ask `check()` on the 1st of each month. |
 | `archive_more` | 60 s after an archive pass that hit its batch limit | Continue the pass |
 
 **ProDO and AdminDO alarms.** ProDO: `check()` 60 s after `expires_at` (a second safeguard beside each group's
-`pro_check`), and self-deletion (`deleteAlarm()`, `deleteAll()`) 30 days after the last `detach()` left it with no
-groups, or 30 days after a write that left it with no groups; an `attach()` in between cancels that. AdminDO: the
-daily report clean-up (§7.7). Both use the same error rule.
+`pro_check`), and self-deletion (`deleteAlarm()`, `deleteAll()`): each write or `detach()` that leaves it with no
+groups sets it to 30 days later; an `attach()` in between cancels it. AdminDO: the daily report clean-up (§7.7).
+Both use the same error rule.
 
 ### 7.5 R2 archive
 
@@ -1694,18 +1742,22 @@ RPC methods:
 
 | Method | What it does |
 | --- | --- |
-| `attach(groupId, verified)` | Apply the verified proof to `ent` (ordering rule below). Check the group count (SD9). Add the group. Return `{active, reason, expiresAt, productId, platform, name}`; the caller answers `402 pro_inactive` when not active. |
+| `attach(name, groupId, proof)` | Ask the store about the proof's purchase (`check`, below; a Google token reaches the ProDO only inside the proof), apply the answer to `ent` (ordering rule below), check the group count (SD9) and add the group. Return `{active, reason, expiresAt, productId, platform, name}`; the caller answers `402`, `409` or `503` when it isn't `ok`. |
 | `detach(groupId)` | Remove the group; with no groups left, schedule self-deletion (§7.4) |
-| `check()` | Ask the store API and store the answer (`state_at` = now). Returns `unknown: true` only when the store could not be asked. |
-| `notify(decoded)` | Drop duplicates by notification id. Apply it (ordering rule below), or call `check()` (Google always; Apple when the state can't be derived). Push to the groups. |
+| `releaseGroups()` | Remove and return every group: they move to the purchase that replaced this one (Google `linkedPurchaseToken`) |
+| `check(callerGroupId?)` | Ask the store API and store the answer (`state_at` = now). Every attached group but `callerGroupId` hears about a change. Returns `unknown: true` only when the store could not be asked. |
+| `notifyApple(name, notification)`, `notifyGoogle(name, rtdn)` | Drop duplicates by notification id. Apply it (ordering rule below), or call `check()` (Google always: the API answer decides, never the message; Apple when the state can't be derived). Push to the groups. |
 
 **Ordering rule** (so an old proof can't undo a refund, R7):
 
-- `attach()` and `notify()` ignore any proof or notification whose time is at or before `state_at`; `ent` keeps
-  the newer state.
+- `attach()`, `notifyApple()` and `notifyGoogle()` ignore any proof or notification whose time is at or before
+  `state_at`; `ent` keeps the newer state.
 - Refunded or revoked is sticky: only a newer `REFUND_REVERSED` notification or a store API answer clears it.
-- E1, E5 and E17 call `check()` after the proof verifies and before `attach()`, and use the API's answer (the
-  proof only names the purchase). Under `TEST_MODE=1` with no API credentials, the verified proof is used as is.
+- E1, E5 and E17 ask the store (inside `attach()`) after the proof verifies, and use the API's answer (the proof
+  only names the purchase). Under `TEST_MODE=1` with no API credentials, the verified proof is used as is.
+  Xcode-environment purchases have no App Store Server API, so their verified proof is always used as is (reachable
+  only with `APPLE_ALLOW_XCODE` under `TEST_MODE=1`). An Apple notification that arrives when the server has no API
+  credentials, outside `TEST_MODE`, is logged (`{"t":"cfg",…}`) and changes nothing.
 - **When state changes,** the ProDO calls `proChanged(name, state)` on each attached group's DO (by RPC). The group
   ignores it unless `name` is its current `pro_name`.
 
@@ -1945,9 +1997,9 @@ limiting, required outside `TEST_MODE=1`, §7.1).
 | `removals` (ids of removed pins, trails and members, with times) | 400 days, so offline phones can catch up (E19) |
 | Archived trail objects of a member who cleared, left or was removed | Deleted at once; retried until R2 confirms (`r2_deletes`, §7.5) |
 | `gone_passes` | 30 days |
-| Invites | 30 days after use, cancellation or expiry |
+| Invites | 30 days after use or cancellation (`used_at`); pending ones 30 days after expiry |
 | Paused groups | Everything deleted 30 days after `pausedAt` unless resumed (R8) |
-| Deleted groups | Content deleted at once; the deleted marker after 30 days |
+| Deleted groups | Content deleted at once; the deleted marker (status, `deleted_at`, `pro_name`) after 30 days |
 | Reports | 180 days after being resolved; open reports at most 365 days |
 | ProDO purchase records | While any group is attached; a ProDO with no groups deletes itself 30 days later (§7.4) |
 | Report facts (`target_*`) | With the report |
@@ -2068,14 +2120,15 @@ final class GroupStore { init(path: String) throws }
 // GroupHub.swift: the sync engine
 protocol GroupTransport: AnyObject {
     // One request to "/v1/…" under the base URL; pass = Bearer or nil. Throws GroupTransportError.offline when
-    // there is no connection, or .failed for any other transport error.
+    // there is no connection, or .failed for any other transport error. No headers reach the core: after a 429 the
+    // hub waits a fixed 60 s (§6.7).
     func request(method: String, path: String, pass: String?, json: Data?) async throws -> (status: Int, body: Data)
 }
 enum GroupTransportError: Error { case offline, failed }
 protocol GroupSocketFactory: AnyObject { func open(groupId: String, pass: String) -> GroupSocket }   // URL from the base URL
 protocol GroupSocket: AnyObject { func send(_ text: String); func close(code: Int) }
 protocol GroupSecretStore: AnyObject {
-    func loadAll() -> [GroupSecret]
+    func loadAll() throws -> [GroupSecret]   // throws when it can't read now: the hub deletes nothing (§8.3)
     func save(_ secret: GroupSecret) throws
     func delete(groupId: String)
 }
@@ -2086,6 +2139,8 @@ final class GroupHub {
     init(store: GroupStore, secrets: GroupSecretStore, transport: GroupTransport, sockets: GroupSocketFactory?,
          words: WordFilter, domain: String, clock: @escaping () -> Int64)   // sockets nil in demo mode; domain for links
     var onChange: ((GroupHubEvent) -> Void)?                // .groups, .group(id), .map, .alert(GroupAlert)
+    var acceptedTermsVersion: Int                           // groupsTermsAccepted, sent by E1 and E10 (§8.13);
+                                                            // default GroupPolicy.termsVersion (1)
 
     // Reading (synchronous, from memory)
     var groups: [GroupSummary] { get }                      // §9.3 S2 rows
@@ -2103,13 +2158,14 @@ final class GroupHub {
     func enteredBackground()                                // close the socket
     func connectivityChanged(online: Bool) async
     func setLocationAccess(authorised: Bool, precise: Bool) // from the recorder's authorisation; §8.5
-    func refreshDetail(_ groupId: String) async             // S5 opened: E2, E11 (lastLiveAt), and E7 for owner/admin
+    func refreshDetail(_ groupId: String) async             // S5 opened: E2, E11 (lastLiveAt), E7 for owner/admin,
+                                                            // and E21 when the group isn't shown (or no sockets)
     func trackPoint(_ point: TrackPoint)                    // from AppModel.appendTrack (TrackLog's TrackPoint)
     func fix(lat: Double, lon: Double, accuracy: Double?, course: Double?, speed: Double?, heading: Double?, time: Double)
     func tick(foreground: Bool) async                       // uploads due per §8.6
-    func socketDidOpen(groupId: String)
-    func socketDidReceive(groupId: String, text: String)
-    func socketDidClose(groupId: String, code: Int)
+    func socketDidOpen(groupId: String)                     // the three name a socket by its group only: report
+    func socketDidReceive(groupId: String, text: String)    // events of the socket the hub opened last, never of
+    func socketDidClose(groupId: String, code: Int)         // one it closed (§8.7)
 
     // Actions (throw GroupActionError, whose `message` is the §8.14 text to show)
     func createGroup(name: String, displayName: String, pro: ProProof) async throws -> String
@@ -2143,6 +2199,22 @@ final class GroupHub {
 // FakeGroupServer.swift: an in-memory GroupTransport that follows §6 (roles, invites, seq, changes, joinedAt,
 // paused), used by GroupHubTests and by demo mode. GroupDemo.swift: the demo seed (§8.15).
 ```
+
+**Kotlin specifics.** Where Swift has no direct Kotlin form, the Kotlin core uses:
+
+- `class GroupResponse(val status: Int, val body: ByteArray)` for the transport's answer, and a sealed
+  `GroupTransportError` with `Offline(cause)` and `Failed(cause)`. The Android OkHttp transport returns and throws
+  exactly these.
+- Small classes for Swift tuples: `GroupDemo.Demo(hub, server)`, `GroupStatusDTO.Pause`, `GroupArchive.Record`,
+  `GroupStore.ChunkKey`; `GroupStore.monthRange` returns a `Pair`.
+- `GroupHub(…, clock, scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main))` as its last
+  parameter: work that the Swift hub starts as a main-actor `Task` (the immediate `live: null` upload, the flush
+  after `dropPin`, `deletePin` or `clearMyTrail`, a pull after a tick) runs there. Tests pass their own scope. A
+  background job that fails is logged without content, never thrown into the scope (that would end the app).
+  `GroupDemo.makeHub` takes the same parameter.
+- `GroupStore(path, driver: SqlDriver = MBTiles.driver)`, throwing `GroupStore.StoreError.Open`, so
+  `GroupStore(path)` still compiles. `last_insert_rowid()` is read in the same transaction as its insert: Android's
+  WAL connection pool may answer a later read from another connection.
 
 #### 8.2.1 Value types
 
@@ -2194,7 +2266,7 @@ struct PinDetail {               // S11
     let animal: String?; let note: String?
     let dropperId: String; let dropperName: String; let createdAt: Int64; let expiresAt: Int64?
     let position: GroupCoordinate
-    let isYours: Bool; let canDelete: Bool; let canReport: Bool; let canBlock: Bool
+    let isYours: Bool; let canDelete: Bool; let canReport: Bool; let canBlock: Bool   // report, block: false if yours
 }
 struct InvitePreview {           // S8
     let groupId: String; let name: String; let inviterName: String?; let memberCount: Int
@@ -2237,7 +2309,7 @@ struct GroupActionError: Error, Equatable {
         case invalidText(GroupTextField), wordFilter(GroupTextField)
     }
     let kind: Kind
-    let message: String          // §8.14, or the field text in §9.3 for invalidText / wordFilter
+    let message: String          // §8.14 (every kind, including invalidText and wordFilter)
 }
 ```
 
@@ -2272,6 +2344,21 @@ files (§13.1).
 failure (a `4xx` that is not a retry case). A crash after the server said yes can't lose a membership. For an
 existing membership, only an E2 answer deletes the secret: a `401` or `404` from any other endpoint first triggers
 an E2 (§8.10), so a bug in one endpoint can't wipe memberships.
+
+**Lost answers.** A create or join that got no answer leaves its secret pending (restored by E2 at the next start,
+activation or reconnect).
+
+- The next join with the same link reuses that member id and pass, which the server answers again (§6.7); a new
+  pass would find the invite used.
+- The next create, while the earlier one is still pending and no E2 has settled it, resends E1 with the same
+  `groupId`, `memberId` and `pass`, with profiles sealed from the names typed now (if the server made the group, the
+  first names stay). Once E2 has restored the group, a new create makes a new group.
+- An E2 answer for a pending secret (success, or `401`, `404 group_not_found`, `410`) counts only while that exact
+  secret is still pending and no group exists for it: a create or join retry that took it over decides instead.
+
+**A failed read.** `start()` deletes store rows that have no secret. When `loadAll` throws (a Keychain or Keystore
+error, such as a read before the first unlock), the hub deletes and loads nothing and reads again at the next
+`becameActive()`, keeping any group made or joined meanwhile.
 
 **Local store** (`GroupStore`), one SQLite file:
 
@@ -2325,7 +2412,7 @@ the invite no longer appears in E7.
 | Enters background | `hub.enteredBackground()`: the socket closes with 1000. Uploads go on at background pace only for groups with sharing on. |
 | Back online (`Connectivity`, false → true) | `hub.connectivityChanged(online: true)`: send the outbox at once; reconnect the socket if wanted |
 | Map tap on a member or pin | Opens S12 or S11 (§9.1) |
-| S5 opens | `hub.refreshDetail(groupId)`: E2, E11 (for `lastLiveAt`), and E7 for owners and admins |
+| S5 opens | `hub.refreshDetail(groupId)`: E2, E11 (for `lastLiveAt`), E7 for owners and admins, and E21 when the group isn't the shown one (or in demo mode), so a member who shares now reads "Sharing", not "Last seen" (§8.9) |
 | Location authorisation or accuracy changes | `hub.setLocationAccess(authorised:precise:)` (iOS from the recorder's authorisation and `accuracyAuthorization`; Android from the location permission and whether fine location is granted) |
 
 ### 8.5 The sharing pipeline
@@ -2349,7 +2436,10 @@ the invite no longer appears in E7.
 - **Pause.** Points recorded while a group is paused are not added. Before an upload, queued points inside the
   status's `pausedIntervals` are dropped.
 - **Sharing switched off:** an immediate upload with `"live": null`. Points already queued still go, because they
-  were recorded while sharing. The app then offers to clear the trail (§9.3 "Stop sharing" alert).
+  were recorded while sharing. The app then offers to clear the trail (§9.3 "Stop sharing" alert). If an upload
+  is already on its way, the `live: null` goes at the next tick (5 s in the foreground, 60 s in the background).
+  Offline, the hub keeps the stop pending in memory (not across a restart) and sends it at the next flush, also
+  while paused.
 - **Sharing switched on:** the next point has `startsSegment` set.
 - Your own trail in a group is never drawn as a group trail: your cyan "Where I've been" track already shows it.
 
@@ -2371,6 +2461,7 @@ Constants in `GroupPolicy`:
 | `maxUploadBytes` | 196 608 (192 KiB of JSON, §4.3) |
 | `liveMaxAccuracy` | 100 m |
 | `socketPing` | 30 s |
+| `lateWindowGrace` | 60 s (§4.3) |
 
 | Situation for group G | Live position | Trail chunks | Channel |
 | --- | --- | --- | --- |
@@ -2385,6 +2476,10 @@ Constants in `GroupPolicy`:
   and still learns `watchers`. A still phone's dot therefore turns stale only if no new fix arrives for 10 min.
 - The 60 s heartbeat is how a background sender learns that someone started watching. After at most 60 s it speeds
   up to 15 s.
+- **One clock.** Wherever the live position goes in fixed slots (every row but the first), changed chunks wait for
+  the next live slot and go in the same request, still at most once per 60 s. On two clocks, chunks falling due at
+  the first point after a stop would go between two heartbeats from then on (two requests a minute, about 40 % more
+  requests and background wake-ups). The first row keeps its own 60 s chunk timer.
 - **Ticks.**
   - In the foreground the app calls `hub.tick(foreground: true)` every 5 s.
   - In the background, the hub returns `nextTickDelay` (15 or 60 s, or nil when no group shares and nothing is
@@ -2406,6 +2501,13 @@ Constants in `GroupPolicy`:
 - Sheets over the map don't change `watching`.
 - **Closing:** close the socket when the app goes to the background, when the shown group changes (then open one for
   the new group), when sharing and showing both stop, and on 4401, 4403 or 4404.
+- **Events from the app.** `socketDidOpen`, `socketDidReceive` and `socketDidClose` name the socket only by its group.
+  The app reports events only for the socket the hub opened last (`GroupSocketFactory.open`) and drops the late
+  frames and close of a socket the hub already closed; otherwise a stale close would end the new socket's state and
+  `uploaded` ids (which restart at 1) could match the wrong upload.
+- **A refused upgrade** (an HTTP answer before the upgrade, §6.6) is reported as a close: `401` and
+  `404 group_not_found` as 4401 (the hub checks with E2), `410 removed` as 4403, `410 group_deleted` as 4404, and
+  anything else (or no answer) as 1006, which reconnects with backoff.
 
 ### 8.8 Sync
 
@@ -2415,7 +2517,7 @@ Constants in `GroupPolicy`:
   - when a tick's `from` is ahead of the cursor
   - after a `welcome` whose `status.seq` is above the cursor and that brought no changes
 - Each page is applied in one store transaction, then the cursor is saved with `cursor_at` = the page's (or tick's)
-  `serverTime`.
+  `serverTime`. Items with `seq` at or below the stored cursor are skipped (§6.3), and the cursor only moves forward.
 - **`archive` items:** if the cursor and `cursor_at` saved before this page satisfy `cursor ≥ maxChunkSeq` and
   `cursor_at < archivedAt`, relabel the stored chunks of that member and month with the item's `seq` (no download,
   §6.3). Otherwise fetch E20 and store each window as a `chunk` with the archive item's `seq`. An archive download
@@ -2445,7 +2547,8 @@ Constants in `GroupPolicy`:
   - No L, `lastLiveAt` not null: `lastSeen(at: lastLiveAt)`.
   - Otherwise: `notSharing`, shown "Not sharing".
   - A live `rec: null` (stopped sharing) removes L.
-- **Blocked members:** no dot, trail or pins on the map; their name shows as "Blocked member".
+- **Blocked members:** no dot, trail or pins on the map; their row shows "Blocked member", initials "BM", grey
+  `#8E8E93` (S16 lists them by their real names).
 - **Received names, animal names and notes** pass through `WordFilter.masked` before display.
 
 ### 8.10 Clearing, leaving, removal, deletion, pause
@@ -2453,6 +2556,7 @@ Constants in `GroupPolicy`:
 | Event | What the app does |
 | --- | --- |
 | Clear my trail | Delete the group's `own_points` and your stored chunks at once; queue E22 (sent when online). No chunk uploads for the group until E22 succeeds (§4.3). |
+| Delete a pin | Gone from the map at once; E24 queued (a `404` counts as done). A pin still queued is never sent, unless its E23 is already on its way: then an E24 follows that E23. If the E23 is answered `409 pin_exists`, nothing is resent under a new id and no E24 goes (the id is another member's pin); a core may also skip the E24 after another `4xx`, which stored nothing. |
 | Leave | Needs a connection; offline shows the offline text. E14 `me`, then delete the group's rows and its secret. |
 | Removed (`410 removed`, close 4403) | Delete the group's rows and secret; alert "Removed" (§9.3) |
 | Deleted (`410 group_deleted`, close 4404) | Same; alert "Deleted" |
@@ -2549,6 +2653,9 @@ worse*
     re-shows S1. On `409 terms_outdated`: if `GroupConfig.termsVersion` is above the accepted one, show S1 and
     retry once; otherwise the server needs terms this app doesn't have, so show "Please update SatMap to create or
     join groups." (§8.14).
+  - The app keeps `GroupHub.acceptedTermsVersion` equal to `groupsTermsAccepted`. On `terms_outdated` the action
+    throws `.termsOutdated` with that text and deletes the secret it saved; the app decides whether to show S1, set
+    the property and retry.
 - **Consent (S9)** is per group, before the first time sharing is switched on:
   - right after creating a group
   - right after joining
@@ -2571,6 +2678,17 @@ worse*
 | `403` | "You can't do that in this group." |
 | `invite_not_found` | "This invite has already been used, was cancelled or has expired. Ask for a new one." |
 | `409 terms_outdated` the app can't satisfy | "Please update SatMap to create or join groups." |
+| `409 group_paused` (`.groupPaused`) | "This group is paused at the moment." |
+| Another `404`, such as `not_found` (`.notFound`) | "This is no longer in the group." |
+| An action on a group that turns out to be gone (`401`, `404 group_not_found`, `410`; `.notFound`) | "The group no longer exists, or your membership ended." (the Gone alert's message, §9.3) |
+| Already a member (`.alreadyMember`) | "You're already in {group}.", or "You're already in this group." where the name isn't known |
+| Damaged link (`.damagedLink`) | "This invite link is damaged. Ask for a new one." |
+| `.invalidText(.groupName)` | "Group names are 1 to 40 characters, on one line." |
+| `.invalidText(.displayName)` | "Names are 1 to 30 characters, on one line." |
+| `.invalidText(.animal)` | "Type the animal, up to 40 characters." |
+| `.invalidText(.note)` | "Notes are up to 140 characters and 4 lines." |
+| `.invalidText(.reportComment)` | "Details are up to 500 characters and 4 lines." |
+| `.wordFilter(.groupName)` / `(.displayName)` / others | "Please use different words for the group name." / "Please use different words for your name." / "Please use different words." (§9.3) |
 
 ### 8.15 Demo mode (for walkthroughs and screenshots)
 
@@ -2615,6 +2733,12 @@ point of the walkthrough's walk:
    pastes this link.
 4. **"Braai club"**, not joined, owner "Bongani". `GroupDemo.inviteLink2`: groupId `0x60…0x6f`, secret
    `0x70…0x7f`, key `0x80…0x9f`. Used only by the link checks (§9.7 step 41, `InviteIntentTest`).
+
+Times the steps above leave open (both cores the same): "Kruger trip" was made 45 days ago and you joined "Drone
+team" 20 days ago, so S2 lists "Kruger trip, Drone team" (step 29); the Kruger pins were dropped between 50 min and
+26 h ago. "Weekend ride" also has "Lindiwe" and "Johan" (3 members), "Braai club" also "Zanele". The fake server's
+`liveSource` keeps the seeded members' live records at their seeded ages, so the long walkthrough doesn't turn every
+dot stale before shot 36.
 
 ---
 
@@ -2705,7 +2829,8 @@ year).
 
 **S2 Groups list** (title "Groups"; leading "Done")
 
-- Section "Your groups" (only when there is at least one). One row per group (id `groupRow`):
+- Section "Your groups" (only when there is at least one). One row per group (id `groupRow`), ordered by your
+  `joinedAt`, oldest first:
   - title: the group name
   - subtitle:
     - "{n} members · Sharing", or "{n} members · Not sharing"
@@ -3241,8 +3366,9 @@ means "Play said Pro at `checkedAt`").
 2. `status.pausedReason` is a Pro reason (`pro_ended`, `pro_refunded`, `pro_unverified`);
 3. `productId` differs from `status.pro.productId`;
 4. `expiresAt` is known and more than `status.pro.expiresAt + 60` (iPhone renewals the server hasn't seen);
-5. Android only: the proof's `purchaseToken` differs from `groups.pro_sent` for that group (a new purchase, an
-   upgrade or a resubscription; renewals keep the token, and the server learns their expiry itself, §7.6).
+5. for a Google proof (only Android makes them; both cores apply the rule): the proof's `purchaseToken` differs
+   from `groups.pro_sent` for that group (a new purchase, an upgrade or a resubscription; renewals keep the token,
+   and the server learns their expiry itself, §7.6).
 
 After E1, E5 or E17 succeeds, `pro_sent` is set to the token sent (Android). A `402` from E5 changes nothing on the
 phone; the server's status decides what is shown.
@@ -3264,14 +3390,16 @@ phone; the server's status decides what is shown.
 
 ### 11.1 Privacy notice and terms (POPIA)
 
-The Worker serves `/privacy` and `/terms` as simple HTML pages (`src/web/pages.ts`, same look as the landing page).
+The Worker serves `/privacy` and `/terms` as simple HTML pages (`src/web/pages.ts`, same look as the landing page),
+with `Cache-Control: public, max-age=3600` (as `/` and the well-known files; §6.1's `no-store` is for `/v1`).
 The server part drafts them from these points, and the owner reviews them before release (a release blocker).
 Both apps link to them (S1, S2, S3).
 
 **Privacy notice points:**
 
 1. **Responsible party:** the developer's name and `CONTACT_EMAIL`. The developer registers an Information Officer
-   with the Information Regulator (owner task).
+   with the Information Regulator (owner task). There is no variable for the name: the draft says "Jacobus Oettle,
+   the developer of SatMap", a constant in `src/web/pages.ts`, for the owner's review.
 2. **What is processed:**
    - random ids, role, join time and a hash of the member pass
    - encrypted names, positions, trails and pins, which the developer cannot read
@@ -3427,6 +3555,7 @@ is an Android-only difference (§9.9).
   - a wrong root
   - a missing OID; an OID whose bytes appear only inside a name (must fail)
   - an intermediate that is not a CA (must fail)
+  - a forged intermediate and a forged leaf: the right issuer name, signed by another key (must fail)
   - a bad signature
   - a wrong bundle id or product
   - Family Sharing
@@ -3482,7 +3611,7 @@ is an Android-only difference (§9.9).
   gives 404
 - logging: a spy on `console.log` sees no id-shaped strings
 
-**WebSocket tests** (`test:ws`, separate project):
+**WebSocket tests** (`test:ws`, separate project, `--no-isolate` (§7.1); RPC to a DO with open sockets runs here):
 
 - hello and welcome
 - `ping` gets `pong`
@@ -3508,8 +3637,9 @@ Each core has the same tests: Swift in `Tests/SatMapCoreTests/Group*Tests.swift`
 | `InviteLinkTests` | `invite.url` and `schemeUrl` round trip; every `inviteParse` case |
 | `WordFilterTests` | The §8.12 table and every `wordFilter` case |
 | `GroupTextTests` | Every `groupText`, `initials` and `ago` case |
-| `GroupStoreTests` | Apply pages (dedupe by `seq`, `joinedAt` drop and trim, removals, reset); archive relabel only when `cursor ≥ maxChunkSeq` and `cursor_at < archivedAt`; outbox versions; ops order; block list |
-| `GroupHubTests` | Against `FakeGroupServer`: create, invite, join, both see each other; upload pace per §8.6 (an injected clock); heartbeat without a new fix has no `live` key; fixes worse than 100 m or with location not precise are not sent; packing (50 chunks or 192 KiB); rejected chunks per §4.3 (`before_join`, `window_paused`, `bad_record` deleted; `bad_time` retried once after E2); no chunk upload while E22 is queued; offline queue then flush; paused drops points and stops live; removed, deleted and gone alerts wipe data; a `401` from E18 wipes nothing unless E2 agrees; clear trail; an expired animal pin hides offline; `410 pin_deleted` drops the queued pin; consent gating; a blocked member's data is hidden; member state per §8.9; `terms_outdated` both ways; `updatePro` decisions (§10.7): each of the five rules, Android `pro_sent`, and nothing sent when none holds |
+| `GroupStoreTests` | Apply pages (dedupe by `seq`, items at or below the cursor skipped, `joinedAt` drop and trim, removals, reset); archive relabel only when `cursor ≥ maxChunkSeq` and `cursor_at < archivedAt`; outbox versions; ops order; block list |
+| `GroupHubTests` | Against `FakeGroupServer`: create, invite, join, both see each other; upload pace per §8.6 (an injected clock); heartbeat without a new fix has no `live` key; fixes worse than 100 m or with location not precise are not sent; packing (50 chunks or 192 KiB); rejected chunks per §4.3 (`before_join`, `window_paused`, `bad_record` deleted; `bad_time` retried once after E2); no chunk upload while E22 is queued; offline queue then flush; paused drops points and stops live; removed, deleted and gone alerts wipe data; a `401` from E18 wipes nothing unless E2 agrees; clear trail; an expired animal pin hides offline; `410 pin_deleted` drops the queued pin; consent gating; a blocked member's data is hidden; member state per §8.9; `terms_outdated` both ways; `updatePro` decisions (§10.7): each of the five rules, Android `pro_sent`, and nothing sent when none holds; lost answers (a flaky transport that holds or loses them): create retried with the same id and pass, join retried with the same pass, an E2 answer for a secret a retry took over, a rename racing a colour fix, a pin deleted while its E23 is on its way; acknowledged windows kept for the grace and a late point joining its whole window; live and chunks in one upload; unreadable secrets delete nothing |
+| `GroupContractTests` | Every `api-examples.json` example (§13.1) through `GroupAPI` and `SocketMessage`: the core builds the request the server accepted (method, path, Bearer, body as the server reads it) and reads every answer back to the same JSON, or to its status and §6.2 code; the file covers E1–E26, every §6.2 code and every server frame |
 
 `build.yml` runs `swift test` on macOS. Locally it can run on Linux with
 `/opt/swift/swift-6.4.1-RELEASE-ubuntu24.04/usr/bin/swift test`. `android.yml` runs `:core:test`.
@@ -3603,7 +3733,7 @@ step (§13.3), not by editing.
 
 | Part | Owns |
 | --- | --- |
-| **P1 Server** | `server/**`; `.github/workflows/server.yml`; `Tests/SatMapCoreTests/Fixtures/groups/api-examples.json` (at least one request and response example per endpoint and per error code an app reacts to, written by the integration tests, for the cores' contract tests). Format: `{"examples": [{"id": "E1-created", "method": "POST", "path": "/v1/groups", "request": {…} or null, "status": 201, "response": {…} or null}]}`; ids, passes and envelopes are the vector values where they fit. |
+| **P1 Server** | `server/**`; `.github/workflows/server.yml`; `Tests/SatMapCoreTests/Fixtures/groups/api-examples.json` (at least one request and response example per endpoint and per error code an app reacts to, written by the integration tests, for the cores' contract tests). Format: `{"examples": [{"id": "E1-created", "method": "POST", "path": "/v1/groups", "request": {…} or null, "status": 201, "response": {…} or null}]}`; ids, passes and envelopes are the vector values where they fit. A raw body that isn't JSON (too large, wrong type) is recorded as `request` null; a binary answer (E20) as `response` null. WebSocket frames are recorded as method `WS`, status 101, `request` the client message and `response` the server frame (`E26-welcome`, `-uploaded`, `-tick`, `-error`, `-ack`), recorded last in a second group with the fixed id `EBESExQVFhcYGRobHB0eHw`. E27 isn't recorded: Apple's signed payload carries a fresh ECDSA signature on every run. |
 | **P2 Swift core** | New files in `SatMap/Core/`: `GroupWire.swift`, `GroupCrypto.swift`, `GroupRecords.swift`, `Deflate.swift` (`raw` and `inflateExact`, §4.2), `InviteLink.swift`, `WordFilter.swift`, `GroupAPI.swift`, `GroupStore.swift`, `GroupHub.swift`, `FakeGroupServer.swift`, `GroupDemo.swift`. Also `Tests/SatMapCoreTests/Group*Tests.swift`, `InviteLinkTests.swift`, `WordFilterTests.swift`; `Tests/Shims/COpenSSL/shim.h`; `SatMap/Resources/GroupWords.txt`. No edits to existing core files. |
 | **P3 Kotlin core** | The same file names as `.kt` in `android/core/src/main/kotlin/com/jacobusoettle/satmap/core/` and their tests in `android/core/src/test/...`; `android/core/build.gradle.kts` if a dependency is needed (none expected). No edits to existing core files. |
 | **P4 iPhone UI** | New `SatMap/Groups/` (`GroupsModel`, `GroupHTTP`, `GroupSocket`, `KeychainSecrets`, `ProStore`, `QRCode`, `QRScanner`), `SatMap/UI/Groups/*.swift` (every §9.3 screen), `SatMap/Map/GroupLayer.swift`. Edits to `App/SatMapApp.swift`, `App/AppModel.swift`, `App/Config.swift` (`GroupConfig`), `UI/MapScreen.swift`, `Map/MapController.swift`, `Info.plist`, `SatMap.entitlements`, `PrivacyInfo.xcprivacy`, `SatMap.xcodeproj/project.pbxproj` (only the `GROUPS_DOMAIN` setting), `SatMapUITests/ScreenshotTests.swift`, `.github/workflows/build.yml`, `.github/workflows/screenshots.yml`, and README's iPhone table and Groups paragraph. |
@@ -3639,7 +3769,7 @@ Notes:
 3. **Merge P2 and P3** (both vector suites green, `GroupHubTests` green). P4 and P5 switch from stubs to the real
    core and finish the walkthroughs (§9.7).
 4. **Merge P1** (server CI green, `api-examples.json` committed). P2 and P3 add contract tests that parse every
-   example.
+   example (`GroupContractTests` in both cores, §12.2).
 5. **Merge P4 and P5** (CI green, screenshots committed). Run the manual end-to-end check (§12.6).
 6. **Release blockers** (§14) cleared by the owner, then deployment (§13.4).
 
@@ -3664,16 +3794,18 @@ Notes:
 | --- | --- | --- | --- |
 | U1 | The URL fragment may not survive into the app (universal links, App Links) | Incomplete-link text; landing page button through `satmap://` (iPhone) or `intent://` (Android); paste and scan paths | The CI checks (§5.6) cover only the app's own handling of a link that has the fragment. Whether a tap in WhatsApp, Mail or Chrome keeps it is a real-device check after deployment, on both phones |
 | U2 | Associated domains may not work on sideloaded free-Apple-ID builds | Custom scheme fallback and paste/scan | Test on a sideloaded build |
-| U3 | The test runtime may not support the Rate Limiting bindings | Tests run with `TEST_MODE=1`, where a missing binding means no limit; production requires both (§7.1) | Try it in P1 |
+| U3 | The test runtime may not support the Rate Limiting bindings | Tests run with `TEST_MODE=1`, where a missing binding means no limit; production requires both (§7.1) | **Closed:** the bindings work in the test runtime, and the tests exercise both |
 | U4 | Which wrangler version first supports `exports` | Use `migrations` | None needed |
-| U5 | The newest vitest-plugin and wrangler are under 14 days old | Newest release at least 14 days old | P1 checks `npm view … time` |
+| U5 | The newest vitest-plugin and wrangler are under 14 days old | Newest release at least 14 days old | **Closed:** plugin 1.4.4 with wrangler 4.151.1 (§7.1) |
 | U6 | Whether CI UI tests pick up a `.storekit` file | Not used; demo mode fakes Pro | None needed |
 | U7 | Whether E2E-encrypted data counts as "collected" (Apple and Google forms) | Declared | Owner's legal review |
 | U8 | Whether Apple adds SA VAT to its commission (affects net revenue only) | Assumed not | Owner's accountant |
 | U9 | Whether a location foreground service keeps network access in Doze | Assumed yes | Manual real-phone check (§12.6 step 4); demo mode can't show it |
 | U10 | Durable Object storage limits on the Free plan (10 GB or 1 GB) and whether storage billing is live | Workers Paid plan assumed | Owner checks the account |
 | U11 | Fail-closed pause when a store check can't be completed at expiry (SD8) could pause a group during an Apple or Google outage | Pause with "couldn't be confirmed", re-check every 30 min, resume automatically | Owner may relax it to a 6-hour grace later |
-| R1 | Release blockers | | Contact address; domain; word list review; privacy notice and terms review; store products; Information Officer registration; export compliance answers; age ratings; the App Store Server API key and `APPLE_APP_APPLE_ID`; `GOOGLE_RTDN_TOKEN`; `REPORT_WEBHOOK_URL` or a written daily A1 routine (S13 promises review within 24 hours) |
+| U12 | A `welcome` holding every live entry passes the 512 KiB server frame cap (§6.6) at roughly 3,500 live sharers in one group, and the server then drops it (the client waits for a welcome that never comes). Groups are uncapped (R6). | Accepted for v1: far beyond expected group sizes | Page the welcome's live entries, or send the status alone and let the client fetch E21 |
+| U13 | `alarm()` serialising per object | `r2_delete`, the archive pass and `purge` assume the platform never runs two `alarm()` calls of one object at once; the races around them were tested only in the vitest Workers pool | Holds by the Durable Objects model; watch for it after deployment |
+| R1 | Release blockers | | Contact address; domain; word list review (known false positives: `nigga*` and `nigger*` also block "niggard" and "niggardly"; `*kaffir*` matches across words in the letters-only text, as in "Kaf firewood"); privacy notice and terms review; store products; Information Officer registration; export compliance answers; age ratings; the App Store Server API key and `APPLE_APP_APPLE_ID`; `GOOGLE_RTDN_TOKEN`; `REPORT_WEBHOOK_URL` or a written daily A1 routine (S13 promises review within 24 hours) |
 | R2 | An invite link is a bearer secret: anyone who gets it can join once. It also carries K: anyone who ever held any invite link for the group (used, cancelled or expired) keeps K for good and, with a copy of the server's data, could read the group; an operator who changed the landing page could read K from links opened in a browser; on iPhone another app registering `satmap://` could catch it (§3.5) | Short life (7 days), single use, owners and admins can cancel, the share text warns; the landing page clears the key from history, Android's fallback names the package, the clipboard copy is local and expires | Accepted (owner decisions R2, R3, R4, R12) |
 | R3 | Removed members keep data they already downloaded, and the key (no rotation) | Server access ends at once; their pending invites are cancelled (SD23) | Accepted (R4) |
 | R4 | Some parks have rules about sharing wildlife sightings, rhino especially (information only; the owner's decision R10 stands) | The terms ask users to follow park rules; pins are padded so their size doesn't name the animal (SD25) | The owner may want to check the parks' current rules |
@@ -3723,3 +3855,19 @@ below says otherwise. Each line names the review point and why the spec differs 
   `live` only otherwise; always omitting it would turn a member who stands still grey after 10 minutes.
 - Implementability 25 (step 37): instead of one fixed point, a deterministic scan for an empty point, because the
   camera fit makes any fixed screen point unreliable.
+
+Integration of the server and both cores (2 November 2026) filled these gaps; the text above now says what the code
+does:
+
+- Server choices the spec left open: the E18 code for an off-grid start (`bad_record`), `400` for a malformed invite
+  token, `403` for an owner's group-name report, removing yourself by `memberId`, `used_at` for cancellations, the
+  daily minute and order, the ProDO RPC shape, the deleted marker keeping `pro_name`, body validation before roles,
+  WebSocket messages in the 120/min limit, tables made at E1, and the `api-examples.json` shapes for frames and
+  binary answers.
+- Both cores now: skip change items at or below the cursor (no tombstones, §6.3); keep acknowledged windows for a
+  60 s grace and sweep them each upload pass (§4.3); send chunks in the live slot (§8.6); resend a lost create with
+  the same id and pass and guard restore against a retry that took the secret over (§8.3); let a rename land after
+  a colour fix (§4.6); delete nothing when the secrets can't be read (§8.3); wait a fixed 60 s after `429` (the
+  transport carries no headers); and share the error texts in §8.14 that §9.3 lacked.
+- App layers: report socket events only for the socket the hub opened last, and map a refused upgrade to a close
+  code (§8.7).

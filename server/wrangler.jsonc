@@ -1,0 +1,51 @@
+// SatMap groups Worker (docs/groups/SPEC.md §7.1). Nothing is deployed from the repository: the owner deploys with
+// `npx wrangler deploy` after setting the domain, the secrets and the bindings (server/README.md, SPEC §13.4).
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "satmap-groups",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Invocation logs record URLs, which hold group ids and invite tokens (SPEC §7.9). The owner may switch
+  // observability on later with invocation logs off.
+  "observability": { "enabled": false },
+  "durable_objects": {
+    "bindings": [
+      { "name": "GROUP", "class_name": "GroupDO" },
+      { "name": "PRO", "class_name": "ProDO" },
+      { "name": "ADMIN", "class_name": "AdminDO" }
+    ]
+  },
+  // SQLite storage is fixed when a namespace is created, so all three classes are SQLite from the start.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GroupDO", "ProDO", "AdminDO"] }],
+  "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "satmap-groups-archive" }],
+  // Required outside TEST_MODE=1 (SPEC §6.8). The binding allows only a period of 10 or 60 s and one limit, hence
+  // two bindings. A namespace_id is any positive integer string, unique per Cloudflare account.
+  "ratelimits": [
+    { "name": "RL_CREATE", "namespace_id": "1001", "simple": { "limit": 3, "period": 60 } },
+    { "name": "RL_INVITE", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
+  ],
+  // Every variable in SPEC §7.8 with its default. Secrets (ADMIN_TOKEN, APPLE_ISSUER_ID, APPLE_KEY_ID,
+  // APPLE_PRIVATE_KEY, GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_RTDN_TOKEN, REPORT_WEBHOOK_URL) are set with
+  // `wrangler secret put`, or in .dev.vars locally (see .dev.vars.example).
+  "vars": {
+    "PUBLIC_BASE_URL": "https://example.invalid",
+    "CONTACT_EMAIL": "groups@example.invalid",
+    "APP_STORE_URL": "",
+    "PLAY_STORE_URL": "",
+    "APPLE_BUNDLE_ID": "com.jacobusoettle.satmap",
+    "APPLE_APP_IDS": "TEAMID.com.jacobusoettle.satmap",
+    "ANDROID_PACKAGE": "com.jacobusoettle.satmap",
+    "ANDROID_CERT_SHA256": "",
+    "PRO_PRODUCTS_APPLE": "pro.monthly,pro.yearly,pro.lifetime",
+    "PRO_PRODUCTS_GOOGLE": "pro,pro_lifetime",
+    "APPLE_APP_APPLE_ID": "",
+    "MAX_GROUPS_PER_PURCHASE": "20",
+    "TERMS_VERSION": "1",
+    "ALLOW_TEST_PURCHASES": "true",
+    "APPLE_ALLOW_XCODE": "false",
+    "ALLOW_UNVERIFIED_PRO": "false",
+    "TEST_MODE": "0",
+    "APPLE_ROOT_OVERRIDE_B64": ""
+  }
+}

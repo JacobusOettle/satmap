@@ -1,0 +1,126 @@
+# SatMap groups word filter (docs/groups/SPEC.md §8.12): names, animal names, notes and report comments.
+# STARTING LIST, TO BE REVIEWED BY THE OWNER BEFORE RELEASE (a release blocker, SPEC §14 R1).
+#
+# One entry per line, lower case:
+#   word      matches a whole word (a run of letters)
+#   word*     matches a word that starts with it
+#   *word*    matches anywhere in a word, and in all the letters of the text run together (so "f u c k" is caught)
+# Text is compared after NFKC, lower-casing and 0→o 1→i 3→e 4→a 5→s 7→t @→a $→s, so "f0k" is "fok".
+#
+# Keep entries narrow: a group pin note is ordinary text ("cock ostrich", "dolerite dyke", "fire retardant",
+# "watergat"), and the filter refuses the whole note. Words that are also ordinary words are left commented out
+# below for the owner to decide.
+
+# --- English: profanity ---
+*fuck*
+shit
+shits
+shite
+shitty
+shithead
+shitheads
+shithole
+shitholes
+bullshit
+horseshit
+dipshit
+cunt*
+bitch*
+bastard*
+asshole*
+arsehole*
+dickhead*
+wanker*
+twat*
+pussy
+slut*
+whore*
+jizz*
+bollocks
+motherfucker*
+# prick (also "a thorn's prick")
+# cock (also a male bird: "cock ostrich")
+# dick (also a name)
+
+# --- English: slurs ---
+nigger*
+nigga*
+faggot*
+retard
+retards
+retarded
+kike
+kikes
+chink
+chinks
+paki
+pakis
+wog
+wogs
+spic
+spics
+gook
+gooks
+towelhead*
+raghead*
+tranny
+trannies
+# fag (also a cigarette)
+# dyke (also a dolerite dyke)
+
+# --- South African racial and ethnic slurs ---
+*kaffir*
+*kaffer*
+kafir
+kafirs
+hotnot*
+coolie
+coolies
+koelie
+koelies
+houtkop*
+boesman
+kwerekwere
+makwerekwere
+amakwerekwere
+ikula
+amakula
+soutpiel*
+
+# --- Afrikaans: profanity ---
+fok
+fokken*
+fokkin
+fokker
+fokkers
+fokkof
+fokof
+fokkop
+fokol
+gefok
+opgefok
+poes
+poese
+poeskop*
+poephol*
+kak
+piel
+piele
+hoer
+hoere
+drol
+# doos (also "box")
+# naai (also "to sew")
+# teef (also a female dog)
+# gat (also "hole": "gat in die pad")
+
+# --- isiZulu: profanity ---
+msunu
+umsunu
+nyoko
+sfebe
+isfebe
+isifebe
+umthondo
+masende
+amasende

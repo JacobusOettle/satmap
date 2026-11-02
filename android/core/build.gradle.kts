@@ -29,5 +29,8 @@ tasks.test {
     // The iOS app's shipped data (Aviation.tsv, KrugerRoads.json) and the Swift tests' fixtures, read in place.
     systemProperty("satmap.resources", rootProject.file("../SatMap/Resources").absolutePath)
     systemProperty("satmap.fixtures", rootProject.file("../Tests/SatMapCoreTests/Fixtures").absolutePath)
+    // Inputs too, so the tests run again when the server's tests rewrite groups/api-examples.json, or the vectors change.
+    inputs.dir(rootProject.file("../SatMap/Resources")).withPropertyName("satmapResources").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(rootProject.file("../Tests/SatMapCoreTests/Fixtures")).withPropertyName("satmapFixtures").withPathSensitivity(PathSensitivity.RELATIVE)
     testLogging { events("failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
 }

@@ -131,6 +131,34 @@ writes and reads exactly what the iPhone app does:
   that old backups still restore (and are sealed by `encryptPlainTiles`). They also write a file's shape as the same
   text (`…/Fixtures/file-area-shape.json`, keys sorted: Swift's `JSONEncoder` puts them in a different order each run).
 
+## Group formats
+
+Groups (shared positions, trails and pins) are specified in `../docs/groups/SPEC.md`, the single source of truth:
+the byte layouts, JSON keys, texts and numbers are there, and both cores follow it exactly. The core files have the
+same names on both sides (`GroupWire`, `GroupCrypto`, `GroupRecords`, `Deflate`, `InviteLink`, `WordFilter`,
+`GroupAPI`, `GroupStore`, `GroupHub`, `FakeGroupServer`, `GroupDemo`), and both cores' tests read the shared vectors
+in `../Tests/SatMapCoreTests/Fixtures/groups/vectors.json` (made by `../docs/groups/vectors.py`; never edited by
+hand), so the two apps seal, open, encode and decode the same bytes.
+
+- Crypto: AES-256-GCM envelopes (`0x01`, 12-byte nonce, ciphertext, tag) with `javax.crypto`, as `TileCrypto` does,
+  and HKDF-SHA256 (RFC 5869) on `Mac.getInstance("HmacSHA256")`.
+- Trail chunks: raw DEFLATE with `Deflater(6, true)`; `Deflate.inflateExact` (`Inflater(true)` into N + 1 bytes)
+  accepts a stream only if it ends exactly after N bytes with no input left. Not `Inflate.raw`.
+- The sealed JSON records (profiles, pins) are written by hand, keys sorted and padded (SD25), for byte-identical
+  output; API bodies are built and read with kotlinx-serialization-json's `JsonObject`, no plugin.
+- Text: `GroupText.clean` writes the White_Space set out (not `trim()`); coordinates use the Swift `rounded()` from
+  `Foundation.kt`, never `Math.round`. A Kotlin string can hold half of a surrogate pair, which a Swift string can't:
+  such a text is invalid.
+- The Kotlin API is the Swift's (spec §8.2) with these mappings: `async` → `suspend`; Swift enums with payloads →
+  sealed types with PascalCase cases (`InviteLink.Parsed.Invite`, `ChangeItem.Pin`, `GroupActionError.Kind.Offline`),
+  plain enums → `enum class` with the Swift case names; failable `init?` → a companion `invoke` returning null
+  (`InviteLink(token =, groupKey =)`); tuples → small classes (`GroupResponse(status, body)` for the transport's answer,
+  `GroupDemo.Demo(hub, server)`, `GroupStatusDTO.Pause`, `GroupArchive.Record`). Classes holding a `ByteArray` compare
+  its contents, as Swift's `Data` does.
+- `GroupHub` takes one more argument, `scope`: the work its plain calls start runs there, on the thread every hub call
+  is made on (`Dispatchers.Main` by default; the tests pass their own). `GroupStore(path)` runs on `MBTiles.driver`
+  unless given a driver; ":memory:" keeps it in memory (demo mode, tests).
+
 ## The map on Android
 
 MapKit + the app's own drawn overlays become **MapLibre Native** with a style built in code:
