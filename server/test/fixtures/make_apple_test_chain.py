@@ -16,15 +16,21 @@ Files:
   inter_no_oid.pem        an intermediate CA without the intermediate OID
   leaf_under_no_oid.pem   the same leaf key, issued by inter_no_oid
   other_root.pem          another self-signed root (the "wrong root" case)
+  example-jws.json        two fixed signed transactions for api-examples.json (ECDSA signatures are random, so the
+                          integration tests use these to keep the examples file stable): an active yearly purchase
+                          and an expired one
 All certificates are valid from 2026-01-01 to 2046-12-31.
 """
 
+import base64
 import datetime
+import json
 import os
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.x509.oid import NameOID
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apple")
@@ -61,6 +67,36 @@ def cert(subject, issuer, public_key, signing_key, ca, oid=None, serial=1):
 def write_cert(file_name, certificate):
     with open(os.path.join(OUT, file_name), "wb") as f:
         f.write(certificate.public_bytes(serialization.Encoding.PEM))
+
+
+def b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def jws(payload, leaf_key, x5c):
+    header = b64url(json.dumps({"alg": "ES256", "x5c": x5c}, separators=(",", ":")).encode())
+    body = b64url(json.dumps(payload, separators=(",", ":")).encode())
+    r, s = decode_dss_signature(leaf_key.sign(f"{header}.{body}".encode(), ec.ECDSA(hashes.SHA256())))
+    return f"{header}.{body}.{b64url(r.to_bytes(32, 'big') + s.to_bytes(32, 'big'))}"
+
+
+def example_transaction(transaction_id, expires_ms):
+    # Times around the vectors' window (2 November 2026); see test/integration/api-examples.test.ts.
+    return {
+        "transactionId": transaction_id,
+        "originalTransactionId": transaction_id,
+        "bundleId": "com.jacobusoettle.satmap",
+        "productId": "pro.yearly",
+        "purchaseDate": 1793600000000,
+        "originalPurchaseDate": 1793600000000,
+        "expiresDate": expires_ms,
+        "quantity": 1,
+        "type": "Auto-Renewable Subscription",
+        "inAppOwnershipType": "PURCHASED",
+        "signedDate": 1793612000000,
+        "environment": "Production",
+        "storefront": "ZAF",
+    }
 
 
 def main():
@@ -105,6 +141,15 @@ def main():
     with open(os.path.join(OUT, "leaf.key"), "wb") as f:
         f.write(leaf_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                        serialization.NoEncryption()))
+
+    x5c = [base64.b64encode(c.public_bytes(serialization.Encoding.DER)).decode() for c in (leaf, inter, root)]
+    examples = {
+        "active": jws(example_transaction("2000000000000001", 1825149600000), leaf_key, x5c),
+        "expired": jws(example_transaction("2000000000000002", 1793600100000), leaf_key, x5c),
+    }
+    with open(os.path.join(OUT, "example-jws.json"), "w") as f:
+        json.dump(examples, f, indent=2)
+        f.write("\n")
 
 
 if __name__ == "__main__":

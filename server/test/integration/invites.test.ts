@@ -131,7 +131,7 @@ describe("E9 preview", () => {
     for (const body of [
       { token: inv.token, joinProof: randomSecret() },
       { token: b64urlEncode(otherSecret), joinProof: g.joinProof },
-      { token: vectors.invite.token, joinProof: vectors.hashes.joinProof },
+      { token: randomSecret(), joinProof: g.joinProof }, // a group that doesn't exist
     ]) {
       const res = await api("POST", "/v1/invites/preview", { body });
       expect(res.status).toBe(404);
