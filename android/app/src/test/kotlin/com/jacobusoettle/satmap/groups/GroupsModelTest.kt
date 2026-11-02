@@ -223,6 +223,26 @@ class GroupsModelTest {
         assertEquals(listOf("Kruger trip"), groups.groups.value.map { it.name })
     }
 
+    @Test
+    fun aHubInstalledLaterKeepsTheLocationAccessAndTheFixSoSharingSendsYourPosition() {
+        // Location allowed and a fix before demo mode replaces the hub (as at launch with -groupsDemo).
+        val fresh = GroupsModel(app)
+        fresh.setLocationAccess(authorised = true, precise = true)
+        val now = System.currentTimeMillis() / 1000.0
+        fresh.fix(GpsFix(-33.9217, 18.9237, 5.0, null, null, now, 0.0))
+        fresh.useDemo()
+        waitFor { fresh.groups.value.size == 2 }
+        val kruger = fresh.groups.value.first { it.name == "Kruger trip" }.groupId
+        val me = fresh.hub.detail(kruger)!!.members.first { it.isYou }.memberId
+        var ticked = false
+        CoroutineScope(Dispatchers.Main).launch {
+            fresh.hub.tick(foreground = true)
+            ticked = true
+        }
+        waitFor { ticked }
+        assertNotNull("your live position reached the server", fresh.demoServer!!.liveAt(kruger, me))
+    }
+
     /** Deletes a group on the demo's fake server, as its owner would. */
     private fun groupsServerDelete(groupId: String) {
         groups.demoServer!!.deleteGroup(groupId)

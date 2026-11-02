@@ -64,7 +64,8 @@ Kotlin package root: `com.jacobusoettle.satmap`.
   (`cacheDir/groups-demo.sqlite`, made afresh), and a `FakeBillingGateway` (not Pro at launch; any plan buys yearly Pro
   at once at R79.99 / R399.99 / R1,199.99; the proof is `GroupDemo.proProof`). The hub made at launch is dropped
   (its events go nowhere). The model was made in `Application.onCreate`, before the activity reads its extras: hence
-  the switch.
+  the switch. The new hub gets what the model was told before it (location access, the last fix), so sharing sends
+  your position at once, as on iPhone.
 - `groupsBaseURL <url>`: `GroupConfig.baseURL` reads it at each request (and each socket), never saved; invite links
   always use `GroupConfig.domain`.
 - `fakePro YES`, debug builds only, outside demo mode (§12.6): a `FakeBillingGateway.localTest()` (Pro at once,
@@ -210,7 +211,7 @@ again when it changes. Stop also calls `groups.stopSharingEverywhere()` (an Andr
 
 | Test | What |
 | --- | --- |
-| `groups/GroupsModelTest` | Demo mode: rows, the shown group, the camera fit, the notification's groups and Stop, invites (in already, another, incomplete), joining, terms, the demo store, hidden banners, alerts |
+| `groups/GroupsModelTest` | Demo mode: rows, the shown group, the camera fit, the notification's groups and Stop, invites (in already, another, incomplete), joining, terms, the demo store, hidden banners, alerts, location access kept for a later hub |
 | `groups/GroupPartsTest` | `GroupTexts`, `GroupLayers` features, images and fit, QR codes round trip, `KeystoreSecrets`, `ProStore` decisions, `GroupConfig.baseURL` |
 | `groups/GroupHttpTest` | MockWebServer: the request and its Bearer pass, status and body as they are, offline and failed, the socket's URL and header, refused upgrades, only the latest socket |
 | `ui/ScreenRendersGroupsTest` | Renders 28–40 at `IPHONE_SCREEN` (36 and 40: overlays only) |

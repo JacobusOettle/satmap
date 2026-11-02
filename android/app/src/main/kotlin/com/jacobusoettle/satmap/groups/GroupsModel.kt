@@ -217,6 +217,10 @@ class GroupsModel(
     private var pendingFit: Pair<String, Long>? = null
     private var heading: Double? = null
 
+    /** What the phone allows and where it is, as last told: a hub installed later (demo mode) starts from them. */
+    private var locationAccess: Pair<Boolean, Boolean>? = null
+    private var lastFix: GpsFix? = null
+
     init {
         install(parts(this))
     }
@@ -225,6 +229,7 @@ class GroupsModel(
         hub = p.hub
         http = p.http
         hub.acceptedTermsVersion = _termsAccepted.value.takeIf { it > 0 } ?: GroupConfig.termsVersion
+        locationAccess?.let { (authorised, precise) -> hub.setLocationAccess(authorised, precise) }
         hub.onChange = { e -> changed(e) }
         http?.events = object : GroupHttp.SocketEvents {
             override fun opened(groupId: String) = hub.socketDidOpen(groupId)
@@ -249,6 +254,7 @@ class GroupsModel(
                 Log.w(TAG, "groups couldn't start: ${e.javaClass.simpleName}")
             }
             ready.complete(Unit)
+            lastFix?.let(::sendFix)
             if (foreground) wake()
             pro.refresh()
         }
@@ -398,6 +404,7 @@ class GroupsModel(
     }
 
     fun setLocationAccess(authorised: Boolean, precise: Boolean) {
+        locationAccess = authorised to precise
         hub.setLocationAccess(authorised, precise)
     }
 
@@ -413,10 +420,15 @@ class GroupsModel(
 
     /** A fix used by the recorder (`AppModel.locationUpdated`); in the background it also keeps the upload alarm set. */
     fun fix(f: GpsFix) {
+        lastFix = f
         if (!started.isCompleted) return
+        sendFix(f)
+        if (!foreground && !backgroundTimer.scheduled) scheduleBackgroundTick()
+    }
+
+    private fun sendFix(f: GpsFix) {
         hub.fix(lat = f.lat, lon = f.lon, accuracy = f.horizontalAccuracy, course = f.course, speed = f.speed, heading = heading,
                 time = f.timestamp)
-        if (!foreground && !backgroundTimer.scheduled) scheduleBackgroundTick()
     }
 
     private suspend fun runCatchingHub(work: suspend () -> Unit) {
