@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap
 
 import android.Manifest
+import android.content.Intent
 import android.graphics.Point
 import android.graphics.PointF
 import android.graphics.Rect
@@ -34,7 +35,9 @@ import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.GeoPoint
+import com.jacobusoettle.satmap.core.GroupDemo
 import com.jacobusoettle.satmap.core.OfflineArea
+import com.jacobusoettle.satmap.map.GroupLayers
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.MapIds
 import org.junit.Rule
@@ -159,6 +162,7 @@ class ScreenshotTest {
             try {
                 allowPermissionPrompts()
                 walkthrough()
+                groupsWalkthrough()
             } catch (e: Throwable) {
                 Log.e(TAG, "The walk stopped", e)
                 fail("The walk stopped: ${short(e)}")
@@ -208,8 +212,9 @@ class ScreenshotTest {
         sleep(23)
         snap("05-blocks-on-map")
 
-        // Offline: download the blocks (and 15 m around the launch point).
-        tap("Offline maps")
+        // Offline: download the blocks (and 15 m around the launch point). The sheet must be open before the shot (a
+        // tap can be lost while the app is busy drawing the blocks).
+        openOfflineSheet()
         sleep(2)
         snap("06-offline-maps")
         tap("Use a GPX or KML file")
@@ -477,8 +482,10 @@ class ScreenshotTest {
         openOfflineSheet()
         val ready = staticText("Ready offline")
         val alongRoads = staticText(containing = "along roads")
-        waitForDownload(900.0) { count(ready) >= 2 }
-        if (count(ready) < 2 || !exists(alongRoads)) return fail("No area downloaded along roads")
+        // The Farm roads area itself, not just two "Ready offline" texts (a row's text can change after the shot).
+        waitForDownload(900.0) { areaReady("Farm roads", 20) && count(ready) >= 2 }
+        if (!areaReady("Farm roads", 20) || count(ready) < 2 || !exists(alongRoads)) return fail("No area downloaded along roads")
+        sleep(2) // the rows drawn as they now read
         snap("13-offline-along-roads")
 
         // Open the roads area and add one deeper level (only zoom 21 is downloaded).
@@ -491,7 +498,9 @@ class ScreenshotTest {
             tap("Download zoom 21")
             sleep(2)
             tapBack() // back to Offline maps
-            waitForDownload(600.0) { count(ready) >= 2 }
+            waitForDownload(600.0) { areaReady("Farm roads", 21) && count(ready) >= 2 }
+            sleep(2)
+            check(areaReady("Farm roads", 21), "The roads area didn't finish its extra level")
             checkEqual(count(ready), 2, "The roads area didn't finish its extra level")
             check(exists(staticText(containing = "up to zoom 21")), "No area up to zoom 21")
         } else {
@@ -506,6 +515,266 @@ class ScreenshotTest {
         if (!waitUntil(30.0) { device.hasObject(saveToFolder) }) return fail("No share sheet")
         sleep(2)
         snap("14-export-backup")
+    }
+
+    /** Groups in demo mode (docs/groups/SPEC.md §9.7, steps 28-40), after the steps above, whichever way they ended.
+     *  The link check (step 41) is `InviteIntentTest`. */
+    private fun groupsWalkthrough() {
+        step = "groups"
+        leaveSheets()
+
+        // 28-29: the terms first, then the list.
+        tap("Groups")
+        if (!waitForExistence(staticText("See your group on the map"), 10)) fail("The groups terms didn't show")
+        sleep(2)
+        snap("28-groups-terms")
+        tap("Agree and continue")
+        if (!waitForExistence(staticText("Kruger trip"), 10)) fail("No Kruger trip in the list")
+        check(exists(staticText("Drone team")), "No Drone team in the list")
+        sleep(1)
+        snap("29-groups-list")
+
+        // 30-31: the paywall (the demo store's prices), a purchase, then a new group's names.
+        tap("Create group")
+        if (!waitForExistence(staticText("R399.99 a year"), 15)) fail("No prices on the paywall")
+        sleep(1)
+        snap("30-paywall")
+        tap("Subscribe")
+        val groupName = id("groupName")
+        if (waitForExistence(groupName, 15)) {
+            click(groupName)
+            typeText(groupName, "Weekend braai")
+            val displayName = id("displayName")
+            click(displayName)
+            typeText(displayName, "Sam\n", replacing = true) // the return key hides the keyboard, as on iOS
+            sleep(1)
+            snap("31-create-group")
+            tap("Cancel")
+        } else {
+            fail("The new group screen didn't open after the purchase")
+        }
+
+        // 32-33: Kruger trip, then an invite's QR code.
+        tapRow(startingWith = "Kruger trip")
+        if (!waitForExistence(navigationBar("Kruger trip"), 10)) fail("Kruger trip didn't open")
+        sleep(3) // the members' states
+        snap("32-group-detail")
+        tap("Invite someone")
+        if (waitForExistence(id("inviteQR"), 15)) {
+            sleep(1)
+            snap("33-invite-qr")
+        } else {
+            fail("No invite QR code")
+        }
+        tap("Done")
+        sleep(1)
+
+        // 34-35: joining "Weekend ride" with its pasted link, then the consent.
+        tapBack()
+        sleep(1)
+        tap("Join with an invite link")
+        val inviteText = id("inviteText")
+        if (waitForExistence(inviteText, 10)) {
+            click(inviteText)
+            // Continue is enabled once the field holds a whole invite link. Typed while the keyboard comes up, the
+            // text can be lost: typed again then.
+            val continueJoin = id("continueJoin")
+            fun canContinue() = node(continueJoin)?.config?.contains(SemanticsProperties.Disabled) == false
+            for (attempt in 0 until 3) {
+                sleep(1)
+                typeText(inviteText, GroupDemo.inviteLink, replacing = true)
+                if (waitUntil(5.0) { canContinue() }) break
+            }
+            check(canContinue(), "The invite link typed wasn't taken")
+            click(continueJoin)
+        } else {
+            fail("No field for the invite link")
+        }
+        if (waitForExistence(id("joinGroup"), 20) && waitForExistence(staticText("Weekend ride"), 5)) {
+            sleep(1)
+            snap("34-join-group")
+            // The name typed at step 31 prefills it (kept as it was typed, §8.3), as on iOS; typed here only if it
+            // wasn't kept.
+            if (node(id("joinGroup"))?.config?.contains(SemanticsProperties.Disabled) == true) {
+                val name = id("displayName")
+                click(name)
+                typeText(name, "Sam\n")
+                sleep(1)
+            }
+            click(id("joinGroup"))
+            if (waitForExistence(navigationBar("Share your location?"), 20)) {
+                sleep(1)
+                snap("35-share-consent")
+                tap("Share my location")
+            } else {
+                fail("No consent after joining")
+            }
+        } else {
+            fail("The join confirmation didn't show Weekend ride")
+        }
+        sleep(2)
+
+        // 36: Kruger trip on the map: the camera fits its members, trails and pins.
+        tapBack() // the joined group's screen, back to the list
+        sleep(1)
+        tapRow(startingWith = "Kruger trip")
+        if (waitForExistence(navigationBar("Kruger trip"), 10)) {
+            scrollTo(switch("Show on the map"))
+            setSwitch("Show on the map", on = true)
+        } else {
+            fail("Kruger trip didn't open")
+        }
+        leaveSheets()
+        sleep(12) // the camera's fit, and the imagery under it
+        check(groupItems().count { it.kind == "pin" } == 6, "Not six pins on the map: ${groupItems().map { it.label }}")
+        // §9.5's layer order with the KML files shown: their fills and lines under the trails, their points under
+        // the pins and dots.
+        val layers = mapLayerIds()
+        check(layers.any { it.startsWith("kml/") }, "No KML layers on the map")
+        GroupLayers.orderProblems(layers).let { check(it.isEmpty(), "Layer order: $it") }
+        snap("36-group-map")
+
+        // 37-38: a pin dropped at an empty spot, then the Kudu pin's detail.
+        val spot = emptySpot()
+        if (spot != null) {
+            device.click(spot.x.roundToInt(), spot.y.roundToInt())
+            if (waitForExistence(id("dropPin"), 10)) {
+                click(id("dropPin"))
+                if (waitForExistence(id("pinType-animal"), 10)) {
+                    click(id("pinType-animal"))
+                    val animal = id("pinAnimal")
+                    if (waitForExistence(animal, 5)) {
+                        click(animal)
+                        typeText(animal, "Rhino\n")
+                    } else {
+                        fail("No field for the animal")
+                    }
+                    sleep(1)
+                    snap("37-drop-pin")
+                    scrollTo(id("dropPinConfirm"))
+                    click(id("dropPinConfirm"))
+                } else {
+                    fail("The drop pin screen didn't open")
+                }
+            } else {
+                fail("No Drop pin over the tapped spot")
+            }
+        } else {
+            fail("No empty spot on the map to tap")
+        }
+        sleep(3)
+        check(groupItems().any { it.kind == "pin" && it.label.startsWith("Rhino") }, "The dropped pin isn't on the map")
+        val kudu = groupItems().firstOrNull { it.kind == "pin" && it.label.startsWith("Kudu") }
+        if (kudu != null) {
+            device.click(kudu.point.x.roundToInt(), kudu.point.y.roundToInt())
+            if (waitForExistence(navigationBar("Animal sighting"), 10)) {
+                sleep(2)
+                snap("38-pin-detail")
+            } else {
+                fail("The Kudu pin's detail didn't open")
+            }
+        } else {
+            fail("The Kudu pin isn't on the map")
+        }
+        leaveSheets()
+
+        // 39: a member's detail.
+        tap("Groups")
+        tapRow(startingWith = "Kruger trip")
+        if (waitForExistence(navigationBar("Kruger trip"), 10)) {
+            sleep(2)
+            scrollTo(Query(hasClickAction() and labelStarts("Thandi"), unmerged = false, "row 'Thandi'"))
+            tapRow(startingWith = "Thandi")
+            if (waitForExistence(navigationBar("Thandi"), 10)) {
+                sleep(2)
+                snap("39-member-detail")
+            } else {
+                fail("Thandi's detail didn't open")
+            }
+        } else {
+            fail("Kruger trip didn't open")
+        }
+
+        // 40: the paused group on the map, with its banner.
+        tapBack()
+        sleep(1)
+        tapBack()
+        sleep(1)
+        tapRow(startingWith = "Drone team")
+        if (waitForExistence(navigationBar("Drone team"), 10)) {
+            scrollTo(switch("Show on the map"))
+            setSwitch("Show on the map", on = true)
+        } else {
+            fail("Drone team didn't open")
+        }
+        leaveSheets()
+        if (waitForExistence(id("groupPausedHint"), 10)) {
+            sleep(6)
+            snap("40-group-paused")
+        } else {
+            fail("No paused banner on the map")
+        }
+    }
+
+    /** Closes what is over the map: the system share sheet, then every sheet (back pops a sheet's screens, then
+     *  closes it). Never presses back on the bare map, which would leave SatMap. */
+    private fun leaveSheets() {
+        for (i in 0 until 8) {
+            val chooser = device.hasObject(By.text("Save to a folder"))
+            val sheet = exists(id("screenTitle"))
+            if (!chooser && !sheet) return
+            device.pressBack()
+            sleep(1.5)
+        }
+        check(!exists(id("screenTitle")), "A sheet stayed open")
+    }
+
+    /** The map's layer ids, bottom to top (`MapController.layerIds`, test-only). */
+    private fun mapLayerIds(): List<String> {
+        var ids = emptyList<String>()
+        instrumentation.runOnMainSync {
+            try {
+                ids = (AppModel.shared.map as? MapController)?.layerIds().orEmpty()
+            } catch (e: Throwable) {
+                Log.w(TAG, "The map's layers: ${short(e)}")
+            }
+        }
+        return ids
+    }
+
+    /** The group's dots and pins on the screen (`MapController.groupItemScreenPoints`, the test-only accessor). */
+    private fun groupItems(): List<GroupLayers.ItemPoint> {
+        var items = emptyList<GroupLayers.ItemPoint>()
+        instrumentation.runOnMainSync {
+            try {
+                items = (AppModel.shared.map as? MapController)?.groupItemScreenPoints().orEmpty()
+            } catch (e: Throwable) {
+                Log.w(TAG, "The group's items: ${short(e)}")
+            }
+        }
+        return items
+    }
+
+    /** Step 37's spot: the first point of a 40 dp grid, scanning outwards from the map's centre, at least 44 dp from
+     *  every member dot and group pin and clear of the screen's overlays (the top panels, the buttons at the sides,
+     *  the bottom), in screen pixels. */
+    private fun emptySpot(): PointF? {
+        val c = mapCentre()
+        val d = density
+        val items = groupItems()
+        val left = 80 * d
+        val right = device.displayWidth - 80 * d
+        val top = 200 * d
+        val bottom = device.displayHeight - 220 * d
+        for (ring in 0..8) {
+            for (i in -ring..ring) for (j in -ring..ring) {
+                if (maxOf(kotlin.math.abs(i), kotlin.math.abs(j)) != ring) continue
+                val p = PointF(c.x + i * 40 * d, c.y + j * 40 * d)
+                if (p.x < left || p.x > right || p.y < top || p.y > bottom) continue
+                if (items.all { kotlin.math.hypot(it.point.x - p.x, it.point.y - p.y) >= 44 * d }) return p
+            }
+        }
+        return null
     }
 
     // Helpers
@@ -817,6 +1086,11 @@ class ScreenshotTest {
     /** `waitForExistence(timeout:)`. */
     private fun waitForExistence(q: Query, seconds: Int) = waitUntil(seconds.toDouble()) { exists(q) }
 
+    /** The offline area called `name` is downloaded, up to zoom `maxZoom` (the app's own record, not the screen). */
+    private fun areaReady(name: String, maxZoom: Int) = AppModel.shared.offline.areas.value.any {
+        it.name == name && it.maxZoom == maxZoom && it.status == OfflineArea.Status.complete
+    }
+
     /** Waits up to `seconds` for `done`, as iOS waits for a download to finish, but only while a download is under way
      *  or will be: it gives up after a minute with no area queued, downloading or waiting for a network (none was
      *  started, as before M4, or it stopped for good: paused or incomplete), or after three minutes in which a running
@@ -1000,9 +1274,11 @@ class ScreenshotTest {
 
     // Launch, failures, files
 
-    /** `app.launch()`. */
+    /** `app.launch()`, in groups' demo mode (`groupsDemo`, docs/groups/SPEC.md §8.15): the fake server with its seed,
+     *  and a fake store. */
     private fun launch(): ActivityScenario<MainActivity>? = try {
-        ActivityScenario.launch(MainActivity::class.java)
+        val intent = Intent(instrumentation.targetContext, MainActivity::class.java).putExtra("groupsDemo", "YES")
+        ActivityScenario.launch<MainActivity>(intent)
     } catch (e: Throwable) {
         fail("SatMap didn't open: ${short(e)}")
         null

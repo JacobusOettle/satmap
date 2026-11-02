@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.ui
 
 import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -130,6 +131,19 @@ object SharePresenter {
         if (_folderWanted.value && (folderBy == null || folderBy == host)) folderChosen(null)
     }
 
+    private val _text = MutableStateFlow<String?>(null)
+
+    /** A text to share (an invite link with its words, groups §9.3 S6): `ShareHost` opens the share sheet for it. */
+    val text: StateFlow<String?> = _text.asStateFlow()
+
+    fun presentText(t: String) {
+        _text.value = t
+    }
+
+    internal fun textShown() {
+        _text.value = null
+    }
+
     internal fun attach() {
         hosts += 1
     }
@@ -189,6 +203,18 @@ fun ShareHost() {
                 }
             }
             else -> SharePresenter.chooserClosed() // shown by an activity that is gone: its result can't come
+        }
+    }
+    // A text share (Android's share sheet for plain text): nothing waits for it to close.
+    val text by SharePresenter.text.collectAsState()
+    LaunchedEffect(text) {
+        val t = text ?: return@LaunchedEffect
+        SharePresenter.textShown()
+        val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, t)
+        try {
+            context.startActivity(Intent.createChooser(send, null))
+        } catch (e: ActivityNotFoundException) {
+            // No app takes text: nothing to do.
         }
     }
     LaunchedEffect(folderWanted) {

@@ -118,4 +118,37 @@ class LocationServiceTest {
         assertEquals(1, shadowOf(lm).getLocationRequests(LocationManager.GPS_PROVIDER).size)
         assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
     }
+
+    /** While groups share, a second line under "Recording your track" names them (groups §11.6). */
+    @Test
+    fun whileGroupsShareTheNotificationNamesThem() {
+        assertNull(sharingLine(emptyList()))
+        assertEquals("Sharing your location with Kruger trip.", sharingLine(listOf("Kruger trip")))
+        assertEquals("Sharing your location with 2 groups.", sharingLine(listOf("Kruger trip", "Drone team")))
+        val n = LocationService.notification(app, listOf("Kruger trip"))
+        assertEquals("SatMap", n.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Recording your track", n.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals(
+            "Recording your track\nSharing your location with Kruger trip.",
+            n.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString(),
+        )
+        assertNull(LocationService.notification(app, emptyList()).extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
+    }
+
+    /** Stop also switches sharing off in every group (an Android-only difference, groups §11.6). */
+    @Test
+    fun stopAlsoEndsSharingInEveryGroup() {
+        val model = model()
+        model.groups.useDemo()
+        for (i in 0 until 400) {
+            if (model.groups.sharingNames.value.isNotEmpty()) break
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(2)
+        }
+        assertEquals(listOf("Kruger trip"), model.groups.sharingNames.value)
+        val service = runningService()
+        pressStop(service)
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(emptyList<String>(), model.groups.sharingNames.value)
+    }
 }

@@ -43,6 +43,14 @@ other, and how the work is ordered and tested.
 | D20 | Car map surface | A `Presentation` on a `VirtualDisplay` with a `MapView` in `textureMode(true)` (offline spec §2.12). |
 | D21 | WorkManager | It is not used: downloads run in a foreground service. Remove the dependency in M0. |
 | D22 | Encrypted tiles | Offline tiles are stored sealed by core (`TileCrypto`, `MBTiles.put`/`tile`; the format is in `PORTING.md`), so files copied off the phone can't be shown in another app. The app never reads or writes `tile_data` itself: the map reads through `MBTiles.tile`, downloads write through `MBTiles.put`, and export, restore and "Save to a folder" move whole files. Files from before tiles were encrypted (old areas, restored old backups) are sealed in place by `OfflineManager.encryptOldFiles` with `MBTiles.encryptPlainTiles`: in the process, not in WorkManager (D21) or a service; one area at a time, a store of its own per file, on `io` at `Thread.MIN_PRIORITY` (Java's priority, which the store's SQLite thread inherits as it is made; iOS uses the background QoS). Only while SatMap is in the foreground, as on iOS (a large area is minutes of work, not worth the battery in the background): going to the background stops it after the batch in hand, and coming to the foreground starts it again, carrying on where it stopped (the file records the last row checked), so no work is lost. It runs at launch, after a restore, after each download run, when an export, a copy or another app's reading ends, and when SatMap comes to the foreground; it skips the downloading area, every area while an export or copy holds downloads, and areas another app reads; an export stops it and seals what it shares first (`prepareExport`, with "Encrypting <name>…" and a progress bar, each file tried up to 3 times as on iOS, since the map reading a file can keep the sealing's 0.2 s final checkpoint from finishing), and a download starting on the area being sealed stops it and starts once it has stopped, so the main thread never waits for the sealing's write lock as it opens the run's stores. A file counts as done when it is marked (`MBTiles.isEncrypted`) and its write-ahead log is empty: a marked file with a log may still hold plain pages in the file itself if the run couldn't fold the log in, so it gets another run (only the checkpoint). |
+| D23 | Groups model | Groups (`docs/groups/SPEC.md`; the Android mapping is `docs/spec/groups.md`) live in `AppModel.groups`, a `GroupsModel` made in `AppModel`'s init after the recorder, KML library and offline manager (recording runs with no screen). It registers no `AppLifecycle` observer of its own: `AppModel` passes on `didBecomeActive` and `didEnterBackground`, its track points (`appendTrack`), fixes (`locationUpdated`), compass headings and the online edge, so the observers stay recorder, offline manager, model. Its scope and the core hub's are `SupervisorJob() + Dispatchers.Main` (never `Main.immediate`: work the hub starts must not run inside a hub call). The 5 s foreground tick is a main-looper `Handler`, armed only while the hub has something to do (a coroutine loop would spin the tests' test dispatchers for ever); the background tick is a `WakeTimer`, rearmed by each fix. |
+| D24 | Groups demo mode | `MainActivity` reads its launch extras after `Application.onCreate` has made the model, so `groupsDemo YES` switches an existing model: `AppModel.applyLaunchArguments` → `GroupsModel.applyLaunchArguments` → `useDemo()`, which drops the hub made at launch (its events go nowhere) and installs `GroupDemo.makeHub` (the core's `FakeGroupServer`, the §8.15 seed, memberships in memory, no sockets) in a store of its own made afresh in the cache, with a fake Pro store. `fakePro` (outside demo mode) and `groupsBaseURL` work the same way (§12.6, §5.1); none is saved. All three are honoured in debug builds only, and `MainActivity.launchArguments` reads no extras at all from an intent with `CATEGORY_BROWSABLE`: any web page's `intent://` link can carry `S.` extras, and any app can start the exported activity with extras, so a release build must never let them move member passes to another server or quietly swap the real hub for the demo one (iOS's launch arguments can't come from a URL). The walkthrough and `InviteIntentTest` run the debug build. |
+| D25 | Groups secrets and store | Member passes and group keys are sealed with an Android Keystore AES-256-GCM key (`satmap.groups.v1`) into `noBackupFilesDir/groups/secrets.bin` (`0x01 ‖ IV ‖ ciphertext ‖ tag`, `AtomicFile`); the local store is `noBackupFilesDir/groups/groups.sqlite` on `AndroidSqlDriver`. Both rule files exclude `root/no_backup/` as well (the platform leaves it out anyway). A file that can't be opened throws, so the hub deletes nothing (§8.3). A file that can never be opened again (`AEADBadTagException`: the Keystore key was lost while the app's data stayed, as some phones do after an update; or not a secrets file) is set aside by the next `save` (`secrets.bin.unreadable`) and a new one started, so creating and joining keep working; the hub's next read then drops the groups it held, which can't be used without their passes anyway. A Keystore error (as before the first unlock) still only throws. iOS has one Keychain item per group, so no single item can block the rest. Robolectric has no AndroidKeyStore: `KeystoreSecrets` takes its key as a function. |
+| D26 | Groups on the map | The shown group's layers are fixed overlay layers (`group-trails` first in the stack; `group-pins`, `group-pin-labels`, `group-member-arrows`, `group-members` between `selected` and `measure-markers`). `BlockLayers` inserts each newly shown file's layers below `track` and `measure-markers`, which would put them over the group's; `GroupLayers.restack()` moves the group's back under those anchors (§3.8). It runs from `BlockLayers.onChanged`, which fires after a file's layers are actually added (each file is drawn on `Dispatchers.Default` first) or removed; run straight after `update()`, it would see the order before the files arrived. The walkthrough checks the order at step 36 (`GroupLayers.orderProblems`). Features and images are made on `Dispatchers.Default` and handed to MapLibre on the main thread (§2.4 rule 3). Taps on member dots and pins come before the KML point and aviation tests, and only while not measuring. |
+| D27 | Pro | Play Billing 9.1.0 behind `BillingGateway` (`PlayBillingGateway`; `FakeBillingGateway` for demo mode, `fakePro` and the tests). The client is made and connected on first use (15 s at most). `proCache`'s `expiresAt` is always null (Play gives no expiry); the hub's `updatePro` always gets `expiresAt = null` (§10.4, §9.9). Purchases Play announces outside a purchase sheet (a pending purchase approved) are taken up at once on the model's scope: Play's whole list is read again (acknowledging), or, when it can't be asked, the announced ones replace those with the same token. An action that needs a proof (S4's create, S5's Renew and Accept) goes ahead only when the store has confirmed Pro since launch (`GroupsModel.hasConfirmedPro`); a cached `isPro` alone opens the paywall, whose "Restore purchases" asks Play again. |
+| D28 | A fix's course and speed | `GpsFix` gains `course` and `speed` (nullable, from `Location.bearing` and `speed`): a group's live position takes its heading from the course while moving (groups §4.4), as iOS's `CLLocation` gives it. Every other use of `GpsFix` is unchanged. |
+| D29 | Groups sheets | Three `SheetHost`s (§4.2): `ActiveSheet.groups`, `groups.groupItem` (S11, S12, and S10 at a tapped spot) and `groups.pendingInvite` (S8 over anything). `GroupsRoute` is the spec's list plus `DropPin` (S10, from the map and S5) and `Join` (S8: pushed from S7 inside the groups sheet; the root of the join sheet for links from other apps). A finished flow replaces the stack with a new `RouteStack` (its root can change, as S1 to S2). S5 opened from outside the list (the paused banner, an invite to a group you are in, S8's "Open group") is `[Detail]` alone, whose leading button is Done, as iOS's; "You're already in {group}." is an alert with OK over it (`GroupsModel.notice`), not a toast: the only toasts are "Link copied" and "Support code copied". |
+| D30 | Groups glyph sizes | The groups' SF Symbols are matched by size as drawn, not by box: `Person3` is drawn as wide for its height as `person.3.fill` (23 × 10.5 of 24) and at 38 dp on the map button and in list rows, where the symbol is 36.7 × 17 pt. Pin glyphs keep about 2 of their 24 units clear all round (as Material's do), so a 16 pt glyph is a 20 dp box: on the map (`GroupLayers.PIN_GLYPH_DP`) and 9/16 of S10's and S11's badges. `House` and `Drop` are custom (Material's Home has no chimney, its WaterDrop a highlight cut out). |
 
 ---
 
@@ -127,6 +135,20 @@ package owns the file (§7). Only the owner edits a file.
 | --- | --- | --- | --- |
 | `CarSceneDelegate.kt` | `CarPlaySceneDelegate.swift` | `SatMapCarAppService`, `CarSession`, `CarMapScreen` (the `NavigationTemplate`). | B |
 | `CarMapController.kt` | `CarPlayMapController.swift` | `CarMapController` (implements `SurfaceCallback` and `CarMapHost`): a `VirtualDisplay` + `Presentation` + `MapView` drawing the same style. | B |
+
+### 1.6a Groups (`groups/`, `ui/groups/`, `map/GroupLayers.kt`)
+
+Built on the Kotlin core's `GroupHub` (docs/groups/SPEC.md; the Android mapping is `docs/spec/groups.md`).
+
+| File | iOS counterpart | Contents |
+| --- | --- | --- |
+| `groups/GroupsModel.kt` | `Groups/GroupsModel.swift` | `GroupsModel` (D23, D24), `GroupsRoute`, `AfterPro`, `ShownGroup`, `JoinRequest` |
+| `groups/GroupHttp.kt` | `GroupHTTP.swift`, `GroupSocket.swift` | The OkHttp transport and WebSocket |
+| `groups/KeystoreSecrets.kt` | `KeychainSecrets.swift` | Memberships sealed with a Keystore key (D25) |
+| `groups/ProStore.kt` | `ProStore.swift` | `ProStore`, `BillingGateway`, `PlayBillingGateway`, `FakeBillingGateway` (D27) |
+| `groups/QRCode.kt`, `groups/QRScanner.kt` | `QRCode.swift`, `QRScanner.swift` | ZXing codes; the CameraX scanner view |
+| `ui/groups/*.kt` | `UI/Groups/*.swift` | The sheets (D29) and every S1–S17 screen, `GroupTexts`, the shared pieces, the icons |
+| `map/GroupLayers.kt` | `Map/GroupLayer.swift` | The shown group's trails, pins and dots (D26) |
 
 ### 1.7 Tests and resources
 
@@ -612,6 +634,7 @@ against the anchors `track`, `aviation-rings` and `measure-markers`.
 | 4 | `contours-<gen>` | raster | `contours-<gen>` | DrawnImagery | |
 | 5 | `terrain-top` | background | — | MapStyle | always hidden |
 | 6 | `kml/<uuid>/fill`, `kml/<uuid>/line` | fill, line | `kml/<uuid>` | MapStyle.kmlLayers, inserted by BlockLayers | `addLayerBelow(…, "track")`; each newly shown file goes above the earlier ones |
+| 6a | `group-trails` | line | `group-trails` | MapStyle (`groupLayer`), fed by GroupLayers | the shown group's trails (groups §9.5): `["get","colour"]`, 85 % opaque, `zoomScaled(3f)` (2 above 10 trails), round; first in the overlay stack, kept just under `track` (`GroupLayers.restack`, D26) |
 | 7 | `track`, `track-live` | line | `track`, `track-live` | MapStyle | `#00E6FF`, width `zoomScaled(4f)`, `lineDasharray(0, 2.25)`, round cap and join |
 | 8 | `measure-fill`, `measure-line` | fill, line | `measure` | MapStyle | pink 15 % fill; pink width `zoomScaled(3f)`, dashes `(10/3, 7/3)`, butt cap |
 | 9 | `draft-fill`, `draft-line` | fill, line | `draft` | MapStyle | white 15 %; white 2.5, dashes `(3.2, 2.4)`, round |
@@ -619,6 +642,7 @@ against the anchors `track`, `aviation-rings` and `measure-markers`.
 | 11 | `aviation-rings` | symbol | `aviation` | MapStyle | map-aligned runway rings, filtered to visible cards (§3.13) |
 | 12 | `aviation` | symbol | `aviation` | MapStyle | the cards, `symbolSortKey(get("key"))`, `SYMBOL_Z_ORDER_SOURCE` |
 | 13 | `selected` | symbol | `selected` | MapStyle | allow-overlap and ignore-placement |
+| 13a | `group-pins`, `group-pin-labels`, `group-member-arrows`, `group-members` | symbol | `group-pins` (pins and labels), `group-members` (arrows and dots) | MapStyle (`groupLayer`), fed by GroupLayers | groups §9.5: pins allow overlap and take room, labels give way, arrows turn with the map (`has heading`), dots allow overlap; kept just under `measure-markers`, over the KML points (D26) |
 | 14 | `kml/<uuid>/points` | symbol | `kml/<uuid>/labels` | MapStyle.kmlLayers | filter `kind == "point"`; `addLayerBelow(…, "measure-markers")`: over the selection ring, whose white centre a tapped point's dot covers (iPhone screenshot 24: MapKit raises the tapped point's own view to the ring's height) |
 | 15 | `measure-markers`, `measure-letters` | symbol | `measure-points` | MapStyle | markers: allow-overlap, not ignore-placement; letters: both |
 | 16 | `user-arrow`, `user-dot` | symbol | `user` | MapStyle | the arrow is `iconRotationAlignment(MAP)`; the dot allows overlap and still takes placement |
@@ -835,6 +859,8 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 - **Two hosts:**
   - `model.sheet`: dismissing it calls `setSheet(null)`.
   - `model.pendingArea`: dismissing it calls `setPendingArea(null)` and `setDraftArea(null)`.
+  - Groups (D29): `model.sheet == groups` (`GroupsSheet`), `model.groups.groupItem` (`GroupItemSheet`; dismissing it calls
+    `openItem(null)`) and `model.groups.pendingInvite` (`JoinSheet`; `closeInvite()`).
 
   "Done" and "Cancel" hide with an animation, then clear the state. When the model clears the state itself, the host keeps the last content while it hides.
 - **No navigation-compose.** Each sheet keeps `mutableStateListOf<Route>(Root)`. A route object holds its screen's state (`PlaceSearchState`, `NewAreaState`, …), so a screen under another one keeps its state.
@@ -914,8 +940,9 @@ From `material-icons-extended` 1.7.8; the custom vectors are in `Icons.kt`, with
 rule: an SF Symbol at text size X becomes an icon of about 1.2·X dp. Map buttons use 24 dp icons. The exceptions are a
 list `Label`, whose symbols are drawn larger than their text: its icons are 28 dp (`ListIconSize`), and the Material
 glyphs that fill less of their box than the SF symbols do of their frames, sized to draw as big as iOS's: on the map buttons
-Landscape 38 dp, GpsFixed and NearMe 26, Close 27; in the pills Landscape 22 and ContentCopy 16; the banner's Pause 23
-(UI spec §1.3).
+Landscape 38 dp, GpsFixed and NearMe 26, Close 27, the groups' Person3 38; in the pills Landscape 22 and ContentCopy
+16; the banner's Pause 23 (UI spec §1.3). The groups' symbols are custom where Material has no close match
+(`ui/groups/GroupIcons.kt`, D30).
 
 | SF Symbol | Android |
 | --- | --- |
@@ -947,6 +974,10 @@ Landscape 38 dp, GpsFixed and NearMe 26, Close 27; in the pills Landscape 22 and
 | `plus` | `Icons.Filled.Add` |
 | (paste) | `Icons.Outlined.ContentPaste` |
 | (chevron) / (back) | `Icons.AutoMirrored.Filled.KeyboardArrowRight` / `Icons.AutoMirrored.Filled.ArrowBackIos` |
+| `person.3.fill` | custom `Person3` (38 dp on the Groups button and in S1's and S3's rows, `Person3RowSize`) |
+| `pawprint.fill` / `house.fill` / `drop.fill` | `Icons.Filled.Pets` / custom `House` (chimney, door cut out) / custom `Drop` (solid) |
+| `exclamationmark.triangle.fill` / `smallcircle.filled.circle` / `shield.lefthalf.filled` | `Icons.Filled.Warning` / custom `Pothole` / custom `Shield` |
+| `mappin.and.ellipse` / `person.badge.plus` / `qrcode.viewfinder` | custom `MapPinAndEllipse` / `Icons.Outlined.PersonAddAlt` / `Icons.Filled.QrCodeScanner` |
 
 ### 4.5 Test tags and accessibility
 
@@ -1211,6 +1242,10 @@ filesDir/SatMap/                          (credential-encrypted: readable after 
     areas.json                            AtomicFile; an unreadable file is renamed areas.json.unreadable-<unix s>
     <UUID upper-case>/imagery.mbtiles, terrain.mbtiles (+ -wal, -shm while open); tiles sealed (D22)
     Restoring/                            restore staging, removed at start and after each restore
+noBackupFilesDir/groups/                  groups (D25), never backed up or transferred
+  secrets.bin                             member passes and group keys, sealed with the Keystore key satmap.groups.v1
+  groups.sqlite                           GroupStore (+ -wal, -shm)
+cacheDir/groups-demo.sqlite               demo mode's store, made afresh at each switch
 cacheDir/tiles-http/                      OkHttp disk cache, 1 GiB (tiles as the server sent them, as iOS's URLCache)
 getExternalFilesDir("screenshots")        androidTest only
 ```
@@ -1233,7 +1268,11 @@ There is no `Export/` folder (D8).
 | `offlineMaxZoom` | Int | NewAreaView | default 22 |
 | `camera` | String | MapController | `"lat,lon,latDelta,lonDelta"`, `Locale.ROOT`; missing means first launch |
 | `zoomScript` | Boolean | — | launch extra only |
-| `locationPermissionAsked`, `motionPermissionAsked`, `notificationPermissionAsked` | Boolean | PermissionFlow / UI | Android only |
+| `locationPermissionAsked`, `motionPermissionAsked`, `notificationPermissionAsked` | Boolean | PermissionFlow / UI | Android only (S9 sets the first when it asks) |
+| `groupsTermsAccepted` | Int | GroupsModel | the groups terms version accepted (groups §8.13) |
+| `groupsDisplayName` | String | GroupsModel | the last valid display name typed (S4 as it is typed, S8 after a join, S15 after a save), to prefill S4 and S8 |
+| `proCache` | String | ProStore | `{"productId","expiresAt":null,"checkedAt"}` (groups §10.6) |
+| `groupsDemo`, `groupsBaseURL`, `fakePro` | String | — | launch extras only (D24), debug builds only, never from a browser's intent |
 
 ### 5.8 Connectivity
 
@@ -1380,6 +1419,7 @@ classes that don't touch `MapLibreMap`. `org.maplibre.geojson` types are plain J
 | map interaction (C) | `PointAdjuster.place`, `fingerGround`, the 5 m clamp and scroll step; `MapController.entry` (the aim line's entry and dash phase); camera string round trip; `BlockLayers.shapes` (every style case, width clamp, white when colours are off); `AviationLayer` selection (km filter, 15 % padding, cap of 140); `AviationCard.text`; the lasso's 3 dp step + Douglas–Peucker; `MeasureMode.label`. |
 | ui (D) | Compose tests under Robolectric with `MapScreen(map = null)`: panel texts for each measure state; `HeightBar` semantics (`above sea level`, ` ft `, ` m `); `CoordinateBar` "Copied" for 2.5 s; terrain toast 1.8 s; `NewAreaView` chosen zoom (`deepestFitting`, `rememberedZoom`) and size texts; `AreaDetailView` button titles; the back stack keeping route state. |
 | offline, kml (E) | The `OfflineManager` state machine (offline spec §2.14): queue order, pause winning, re-queue during a run, Wi-Fi-only waiting, retry delay 15→600, low-space stop, the preset guard, unreadable `areas.json`, orphan folders, `downloading` → `queued` at load. Export display names and the reader hold, and exported tiles sealed (none an image); restore of `Tests/SatMapCoreTests/Fixtures/backup/iphone-encrypted`, a satellite-only file, a duplicate, a non-backup. Sealing files from before tiles were encrypted (D22): an old area at launch (at the lowest priority, no plain picture left in the file), an old area that downloads only after its run, the map drawing every tile from its own reader while an area is half sealed, a delete stopping it, a download resumed on the area being sealed starting once the work has stopped (the main thread not waiting for the file's write lock) and the work carrying on where it stopped after the run, the old backups `…/backup/iphone` and `…/backup/android` sealed once restored, nothing sealed in the background (stopped after the batch in hand, carrying on in the foreground), and an export sealing an old area itself ("Encrypting <name>…" with its progress, a busy final checkpoint tried again). No delete while a backup task runs (the manager and the sheet's rows). `AndroidSqlDriverTest` reads all four backup fixtures on Android's SQLite. `KMLLibrary`: `.kmz` when the data starts with `PK`, `.gpx` for a GPX file, `hidden` round trip, the `kmlFileColours` default, delete, an import during the initial load. `RoadFetcher` and `PlaceSearch` with `MockWebServer`: the 12 s stagger, the first answer winning, the error texts, percent-encoding, `lat`/`lon` with a point under a German locale. |
+| groups | `GroupsModelTest` (demo mode: rows, the shown group, the camera fit, the notification's groups and Stop, invites, joining, terms, the demo store, alerts), `GroupPartsTest` (`GroupTexts`, `GroupLayers` features, images and fit, QR codes, `KeystoreSecrets` with a software key, `ProStore` decisions), `GroupHttpTest` (MockWebServer: the request, status mapping, offline, the socket and refused upgrades, only the latest socket), `ScreenRendersGroupsTest` (renders 28–40), `GroupScreensTest` (S4's name kept for S8, S5's invite made before S6 and its failure, S5's sharing switch with location off, S10's animal checked on the tap), `GroupIconsTest` (the pin glyphs' drawn size, the drop, house and person.3 shapes), `MapScreenGroupsTest` (the Groups button's place, the banner: S5 alone, "Hide"; the drop-pin capsule), and additions to `MainActivityTest` (the invite filters and intents), `LocationServiceTest` (the big-text lines, Stop) and `MapStyleTest` (the stack). |
 | car (B) | `app-testing`: `ScreenController(CarMapScreen)` → one `NavigationTemplate` titled `Contours`; after a click, `Contours + colours`; the map strip has 4 actions, the last `TYPE_PAN`. `CarMapController` camera logic against a fake map. |
 
 ### 8.2 Instrumented screenshot walkthrough (emulator in GitHub Actions)
@@ -1401,6 +1441,9 @@ classes that don't touch `MapLibreMap`. `org.maplibre.geojson` types are plain J
   2. Resize to 600 px wide (Pillow).
   3. Upload the artifact.
   4. Commit to `docs/screenshots/android/NN-name.jpg` on the branch, with the same retry loop as the iOS workflow.
+
+The walkthrough runs in groups' demo mode (`groupsDemo YES` in the launch intent) and ends with the groups steps 28–40
+(groups §9.7); `InviteIntentTest` (the link check, §5.6) runs in the same instrumentation call.
 
 **`ScreenshotTest.kt`** mirrors `SatMapUITests/ScreenshotTests.swift` step for step, with the same snapshot names
 (01-map … 27-place-area), the same waits, the same asserts and continue-after-failure (soft asserts collected and

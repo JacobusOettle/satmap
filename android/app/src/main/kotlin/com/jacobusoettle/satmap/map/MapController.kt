@@ -48,12 +48,15 @@ import com.jacobusoettle.satmap.core.TerrainMode
 import com.jacobusoettle.satmap.core.WebMercator
 import com.jacobusoettle.satmap.core.WorldRect
 import com.jacobusoettle.satmap.core.XY
+import com.jacobusoettle.satmap.groups.GroupsRoute
 import com.jacobusoettle.satmap.location.GpsFix
 import com.jacobusoettle.satmap.location.LocationRecorder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -150,6 +153,9 @@ class MapController(
     private var measureLine: MeasureLineLayer? = null
     private var selectedLayer: SelectedPointLayer? = null
     private var draft: DraftAreaLayer? = null
+
+    /** The shown group: its trails, pins and members' dots (groups §9.5). */
+    private var groupLayers: GroupLayers? = null
 
     /** The zoom test, when the launch setting asks for it. */
     private var zoomScript: ZoomScript.Run? = null
@@ -280,7 +286,14 @@ class MapController(
         userDot = UserDotLayer(m, style, activity)
         track = TrackLayer(m, style, activity).also { it.reset(model.track) }
         drawnTrackCount = model.track.size
-        blocks = BlockLayers(m, style, activity).also { it.onChanged = { container.labelsChanged() } }
+        // Each file's layers are added once drawn off the main thread, against `track` and `measure-markers`: the
+        // group's go back under those anchors each time (groups §9.5 layer order).
+        blocks = BlockLayers(m, style, activity).also {
+            it.onChanged = {
+                groupLayers?.restack()
+                container.labelsChanged()
+            }
+        }
         aviation = AviationLayer(m, style, activity) { visibleRegion(m) }.also { it.isOn = model.terrainMode.value.showsAviation }
         markerLayer = MeasureMarkerLayer(m, style, activity)
         measureLine = MeasureLineLayer(m, style, activity)
@@ -289,6 +302,7 @@ class MapController(
             it.onMove = { which, p, done -> adjusted(which, p, done) }
         }
         draft = DraftAreaLayer(m, style, activity)
+        groupLayers = GroupLayers(m, style, activity)
         mapView.doOnLayout { start(m) }
     }
 
@@ -339,6 +353,15 @@ class MapController(
             combine(model.kml.files, model.kml.useFileColours) { files, colours -> files to colours }
                 .collect { (files, colours) -> blocks?.update(files, colours) }
         }
+        // The shown group (groups §9.5 binding): its features and images made off the main thread, shown on it; again
+        // every minute, for the animal pins' "… ago" labels and pins that expire.
+        scope.launch { model.groups.mapRevision.collect { groupsChanged() } }
+        scope.launch {
+            while (true) {
+                delay(60_000)
+                if (model.groups.shown.value != null || groupLayers?.shown != null) groupsChanged()
+            }
+        }
         // Drone mode's distances: from you and from the tapped spot.
         scope.launch { model.selectedPoint.collect { aviationDistances(it) } }
         scope.launch {
@@ -349,6 +372,49 @@ class MapController(
         scope.launch { model.isDrawingArea.collect { lasso.reset() } }
         scope.launch { model.draftArea.collect { draftChanged(it) } }
         scope.launch { model.recorder.power.collect { powerChanged() } }
+    }
+
+    /** Shows the shown group's content as it is now. The newest request wins: one that was overtaken while its
+     *  features were made isn't shown. */
+    private var groupsGeneration = 0
+
+    private fun groupsChanged() {
+        val layers = groupLayers ?: return
+        val content = model.groups.mapContent()
+        val generation = ++groupsGeneration
+        scope.launch {
+            val prepared = withContext(Dispatchers.Default) { layers.prepare(content) }
+            if (generation != groupsGeneration || groupLayers !== layers) return@launch
+            layers.apply(prepared)
+            container.labelsChanged()
+        }
+    }
+
+    /** Test-only (the walkthrough): the style's layer ids, bottom to top; empty before the style has loaded. */
+    fun layerIds(): List<String> = map?.style?.takeIf { it.isFullyLoaded }?.layers?.map { it.id }.orEmpty()
+
+    /** Test-only (the walkthrough, groups §9.6): each member dot's and group pin's point on the screen, in pixels, with
+     *  its kind ("member" or "pin"), id and accessibility label. */
+    fun groupItemScreenPoints(): List<GroupLayers.ItemPoint> {
+        val layers = groupLayers ?: return emptyList()
+        if (!started) return emptyList()
+        val at = IntArray(2).also { container.getLocationOnScreen(it) }
+        return layers.points().map { it.copy(point = PointF(it.point.x + at[0], it.point.y + at[1])) }
+    }
+
+    /** A group became the shown group (groups §9.5 camera): every live member and you, with 60 dp round them, at least
+     *  300 m across, centred in the safe area. It stops following you. */
+    override fun fit(points: List<GeoPoint>) {
+        val b = GroupLayers.fitBounds(points) ?: return
+        model.setFollowing(false)
+        afterStart { m ->
+            val i = safeInsets()
+            val pad = (60 * density).toInt()
+            val bounds = LatLngBounds.from(b.maxLat, b.maxLon, b.minLat, b.minLon)
+            val fitted = m.getCameraForLatLngBounds(bounds, intArrayOf(i.left + pad, i.top + pad, i.right + pad, i.bottom + pad)) ?: return@afterStart
+            keepCameraUntil = SystemClock.uptimeMillis() + 1000
+            m.easeCamera(CameraUpdateFactory.newCameraPosition(centred(fitted, b.center, centringOffset())))
+        }
     }
 
     /** Tiles may be had again (`AppModel.requestReload`): a new layer asks again for those shown with a stand-in. */
@@ -665,6 +731,15 @@ class MapController(
         // A tap on a point in a KML file (a launch point …) selects it: its own position, with its name.
         val spot = m.projection.toScreenLocation(LatLng(c.lat, c.lon))
         val measure = model.measure.value
+        // A group member's dot, then a group pin, before everything else (groups §9.1); not while measuring, when a tap
+        // places a point at the crosshair.
+        if (measure == MeasureMode.Off) {
+            when (val hit = groupLayers?.hit(point)) {
+                is GroupLayers.Hit.Member -> return model.groups.openItem(GroupsRoute.Member(hit.groupId, hit.memberId))
+                is GroupLayers.Hit.Pin -> return model.groups.openItem(GroupsRoute.Pin(hit.groupId, hit.pinId))
+                null -> {}
+            }
+        }
         if (measure == MeasureMode.Off) {
             kmlPoint(m, spot)?.let { k ->
                 model.pointTapped(k.coordinate, k.name)
@@ -942,7 +1017,12 @@ class MapController(
     private fun mapLabels(): List<MapContainerView.Label> {
         val aviationLayers = if (aviation?.isOn == true) listOf(MapIds.AVIATION) else emptyList()
         val layers = blocks?.pointLayerIds.orEmpty().toList() + aviationLayers
-        return placed(layers.toTypedArray())
+        // The group's dots and pins too, each by its label ("Thandi, Sharing · 2 min ago", groups §9.6).
+        val group = groupLayers?.points().orEmpty().map { g ->
+            val r = g.radiusDp * density
+            Placed(g.label, RectF(g.point.x - r, g.point.y - r, g.point.x + r, g.point.y + r), g.point)
+        }
+        return (placed(layers.toTypedArray()) + group)
             .sortedWith(compareBy({ it.box.top }, { it.box.left }))
             .map { MapContainerView.Label(it.name, it.box, it.spot) }
     }
@@ -1043,6 +1123,7 @@ class MapController(
         measureLine = null
         selectedLayer = null
         draft = null
+        groupLayers = null
         zoomScript?.stop()
         zoomScript = null
         lasso.onFinish = null

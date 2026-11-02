@@ -81,6 +81,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -158,7 +159,15 @@ import com.jacobusoettle.satmap.location.LocationRecorder
 import com.jacobusoettle.satmap.map.ContourInterval
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.MapViewRepresentable
+import com.jacobusoettle.satmap.groups.GroupsRoute
 import com.jacobusoettle.satmap.offline.OfflineManager
+import com.jacobusoettle.satmap.ui.groups.GroupAlerts
+import com.jacobusoettle.satmap.ui.groups.GroupItemSheet
+import com.jacobusoettle.satmap.ui.groups.GroupTexts
+import com.jacobusoettle.satmap.ui.groups.GroupsSheet
+import com.jacobusoettle.satmap.ui.groups.JoinSheet
+import com.jacobusoettle.satmap.ui.groups.MapPinAndEllipse
+import com.jacobusoettle.satmap.ui.groups.Person3
 import kotlin.math.abs
 import kotlin.math.max
 import kotlinx.coroutines.delay
@@ -183,14 +192,22 @@ fun MapScreen(model: AppModel, offline: OfflineManager, recorder: LocationRecord
                 ActiveSheet.blocks -> BlocksSheet(model, model.kml, close)
                 ActiveSheet.offline -> OfflineSheet(model, offline, model.kml, close)
                 ActiveSheet.coordinates -> CoordinateEntryView(model, close, sheetState)
+                ActiveSheet.groups -> GroupsSheet(model, close)
             }
         }
+        // Groups (docs/groups/SPEC.md §9.2): a pin or member tapped on the map (or a pin dropped there) in a sheet of
+        // its own, and an invite link's confirmation over anything.
+        val groupItem by model.groups.groupItem.collectAsStateWithLifecycle()
+        SheetHost(groupItem, onDismiss = { model.groups.openItem(null) }) { root -> GroupItemSheet(model, root, close) }
+        val invite by model.groups.pendingInvite.collectAsStateWithLifecycle()
+        SheetHost(invite, onDismiss = model.groups::closeInvite) { j -> key(j.id) { JoinSheet(model, GroupsRoute.Join(j.link), close) } }
         val pending by model.pendingArea.collectAsStateWithLifecycle()
         // Swift's onDismiss: the drawn loop goes with the sheet.
         SheetHost(pending, onDismiss = { model.setPendingArea(null); model.setDraftArea(null) }) { area ->
             NewAreaView(model, remember(area.id) { NewAreaState(area) }, showsCancel = true, close = close)
         }
         if (confirmClearTrack) ClearTrackDialog(onClear = model::clearTrack, onDismiss = { confirmClearTrack = false })
+        GroupAlerts(model)
         ShareHost()
         KeepScreenOn(offline)
     }
@@ -224,20 +241,26 @@ private fun MapOverlay(
             // Drone mode: where you (and the tapped spot) are from the nearest airfield, as a pilot says it.
             if (!drawing) Drone(model)
             LocationHint(recorder)
+            GroupPausedHint(model)
             Spacer(Modifier.weight(1f))
             // Map credits are in the Offline maps sheet.
             if (!drawing) {
                 // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
                 // bottom of the screen to a tapped spot's coordinates.
-                Row(Modifier.fillMaxWidth().padding(bottom = controlsLift), verticalAlignment = Alignment.Bottom) {
-                    // The contour interval above the scale bar, the elevation colours' heights under it.
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.Start) {
-                        ContourKeyView(model.legend)
-                        ScaleBarView(model.scale, onTap = model::nextDistanceUnit)
-                        ColourKeyView(model.legend)
+                // The Groups button is laid over the row, at its top left (groups §9.1, SD21): level with the top of
+                // the buttons on the right, adding no height to the row.
+                Box(Modifier.fillMaxWidth().padding(bottom = controlsLift)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
+                        // The contour interval above the scale bar, the elevation colours' heights under it.
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.Start) {
+                            ContourKeyView(model.legend)
+                            ScaleBarView(model.scale, onTap = model::nextDistanceUnit)
+                            ColourKeyView(model.legend)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Controls(model, offline, map, onClearTrack)
                     }
-                    Spacer(Modifier.weight(1f))
-                    Controls(model, offline, map, onClearTrack)
+                    GroupsButton(model, Modifier.align(Alignment.TopStart))
                 }
             }
         }
@@ -362,17 +385,27 @@ private fun TappedSpot(model: AppModel, modifier: Modifier) {
     val name by model.selectedName.collectAsStateWithLifecycle()
     val elevation by model.selectedElevation.collectAsStateWithLifecycle()
     val unit by model.heightUnit.collectAsStateWithLifecycle()
+    val shownGroup by model.groups.shown.collectAsStateWithLifecycle()
     val p = selected ?: return
+    // While a group is shown and active, a pin can be dropped here (groups §9.1).
+    val dropIn = shownGroup?.takeIf { !it.isPaused }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        // A KML point's name over its coordinates.
-        name?.let {
-            Text(
-                it,
-                style = Subheadline.copy(fontWeight = FontWeight.Bold),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.testTag("tappedName").blocksMap().pill(vertical = 5.dp),
-            )
+        if (name != null || dropIn != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                // A KML point's name over its coordinates.
+                name?.let {
+                    Text(
+                        it,
+                        style = Subheadline.copy(fontWeight = FontWeight.Bold),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false).testTag("tappedName").blocksMap().pill(vertical = 5.dp),
+                    )
+                }
+                if (dropIn != null) {
+                    DropPinCapsule { model.groups.openItem(GroupsRoute.DropPin(dropIn.groupId, p.lat, p.lon)) }
+                }
+            }
         }
         CoordinateRow {
             CoordinateBar(
@@ -384,6 +417,57 @@ private fun TappedSpot(model: AppModel, modifier: Modifier) {
             )
             HeightBar(elevation, unit = unit, id = "tappedHeight", onTap = model::nextHeightUnit)
         }
+    }
+}
+
+/** Groups (groups §9.1, SD21): a map button at the left edge, yellow while a group is shown on the map; a tap opens
+ *  the groups sheet. */
+@Composable
+private fun GroupsButton(model: AppModel, modifier: Modifier) {
+    val shown by model.groups.shown.collectAsStateWithLifecycle()
+    MapButton(
+        SatIcons.Person3,
+        "Groups",
+        active = shown != null,
+        onClick = { model.setSheet(ActiveSheet.groups) },
+        modifier = modifier.testTag("groupsButton"),
+    )
+}
+
+/** The shown group is paused (groups §9.1): why, under the location hints. A tap opens its screen alone (S5 with
+ *  "Done"); its close button ("Hide", as VoiceOver reads it on iOS) hides it until the next launch. */
+@Composable
+private fun GroupPausedHint(model: AppModel) {
+    val shown by model.groups.shown.collectAsStateWithLifecycle()
+    val hidden by model.groups.hiddenPausedHints.collectAsStateWithLifecycle()
+    val g = shown ?: return
+    if (!g.isPaused || g.groupId in hidden) return
+    Hint(
+        GroupTexts.pausedBanner(g.name, g.pausedReason, g.isOwner),
+        onClose = { model.groups.hidePausedHint(g.groupId) },
+        onTap = { model.groups.open(listOf(GroupsRoute.Detail(g.groupId))) },
+        closeLabel = "Hide",
+        modifier = Modifier.testTag("groupPausedHint"),
+    )
+}
+
+/** "Drop pin" over a tapped spot's coordinates while a group is shown and active (groups §9.1): S10 at the spot. A
+ *  capsule with a 1 dp white outline at 30 %, as iOS's, so it reads as a button; the outline goes before the pill's
+ *  padding, around the capsule (after it, it would ring the text). */
+@Composable
+private fun DropPinCapsule(onClick: () -> Unit) {
+    Row(
+        Modifier
+            .testTag("dropPin")
+            .blocksMap()
+            .pressable(onClick = onClick)
+            .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+            .pill(vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(SatIcons.MapPinAndEllipse, contentDescription = null, modifier = Modifier.size(18.dp))
+        Text("Drop pin", style = Subheadline.copy(fontWeight = FontWeight.Bold), maxLines = 1)
     }
 }
 
@@ -721,10 +805,11 @@ fun MapButton(
 
 /** How big a map button draws `icon`: 24 dp for SF's 20 pt semibold (UI spec §1.3), more where the Material glyph
  *  fills less of its box than the SF symbol does of its frame, to draw it as big as iOS (screenshots 01, 02, 19):
- *  mountain.2 is 35 × 17.5 pt (Landscape fills 22 × 12 of its 24), scope 23.5 (GpsFixed 22), xmark 15.5 (Close 14) and
- *  location 18.8 (NearMe 18). */
+ *  mountain.2 is 35 × 17.5 pt (Landscape fills 22 × 12 of its 24), scope 23.5 (GpsFixed 22), xmark 15.5 (Close 14),
+ *  location 18.8 (NearMe 18) and person.3.fill 36.7 × 17 (Person3 fills 23 × 10.5 of its 24; screenshots 36, 40). */
 private fun mapButtonIconSize(icon: ImageVector): Dp = when (icon) {
     Icons.Filled.Landscape, Icons.Outlined.Landscape -> 38.dp
+    SatIcons.Person3 -> 38.dp
     Icons.Filled.Close -> 27.dp
     Icons.Filled.GpsFixed, Icons.Filled.NearMe, Icons.Outlined.NearMe -> 26.dp
     else -> 24.dp
@@ -770,9 +855,15 @@ internal fun Density.drawCrosshair(n: android.graphics.Canvas, size: Size) {
 /** A short iOS-style hint over the map. `onClose` shows a ✕ ("Stop measuring") after the text; `onTap` (Android
  *  only) makes the hint a button. */
 @Composable
-fun Hint(text: String, onClose: (() -> Unit)? = null, onTap: (() -> Unit)? = null) {
+fun Hint(
+    text: String,
+    onClose: (() -> Unit)? = null,
+    onTap: (() -> Unit)? = null,
+    closeLabel: String = "Stop measuring",
+    modifier: Modifier = Modifier,
+) {
     Row(
-        Modifier
+        modifier
             .blocksMap()
             .then(if (onTap != null) Modifier.pressable(onClick = onTap) else Modifier)
             .panel(0.65f, cornerRadius = 10.dp)
@@ -784,7 +875,7 @@ fun Hint(text: String, onClose: (() -> Unit)? = null, onTap: (() -> Unit)? = nul
         if (onClose != null) {
             Icon(
                 Icons.Filled.Close,
-                contentDescription = "Stop measuring",
+                contentDescription = closeLabel,
                 modifier = Modifier.size(16.dp).pressable(onClick = onClose),
             )
         }

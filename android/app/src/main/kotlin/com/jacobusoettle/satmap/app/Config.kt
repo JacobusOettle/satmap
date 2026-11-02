@@ -1,5 +1,6 @@
 package com.jacobusoettle.satmap.app
 
+import com.jacobusoettle.satmap.BuildConfig
 import com.jacobusoettle.satmap.core.TileID
 
 /** Map data sources. Change the URL templates here to use a different provider.
@@ -65,4 +66,49 @@ object LocationPolicy {
     /** Start a new dotted-line segment instead of joining across a gap this long and far. */
     const val segmentBreakSeconds = 300.0
     const val segmentBreakMeters = 200.0
+}
+
+/** Groups (docs/groups/SPEC.md §5.1, §10.1): the invite domain and what is derived from it, the contact address, the
+ *  store links, the terms version and the Pro products. The iPhone's `GroupConfig` (Config.swift) holds the same. */
+object GroupConfig {
+    /** The invite domain: the one value in `gradle.properties` (`groupsDomain`), also the App Links host in the
+     *  manifest. Invite links are always made and parsed with it, whatever `groupsBaseURL` says. */
+    val domain: String = BuildConfig.GROUPS_DOMAIN
+
+    /** Where the API and the WebSocket are: `https://` + domain, or, in debug builds only, the launch extra
+     *  `groupsBaseURL` (tests and the local check against `wrangler dev`, e.g. `http://10.0.2.2:8787`), read at each
+     *  request and never saved. A release build always talks to its own domain: any app can start SatMap with extras,
+     *  and requests carry member passes. */
+    val baseURL: String
+        get() = baseURL(Defaults.string("groupsBaseURL"))
+
+    /** `https://` + domain, unless `honoured` (debug builds) and `argument` is an http(s) URL (its trailing slashes
+     *  dropped). */
+    fun baseURL(argument: String?, honoured: Boolean = BuildConfig.DEBUG): String =
+        argument?.takeIf { honoured }?.trim()?.trimEnd('/')?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: "https://$domain"
+
+    /** The pages the Worker serves (§11.1), linked from S1, S2 and S3: always on the invite domain. */
+    val termsURL: String get() = "https://$domain/terms"
+    val privacyURL: String get() = "https://$domain/privacy"
+
+    /** The published contact address (S1, S2, S5): a release blocker until the owner sets it (§14 R1). */
+    const val contactEmail = "groups@example.invalid"
+
+    const val appStoreURL = ""
+    const val playStoreURL = "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+
+    /** The terms the app shows (S1); a later version re-shows S1 (§8.13). */
+    const val termsVersion = 1
+
+    /** The Play products (§10.1): the subscription `pro` with its two base plans, and the one-time `pro_lifetime`. */
+    object ProProducts {
+        const val subscription = "pro"
+        const val monthlyBasePlan = "monthly"
+        const val yearlyBasePlan = "yearly"
+        const val lifetime = "pro_lifetime"
+    }
+
+    /** `proProducts` as the spec names it (§10.1). */
+    val proProducts get() = ProProducts
 }

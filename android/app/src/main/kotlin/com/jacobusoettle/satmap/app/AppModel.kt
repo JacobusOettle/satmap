@@ -17,6 +17,7 @@ import com.jacobusoettle.satmap.core.TerrainMode
 import com.jacobusoettle.satmap.core.TrackLog
 import com.jacobusoettle.satmap.core.TrackPoint
 import com.jacobusoettle.satmap.core.rounded
+import com.jacobusoettle.satmap.groups.GroupsModel
 import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.location.GpsFix
 import com.jacobusoettle.satmap.location.LocationRecorder
@@ -37,6 +38,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
@@ -68,6 +70,10 @@ interface MapHost {
     fun locationUpdated(fix: GpsFix)
     fun headingUpdated(heading: Double?)
     fun reloadImagery()
+
+    /** A group became the shown group (groups §9.5 camera): the map fits these positions with 60 dp round them, at
+     *  least 300 m across. */
+    fun fit(points: List<GeoPoint>) {}
 }
 
 /** What the model asks of the car's map (`CarMapController`). */
@@ -316,7 +322,7 @@ class HeightLookup(private val source: ElevationSource, private val found: (GeoP
 /** A shape waiting for the user to confirm an offline download. */
 data class PendingArea(val id: UUID = UUID.randomUUID(), val name: String, val shape: CoverageShape)
 
-enum class ActiveSheet { blocks, offline, coordinates }
+enum class ActiveSheet { blocks, offline, coordinates, groups }
 
 /** App state shared by the map and the controls, for the whole process (not a ViewModel: recording, downloads and
  *  Android Auto run without an activity). Used on the main thread only (background work comes back on the main
@@ -332,6 +338,9 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
             shared = AppModel(app)
         }
 
+        /** The shared model, or null before `init` (a service a test starts on its own). */
+        val sharedOrNull: AppModel? get() = if (::shared.isInitialized) shared else null
+
         /** Seconds on a monotonic clock, for the reload's 20 s spacing (Swift: `Date`). */
         private fun now(): Double = SystemClock.elapsedRealtime() / 1000.0
     }
@@ -346,6 +355,10 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     val recorder = LocationRecorder(app)
     val kml = KMLLibrary(app)
     val offline = OfflineManager(app)
+
+    /** Groups (docs/groups/SPEC.md §8.1): made here because recording runs with no screen. It is told of the app's
+     *  lifecycle by this model (it registers no observer of its own), and gets the track points and fixes. */
+    val groups = GroupsModel(app)
     private val trackLog = TrackLog(AppPaths.track)
 
     /** The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the list). Read on
@@ -523,7 +536,19 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         recorder.seed(_track.lastOrNull())
         recorder.onTrackPoint = { p -> appendTrack(p) }
         recorder.onFix = { loc -> locationUpdated(loc) }
-        recorder.onHeading = { h -> map?.headingUpdated(h) }
+        recorder.onHeading = { h ->
+            map?.headingUpdated(h)
+            groups.headingUpdated(h)
+        }
+        groups.openSheet = { setSheet(ActiveSheet.groups) }
+        groups.fitMap = { points -> map?.fit(points) }
+        groups.myPosition = { recorder.location.value?.point }
+        // Groups share only with location allowed and precise (§8.5; coarse-only is the existing hint's case).
+        combine(recorder.authorization, recorder.reducedAccuracy) { a, reduced -> a to reduced }
+            .onEach { (a, reduced) ->
+                groups.setLocationAccess(authorised = a == LocationRecorder.Authorization.authorized, precise = !reduced)
+            }
+            .launchIn(scope)
 
         // For the whole app, whichever maps there are (the phone's, the car's, or both): memory trimmed in the
         // background, and tiles that failed asked for again. After the recorder and the offline manager, which
@@ -543,6 +568,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
                 mainScope.launch {
                     TileRepository.shared.resetFailureState()
                     requestReload()
+                    // Back online: groups send what waited (§8.4).
+                    groups.connectivityChanged(online = true)
                 }
             }
             .launchIn(scope)
@@ -632,6 +659,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         _track.add(p)
         trackLog.append(p)
         _trackRevision.value += 1
+        // Queued for every group that shares (groups §8.5).
+        groups.trackPoint(p)
     }
 
     fun clearTrack() {
@@ -645,6 +674,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
 
     private fun locationUpdated(loc: GpsFix) {
         map?.locationUpdated(loc)
+        // The newest fix, for a group's live position (groups §8.5).
+        groups.fix(loc)
         carMap?.locationUpdated(loc)
         updateDroneReport()
         // Only for the phone's screen (with Android Auto the app stays foreground while the phone is locked).
@@ -860,6 +891,9 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         userLookup.set(loc.point)
     }
 
+    /** A spot's height above sea level, or null (a group pin's, groups §9.3 S11). */
+    suspend fun height(p: GeoPoint): Double? = elevation.heightOrNull(p)
+
     // Offline areas
 
     fun startDrawingArea() {
@@ -916,6 +950,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         _heightUnit.value = Defaults.string("heightUnit")?.let { HeightUnit(it) } ?: HeightUnit.metres
         scale.unit = _distanceUnit.value
         updateDroneReport()
+        // Groups' demo mode (`groupsDemo`) and, in debug builds, `fakePro` (groups §8.15, §12.6).
+        groups.applyLaunchArguments()
     }
 
     // App state
@@ -931,9 +967,12 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         if (_markerElevation.value == null || _lastElevation.value == null) refreshPointElevations()
         recorder.location.value?.let { refreshUserElevation(it) }
         if (_selectedElevation.value == null) selectedLookup.retry()
+        // Groups: status, changes, queued uploads, the shown group's live positions and socket (§8.4).
+        groups.didBecomeActive()
     }
 
     override fun didEnterBackground() {
+        groups.didEnterBackground()
         retryJob?.cancel()
         retryJob = null
         TileRepository.shared.trimForBackground()

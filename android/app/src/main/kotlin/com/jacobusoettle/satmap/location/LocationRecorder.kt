@@ -62,6 +62,10 @@ data class GpsFix(
     val timestamp: Double,
     /** Seconds, on the `SystemClock.elapsedRealtime` clock. */
     val elapsed: Double,
+    /** The direction of travel, degrees from true north, and the speed, m/s; null when unknown (iOS `course` and
+     *  `speed`): a group's live position takes its heading from them while moving (groups §4.4). */
+    val course: Double? = null,
+    val speed: Double? = null,
 ) {
     val point: GeoPoint get() = GeoPoint(lat, lon)
 }
@@ -466,6 +470,8 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
             verticalAccuracy = verticalAccuracy,
             timestamp = loc.time / 1000.0,
             elapsed = LocationCompat.getElapsedRealtimeMillis(loc) / 1000.0,
+            course = if (loc.hasBearing()) loc.bearing.toDouble() else null,
+            speed = if (loc.hasSpeed()) loc.speed.toDouble() else null,
         )
     }
 

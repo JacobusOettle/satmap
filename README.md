@@ -53,6 +53,14 @@ are in [docs/screenshots/android](docs/screenshots/android):
 | Map | Measuring | Offline maps | Drone mode |
 | --- | --- | --- | --- |
 | <img src="docs/screenshots/android/01-map.jpg" width="180"> | <img src="docs/screenshots/android/03-measure-live.jpg" width="180"> | <img src="docs/screenshots/android/09-offline-areas.jpg" width="180"> | <img src="docs/screenshots/android/25-drone-mode.jpg" width="180"> |
+| **Groups: terms** | **Your groups** | **SatMap Pro** | **A new group** |
+| <img src="docs/screenshots/android/28-groups-terms.jpg" width="180"> | <img src="docs/screenshots/android/29-groups-list.jpg" width="180"> | <img src="docs/screenshots/android/30-paywall.jpg" width="180"> | <img src="docs/screenshots/android/31-create-group.jpg" width="180"> |
+| **A group** | **An invite's QR code** | **Joining with a link** | **Sharing your location** |
+| <img src="docs/screenshots/android/32-group-detail.jpg" width="180"> | <img src="docs/screenshots/android/33-invite-qr.jpg" width="180"> | <img src="docs/screenshots/android/34-join-group.jpg" width="180"> | <img src="docs/screenshots/android/35-share-consent.jpg" width="180"> |
+| **A group on the map** | **Dropping a pin** | **A pin** | **A member** |
+| <img src="docs/screenshots/android/36-group-map.jpg" width="180"> | <img src="docs/screenshots/android/37-drop-pin.jpg" width="180"> | <img src="docs/screenshots/android/38-pin-detail.jpg" width="180"> | <img src="docs/screenshots/android/39-member-detail.jpg" width="180"> |
+| **A paused group** | | | |
+| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | | | |
 
 ## Features
 

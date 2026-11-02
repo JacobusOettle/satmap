@@ -15,22 +15,30 @@ class MapStyleTest {
     fun theOverlaysAreStackedAsMapKitDrewThem() {
         // Lines and fills first (track, measuring line, draft area), then the symbols from the lowest priority up:
         // MapLibre places symbols from the top layer down, so you and the markers win every collision.
+        // The shown group's trails go under your track, its pins and dots between the selected spot and the measuring
+        // points (groups §9.5).
         assertEquals(
             listOf(
+                "group-trails",
                 "track", "track-live",
                 "measure-fill", "measure-line",
                 "draft-fill", "draft-line",
                 "aviation-rings", "aviation",
                 "selected",
+                "group-pins", "group-pin-labels", "group-member-arrows", "group-members",
                 "measure-markers", "measure-letters",
                 "user-arrow", "user-dot",
             ),
             MapStyle.overlayLayerIds,
         )
         assertEquals(
-            listOf("track", "track-live", "measure", "draft", "aviation", "selected", "measure-points", "user"),
+            listOf(
+                "track", "track-live", "measure", "draft", "aviation", "selected", "measure-points", "user",
+                "group-trails", "group-pins", "group-members",
+            ),
             MapStyle.overlaySourceIds,
         )
+        assertEquals(MapStyle.groupSymbolLayerIds, listOf("group-pins", "group-pin-labels", "group-member-arrows", "group-members"))
     }
 
     @Test

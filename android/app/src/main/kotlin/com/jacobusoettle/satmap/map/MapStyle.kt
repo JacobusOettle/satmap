@@ -33,6 +33,7 @@ import org.maplibre.android.style.layers.PropertyFactory.lineCap
 import org.maplibre.android.style.layers.PropertyFactory.lineColor
 import org.maplibre.android.style.layers.PropertyFactory.lineDasharray
 import org.maplibre.android.style.layers.PropertyFactory.lineJoin
+import org.maplibre.android.style.layers.PropertyFactory.lineOpacity
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
 import org.maplibre.android.style.layers.PropertyFactory.symbolSortKey
 import org.maplibre.android.style.layers.PropertyFactory.symbolZOrder
@@ -72,6 +73,15 @@ object MapIds {
     const val USER_ARROW = "user-arrow"
     const val USER_DOT = "user-dot"
 
+    /** The shown group (docs/groups/SPEC.md §9.5): its members' trails, its pins and their labels, and its members'
+     *  dots with their heading. Each is also its source's id, except the labels (on `group-pins`) and the arrows (on
+     *  `group-members`). */
+    const val GROUP_TRAILS = "group-trails"
+    const val GROUP_PINS = "group-pins"
+    const val GROUP_PIN_LABELS = "group-pin-labels"
+    const val GROUP_MEMBER_ARROWS = "group-member-arrows"
+    const val GROUP_MEMBERS = "group-members"
+
     /** A KML file's shapes and their fill and line layers. */
     fun kml(file: UUID) = "kml/$file"
     fun kmlFill(file: UUID) = "kml/$file/fill"
@@ -110,6 +120,9 @@ object MapStyle {
         MapIds.SELECTED to true,
         MapIds.MEASURE_POINTS to true,
         MapIds.USER to true,
+        MapIds.GROUP_TRAILS to false,
+        MapIds.GROUP_PINS to false,
+        MapIds.GROUP_MEMBERS to false,
     )
 
     /** Every fixed overlay source (empty GeoJSON) and layer, bottom to top (DESIGN.md §3.8), and the base images. Run in
@@ -141,6 +154,8 @@ object MapStyle {
      *  between: fills and lines below `track`, names below `aviation-rings`, points below `measure-markers` (over
      *  `selected`). */
     private val overlayLayers: List<Pair<String, () -> Layer>> = listOf(
+        // The shown group's trails, above the KML blocks and below your track (groups §9.5).
+        MapIds.GROUP_TRAILS to { groupTrails() },
         // The dotted track: zero-length dashes with round caps draw dots 2.25 line widths apart.
         MapIds.TRACK to { trackLine(MapIds.TRACK) },
         MapIds.TRACK_LIVE to { trackLine(MapIds.TRACK_LIVE) },
@@ -208,6 +223,12 @@ object MapStyle {
                 iconPadding(0f),
             )
         },
+        // The shown group's pins, their labels, and its members' dots with their heading (groups §9.5): above the KML
+        // points, under the measuring points and you.
+        MapIds.GROUP_PINS to { groupLayer(MapIds.GROUP_PINS)!! },
+        MapIds.GROUP_PIN_LABELS to { groupLayer(MapIds.GROUP_PIN_LABELS)!! },
+        MapIds.GROUP_MEMBER_ARROWS to { groupLayer(MapIds.GROUP_MEMBER_ARROWS)!! },
+        MapIds.GROUP_MEMBERS to { groupLayer(MapIds.GROUP_MEMBERS)!! },
         // The measuring points always show and hide labels under them and round them; their letters hide nothing.
         MapIds.MEASURE_MARKERS to {
             SymbolLayer(MapIds.MEASURE_MARKERS, MapIds.MEASURE_POINTS).withProperties(
@@ -252,6 +273,59 @@ object MapStyle {
             )
         },
     )
+
+    /** The group's symbol layers, bottom to top, as they sit right under `measure-markers`. */
+    val groupSymbolLayerIds = listOf(MapIds.GROUP_PINS, MapIds.GROUP_PIN_LABELS, MapIds.GROUP_MEMBER_ARROWS, MapIds.GROUP_MEMBERS)
+
+    /** A member's trail: a solid line in their colour, 85 % opaque, 3 dp (2 above 10 trails, set by `GroupLayers`) at
+     *  MapKit's tile scale, as iOS's `GroupTrailRenderer` draws it like `TrackRenderer`. */
+    private fun groupTrails(): Layer = LineLayer(MapIds.GROUP_TRAILS, MapIds.GROUP_TRAILS).withProperties(
+        lineColor(toColor(get("colour"))),
+        lineOpacity(0.85f),
+        lineWidth(zoomScaled(3f)),
+        lineCap(Property.LINE_CAP_ROUND),
+        lineJoin(Property.LINE_JOIN_ROUND),
+    )
+
+    /** A group layer, made anew (`GroupLayers.restack` puts them back under KML layers added later); null for another
+     *  id. Pins always show and take room; their labels give way; the dots and their arrows always show. */
+    fun groupLayer(id: String): Layer? = when (id) {
+        MapIds.GROUP_TRAILS -> groupTrails()
+        MapIds.GROUP_PINS -> SymbolLayer(MapIds.GROUP_PINS, MapIds.GROUP_PINS).withProperties(
+            iconImage(get("img")),
+            iconAllowOverlap(true),
+            iconIgnorePlacement(false),
+            iconPadding(0f),
+        )
+        // Under the pin: the label's top 17 dp below the pin's centre.
+        MapIds.GROUP_PIN_LABELS -> SymbolLayer(MapIds.GROUP_PIN_LABELS, MapIds.GROUP_PINS)
+            .withFilter(has("label"))
+            .withProperties(
+                iconImage(get("label")),
+                iconAnchor(Property.ICON_ANCHOR_TOP),
+                iconOffset(arrayOf(0f, 17f)),
+                iconAllowOverlap(false),
+                iconIgnorePlacement(false),
+                iconPadding(2f),
+            )
+        MapIds.GROUP_MEMBER_ARROWS -> SymbolLayer(MapIds.GROUP_MEMBER_ARROWS, MapIds.GROUP_MEMBERS)
+            .withFilter(has("heading"))
+            .withProperties(
+                iconImage(get("arrow")),
+                iconRotate(get("heading")),
+                iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+                iconAllowOverlap(true),
+                iconIgnorePlacement(true),
+                iconPadding(0f),
+            )
+        MapIds.GROUP_MEMBERS -> SymbolLayer(MapIds.GROUP_MEMBERS, MapIds.GROUP_MEMBERS).withProperties(
+            iconImage(get("img")),
+            iconAllowOverlap(true),
+            iconIgnorePlacement(false),
+            iconPadding(0f),
+        )
+        else -> null
+    }
 
     /** The track's cyan dots (iOS `TrackRenderer`: 4 points wide, zero-length dashes 9 points apart, round), at
      *  MapKit's tile scale. */
