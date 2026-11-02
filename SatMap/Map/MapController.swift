@@ -24,6 +24,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var blocks: BlockLayers!
     /// Drone mode: aerodromes, strips, helipads and navaids, with distances from you and the tapped spot.
     private var aviation: AviationLayer!
+    /// The shown group: members, trails and pins.
+    private var groups: GroupLayer!
     private let track = TrackOverlay()
     private let measureLine = MeasureLineOverlay()
     private var trackRenderer: TrackRenderer?
@@ -90,7 +92,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         drawnTrackCount = model.track.count
         mapView.addOverlay(track, level: .aboveLabels)
         mapView.addOverlay(measureLine, level: .aboveLabels)
-        blocks = BlockLayers(mapView: mapView, below: track)
+        // Group trails go between the blocks and the track: blocks under the group layer's anchor, trails over it.
+        groups = GroupLayer(mapView: mapView, below: track)
+        mapView.insertOverlay(groups.anchor, below: track)
+        blocks = BlockLayers(mapView: mapView, below: groups.anchor)
         aviation = AviationLayer(mapView: mapView)
         aviation.isOn = model.terrainMode.showsAviation
 
@@ -210,6 +215,32 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             .removeDuplicates()
             .sink { [weak self] power in DispatchQueue.main.async { self?.powerChanged(power) } }
             .store(in: &cancellables)
+        model.groups.$mapRevision
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.groupsChanged() } }
+            .store(in: &cancellables)
+    }
+
+    /// The shown group's members, trails and pins, as the hub has them now (§9.5).
+    private func groupsChanged() {
+        guard isShown else { return } // drawn again when the screen comes back
+        groups.update(model.groups.hub.mapContent(now: Int64(Date().timeIntervalSince1970)))
+    }
+
+    /// Fits places on the screen with padding, at least `minimumMeters` across (a group shown from S5 or S8).
+    func fit(_ coordinates: [CLLocationCoordinate2D], padding: CGFloat, minimumMeters: Double) {
+        guard !coordinates.isEmpty, mapView.bounds.width > 2 * padding, mapView.bounds.height > 2 * padding else { return }
+        var rect = MKMapRect.null
+        for c in coordinates {
+            rect = rect.union(MKMapRect(origin: MKMapPoint(c), size: MKMapSize(width: 0, height: 0)))
+        }
+        let centre = MKMapPoint(x: rect.midX, y: rect.midY)
+        let minimum = minimumMeters * MKMapPointsPerMeterAtLatitude(centre.coordinate.latitude)
+        if rect.width < minimum {
+            rect = MKMapRect(x: centre.x - minimum / 2, y: rect.minY, width: minimum, height: rect.height)
+        }
+        model.following = false
+        keepCameraUntil = CACurrentMediaTime() + 1
+        mapView.setVisibleMapRect(rect, edgePadding: UIEdgeInsets(top: padding, left: padding, bottom: padding, right: padding), animated: true)
     }
 
     /// Tiles may be had again (`AppModel.requestReload`): a new layer asks again for those shown with a stand-in.
@@ -303,6 +334,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         updateScale()
         if heading != nil { updateArrow() } // the map may have turned
         aviation?.headingChanged()
+        groups?.headingChanged()
         imagery?.visibleRegionChanged()
     }
 
@@ -413,6 +445,18 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         // A tap on a point in a KML file (a launch point …) selects it: its own position, with its name. Where the finger
         // was on the map, which may have moved since (following you).
         let spot = mapView.convert(c, toPointTo: mapView)
+        // The shown group first (§9.1): a member's dot opens the member, then a group pin opens the pin. While
+        // measuring, a tap places a point as always.
+        if model.measure == .off, let gid = groups.shownGroupId {
+            if let m = groups.member(near: spot) {
+                model.groups.openFromMap(.member(groupId: gid, memberId: m.memberId))
+                return
+            }
+            if let p = groups.pin(near: spot) {
+                model.groups.openFromMap(.pin(groupId: gid, pinId: p.pinId))
+                return
+            }
+        }
         if model.measure == .off, let k = kmlPoint(near: spot) {
             model.pointTapped(GeoPoint(lat: k.coordinate.latitude, lon: k.coordinate.longitude), name: k.title)
             return
@@ -766,6 +810,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         model.recorder.headingWanted = true
         imagery.becameVisible()
         trackChanged()
+        groupsChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
     }
 
@@ -787,6 +832,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             return BlockLayers.renderer(o)
         case let o as BlockLines:
             return BlockLayers.renderer(o)
+        case let o as GroupTrailOverlay:
+            return GroupTrailRenderer(overlay: o)
         case let o as DraftAreaPolygon:
             let r = MKPolygonRenderer(polygon: o)
             r.strokeColor = .white
@@ -814,6 +861,10 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             return mapView.dequeueReusableAnnotationView(withIdentifier: BlockLabelView.reuseID, for: annotation)
         case let a as AviationAnnotation:
             return aviation.view(for: a)
+        case let a as GroupMemberAnnotation:
+            return groups.view(for: a)
+        case let a as GroupPinAnnotation:
+            return groups.view(for: a)
         default:
             return nil
         }
