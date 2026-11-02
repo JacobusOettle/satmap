@@ -286,7 +286,14 @@ class MapController(
         userDot = UserDotLayer(m, style, activity)
         track = TrackLayer(m, style, activity).also { it.reset(model.track) }
         drawnTrackCount = model.track.size
-        blocks = BlockLayers(m, style, activity).also { it.onChanged = { container.labelsChanged() } }
+        // Each file's layers are added once drawn off the main thread, against `track` and `measure-markers`: the
+        // group's go back under those anchors each time (groups §9.5 layer order).
+        blocks = BlockLayers(m, style, activity).also {
+            it.onChanged = {
+                groupLayers?.restack()
+                container.labelsChanged()
+            }
+        }
         aviation = AviationLayer(m, style, activity) { visibleRegion(m) }.also { it.isOn = model.terrainMode.value.showsAviation }
         markerLayer = MeasureMarkerLayer(m, style, activity)
         measureLine = MeasureLineLayer(m, style, activity)
@@ -344,11 +351,7 @@ class MapController(
         }
         scope.launch {
             combine(model.kml.files, model.kml.useFileColours) { files, colours -> files to colours }
-                .collect { (files, colours) ->
-                    blocks?.update(files, colours)
-                    // Newly shown files' layers go under the group's (groups §9.5 layer order).
-                    groupLayers?.restack()
-                }
+                .collect { (files, colours) -> blocks?.update(files, colours) }
         }
         // The shown group (groups §9.5 binding): its features and images made off the main thread, shown on it; again
         // every minute, for the animal pins' "… ago" labels and pins that expire.
@@ -386,6 +389,9 @@ class MapController(
             container.labelsChanged()
         }
     }
+
+    /** Test-only (the walkthrough): the style's layer ids, bottom to top; empty before the style has loaded. */
+    fun layerIds(): List<String> = map?.style?.takeIf { it.isFullyLoaded }?.layers?.map { it.id }.orEmpty()
 
     /** Test-only (the walkthrough, groups §9.6): each member dot's and group pin's point on the screen, in pixels, with
      *  its kind ("member" or "pin"), id and accessibility label. */

@@ -9,6 +9,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.security.KeyStore
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -23,7 +24,11 @@ import javax.crypto.spec.GCMParameterSpec
  *  (§9.9).
  *
  *  `loadAll` throws when the file is there but can't be read now (a Keystore error, a damaged file): the hub then
- *  deletes nothing and reads again later (§8.3). No file is no memberships. `key` gives the sealing key; tests pass a
+ *  deletes nothing and reads again later (§8.3). No file is no memberships. A file that can never be opened again
+ *  (its tag doesn't match: the Keystore key was lost and made anew, as some phones do after an update; or it isn't a
+ *  secrets file) would otherwise stop every later create and join: `save` sets it aside as `secrets.bin.unreadable`
+ *  and starts a new one, so the hub's next read drops the memberships it held, which can't be used again anyway. A
+ *  Keystore error (as before the first unlock) is never taken for that. `key` gives the sealing key; tests pass a
  *  software key, as Robolectric has no AndroidKeyStore. Thread-safe. */
 class KeystoreSecrets(
     private val file: File,
@@ -35,14 +40,20 @@ class KeystoreSecrets(
     override fun loadAll(): List<GroupSecret> = synchronized(lock) { read() }
 
     override fun save(secret: GroupSecret) = synchronized(lock) {
-        write(read().filter { it.groupId != secret.groupId } + secret)
+        val all = try {
+            read()
+        } catch (e: Unreadable) {
+            setAside(e.bytes)
+            emptyList()
+        }
+        write(all.filter { it.groupId != secret.groupId } + secret)
     }
 
     override fun delete(groupId: String) = synchronized(lock) {
         val all = try {
             read()
         } catch (e: Exception) {
-            // Can't read them now: nothing is deleted (the next save rewrites the file from what it holds).
+            // Can't read them now: nothing is deleted.
             return@synchronized
         }
         if (all.none { it.groupId == groupId }) return@synchronized
@@ -55,7 +66,31 @@ class KeystoreSecrets(
         } catch (e: FileNotFoundException) {
             return emptyList()
         }
-        return GroupSecret.decodeAll(open(bytes, key()))
+        val key = key() // a Keystore error is thrown as it is: it may pass
+        val plain = try {
+            open(bytes, key)
+        } catch (e: AEADBadTagException) {
+            throw Unreadable(bytes, e)
+        } catch (e: NotASecretsFile) {
+            throw Unreadable(bytes, e)
+        }
+        return try {
+            GroupSecret.decodeAll(plain)
+        } catch (e: Exception) {
+            throw Unreadable(bytes, e)
+        }
+    }
+
+    /** A file that will never open: the wrong key (the Keystore's was lost and made anew), or damaged. */
+    private class Unreadable(val bytes: ByteArray, cause: Exception) : IOException("The memberships can't be opened", cause)
+
+    /** Keeps the unreadable bytes beside it (in `no_backup` too); `write` then replaces the file whole. */
+    private fun setAside(bytes: ByteArray) {
+        try {
+            File(file.path + ".unreadable").writeBytes(bytes)
+        } catch (e: IOException) {
+            // Only a copy: the new file matters more.
+        }
     }
 
     private fun write(secrets: List<GroupSecret>) {
@@ -106,9 +141,13 @@ class KeystoreSecrets(
             return byteArrayOf(VERSION) + iv + cipher.doFinal(plain)
         }
 
-        /** `seal`'s bytes opened; throws when they aren't (another version, too short, a wrong key or tag). */
+        /** Bytes that aren't a sealed secrets file (another version, too short). */
+        class NotASecretsFile : IOException("Not a secrets file")
+
+        /** `seal`'s bytes opened; throws when they aren't (`NotASecretsFile`; `AEADBadTagException` for a wrong key or
+         *  tag). */
         fun open(sealed: ByteArray, key: SecretKey): ByteArray {
-            if (sealed.size < 1 + IV_SIZE + TAG_BITS / 8 || sealed[0] != VERSION) throw IOException("Not a secrets file")
+            if (sealed.size < 1 + IV_SIZE + TAG_BITS / 8 || sealed[0] != VERSION) throw NotASecretsFile()
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BITS, sealed, 1, IV_SIZE))
             return cipher.doFinal(sealed, 1 + IV_SIZE, sealed.size - 1 - IV_SIZE)

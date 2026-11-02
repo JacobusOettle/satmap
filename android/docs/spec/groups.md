@@ -58,6 +58,11 @@ Kotlin package root: `com.jacobusoettle.satmap`.
 
 ## 2. Launch arguments and demo mode
 
+All three are read in debug builds only (`BuildConfig.DEBUG`; the walkthrough and `InviteIntentTest` run the debug
+build), and `MainActivity.launchArguments` gives no extras at all for an intent with `CATEGORY_BROWSABLE`: a web page's
+`intent://` link can carry any `S.` extra, and any app can start the exported activity with extras, so neither may move
+member passes to another server or swap in the demo hub (iOS's launch arguments never come from a URL).
+
 - `groupsDemo YES` (`--es groupsDemo YES`, through `Defaults.setLaunchArguments` in `MainActivity.onCreate`, then
   `AppModel.applyLaunchArguments` → `groups.applyLaunchArguments`): `useDemo()` swaps in `GroupDemo.makeHub` (the core's
   `FakeGroupServer` with the §8.15 seed, memberships in memory, no sockets) in a store of its own
@@ -67,8 +72,8 @@ Kotlin package root: `com.jacobusoettle.satmap`.
   the switch. The new hub gets what the model was told before it (location access, the last fix), so sharing sends
   your position at once, as on iPhone.
 - `groupsBaseURL <url>`: `GroupConfig.baseURL` reads it at each request (and each socket), never saved; invite links
-  always use `GroupConfig.domain`.
-- `fakePro YES`, debug builds only, outside demo mode (§12.6): a `FakeBillingGateway.localTest()` (Pro at once,
+  always use `GroupConfig.domain`. A release build always uses `https://` + domain.
+- `fakePro YES`, outside demo mode (§12.6): a `FakeBillingGateway.localTest()` (Pro at once,
   product "pro", token "local-test-" and 20 base64url characters).
 
 ## 3. Transport and socket (`GroupHttp`)
@@ -94,6 +99,11 @@ Kotlin package root: `com.jacobusoettle.satmap`.
   `0x01 ‖ IV (12) ‖ ciphertext ‖ tag`, written whole with `AtomicFile` (§8.3).
 - No file: no memberships. A file that can't be opened (a Keystore error, a damaged file, another key) throws: the hub
   deletes nothing and reads again at the next `becameActive`. `delete` deletes nothing it can't read.
+- A file that will never open (`AEADBadTagException`: the Keystore key was lost and made anew while the app's data
+  stayed; or not a secrets file: another version, too short, or JSON that isn't a list of secrets) would block every
+  create and join: `save` copies it to `secrets.bin.unreadable` and writes the list from empty, so the hub's next read
+  keeps the new membership and drops the old ones (they can't be used without their passes). A Keystore error, which
+  may pass, is never taken for that.
 - The local store is `noBackupFilesDir/groups/groups.sqlite` on `AndroidSqlDriver` (a fresh copy in the cache if the
   file can't be opened; the memberships are restored from the server). Both rule files exclude `root/no_backup/`
   (`backup_rules.xml`, and `data_extraction_rules.xml` under cloud backup and device transfer).
@@ -108,7 +118,9 @@ Kotlin package root: `com.jacobusoettle.satmap`.
   offer id) and `pro_lifetime` (INAPP; `oneTimePurchaseOfferDetailsList`, else `oneTimePurchaseOfferDetails`):
   `formattedPrice` and `priceAmountMicros`. Purchases: `queryPurchasesAsync` for SUBS and INAPP. A purchase sheet
   (`launchBillingFlow` with the product and offer token) waits for `onPurchasesUpdated`; purchases announced outside a
-  sheet are taken up at the next refresh.
+  sheet (a pending purchase approved) are taken up at once on the model's scope (`takeUpdates`): Play's whole list is
+  read again, or, when Play can't be asked, the announced purchases replace those with the same token (an announcement
+  never takes away a purchase it doesn't name).
 - `refresh()` (after start, on every `becameActive`, and Restore): acknowledges purchased, unacknowledged Pro
   purchases, then Pro is the best purchased, not suspended one, Lifetime first, else the newest subscription. Pro writes
   `proCache` (`{"productId", "expiresAt": null, "checkedAt"}`, §10.6) and calls the hub's
@@ -117,6 +129,11 @@ Kotlin package root: `com.jacobusoettle.satmap`.
 - `buy`: `Done` (the paywall closes and the flow goes on), the pending text, nothing (cancelled), or the store text.
   `restore`: `Done`, pending, "No SatMap Pro purchase was found for this Google account." or the store text.
 - "Save {n}%": `savingPercent(yearlyMicros, monthlyMicros)`, floored, hidden unless above 0.
+- "The phone has Pro" for an action that sends a proof (S4's create, S5's Renew and Accept) is `hasConfirmedPro`: the
+  store has confirmed a purchase since launch (`proof()` isn't null). The cached `isPro` (S2's button, the paywall's
+  first screen) can't give a proof offline, so it opens the paywall instead, whose "Restore purchases" asks Play again;
+  `renewPro` and `acceptOwnership` throw `ProNotConfirmed` ("…Tap Restore purchases, then try again.") rather than
+  doing nothing.
 
 ## 6. Invite links in (`MainActivity`)
 
@@ -182,8 +199,9 @@ Kotlin package root: `com.jacobusoettle.satmap`.
   room), `group-pin-labels` (on `group-pins`, filter `has label`, anchored at its top 17 dp below the pin, gives way),
   `group-member-arrows` (on `group-members`, filter `has heading`, rotated with the map) and `group-members` (icon from
   `img`, allow-overlap) after `selected` and before `measure-markers`.
-- KML files shown later insert their layers below `track` and `measure-markers` (BlockLayers): `restack()`, run after
-  every Blocks update, puts the group's layers back just under those anchors, so the order stays KML fills and lines,
+- KML files shown later insert their layers below `track` and `measure-markers` (BlockLayers, once each file is drawn
+  off the main thread): `restack()`, run from `BlockLayers.onChanged` as each file's layers arrive or go, puts the
+  group's layers back just under those anchors, so the order stays KML fills and lines,
   group trails, your track …, KML points, group pins, labels, arrows, dots, measuring points, you.
 - Images (app-drawn, the map's density): a member's dot (`group-member/{colour}/{initials}/{live|stale}`: 26 dp, a 2 dp
   white ring, white bold 11 sp initials; stale: grey fill, ring in their colour), the heading's triangle

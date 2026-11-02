@@ -75,14 +75,18 @@ object GroupConfig {
      *  manifest. Invite links are always made and parsed with it, whatever `groupsBaseURL` says. */
     val domain: String = BuildConfig.GROUPS_DOMAIN
 
-    /** Where the API and the WebSocket are: `https://` + domain, or the launch extra `groupsBaseURL` (tests and the
-     *  local check against `wrangler dev`, e.g. `http://10.0.2.2:8787`), read at each request and never saved. */
+    /** Where the API and the WebSocket are: `https://` + domain, or, in debug builds only, the launch extra
+     *  `groupsBaseURL` (tests and the local check against `wrangler dev`, e.g. `http://10.0.2.2:8787`), read at each
+     *  request and never saved. A release build always talks to its own domain: any app can start SatMap with extras,
+     *  and requests carry member passes. */
     val baseURL: String
         get() = baseURL(Defaults.string("groupsBaseURL"))
 
-    /** `https://` + domain, unless `argument` is an http(s) URL (its trailing slashes dropped). */
-    fun baseURL(argument: String?): String =
-        argument?.trim()?.trimEnd('/')?.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: "https://$domain"
+    /** `https://` + domain, unless `honoured` (debug builds) and `argument` is an http(s) URL (its trailing slashes
+     *  dropped). */
+    fun baseURL(argument: String?, honoured: Boolean = BuildConfig.DEBUG): String =
+        argument?.takeIf { honoured }?.trim()?.trimEnd('/')?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: "https://$domain"
 
     /** The pages the Worker serves (§11.1), linked from S1, S2 and S3: always on the invite domain. */
     val termsURL: String get() = "https://$domain/terms"

@@ -63,7 +63,7 @@ fun CreateGroupScreen(model: AppModel, nav: GroupsNav) {
             FormSection {
                 ButtonRow("Create group", enabled = valid, busy = busy, busyText = "Creating…", tag = "createGroup", style = Headline) {
                     // Pro isn't confirmed on this phone now (the cache said Pro): the paywall, with Restore purchases.
-                    if (groups.pro.proof() == null) return@ButtonRow nav.replaceTop(GroupsRoute.Paywall(AfterPro.Create))
+                    if (!groups.hasConfirmedPro) return@ButtonRow nav.replaceTop(GroupsRoute.Paywall(AfterPro.Create))
                     message = null
                     busy = true
                     scope.launch {

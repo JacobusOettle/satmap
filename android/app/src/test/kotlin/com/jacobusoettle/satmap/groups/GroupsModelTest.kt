@@ -14,6 +14,7 @@ import com.jacobusoettle.satmap.app.GroupConfig
 import com.jacobusoettle.satmap.app.MapHost
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
+import com.jacobusoettle.satmap.core.GroupActionError
 import com.jacobusoettle.satmap.core.GroupDemo
 import com.jacobusoettle.satmap.core.InviteLink
 import com.jacobusoettle.satmap.core.PausedReason
@@ -199,6 +200,33 @@ class GroupsModelTest {
         assertEquals(listOf("R399.99", "R79.99", "R1,199.99"), ProPlan.entries.map { prices.getValue(it).formatted })
         assertEquals(GroupConfig.proProducts.subscription, groups.pro.productId)
         assertNotNull(Defaults.string(ProStore.CACHE_KEY))
+    }
+
+    /** S5's Renew and Accept, like S4's create, send their proof only when the store has confirmed Pro; otherwise
+     *  the paywall comes first (and renewPro says why rather than doing nothing). */
+    @Test
+    fun renewingNeedsProTheStoreConfirmed() {
+        assertFalse(groups.hasConfirmedPro)
+        var error: Exception? = null
+        var done = false
+        CoroutineScope(Dispatchers.Main).launch {
+            try {
+                groups.renewPro()
+            } catch (e: Exception) {
+                error = e
+            }
+            done = true
+        }
+        waitFor { done }
+        assertEquals(GroupActionError.Kind.ProNotConfirmed, (error as GroupActionError).kind)
+        done = false
+        CoroutineScope(Dispatchers.Main).launch {
+            groups.pro.buy(null, ProPlan.yearly)
+            groups.renewPro()
+            done = true
+        }
+        waitFor { done }
+        assertTrue(groups.hasConfirmedPro)
     }
 
     @Test

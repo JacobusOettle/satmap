@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
         val model = AppModel.shared
         // Read once, as iOS reads its argument domain: a recreated activity keeps what was chosen since.
         if (savedInstanceState == null) {
-            Defaults.setLaunchArguments(intent.extras)
+            Defaults.setLaunchArguments(launchArguments(intent))
             model.applyLaunchArguments()
         }
         mapController = MapController(this, model, savedInstanceState)
@@ -82,6 +82,14 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        /** The launch extras (iOS's launch arguments), or none when a browser sent the intent: a web page's
+         *  `intent://` link (an invite's landing page is one) can carry any `S.` extra, and a page must never choose
+         *  groups' server or demo mode, nor any other setting. Browsers add `CATEGORY_BROWSABLE` to every intent they
+         *  send; adb, the tests and the launcher don't. (iOS can't be reached this way: opening a URL carries no
+         *  launch arguments.) */
+        fun launchArguments(intent: Intent): Bundle? =
+            if (intent.hasCategory(Intent.CATEGORY_BROWSABLE)) null else intent.extras
+
         /** An intent Android hands over again when SatMap is reopened from Recents: the one that started its task
          *  (before Android 12 Back finishes the activity but leaves the task there, with that intent). Its files were
          *  imported, or its folder chosen, when it first came, and iOS hands each opened file to the app only once. */

@@ -23,9 +23,11 @@ import com.jacobusoettle.satmap.core.GroupRandom
 import com.jacobusoettle.satmap.core.ProProof
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -93,6 +95,9 @@ class ProStore(
     /** The proof for a purchase: Google's product and token, or demo mode's fake proof. */
     private val proofFor: (StorePurchase) -> ProProof = { p -> ProProof.Google(productId = p.products.first(), purchaseToken = p.token) },
     private val onPro: suspend (proof: ProProof, productId: String) -> Unit = { _, _ -> },
+    /** Where purchases Play announces outside a purchase sheet (a pending one approved) are taken up at once, as
+     *  `onPurchasesUpdated` asks (§10.4); without one (the tests), at the next `takeUpdates`. */
+    private val scope: CoroutineScope? = null,
 ) {
     sealed interface Prices {
         data object Loading : Prices
@@ -116,13 +121,19 @@ class ProStore(
 
     /** The purchase that makes this phone Pro, from the store's last answer. */
     private var best: StorePurchase? = null
+
+    /** Every purchase the store's last answer held (an announcement outside a sheet only names what changed). */
+    private var held: List<StorePurchase> = emptyList()
     private val refreshing = Mutex()
 
     init {
-        gateway.updates = { purchases -> pendingUpdates = purchases }
+        gateway.updates = { purchases ->
+            pendingUpdates = purchases
+            scope?.launch { takeUpdates() }
+        }
     }
 
-    /** Purchases Play announced outside a sheet, taken up by the next `refresh` (the listener runs on any thread). */
+    /** Purchases Play announced outside a sheet, not taken up yet (the listener runs on any thread). */
     @Volatile
     private var pendingUpdates: List<StorePurchase>? = null
 
@@ -160,11 +171,18 @@ class ProStore(
         list
     }
 
-    /** The store announced purchases outside a sheet. */
+    /** The store announced purchases outside a sheet (a pending purchase approved): Play's whole list read again,
+     *  acknowledging what is new, so Pro starts at once. When Play can't be asked, the announced purchases replace
+     *  those with the same token in the last answer (an announcement names only what changed, so it never takes away
+     *  a purchase it doesn't name). */
     suspend fun takeUpdates() {
         val u = pendingUpdates ?: return
         pendingUpdates = null
-        apply(u)
+        if (refresh() != null) return
+        refreshing.withLock {
+            val tokens = u.map { it.token }.toSet()
+            apply(held.filter { it.token !in tokens } + u)
+        }
     }
 
     /** `purchase(plan)`: the store's sheet, then what it says (§9.3 S3 results). */
@@ -196,6 +214,7 @@ class ProStore(
     }
 
     private suspend fun apply(list: List<StorePurchase>) {
+        held = list
         for (p in list) {
             if (p.purchased && !p.acknowledged && isProProduct(p)) {
                 try {

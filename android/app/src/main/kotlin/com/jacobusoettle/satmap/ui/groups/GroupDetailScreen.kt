@@ -74,7 +74,6 @@ import kotlinx.coroutines.launch
 fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: GroupsRoute?) {
     val groups = model.groups
     val rev by groups.revision.collectAsStateWithLifecycle()
-    val isPro by groups.pro.isPro.collectAsStateWithLifecycle()
     val fix by model.recorder.location.collectAsStateWithLifecycle()
     val now = rememberNow()
     val context = LocalContext.current
@@ -130,7 +129,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
                         )
                         if (d.canHandOver) {
                             ButtonRow("Renew SatMap Pro", modifier = tint) {
-                                if (isPro) run { groups.renewPro() } else nav.push(GroupsRoute.Paywall(AfterPro.Renew(groupId)))
+                                if (groups.hasConfirmedPro) run { groups.renewPro() } else nav.push(GroupsRoute.Paywall(AfterPro.Renew(groupId)))
                             }
                             ButtonRow("Hand over ownership", modifier = tint) { nav.push(GroupsRoute.Handover(groupId)) }
                         }
@@ -142,7 +141,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
                     FormSection(first = !d.isPaused) {
                         TextRow("$owner wants to make you the owner of this group. You need SatMap Pro.")
                         ButtonRow("Accept", tag = "acceptOwner") {
-                            if (isPro) run { groups.acceptOwnership(groupId) } else nav.push(GroupsRoute.Paywall(AfterPro.Accept(groupId)))
+                            if (groups.hasConfirmedPro) run { groups.acceptOwnership(groupId) } else nav.push(GroupsRoute.Paywall(AfterPro.Accept(groupId)))
                         }
                         ButtonRow("Decline") { run { groups.hub.cancelOwnershipOffer(groupId) } }
                     }

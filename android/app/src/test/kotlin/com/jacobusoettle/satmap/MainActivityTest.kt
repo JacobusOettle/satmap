@@ -289,6 +289,31 @@ class MainActivityTest {
         assertTrue(model.kml.files.value.isEmpty())
     }
 
+    /** A web page's `intent://` link can carry any extra: as a browser sends it (with `CATEGORY_BROWSABLE`), none is
+     *  read as a launch extra, so a page can't move groups to another server or into demo mode. The invite in it still
+     *  opens. adb's and the tests' extras still count. */
+    @Test
+    fun aWebPageCantSetLaunchExtras() {
+        val invite = InviteLink.parse(GroupDemo.inviteLink2, GroupConfig.domain) as InviteLink.Parsed.Invite
+        val link = "intent://join/${invite.link.token}#Intent;scheme=satmap;package=${app.packageName};" +
+            "S.groupKey=${Base64URL.encode(invite.link.groupKey)};S.groupsBaseURL=https://evil.example;S.groupsDemo=YES;end"
+        val fromBrowser = Intent.parseUri(link, Intent.URI_INTENT_SCHEME).addCategory(Intent.CATEGORY_BROWSABLE)
+        assertEquals("the link does carry it", "https://evil.example", fromBrowser.getStringExtra("groupsBaseURL"))
+        assertNull(MainActivity.launchArguments(fromBrowser))
+        try {
+            Defaults.setLaunchArguments(MainActivity.launchArguments(fromBrowser))
+            assertEquals("https://${GroupConfig.domain}", GroupConfig.baseURL)
+            assertNull(Defaults.bool("groupsDemo"))
+            assertEquals(invite, MainActivity.invite(fromBrowser))
+            // adb, the launcher and the tests send no BROWSABLE category.
+            val adb = Intent(app, MainActivity::class.java).putExtra("groupsBaseURL", "http://10.0.2.2:8787")
+            Defaults.setLaunchArguments(MainActivity.launchArguments(adb))
+            assertEquals("http://10.0.2.2:8787", GroupConfig.baseURL)
+        } finally {
+            Defaults.setLaunchArguments(null)
+        }
+    }
+
     @Test
     fun theLandingPagesIntentLinkCarriesTheKeyInAnExtra() {
         val invite = InviteLink.parse(GroupDemo.inviteLink2, GroupConfig.domain) as InviteLink.Parsed.Invite

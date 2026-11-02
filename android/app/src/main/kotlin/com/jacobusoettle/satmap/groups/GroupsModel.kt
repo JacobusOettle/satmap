@@ -238,9 +238,9 @@ class GroupsModel(
         }
         val proof = p.proofFor
         pro = if (proof != null) {
-            ProStore(p.billing, clock, proofFor = proof, onPro = { pr, product -> sendPro(pr, product) })
+            ProStore(p.billing, clock, proofFor = proof, onPro = { pr, product -> sendPro(pr, product) }, scope = scope)
         } else {
-            ProStore(p.billing, clock, onPro = { pr, product -> sendPro(pr, product) })
+            ProStore(p.billing, clock, onPro = { pr, product -> sendPro(pr, product) }, scope = scope)
         }
         val ready = CompletableDeferred<Unit>()
         started = ready
@@ -270,15 +270,17 @@ class GroupsModel(
 
     // Launch arguments and demo mode
 
-    /** Reads `groupsDemo` after `Defaults.setLaunchArguments` (as iOS reads `-groupsDemo YES`). `groupsBaseURL` is read
-     *  at each request. */
+    /** Reads `groupsDemo` after `Defaults.setLaunchArguments` (as iOS reads `-groupsDemo YES`), in debug builds only:
+     *  any app can start SatMap with extras, and demo mode would quietly stop the real sharing. `groupsBaseURL` is read
+     *  at each request (also debug builds only). */
     fun applyLaunchArguments() {
+        if (!BuildConfig.DEBUG) return
         if (Defaults.bool("groupsDemo") == true && !isDemo) {
             useDemo()
-        } else if (!isDemo && BuildConfig.DEBUG && Defaults.bool("fakePro") == true && !fakePro) {
+        } else if (!isDemo && Defaults.bool("fakePro") == true && !fakePro) {
             // The local check (§12.6): Pro at once, with a "local-test-" token, in debug builds outside demo mode.
             fakePro = true
-            pro = ProStore(FakeBillingGateway.localTest(), clock, onPro = { pr, product -> sendPro(pr, product) })
+            pro = ProStore(FakeBillingGateway.localTest(), clock, onPro = { pr, product -> sendPro(pr, product) }, scope = scope)
             scope.launch { pro.refresh() }
         }
     }
@@ -550,11 +552,17 @@ class GroupsModel(
         for (g in hub.groups) if (g.isSharing) hub.setSharing(false, g.groupId)
     }
 
-    /** "Renew SatMap Pro" with Pro on the phone, and after the paywall: E5 (§10.5). */
+    /** The phone has Pro the store has confirmed since launch, so an action that needs Pro (S4's create, S5's Renew
+     *  and Accept) can send its proof now; otherwise the paywall comes first (§10.5). The cached `isPro` alone isn't
+     *  enough: Play gives no proof offline, and the paywall's "Restore purchases" asks it again. */
+    val hasConfirmedPro: Boolean get() = pro.proof() != null
+
+    /** "Renew SatMap Pro" with Pro on the phone, and after the paywall: E5 (§10.5). Throws `ProNotConfirmed` when the
+     *  store hasn't confirmed Pro. */
     suspend fun renewPro() {
         ready()
         pro.refresh()
-        val proof = pro.proof() ?: return
+        val proof = pro.proof() ?: throw GroupActionError(GroupActionError.Kind.ProNotConfirmed)
         hub.updatePro(proof, pro.productId ?: GroupConfig.proProducts.subscription, expiresAt = null)
     }
 

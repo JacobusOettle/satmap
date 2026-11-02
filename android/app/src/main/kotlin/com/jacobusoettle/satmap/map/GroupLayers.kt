@@ -107,17 +107,14 @@ class GroupLayers(private val map: MapLibreMap, private val style: Style, privat
      *  which would put them over the group's: the group's go back to just under those anchors (§9.5 layer order). */
     fun restack() {
         val ids = style.layers.map { it.id }
-        val track = ids.indexOf(MapIds.TRACK)
-        if (track > 0 && ids[track - 1] != MapIds.GROUP_TRAILS) {
+        if (trailsMisplaced(ids)) {
             style.removeLayer(MapIds.GROUP_TRAILS)
             MapStyle.groupLayer(MapIds.GROUP_TRAILS)?.let { style.addLayerBelow(it, MapIds.TRACK) }
             style.getLayerAs<LineLayer>(MapIds.GROUP_TRAILS)?.setProperties(lineWidth(MapStyle.zoomScaled(widthPt.toFloat())))
         }
-        val markers = ids.indexOf(MapIds.MEASURE_MARKERS)
-        val wanted = MapStyle.groupSymbolLayerIds
-        if (markers >= wanted.size && ids.subList(markers - wanted.size, markers) != wanted) {
-            for (id in wanted) style.removeLayer(id)
-            for (id in wanted) MapStyle.groupLayer(id)?.let { style.addLayerBelow(it, MapIds.MEASURE_MARKERS) }
+        if (symbolsMisplaced(ids)) {
+            for (id in MapStyle.groupSymbolLayerIds) style.removeLayer(id)
+            for (id in MapStyle.groupSymbolLayerIds) MapStyle.groupLayer(id)?.let { style.addLayerBelow(it, MapIds.MEASURE_MARKERS) }
         }
     }
 
@@ -159,6 +156,41 @@ class GroupLayers(private val map: MapLibreMap, private val style: Style, privat
         const val PIN_DP = 30f
         const val ARROW = "group-member-arrow"
         private const val LABEL_PREFIX = "group-pin-label/"
+
+        /** `group-trails` isn't right under `track` (`ids` bottom to top, as `Style.layers` lists them). */
+        fun trailsMisplaced(ids: List<String>): Boolean {
+            val track = ids.indexOf(MapIds.TRACK)
+            return track > 0 && ids[track - 1] != MapIds.GROUP_TRAILS
+        }
+
+        /** The group's symbol layers aren't right under `measure-markers`, in their order. */
+        fun symbolsMisplaced(ids: List<String>): Boolean {
+            val markers = ids.indexOf(MapIds.MEASURE_MARKERS)
+            val wanted = MapStyle.groupSymbolLayerIds
+            return markers >= wanted.size && ids.subList(markers - wanted.size, markers) != wanted
+        }
+
+        /** What is out of the §9.5 order in `ids` (bottom to top): every KML fill and line under `group-trails`, which
+         *  is under `track`; every KML points layer under the group's symbol layers, which are under
+         *  `measure-markers`. Empty when all is well (the walkthrough checks the map with it). */
+        fun orderProblems(ids: List<String>): List<String> {
+            val problems = ArrayList<String>()
+            val trails = ids.indexOf(MapIds.GROUP_TRAILS)
+            val track = ids.indexOf(MapIds.TRACK)
+            val symbols = MapStyle.groupSymbolLayerIds.map { ids.indexOf(it) }
+            val markers = ids.indexOf(MapIds.MEASURE_MARKERS)
+            if (trails < 0 || track < 0 || trails > track) problems += "${MapIds.GROUP_TRAILS} isn't under ${MapIds.TRACK}"
+            if (symbols.any { it < 0 } || markers < 0 || symbols.any { it > markers }) {
+                problems += "the group's symbols aren't under ${MapIds.MEASURE_MARKERS}"
+            }
+            val firstSymbol = symbols.minOrNull() ?: -1
+            for ((i, id) in ids.withIndex()) {
+                if (!id.startsWith("kml/")) continue
+                if ((id.endsWith("/fill") || id.endsWith("/line")) && i > trails) problems += "$id is over ${MapIds.GROUP_TRAILS}"
+                if (id.endsWith("/points") && i > firstSymbol) problems += "$id is over ${MapIds.GROUP_PINS}"
+            }
+            return problems
+        }
 
         fun pinImageId(type: PinType?) = "group-pin/${type?.rawValue ?: "unknown"}"
         fun labelImageId(label: String) = LABEL_PREFIX + label

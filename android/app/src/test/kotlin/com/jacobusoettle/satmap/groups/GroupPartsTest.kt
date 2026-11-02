@@ -22,8 +22,13 @@ import com.jacobusoettle.satmap.core.PinType
 import com.jacobusoettle.satmap.core.ProProof
 import com.jacobusoettle.satmap.core.ReportTarget
 import com.jacobusoettle.satmap.map.GroupLayers
+import com.jacobusoettle.satmap.map.MapIds
+import com.jacobusoettle.satmap.map.MapStyle
 import com.jacobusoettle.satmap.ui.groups.GroupTexts
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -234,6 +239,34 @@ class GroupPartsTest {
         assertEquals(1, KeystoreSecrets(file, ::keyOne).loadAll().size)
     }
 
+    @Test
+    fun aFileThatCanNeverBeOpenedAgainIsSetAsideByTheNextSave() {
+        val file = File(app.cacheDir, "secrets-test3/secrets.bin").apply { parentFile!!.deleteRecursively() }
+        val aside = File(file.path + ".unreadable")
+        val a = GroupSecret("g1", "m1", "p1", "k1")
+        val b = GroupSecret("g2", "m2", "p2", "k2")
+        val c = GroupSecret("g3", "m3", "p3", "k3")
+        KeystoreSecrets(file, ::keyOne).save(a)
+        val old = file.readBytes()
+        // The Keystore's key was lost and made anew: the file never opens again. A create or join still saves.
+        val renewed = key()
+        val store = KeystoreSecrets(file) { renewed }
+        assertThrows(Exception::class.java) { store.loadAll() }
+        store.save(b)
+        assertEquals(listOf(b), store.loadAll())
+        assertArrayEquals("kept beside it", old, aside.readBytes())
+        // A damaged file the same way.
+        file.writeBytes(byteArrayOf(1, 2, 3))
+        store.save(c)
+        assertEquals(listOf(c), store.loadAll())
+        // A Keystore error may pass (before the first unlock): nothing is replaced or set aside.
+        aside.delete()
+        val locked = KeystoreSecrets(file) { throw java.security.KeyStoreException("locked") }
+        assertThrows(java.security.KeyStoreException::class.java) { locked.save(a) }
+        assertEquals(listOf(c), store.loadAll())
+        assertFalse(aside.exists())
+    }
+
     private val one by lazy { key() }
     private fun keyOne(): SecretKey = one
 
@@ -275,13 +308,57 @@ class GroupPartsTest {
         assertEquals(listOf("tok"), g.acknowledged)
         assertEquals(listOf(ProProof.Google("pro", "tok") to "pro"), sent)
         assertEquals("""{"productId":"pro","expiresAt":null,"checkedAt":1000}""", Defaults.string(ProStore.CACHE_KEY))
-        // Shown at once at the next launch, from the cache.
-        assertTrue(ProStore(Gateway(null), clock = { 0 }).isPro.value)
+        // Shown at once at the next launch, from the cache; but with no proof until the store answers.
+        val cachedOnly = ProStore(Gateway(null), clock = { 0 })
+        assertTrue(cachedOnly.isPro.value)
+        assertNull(cachedOnly.proof())
         // The store says there is none: the cache goes.
         g.held = emptyList()
         store.refresh()
         assertFalse(store.isPro.value)
         assertNull(Defaults.string(ProStore.CACHE_KEY))
+    }
+
+    /** A pending purchase approved while SatMap is open: Play's listener, outside a sheet. Taken up at once:
+     *  acknowledged, Pro, and the proof sent (§10.4). */
+    @Test
+    fun aPurchaseApprovedOutsideTheSheetMakesThePhoneProAtOnce() {
+        val pending = purchase("pro", "tok", purchased = false, acknowledged = false)
+        val g = Gateway(listOf(pending))
+        val sent = mutableListOf<ProProof>()
+        val store = ProStore(g, clock = { 0 }, onPro = { p, _ -> sent += p }, scope = CoroutineScope(Dispatchers.Unconfined))
+        runBlocking { store.refresh() }
+        assertFalse(store.isPro.value)
+        val approved = purchase("pro", "tok", acknowledged = false)
+        g.held = listOf(approved)
+        g.updates!!.invoke(listOf(approved))
+        assertTrue(store.isPro.value)
+        assertEquals(listOf("tok"), g.acknowledged)
+        assertEquals(listOf<ProProof>(ProProof.Google("pro", "tok")), sent)
+        assertEquals(ProProof.Google("pro", "tok"), store.proof())
+    }
+
+    /** When Play can't be asked, an announcement only replaces the purchases it names: a pending one announced
+     *  doesn't take away Lifetime. */
+    @Test
+    fun anAnnouncementTakesNothingAwayItDoesntName() {
+        val life = purchase("pro_lifetime", "l")
+        val g = Gateway(listOf(life))
+        val store = ProStore(g, clock = { 0 }, scope = CoroutineScope(Dispatchers.Unconfined))
+        runBlocking { store.refresh() }
+        assertTrue(store.isPro.value)
+        g.held = null
+        g.updates!!.invoke(listOf(purchase("pro", "s", purchased = false)))
+        assertTrue(store.isPro.value)
+        assertEquals(ProProof.Google("pro_lifetime", "l"), store.proof())
+        // Without a scope it waits for takeUpdates.
+        Defaults.prefs.edit().remove(ProStore.CACHE_KEY).commit()
+        val g2 = Gateway(null)
+        val waiting = ProStore(g2, clock = { 0 })
+        g2.updates!!.invoke(listOf(purchase("pro", "x")))
+        assertFalse(waiting.isPro.value)
+        runBlocking { waiting.takeUpdates() }
+        assertTrue(waiting.isPro.value)
     }
 
     @Test
@@ -308,5 +385,32 @@ class GroupPartsTest {
         assertEquals("https://${GroupConfig.domain}", GroupConfig.baseURL(null))
         assertEquals("http://10.0.2.2:8787", GroupConfig.baseURL("http://10.0.2.2:8787/"))
         assertEquals("https://${GroupConfig.domain}", GroupConfig.baseURL("ftp://nope"))
+        // A release build always talks to its own domain.
+        assertEquals("https://${GroupConfig.domain}", GroupConfig.baseURL("https://evil.example", honoured = false))
+    }
+
+    // The map's layer order (§9.5)
+
+    @Test
+    fun theLayerOrderPutsTheGroupOverTheKmlFilesShapesAndPoints() {
+        val file = "kml/2b7c9440-0000-0000-0000-000000000001"
+        val symbols = MapStyle.groupSymbolLayerIds
+        val good = listOf("imagery", "$file/fill", "$file/line", MapIds.GROUP_TRAILS, MapIds.TRACK, "selected", "$file/points") +
+            symbols + MapIds.MEASURE_MARKERS
+        assertEquals(emptyList<String>(), GroupLayers.orderProblems(good))
+        assertFalse(GroupLayers.trailsMisplaced(good))
+        assertFalse(GroupLayers.symbolsMisplaced(good))
+        // As BlockLayers adds a file shown later: against track and measure-markers, over the group's layers.
+        val late = listOf("imagery", MapIds.GROUP_TRAILS, "$file/fill", "$file/line", MapIds.TRACK, "selected") + symbols +
+            "$file/points" + MapIds.MEASURE_MARKERS
+        assertEquals(
+            listOf("$file/fill is over ${MapIds.GROUP_TRAILS}", "$file/line is over ${MapIds.GROUP_TRAILS}",
+                   "$file/points is over ${MapIds.GROUP_PINS}"),
+            GroupLayers.orderProblems(late),
+        )
+        assertTrue(GroupLayers.trailsMisplaced(late))
+        assertTrue(GroupLayers.symbolsMisplaced(late))
+        assertEquals(listOf("${MapIds.GROUP_TRAILS} isn't under ${MapIds.TRACK}", "the group's symbols aren't under ${MapIds.MEASURE_MARKERS}"),
+                     GroupLayers.orderProblems(listOf(MapIds.TRACK, MapIds.MEASURE_MARKERS)))
     }
 }
