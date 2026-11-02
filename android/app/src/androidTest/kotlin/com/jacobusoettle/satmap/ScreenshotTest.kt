@@ -541,7 +541,7 @@ class ScreenshotTest {
             typeText(groupName, "Weekend braai")
             val displayName = id("displayName")
             click(displayName)
-            typeText(displayName, "Sam", replacing = true)
+            typeText(displayName, "Sam\n", replacing = true) // the return key hides the keyboard, as on iOS
             sleep(1)
             snap("31-create-group")
             tap("Cancel")
@@ -584,7 +584,7 @@ class ScreenshotTest {
             if (node(id("joinGroup"))?.config?.contains(SemanticsProperties.Disabled) == true) {
                 val name = id("displayName")
                 click(name)
-                typeText(name, "Sam")
+                typeText(name, "Sam\n")
                 sleep(1)
             }
             click(id("joinGroup"))
@@ -626,10 +626,13 @@ class ScreenshotTest {
                     val animal = id("pinAnimal")
                     if (waitForExistence(animal, 5)) {
                         click(animal)
-                        typeText(animal, "Rhino")
+                        typeText(animal, "Rhino\n")
+                    } else {
+                        fail("No field for the animal")
                     }
                     sleep(1)
                     snap("37-drop-pin")
+                    scrollTo(id("dropPinConfirm"))
                     click(id("dropPinConfirm"))
                 } else {
                     fail("The drop pin screen didn't open")

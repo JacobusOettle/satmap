@@ -21,6 +21,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -266,7 +267,10 @@ fun EditNameScreen(model: AppModel, groupId: String, rename: Boolean, nav: Group
                     text,
                     { text = it },
                     placeholder = if (rename) "e.g. Kruger trip" else "e.g. Sam",
-                    keyboardOptions = KeyboardOptions(capitalization = if (rename) KeyboardCapitalization.Sentences else KeyboardCapitalization.Words),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = if (rename) KeyboardCapitalization.Sentences else KeyboardCapitalization.Words,
+                        imeAction = ImeAction.Done,
+                    ),
                 )
             }
         }

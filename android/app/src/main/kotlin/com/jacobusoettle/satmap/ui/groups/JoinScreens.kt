@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -202,7 +203,7 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
                             { displayName = it },
                             placeholder = "e.g. Sam",
                             modifier = Modifier.testTag("displayName"),
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),
                         )
                     }
                 }
