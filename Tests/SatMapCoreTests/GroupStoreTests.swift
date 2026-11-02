@@ -106,6 +106,26 @@ final class GroupStoreTests: XCTestCase {
         XCTAssertEqual(store.group(gid)?.cursor, 10)
     }
 
+    func testItemsAtOrBelowTheCursorAreSkipped() throws {
+        _ = try store.apply(page([.member(seq: 2, memberId: other, role: "member", joinedAt: 9000, profile: rec(1)),
+                                  .pin(seq: 4, pinId: "p1", memberId: other, createdAt: 10_300, expiresAt: nil, rec: rec(3))], cursor: 4), groupId: gid)
+        _ = try store.apply(page([.removed(seq: 6, what: "pin", id: "p1"), .removed(seq: 7, what: "member", id: other)], cursor: 7), groupId: gid)
+        // A tick computed before that page (from 3) arrives after it: its old items bring nothing back (no tombstones),
+        // its newer ones apply, and the cursor stays.
+        let applied = try store.apply(page([.member(seq: 2, memberId: other, role: "member", joinedAt: 9000, profile: rec(1)),
+                                            .pin(seq: 4, pinId: "p1", memberId: other, createdAt: 10_300, expiresAt: nil, rec: rec(3)),
+                                            .chunk(seq: 5, memberId: other, start: 10_200, rec: rec(2))], cursor: 5), groupId: gid)
+        XCTAssertFalse(applied.changed)
+        XCTAssertTrue(store.members(gid).isEmpty)
+        XCTAssertTrue(store.pins(gid).isEmpty)
+        XCTAssertTrue(store.chunks(gid).isEmpty)
+        XCTAssertEqual(store.group(gid)?.cursor, 7)
+        _ = try store.apply(page([.pin(seq: 4, pinId: "p1", memberId: other, createdAt: 10_300, expiresAt: nil, rec: rec(3)),
+                                  .pin(seq: 8, pinId: "p2", memberId: other, createdAt: 10_400, expiresAt: nil, rec: rec(4))], cursor: 8), groupId: gid)
+        XCTAssertEqual(store.pins(gid).map(\.pinId), ["p2"])
+        XCTAssertEqual(store.group(gid)?.cursor, 8)
+    }
+
     func testReset() throws {
         _ = try store.apply(page([.member(seq: 1, memberId: other, role: "member", joinedAt: 9000, profile: rec(1)),
                                   .chunk(seq: 2, memberId: other, start: 10_200, rec: rec(2)),

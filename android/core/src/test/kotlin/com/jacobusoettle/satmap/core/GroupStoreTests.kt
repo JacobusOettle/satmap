@@ -125,6 +125,27 @@ class GroupStoreTests {
     }
 
     @Test
+    fun testItemsAtOrBelowTheCursorAreSkipped() {
+        store.apply(page(listOf(ChangeItem.Member(seq = 2, memberId = other, role = "member", joinedAt = 9000, profile = rec(1)),
+                                ChangeItem.Pin(seq = 4, pinId = "p1", memberId = other, createdAt = 10_300, expiresAt = null, rec = rec(3))), cursor = 4), gid)
+        store.apply(page(listOf(ChangeItem.Removed(seq = 6, what = "pin", id = "p1"), ChangeItem.Removed(seq = 7, what = "member", id = other)), cursor = 7), gid)
+        // A tick computed before that page (from 3) arrives after it: its old items bring nothing back (no tombstones),
+        // its newer ones apply, and the cursor stays.
+        val applied = store.apply(page(listOf(ChangeItem.Member(seq = 2, memberId = other, role = "member", joinedAt = 9000, profile = rec(1)),
+                                              ChangeItem.Pin(seq = 4, pinId = "p1", memberId = other, createdAt = 10_300, expiresAt = null, rec = rec(3)),
+                                              ChangeItem.Chunk(seq = 5, memberId = other, start = 10_200, rec = rec(2))), cursor = 5), gid)
+        assertFalse(applied.changed)
+        assertTrue(store.members(gid).isEmpty())
+        assertTrue(store.pins(gid).isEmpty())
+        assertTrue(store.chunks(gid).isEmpty())
+        assertEquals(7L, store.group(gid)?.cursor)
+        store.apply(page(listOf(ChangeItem.Pin(seq = 4, pinId = "p1", memberId = other, createdAt = 10_300, expiresAt = null, rec = rec(3)),
+                                ChangeItem.Pin(seq = 8, pinId = "p2", memberId = other, createdAt = 10_400, expiresAt = null, rec = rec(4))), cursor = 8), gid)
+        assertEquals(listOf("p2"), store.pins(gid).map { it.pinId })
+        assertEquals(8L, store.group(gid)?.cursor)
+    }
+
+    @Test
     fun testReset() {
         store.apply(page(listOf(ChangeItem.Member(seq = 1, memberId = other, role = "member", joinedAt = 9000, profile = rec(1)),
                                 ChangeItem.Chunk(seq = 2, memberId = other, start = 10_200, rec = rec(2)),

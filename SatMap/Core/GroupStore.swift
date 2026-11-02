@@ -614,7 +614,9 @@ final class GroupStore {
             }
             let me = g.memberId
             var joinedAt = g.joinedAt
-            for item in page.items {
+            // Items at or below the cursor were applied already (§6.3). A tick computed before a later HTTP page can
+            // still carry them; without tombstones, an old pin or member item would bring back what a removal deleted.
+            for item in page.items where item.seq > g.cursor {
                 switch item {
                 case .group(let seq, let profile):
                     if seq >= g.profileSeq, let data = Base64URL.decode(profile) {

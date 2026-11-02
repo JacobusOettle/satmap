@@ -576,6 +576,9 @@ class GroupStore(path: String, driver: SqlDriver = MBTiles.driver) : Closeable {
         val me = g.memberId
         var joinedAt = g.joinedAt
         for (item in page.items) {
+            // Items at or below the cursor were applied already (§6.3). A tick computed before a later HTTP page can
+            // still carry them; without tombstones, an old pin or member item would bring back what a removal deleted.
+            if (item.seq <= g.cursor) continue
             when (item) {
                 is ChangeItem.Group -> {
                     val data = Base64URL.decode(item.profile)
