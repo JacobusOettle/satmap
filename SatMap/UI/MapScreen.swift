@@ -6,6 +6,7 @@ struct MapScreen: View {
     @ObservedObject var model: AppModel
     @ObservedObject var offline: OfflineManager
     @ObservedObject var recorder: LocationRecorder
+    @ObservedObject var groups: GroupsModel
     @State private var confirmClearTrack = false
     /// What the terrain button now shows, said for a moment beside it after a tap.
     @State private var terrainToast: String?
@@ -62,6 +63,14 @@ struct MapScreen: View {
                 } else if recorder.reducedAccuracy {
                     Hint(text: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location.")
                 }
+                // The shown group is paused (§9.1): a tap opens it; ✕ hides the banner until the next launch.
+                if let banner = groups.pausedBanner, !model.isDrawingArea {
+                    Hint(text: banner.text, onClose: { groups.hideBanner(banner.groupId) }, closeLabel: "Hide")
+                        .contentShape(Rectangle())
+                        .onTapGesture { groups.openPausedGroup(banner.groupId) }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("groupPausedHint")
+                }
                 Spacer()
                 // Map credits are in the Offline maps sheet.
                 if !model.isDrawingArea {
@@ -75,6 +84,14 @@ struct MapScreen: View {
                         Spacer()
                         controls
                     }
+                    // Groups at the left edge, level with the top of the controls (the compass): an overlay, so the
+                    // row keeps its height and the right-hand column doesn't grow (SD21). (Tests find it by its
+                    // label, as the other map buttons; the id `groupsButton` is Android's test tag, §9.6.)
+                    .overlay(alignment: .topLeading) {
+                        MapButton(systemImage: "person.3.fill", label: "Groups", active: groups.shownGroupId != nil) {
+                            groups.openFromButton()
+                        }
+                    }
                     // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
                     // bottom of the screen to a tapped spot's coordinates.
                     .padding(.bottom, Self.controlsLift)
@@ -85,17 +102,28 @@ struct MapScreen: View {
             .overlay(alignment: .bottom) {
                 if let p = model.selectedPoint, !model.isDrawingArea {
                     VStack(spacing: 6) {
-                        // A KML point's name over its coordinates.
-                        if let name = model.selectedName {
-                            Text(name)
-                                .font(.subheadline.weight(.bold))
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 5)
-                                .background(Color.black.opacity(0.65))
-                                .clipShape(Capsule())
-                                .accessibilityIdentifier("tappedName")
+                        if let gid = groups.activeShownGroupId {
+                            // With a group shown (and not paused): "Drop pin" at the spot, beside a KML point's name.
+                            HStack(spacing: 8) {
+                                if let name = model.selectedName { nameCapsule(name) }
+                                Button {
+                                    groups.openFromMap(.dropPin(groupId: gid, lat: p.lat, lon: p.lon))
+                                } label: {
+                                    Label("Drop pin", systemImage: "mappin.and.ellipse")
+                                        .font(.subheadline.weight(.bold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 5)
+                                        .background(Color.black.opacity(0.65))
+                                        .clipShape(Capsule())
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.3), lineWidth: 1))
+                                }
+                                .accessibilityIdentifier("dropPin")
+                            }
+                        } else if let name = model.selectedName {
+                            // A KML point's name over its coordinates.
+                            nameCapsule(name)
                         }
                         CoordinateRow {
                             CoordinateBar(icon: model.selectedName == nil ? "mappin" : "mappin.circle.fill", text: Format.coordinate(p),
@@ -117,6 +145,8 @@ struct MapScreen: View {
                 OfflineSheet(model: model, offline: offline, library: model.kml)
             case .coordinates:
                 CoordinateEntryView(model: model)
+            case .groups:
+                GroupsSheet(groups: groups, model: model)
             }
         }
         .background(
@@ -126,6 +156,12 @@ struct MapScreen: View {
                 }
             }
         )
+        // A group's member, pin or new pin opened from the map, in its own sheet (§9.2).
+        .background(
+            Color.clear.sheet(item: $groups.groupItem) { item in
+                GroupItemSheet(groups: groups, model: model, item: item)
+            }
+        )
         .confirmationDialog("Clear the recorded track?", isPresented: $confirmClearTrack, titleVisibility: .visible) {
             Button("Clear track", role: .destructive) { model.clearTrack() }
         }
@@ -133,6 +169,19 @@ struct MapScreen: View {
 
     /// Two side buttons and the gap between them.
     private static let controlsLift: CGFloat = 2 * (50 + 12)
+
+    /// A selected KML point's name, over its coordinates.
+    private func nameCapsule(_ name: String) -> some View {
+        Text(name)
+            .font(.subheadline.weight(.bold))
+            .foregroundColor(.white)
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(Color.black.opacity(0.65))
+            .clipShape(Capsule())
+            .accessibilityIdentifier("tappedName")
+    }
 
     private var controls: some View {
         VStack(spacing: 12) {
@@ -296,8 +345,10 @@ struct Crosshair: View {
 
 struct Hint: View {
     let text: String
-    /// Shows a ✕ ("Stop measuring") after the text.
+    /// Shows a ✕ after the text.
     var onClose: (() -> Void)?
+    /// What VoiceOver says for the ✕.
+    var closeLabel = "Stop measuring"
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -307,7 +358,7 @@ struct Hint: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark").font(.footnote.weight(.bold))
                 }
-                .accessibilityLabel(Text("Stop measuring"))
+                .accessibilityLabel(Text(closeLabel))
             }
         }
         .foregroundColor(.white)

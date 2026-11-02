@@ -8,9 +8,17 @@ struct SatMapApp: App {
     var body: some Scene {
         WindowGroup {
             let model = AppModel.shared
-            MapScreen(model: model, offline: model.offline, recorder: model.recorder)
+            MapScreen(model: model, offline: model.offline, recorder: model.recorder, groups: model.groups)
                 .preferredColorScheme(.dark)
                 .onOpenURL { url in
+                    // A group invite (https://{domain}/j/… as a universal link, or the landing page's satmap://join/…):
+                    // the join sheet, never a join by itself (docs/groups/SPEC.md §5.6). A link without its key shows
+                    // the incomplete-link text.
+                    let invite = InviteLink.parse(url.absoluteString, domain: GroupConfig.domain)
+                    if invite != .notInvite {
+                        model.groups.openInvite(invite)
+                        return
+                    }
                     // A .kml, .kmz or .gpx shared into the app ("Open in SatMap" / "Copy to SatMap").
                     model.kml.importFile(at: url) { file in
                         if let b = file?.document.bounds {

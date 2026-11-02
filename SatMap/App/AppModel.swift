@@ -238,6 +238,8 @@ enum ActiveSheet: String, Identifiable {
     case blocks
     case offline
     case coordinates
+    /// Groups (docs/groups/SPEC.md §9.2): the list or the terms, with the screens pushed on it.
+    case groups
 
     var id: String { rawValue }
 }
@@ -250,6 +252,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     let recorder = LocationRecorder()
     let kml = KMLLibrary()
     let offline = OfflineManager()
+    /// Groups: made at launch, because sharing your position runs with no screen (§8.1).
+    let groups = GroupsModel()
     private let trackLog = TrackLog(url: AppPaths.track)
 
     /// The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the array).
@@ -351,7 +355,12 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         recorder.seed(lastRecorded: track.last)
         recorder.onTrackPoint = { [weak self] p in self?.appendTrack(p) }
         recorder.onFix = { [weak self] loc in self?.locationUpdated(loc) }
-        recorder.onHeading = { [weak self] h in self?.map?.headingUpdated(h) }
+        recorder.onHeading = { [weak self] h in
+            self?.map?.headingUpdated(h)
+            self?.groups.heading = h
+        }
+        groups.app = self
+        groups.start(recorder: recorder)
 
         NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             // Elevations aren't looked up in the background; catch up when the app is opened.
@@ -483,6 +492,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         track.append(p)
         trackLog.append(p)
         trackRevision += 1
+        // The trail of every group you share with (§8.5).
+        groups.trackPoint(p)
     }
 
     func clearTrack() {
@@ -497,6 +508,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private func locationUpdated(_ loc: CLLocation) {
         map?.locationUpdated(loc)
         carPlayMap?.locationUpdated(loc)
+        // The live position for the groups you share with (§8.5).
+        groups.fix(loc)
         updateDroneReport()
         // Only for the phone's screen (with CarPlay the app stays active while the phone is locked).
         if UIApplication.shared.applicationState == .active, map?.isOnScreen == true { refreshUserElevation(loc) }
