@@ -58,24 +58,39 @@ enum GroupDemo {
             Walker(name: "Sipho", role: "member", colour: 9, offset: (0.0018, -0.0006), heading: nil, age: 25 * 60, bearing: 140, joined: 41 * day),
         ]
         var ids: [String: DemoMember] = ["Sam": sam]
+        var feed: [(member: DemoMember, walker: Walker, end: GeoPoint)] = []
+        /// A walker's live record, `walker.age` seconds before `time`.
+        func live(_ m: DemoMember, _ w: Walker, _ end: GeoPoint, _ time: Int64) -> LiveEntry? {
+            let at = time - w.age
+            let p = LivePosition(time: at, lat: MicroDegrees.from(end.lat), lon: MicroDegrees.from(end.lon), accuracy: 5,
+                                 heading: w.heading, speed: w.heading == nil ? nil : 140)
+            guard let rec = try? GroupCrypto.seal(p.encoded(), key: kruger.keys.live(m.id), aad: GroupAAD.live(kruger.id, m.id, at: at)) else { return nil }
+            return LiveEntry(memberId: m.id, at: at, rec: Base64URL.encode(rec))
+        }
         for w in walkers {
             let m = kruger.member(w.name)
             ids[w.name] = m
             server.seedMember(groupId: kruger.id, memberId: m.id, pass: m.pass, role: w.role, joinedAt: now - w.joined,
                               profile: kruger.memberProfile(m, colour: w.colour))
             let end = GeoPoint(lat: a.lat + w.offset.0, lon: a.lon + w.offset.1)
-            let at = now - w.age
-            for (start, points) in trail(end: end, endTime: at, bearing: w.bearing) {
+            for (start, points) in trail(end: end, endTime: now - w.age, bearing: w.bearing) {
                 if let plain = try? TrailChunk.encode(points, windowStart: start, compress: true),
                    let rec = try? GroupCrypto.seal(plain, key: kruger.keys.trail(m.id), aad: GroupAAD.trail(kruger.id, m.id, start: start)) {
                     server.seedChunk(groupId: kruger.id, memberId: m.id, start: start, rec: Base64URL.encode(rec))
                 }
             }
-            let live = LivePosition(time: at, lat: MicroDegrees.from(end.lat), lon: MicroDegrees.from(end.lon), accuracy: 5,
-                                    heading: w.heading, speed: w.heading == nil ? nil : 140)
-            if let rec = try? GroupCrypto.seal(live.encoded(), key: kruger.keys.live(m.id), aad: GroupAAD.live(kruger.id, m.id, at: at)) {
-                server.seedLive(groupId: kruger.id, memberId: m.id, at: at, rec: Base64URL.encode(rec))
+            if let entry = live(m, w, end, now), let rec = entry.rec {
+                server.seedLive(groupId: kruger.id, memberId: m.id, at: entry.at, rec: rec)
             }
+            feed.append((m, w, end))
+        }
+        // A walkthrough runs for many minutes after the seed: the members go on "sharing", so their dots keep the ages
+        // above (fresh, and Sipho 25 minutes old) whenever the live positions are read.
+        let krugerId = kruger.id
+        let liveFeed = feed
+        server.liveSource = { groupId, time in
+            guard groupId == krugerId else { return [] }
+            return liveFeed.compactMap { live($0.member, $0.walker, $0.end, time) }
         }
         let pins: [(type: PinType, animal: String?, note: String?, offset: (Double, Double), by: String, age: Int64)] = [
             (.animal, "Kudu", "Three bulls", (-0.0006, 0.0004), "Thandi", 2 * 3600),

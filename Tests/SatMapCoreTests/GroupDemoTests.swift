@@ -101,6 +101,23 @@ final class GroupDemoTests: XCTestCase {
         XCTAssertEqual(t.live?.lat ?? 0, a.lat - 0.0012, accuracy: 1e-6)
     }
 
+    func testDotsStayFreshThroughALongWalkthrough() async throws {
+        let (hub, _, clock, _) = try await demo()
+        let gid = try XCTUnwrap(hub.groups.first?.groupId)
+        // Shots 01–27 take a while before the group is shown.
+        clock.advance(40 * 60)
+        hub.setShown(gid)
+        await hub.tick(foreground: true)
+        await hub.waitForBackgroundWork()
+        let map = try XCTUnwrap(hub.mapContent(now: clock.now))
+        XCTAssertEqual(map.members.filter(\.isStale).count, 1, "only Sipho")
+        XCTAssertEqual(map.members.first { $0.initials == "T" }?.a11yLabel, "Thandi, Sharing · just now")
+        XCTAssertEqual(map.members.first { $0.a11yLabel.hasPrefix("Sipho") }?.a11yLabel, "Sipho, Last seen 25 min ago")
+        // Trails and pins are still there (within the last 24 hours, the animal sighting within 12).
+        XCTAssertEqual(map.trails.count, 4)
+        XCTAssertEqual(map.pins.count, 6)
+    }
+
     func testDroneTeamIsPaused() async throws {
         let (hub, _, _, _) = try await demo()
         let gid = try XCTUnwrap(hub.groups.last?.groupId)

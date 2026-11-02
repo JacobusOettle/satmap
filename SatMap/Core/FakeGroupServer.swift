@@ -19,6 +19,10 @@ final class FakeGroupServer: GroupTransport {
     /// Uploaded chunks whose window start is a key here are rejected with that error (`before_join`, `bad_time`,
     /// `bad_record` or `window_paused`), as long as the entry stays.
     var chunkRejections: [Int64: String] = [:]
+    /// Demo mode: asked at each E21 for a group's live records at that time; newer ones replace the stored ones, as
+    /// if those members kept sharing (`GroupDemo` keeps its members' dots fresh however long a walkthrough runs). It
+    /// runs under the server's lock and must not call back into the server.
+    var liveSource: ((_ groupId: String, _ now: Int64) -> [LiveEntry])?
 
     private let clock: () -> Int64
     private let lock = NSLock()
@@ -408,6 +412,13 @@ final class FakeGroupServer: GroupTransport {
             guard !visible.isEmpty else { throw Answer(status: 404, code: "not_found") }
             return (200, GroupArchive.build(visible))
         case ("GET", "live", 1):
+            if g.status == "active", let source = liveSource {
+                for e in source(g.id, now) where g.members[e.memberId] != nil && (g.live[e.memberId]?.at ?? .min) < e.at {
+                    guard let rec = e.rec else { continue }
+                    g.live[e.memberId] = (e.at, rec)
+                    g.members[e.memberId]?.lastLiveAt = e.at
+                }
+            }
             let entries = g.live.filter { $0.value.at >= now - 86_400 }.sorted { $0.key < $1.key }
                 .map { LiveEntry(memberId: $0.key, at: $0.value.at, rec: $0.value.rec) }
             return ok(LivePage(live: entries, watchers: g.watchers, serverTime: now))
