@@ -385,6 +385,9 @@ final class GroupPinView: MKAnnotationView {
     }
 
     func show(_ p: MapPin) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true) // no sliding or morphing when a view is reused or updated
+        defer { CATransaction.commit() }
         circle.backgroundColor = UIColor(groupHex: p.colourHex)
         glyph.image = UIImage(systemName: GroupTexts.pinSymbol(p.knownType))
         accessibilityLabel = p.a11yLabel
@@ -393,7 +396,9 @@ final class GroupPinView: MKAnnotationView {
         let labelSize = p.label == nil ? .zero : label.intrinsicContentSize
         let width = max(Self.size, labelSize.width)
         let height = Self.size + (p.label == nil ? 0 : labelSize.height + 3)
-        frame = CGRect(x: 0, y: 0, width: width, height: height)
+        // Its size only: MapKit keeps it on the pin (setting the frame would move a view already on the map to the
+        // map's corner, as the label's age changes every minute).
+        bounds = CGRect(x: 0, y: 0, width: width, height: height)
         circle.frame = CGRect(x: (width - Self.size) / 2, y: 0, width: Self.size, height: Self.size)
         glyph.frame = circle.bounds
         label.frame = CGRect(x: (width - labelSize.width) / 2, y: Self.size + 3, width: labelSize.width, height: labelSize.height)
