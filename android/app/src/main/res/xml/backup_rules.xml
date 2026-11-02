@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Auto Backup up to API 30: the offline areas (many GB, over the 25 MB quota) stay out, as iOS excludes them from
-     backup. The KML files, the track and the preferences are backed up. -->
+     backup. The KML files, the track and the preferences are backed up. Groups' member passes, group keys and local
+     store live in no_backup/ (groups §8.3), which never leaves the phone; it is excluded here too. -->
 <full-backup-content>
     <exclude domain="file" path="SatMap/Offline/" />
+    <exclude domain="root" path="no_backup/" />
 </full-backup-content>

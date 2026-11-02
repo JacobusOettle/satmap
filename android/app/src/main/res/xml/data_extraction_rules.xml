@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- API 31+: the offline areas stay out of cloud backups and device transfers. -->
+<!-- API 31+: the offline areas stay out of cloud backups and device transfers, and so do groups' member passes, group
+     keys and local store in no_backup/ (groups §8.3; the platform leaves no_backup out anyway). -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="file" path="SatMap/Offline/" />
+        <exclude domain="root" path="no_backup/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="file" path="SatMap/Offline/" />
+        <exclude domain="root" path="no_backup/" />
     </device-transfer>
 </data-extraction-rules>

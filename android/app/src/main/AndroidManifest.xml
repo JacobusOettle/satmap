@@ -17,10 +17,13 @@
     <!-- Android Auto: a navigation app draws its own map on the car's surface. -->
     <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES" />
     <uses-permission android:name="androidx.car.app.ACCESS_SURFACE" />
+    <!-- Groups: scanning an invite's QR code in the app, asked on the first tap of "Scan QR code" (groups §11.5). -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- SCHEDULE_EXACT_ALARM is deliberately absent: the recorder's alarms fall back to inexact ones. -->
 
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:name=".app.SatMapApplication"
@@ -42,6 +45,22 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Group invites (groups §5.6): verified App Links for https://{groupsDomain}/j/… (the domain is the one
+                 value in gradle.properties; its assetlinks.json is served by the Worker, §5.5) … -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${groupsDomain}" android:pathPrefix="/j/" />
+            </intent-filter>
+            <!-- … and satmap://join/…, the landing page's fallback (on Android its intent:// link names this package and
+                 carries the key in the extra groupKey, §5.4). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="satmap" android:host="join" />
             </intent-filter>
             <!-- "Open with" by type. -->
             <intent-filter>

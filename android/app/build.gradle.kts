@@ -21,6 +21,11 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Phones (64- and 32-bit ARM) and the x86_64 emulator; MapLibre's native code is the bulk of the APK.
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
+        // The groups invite domain, one value in gradle.properties (docs/groups/SPEC.md §5.1): the App Links host in
+        // the manifest and GroupConfig.domain.
+        val groupsDomain = providers.gradleProperty("groupsDomain").getOrElse("example.invalid")
+        manifestPlaceholders["groupsDomain"] = groupsDomain
+        buildConfigField("String", "GROUPS_DOMAIN", "\"$groupsDomain\"")
     }
 
     signingConfigs {
@@ -99,6 +104,13 @@ dependencies {
     // Android Auto (CarPlay's counterpart): the car app library, and its projected (phone-driven) host support.
     implementation(libs.car.app)
     implementation(libs.car.app.projected)
+    // Groups: SatMap Pro through Play Billing, invite QR codes drawn and read with ZXing, scanned with CameraX (no Play
+    // services; docs/groups/SPEC.md §5.3, §10.4).
+    implementation(libs.billing.ktx)
+    implementation(libs.zxing.core)
+    implementation(libs.camera.camera2)
+    implementation(libs.camera.lifecycle)
+    implementation(libs.camera.view)
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)

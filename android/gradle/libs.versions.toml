@@ -20,6 +20,10 @@ androidxTestRules = "1.7.0"
 mockwebserver = "4.12.0"
 carApp = "1.7.0"
 coreKtx = "1.17.0"
+# Groups (docs/groups/SPEC.md §13.2): Play Billing for Pro, ZXing for invite QR codes, CameraX to scan them.
+billing = "9.1.0"
+zxing = "3.5.4"
+camerax = "1.6.2"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -47,6 +51,11 @@ okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 car-app = { module = "androidx.car.app:app", version.ref = "carApp" }
 car-app-projected = { module = "androidx.car.app:app-projected", version.ref = "carApp" }
 car-app-testing = { module = "androidx.car.app:app-testing", version.ref = "carApp" }
+billing-ktx = { module = "com.android.billingclient:billing-ktx", version.ref = "billing" }
+zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
+camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
 junit = { module = "junit:junit", version.ref = "junit" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version.ref = "mockwebserver" }
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }

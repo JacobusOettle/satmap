@@ -10,7 +10,9 @@ import androidx.activity.enableEdgeToEdge
 import com.jacobusoettle.satmap.app.ActiveSheet
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.app.Defaults
+import com.jacobusoettle.satmap.app.GroupConfig
 import com.jacobusoettle.satmap.app.PermissionFlow
+import com.jacobusoettle.satmap.core.InviteLink
 import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.offline.BackupSharing
@@ -72,9 +74,9 @@ class MainActivity : ComponentActivity() {
         mapController.onSaveInstanceState(outState)
     }
 
-    /** KML/KMZ or GPX opened or shared from another app (zoom to it, or the Blocks sheet with the error), and "Save to
-     *  a folder" from the backup chooser. Once handled, a recreated activity (its intent kept) doesn't handle it
-     *  again. */
+    /** A group invite link (the join confirmation), KML/KMZ or GPX opened or shared from another app (zoom to it, or
+     *  the Blocks sheet with the error), and "Save to a folder" from the backup chooser. Once handled, a recreated
+     *  activity (its intent kept) doesn't handle it again. */
     private fun handleIncoming(intent: Intent) {
         if (handleIncoming(AppModel.shared, intent)) setIntent(Intent(intent).setAction(null))
     }
@@ -95,7 +97,32 @@ class MainActivity : ComponentActivity() {
                 SharePresenter.requestFolder()
                 return true
             }
+            // A group invite first (groups §5.6): it opens the join confirmation, never a file import.
+            val invite = invite(intent)
+            if (invite != InviteLink.Parsed.NotInvite) {
+                model.groups.openInvite(invite)
+                return true
+            }
             return openFiles(model, intent)
+        }
+
+        /** The invite an intent brings (groups §5.6): an App Link `https://{domain}/j/…#key` or `satmap://join/…#key`
+         *  in its data, or the landing page's `intent://` form, which arrives as `satmap://join/<token>` without its
+         *  fragment and the key in the extra `groupKey` (§5.4). `NotInvite` for anything else. */
+        fun invite(intent: Intent): InviteLink.Parsed {
+            if (intent.action != Intent.ACTION_VIEW) return InviteLink.Parsed.NotInvite
+            val data = intent.dataString ?: return InviteLink.Parsed.NotInvite
+            val parsed = InviteLink.parse(data, GroupConfig.domain)
+            val key = intent.getStringExtra("groupKey")
+            val uri = intent.data
+            if (parsed !is InviteLink.Parsed.Invite && key != null && uri?.scheme == "satmap" && uri.host == "join" &&
+                uri.fragment.isNullOrEmpty()
+            ) {
+                val token = uri.path?.trim('/') ?: return parsed
+                val fromExtra = InviteLink.parse("satmap://join/$token#$key", GroupConfig.domain)
+                if (fromExtra is InviteLink.Parsed.Invite) return fromExtra
+            }
+            return parsed
         }
 
         /** iOS's `onOpenURL`: each .kml/.kmz/.gpx shared into the app ("Open with SatMap" / "Share to SatMap") is

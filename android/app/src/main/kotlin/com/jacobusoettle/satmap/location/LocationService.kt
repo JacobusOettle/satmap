@@ -15,6 +15,12 @@ import androidx.core.content.ContextCompat
 import com.jacobusoettle.satmap.MainActivity
 import com.jacobusoettle.satmap.R
 import com.jacobusoettle.satmap.app.AppModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /** Recording in the background with "While using the app" access (iOS `UIBackgroundModes: location`, with
  *  `allowsBackgroundLocationUpdates` and the background location indicator): a foreground service of type location,
@@ -44,52 +50,95 @@ class LocationService : Service() {
         }
     }
 
+    /** The groups the notification names, and their collector while the service runs. */
+    private var sharing: List<String> = emptyList()
+    private var watch: Job? = null
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            // On screen, the recorder carries on until SatMap goes to the background.
+            // On screen, the recorder carries on until SatMap goes to the background. Sharing goes off in every group
+            // too (an Android-only difference, groups §11.6): Stop means nobody follows you any more.
             AppModel.shared.recorder.stop()
+            AppModel.shared.groups.stopSharingEverywhere()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
+        sharing = AppModel.shared.groups.sharingNames.value
         try {
-            ServiceCompat.startForeground(this, ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            ServiceCompat.startForeground(this, ID, notification(this, sharing), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         } catch (e: Exception) {
             // Refused (started too late, or the permission went): recording carries on while SatMap is visible.
             stopSelf()
+            return START_NOT_STICKY
+        }
+        // The groups shared with change while recording: the notification says so (§11.6).
+        if (watch == null) {
+            watch = scope.launch {
+                AppModel.shared.groups.sharingNames.collect { names ->
+                    if (names == sharing) return@collect
+                    sharing = names
+                    try {
+                        NotificationManagerCompat.from(this@LocationService).notify(ID, notification(this@LocationService, names))
+                    } catch (e: SecurityException) {
+                        // No notification permission: the service runs without its notification in the drawer.
+                    }
+                }
+            }
         }
         return START_NOT_STICKY
     }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
-    /** Shown without sound or time; without the notification permission the service runs all the same, its
-     *  notification only missing from the drawer. */
-    private fun notification(): Notification {
-        NotificationManagerCompat.from(this).createNotificationChannel(
-            NotificationChannelCompat.Builder(CHANNEL, NotificationManagerCompat.IMPORTANCE_LOW)
-                .setName(getString(R.string.channel_recording))
-                .setShowBadge(false)
-                .build(),
-        )
-        val open = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        val stop = PendingIntent.getService(
-            this, 1, Intent(this, LocationService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_stat_location)
-            .setContentTitle("SatMap")
-            .setContentText("Recording your track")
-            .setOngoing(true)
-            .setSilent(true)
-            .setShowWhen(false)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setContentIntent(open)
-            .addAction(R.drawable.ic_stop, "Stop", stop)
-            .build()
+    override fun onDestroy() {
+        scope.cancel()
+        watch = null
+        super.onDestroy()
     }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
+
+/** The recording notification, shown without sound or time; without the notification permission the service runs all
+ *  the same, its notification only missing from the drawer. While groups share (`sharing`, their names) a big-text
+ *  view adds "Sharing your location with {group}." or "… with {n} groups." under "Recording your track", which stays
+ *  the collapsed text (groups §11.6). */
+internal fun LocationService.Companion.notification(context: Context, sharing: List<String>): Notification {
+    NotificationManagerCompat.from(context).createNotificationChannel(
+        NotificationChannelCompat.Builder(LocationService.CHANNEL, NotificationManagerCompat.IMPORTANCE_LOW)
+            .setName(context.getString(R.string.channel_recording))
+            .setShowBadge(false)
+            .build(),
+    )
+    val open = PendingIntent.getActivity(
+        context, 0, Intent(context, MainActivity::class.java),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+    val stop = PendingIntent.getService(
+        context, 1, Intent(context, LocationService::class.java).setAction(LocationService.ACTION_STOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+    val builder = NotificationCompat.Builder(context, LocationService.CHANNEL)
+        .setSmallIcon(R.drawable.ic_stat_location)
+        .setContentTitle("SatMap")
+        .setContentText(RECORDING)
+        .setOngoing(true)
+        .setSilent(true)
+        .setShowWhen(false)
+        .setOnlyAlertOnce(true)
+        .setCategory(NotificationCompat.CATEGORY_SERVICE)
+        .setContentIntent(open)
+        .addAction(R.drawable.ic_stop, "Stop", stop)
+    sharingLine(sharing)?.let { builder.setStyle(NotificationCompat.BigTextStyle().bigText("$RECORDING\n$it")) }
+    return builder.build()
+}
+
+private const val RECORDING = "Recording your track"
+
+/** The second line of the notification while groups share, or null when none does. */
+internal fun sharingLine(sharing: List<String>): String? = when (sharing.size) {
+    0 -> null
+    1 -> "Sharing your location with ${sharing[0]}."
+    else -> "Sharing your location with ${sharing.size} groups."
 }
