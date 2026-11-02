@@ -184,6 +184,18 @@ export async function addMember(g: TestGroup, role: "member" | "admin" = "member
   return member;
 }
 
+/** A new Apple purchase's proof, with its ProDO's clock set to `now` (the proof is used as is under TEST_MODE). */
+export async function appleProofAt(
+  now: number,
+  tx: Record<string, unknown> = {},
+): Promise<{ pro: { platform: string; signedTransaction: string }; proName: string; otid: string }> {
+  const jws = await signedTransaction(now, tx);
+  const otid = JSON.parse(new TextDecoder().decode(base64urlToBytes(jws.split(".")[1]!))).originalTransactionId as string;
+  const proName = `apple:${otid}`;
+  await setProClock(proName, now);
+  return { pro: appleProof(jws), proName, otid };
+}
+
 export async function advance(g: TestGroup, seconds: number): Promise<number> {
   g.now += seconds;
   await setClock(g.groupId, g.now);

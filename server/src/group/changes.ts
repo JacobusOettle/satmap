@@ -79,35 +79,65 @@ export function readChanges(
 ): ChangesPage {
   // A month ends before joinedAt exactly when it sorts before joinedAt's own month.
   const firstMonth = monthOf(q.joinedAt);
-  const rows = sql
-    .exec<Row>(
-      `SELECT 'group' AS kind, profile_seq AS seq, NULL AS a, NULL AS b, NULL AS c, NULL AS d, profile AS rec
-         FROM grp WHERE one = 1 AND profile_seq > ? AND profile IS NOT NULL
-       UNION ALL
-       SELECT 'member', seq, member_id, role, joined_at, NULL, profile FROM members WHERE seq > ?
-       UNION ALL
-       SELECT 'chunk', seq, member_id, NULL, start, NULL, rec FROM chunks WHERE seq > ? AND start + ${WINDOW} > ?
-       UNION ALL
-       SELECT 'archive', seq, member_id, month, max_chunk_seq, archived_at, NULL FROM archives
-         WHERE seq > ? AND month >= ?
-       UNION ALL
-       SELECT 'pin', seq, pin_id, member_id, created_at, expires_at, rec FROM pins
-         WHERE seq > ? AND (expires_at IS NULL OR expires_at > ?)
-       UNION ALL
-       SELECT 'removed', seq, what, id, NULL, NULL, NULL FROM removals WHERE seq > ?
-       ORDER BY seq LIMIT ?`,
-      q.since,
-      q.since,
-      q.since,
-      q.joinedAt,
-      q.since,
-      firstMonth,
-      q.since,
-      q.now,
-      q.since,
-      q.limit + 1,
-    )
-    .toArray();
+  const take = q.limit + 1;
+  // One query per table, each in `seq` order through its seq index, merged here: Durable Object SQLite allows only
+  // a few terms in a compound SELECT, so one UNION ALL over the six tables is refused.
+  const parts: Row[][] = [
+    sql
+      .exec<Row>(
+        `SELECT 'group' AS kind, profile_seq AS seq, NULL AS a, NULL AS b, NULL AS c, NULL AS d, profile AS rec
+           FROM grp WHERE one = 1 AND profile_seq > ? AND profile IS NOT NULL`,
+        q.since,
+      )
+      .toArray(),
+    sql
+      .exec<Row>(
+        `SELECT 'member' AS kind, seq, member_id AS a, role AS b, joined_at AS c, NULL AS d, profile AS rec
+           FROM members WHERE seq > ? ORDER BY seq LIMIT ?`,
+        q.since,
+        take,
+      )
+      .toArray(),
+    sql
+      .exec<Row>(
+        `SELECT 'chunk' AS kind, seq, member_id AS a, NULL AS b, start AS c, NULL AS d, rec
+           FROM chunks WHERE seq > ? AND start + ${WINDOW} > ? ORDER BY seq LIMIT ?`,
+        q.since,
+        q.joinedAt,
+        take,
+      )
+      .toArray(),
+    sql
+      .exec<Row>(
+        `SELECT 'archive' AS kind, seq, member_id AS a, month AS b, max_chunk_seq AS c, archived_at AS d, NULL AS rec
+           FROM archives WHERE seq > ? AND month >= ? ORDER BY seq LIMIT ?`,
+        q.since,
+        firstMonth,
+        take,
+      )
+      .toArray(),
+    sql
+      .exec<Row>(
+        `SELECT 'pin' AS kind, seq, pin_id AS a, member_id AS b, created_at AS c, expires_at AS d, rec
+           FROM pins WHERE seq > ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq LIMIT ?`,
+        q.since,
+        q.now,
+        take,
+      )
+      .toArray(),
+    sql
+      .exec<Row>(
+        `SELECT 'removed' AS kind, seq, what AS a, id AS b, NULL AS c, NULL AS d, NULL AS rec
+           FROM removals WHERE seq > ? ORDER BY seq LIMIT ?`,
+        q.since,
+        take,
+      )
+      .toArray(),
+  ];
+  const rows = parts
+    .flat()
+    .sort((x, y) => x.seq - y.seq)
+    .slice(0, take);
   const items: ChangeItem[] = [];
   let bytes = 2;
   let more = rows.length > q.limit;

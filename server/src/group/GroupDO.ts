@@ -1430,6 +1430,8 @@ export class GroupDO extends DurableObject<AppEnv> {
     const now = this.now();
     let facts: NewReport["facts"];
     if (kind === "group") {
+      // §1.3: the owner doesn't report the group name, they rename it.
+      if (caller.role === "owner") throw new ApiError("forbidden");
       if (targetId !== grp.group_id) throw new ApiError("not_found");
       facts = { targetExists: true, targetMemberId: null, targetTime: null, targetBytes: grp.profile?.byteLength ?? null };
     } else if (kind === "pin") {
