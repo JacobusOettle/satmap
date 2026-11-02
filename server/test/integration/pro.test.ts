@@ -473,6 +473,11 @@ describe("Google: E28 notifications and linked purchases", () => {
       );
     expect((await send(RTDN, { GOOGLE_RTDN_TOKEN: "" })).status).toBe(404);
     expect((await send("a".repeat(31), { GOOGLE_RTDN_TOKEN: "a".repeat(31) })).status).toBe(404);
+    // Any method: without its secret the endpoint doesn't exist, so no 405 either.
+    const get = (e: Record<string, unknown>) => worker.fetch(new Request(`${BASE}/v1/store/google?token=${RTDN}`), { ...env, ...e } as typeof env);
+    expect((await get({ GOOGLE_RTDN_TOKEN: "" })).status).toBe(404);
+    expect((await get({ GOOGLE_RTDN_TOKEN: "a".repeat(31) })).status).toBe(404);
+    expect((await get({})).status).toBe(405);
     expect((await send("wrong-token-wrong-token-wrong-token")).status).toBe(403);
     expect((await send(RTDN)).status).toBe(204);
     const bad = await api("POST", `/v1/store/google?token=${RTDN}`, { body: { hello: 1 } });

@@ -124,6 +124,17 @@ describe("admin endpoints", () => {
       const res = await worker.fetch(new Request(BASE + path, { headers: { Authorization: `Bearer ${ADMIN}` } }), { ...env, ADMIN_TOKEN: "" } as typeof env);
       expect(res.status).toBe(404);
     }
+    // A wrong method too: a 405 would tell a scanner the path exists.
+    for (const [method, path] of [
+      ["POST", "/v1/admin/reports"],
+      ["GET", `/v1/admin/reports/${randomId()}/resolve`],
+      ["PUT", `/v1/admin/groups/${randomId()}`],
+    ] as const) {
+      const unset = await worker.fetch(new Request(BASE + path, { method, headers: { Authorization: `Bearer ${ADMIN}` } }), { ...env, ADMIN_TOKEN: "" } as typeof env);
+      expect(unset.status, `${method} ${path}`).toBe(404);
+      expect(((await unset.json()) as { error: string }).error).toBe("not_found");
+      expect((await admin(method, path)).status, `${method} ${path} with the token set`).toBe(405);
+    }
     expect((await api("GET", "/v1/admin/reports", { headers: { Authorization: "Bearer nope" } })).status).toBe(401);
     expect((await api("GET", "/v1/admin/reports")).status).toBe(401);
   });

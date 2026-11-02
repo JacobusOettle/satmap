@@ -134,10 +134,23 @@ async function handleWeb(request: Request, url: URL, cfg: Config): Promise<Handl
   return { route, response: request.method === "HEAD" ? new Response(null, response) : response };
 }
 
+/**
+ * Endpoints that don't exist without their secret (SPEC §7.7, §6.5 E28): they answer 404 for every method then, so
+ * a 405 doesn't tell a scanner they are there.
+ */
+function hiddenPath(pathname: string, cfg: Config): boolean {
+  if (pathname.startsWith("/v1/admin/")) return cfg.adminToken === "";
+  if (pathname === "/v1/store/google") return cfg.googleRtdnToken.length < 32;
+  return false;
+}
+
 async function handleApi(request: Request, env: AppEnv, url: URL, cfg: Config): Promise<Handled> {
   const match = matchRoute(request.method, url.pathname);
   if (match.type === "none") return { route: "unknown", response: errorResponse("not_found") };
-  if (match.type === "method_not_allowed") return { route: "unknown", response: errorResponse("method_not_allowed") };
+  if (match.type === "method_not_allowed") {
+    const code = hiddenPath(url.pathname, cfg) ? "not_found" : "method_not_allowed";
+    return { route: "unknown", response: errorResponse(code) };
+  }
   const { route, params } = match;
   const template = routeTemplate(route);
   try {
