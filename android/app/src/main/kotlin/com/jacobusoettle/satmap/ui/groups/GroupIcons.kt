@@ -6,7 +6,6 @@ import android.graphics.Paint
 import android.graphics.RectF
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Flag
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
@@ -15,7 +14,6 @@ import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Redeem
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.outlined.AddCircleOutline
 import androidx.compose.material.icons.outlined.PersonAddAlt
 import androidx.compose.ui.graphics.Color
@@ -36,17 +34,24 @@ import com.jacobusoettle.satmap.ui.SatIcons
 // Android only: the groups' SF Symbols (docs/groups/SPEC.md §9.1, §9.3, §9.4) as Material icons where one matches
 // (DESIGN.md §4.4), and as vectors drawn to match where none does, on a 24 × 24 viewport.
 
-/** `person.3.fill`: three people, the middle one in front and larger (the Groups button). */
+/** `person.3.fill`: three heads in a row, the middle one larger, over three domed bodies with a gap between them, the
+ *  middle one in front; 23 × 10.5 of the 24 viewport, as wide for its height as the symbol (the Groups button, S1,
+ *  S3). */
 val SatIcons.Person3: ImageVector by lazy {
     vector("Person3") {
         fill(
-            "M12,4.2a3.1,3.1 0 1 1 0,6.2a3.1,3.1 0 1 1 0,-6.2z M6.3,12.6c0,-0.7 2.6,-1.6 5.7,-1.6s5.7,0.9 5.7,1.6v5.2H6.3z " +
-                "M5.1,6.6a2.3,2.3 0 1 1 0,4.6a2.3,2.3 0 1 1 0,-4.6z M18.9,6.6a2.3,2.3 0 1 1 0,4.6a2.3,2.3 0 1 1 0,-4.6z " +
-                "M0.6,13.6c0,-0.6 2,-1.4 4.5,-1.4c0.4,0 0.7,0 0.9,0.05c-0.5,0.4 -0.7,0.9 -0.7,1.3v3.3H0.6z " +
-                "M23.4,13.6c0,-0.6 -2,-1.4 -4.5,-1.4c-0.4,0 -0.7,0 -0.9,0.05c0.5,0.4 0.7,0.9 0.7,1.3v3.3h4.7z",
+            "M4.81,7.39a2.15,2.15 0 1 1 0,4.3a2.15,2.15 0 1 1 0,-4.3z " +
+                "M12,6.58a2.55,2.55 0 1 1 0,5.1a2.55,2.55 0 1 1 0,-5.1z " +
+                "M19.19,7.39a2.15,2.15 0 1 1 0,4.3a2.15,2.15 0 1 1 0,-4.3z " +
+                "M6.66,17.14V16.33C6.66,15 9.6,13.03 12,13.03C14.4,13.03 17.34,15 17.34,16.33V17.14z " +
+                "M0.5,17.14V16C0.5,14.4 2.6,13.03 4.6,13.03C5.5,13.03 6.3,13.15 6.75,13.5L5.45,16.3V17.14z " +
+                "M23.5,17.14V16C23.5,14.4 21.4,13.03 19.4,13.03C18.5,13.03 17.7,13.15 17.25,13.5L18.55,16.3V17.14z",
         )
     }
 }
+
+/** How big a list row draws `Person3` (S1, S3): the symbol in a `Label` is as wide as on the map button. */
+val Person3RowSize = 38.dp
 
 /** `mappin.and.ellipse`: the pin over an ellipse on the ground. */
 val SatIcons.MapPinAndEllipse: ImageVector by lazy {
@@ -72,9 +77,26 @@ val SatIcons.Shield: ImageVector by lazy {
     }
 }
 
+/** `house.fill`: the roof as a band with a chimney on its right slope, the house under it with a door cut out. */
+val SatIcons.House: ImageVector by lazy {
+    vector("House") {
+        fill("M1,12L12,1.94L23,12H20.65L12,4.38L3.35,12z M17.5,4.3H20.65V10.4L17.5,7.5z")
+        fill(
+            "M12,5.79L20.65,12.79V20.86Q20.65,22.06 19.45,22.06H5.34Q4.14,22.06 4.14,20.86V12.79z " +
+                "M9.64,20.25V14.77Q9.64,13.97 10.44,13.97H13.56Q14.36,13.97 14.36,14.77V20.25z",
+            evenOdd = true,
+        )
+    }
+}
+
+/** `drop.fill`: a solid drop, pointed at the top (Material's WaterDrop has a highlight cut into it). */
+val SatIcons.Drop: ImageVector by lazy {
+    vector("Drop") {
+        fill("M12,2.65C12,2.65 5.71,9.3 5.71,15.06A6.29,6.29 0 0 0 18.29,15.06C18.29,9.3 12,2.65 12,2.65z")
+    }
+}
+
 val SatIcons.Paw: ImageVector get() = Icons.Filled.Pets
-val SatIcons.House: ImageVector get() = Icons.Filled.Home
-val SatIcons.Drop: ImageVector get() = Icons.Filled.WaterDrop
 val SatIcons.Warning: ImageVector get() = Icons.Filled.Warning
 val SatIcons.Pin: ImageVector get() = SatIcons.MapPin
 
@@ -157,6 +179,11 @@ private fun ImageVector.Builder.stroke(path: String, width: Float) {
     )
 }
 
-private fun ImageVector.Builder.fill(path: String) {
-    addPath(pathData = addPathNodes(path), fill = SolidColor(Color.Black))
+/** A filled path; `evenOdd` cuts the inner shapes out (the house's door). */
+private fun ImageVector.Builder.fill(path: String, evenOdd: Boolean = false) {
+    addPath(
+        pathData = addPathNodes(path),
+        pathFillType = if (evenOdd) PathFillType.EvenOdd else PathFillType.NonZero,
+        fill = SolidColor(Color.Black),
+    )
 }

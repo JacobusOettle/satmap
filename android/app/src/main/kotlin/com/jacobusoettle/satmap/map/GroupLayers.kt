@@ -154,6 +154,9 @@ class GroupLayers(private val map: MapLibreMap, private val style: Style, privat
         const val HIT_DP = 22.0
         const val MEMBER_DP = 26f
         const val PIN_DP = 30f
+
+        /** The box a pin's glyph is drawn in, dp. */
+        const val PIN_GLYPH_DP = 20f
         const val ARROW = "group-member-arrow"
         private const val LABEL_PREFIX = "group-pin-label/"
 
@@ -279,12 +282,14 @@ class GroupLayers(private val map: MapLibreMap, private val style: Style, privat
             drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; setShadowLayer(1.5f * d, 0f, 0f, 0x66000000) })
         }
 
-        /** A pin: a 30 dp disc in the type's colour with a 2 dp white ring and its 16 dp white glyph (§9.4). */
+        /** A pin: a 30 dp disc in the type's colour with a 2 dp white ring and its white glyph (§9.4), drawn in a
+         *  20 dp box: the glyphs keep about 2 of their 24 units clear all round, so what shows is about 16 dp, as
+         *  SF's 16 pt symbol. */
         fun pinImage(m: DisplayMetrics, type: PinType?): Bitmap = image(m, PIN_DP, PIN_DP) { d ->
             val c = PIN_DP / 2 * d
             drawCircle(c, c, c, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
             drawCircle(c, c, c - 2 * d, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = pinColour(type) })
-            val g = 8 * d
+            val g = PIN_GLYPH_DP / 2 * d
             drawIcon(this, pinIcon(type), RectF(c - g, c - g, c + g, c + g), Color.WHITE)
         }
 

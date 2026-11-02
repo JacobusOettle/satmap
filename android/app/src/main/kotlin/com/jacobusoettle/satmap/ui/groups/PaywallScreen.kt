@@ -109,7 +109,7 @@ fun PaywallScreen(model: AppModel, route: GroupsRoute.Paywall, nav: GroupsNav) {
         item {
             FormSection(first = true) {
                 HeadlineRow("Create your own groups")
-                IconTextRow("Create groups and invite as many people as you like", SatIcons.Person3)
+                IconTextRow("Create groups and invite as many people as you like", SatIcons.Person3, iconSize = Person3RowSize)
                 IconTextRow("Members join free", GroupSymbols.gift)
                 IconTextRow("See everyone's position and trail, and share pins", GroupSymbols.map)
                 IconTextRow("Encrypted on your phone: we can't read it", GroupSymbols.lock)

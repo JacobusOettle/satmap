@@ -29,7 +29,7 @@ fun TermsScreen(model: AppModel, below: GroupsRoute?, leading: ScreenChrome.Lead
         item {
             FormSection(first = true) {
                 HeadlineRow("See your group on the map")
-                IconTextRow("Share your position, trail and pins with friends, family or your drone team.", SatIcons.Person3)
+                IconTextRow("Share your position, trail and pins with friends, family or your drone team.", SatIcons.Person3, iconSize = Person3RowSize)
                 IconTextRow("Only people you invite can join. Each invite works once, for 7 days.", GroupSymbols.link)
                 IconTextRow(
                     "Everything your group shares is encrypted on your phone. Our server can't read names, places or notes.",

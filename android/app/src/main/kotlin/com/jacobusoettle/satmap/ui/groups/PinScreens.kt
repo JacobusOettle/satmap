@@ -93,11 +93,12 @@ fun SmallTextRow(text: String) {
     }
 }
 
-/** A pin type's badge: a circle in its colour with its white glyph (§9.4, as on the map). */
+/** A pin type's badge: a circle in its colour with its white glyph (§9.4, as on the map), the glyph's box 9/16 of the
+ *  circle: 20 dp in S10's 36 dp circle for SF's 16 pt, as the map draws its 16 pt glyph. */
 @Composable
 fun PinBadge(type: PinType?, size: Dp = 30.dp) {
     Box(Modifier.size(size).background(Color(GroupTexts.pinColour(type)), CircleShape).border(2.dp, Color.White, CircleShape), contentAlignment = Alignment.Center) {
-        Icon(pinIcon(type), contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.53f))
+        Icon(pinIcon(type), contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.5625f))
     }
 }
 

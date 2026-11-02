@@ -46,6 +46,7 @@ import com.jacobusoettle.satmap.ui.FormRow
 import com.jacobusoettle.satmap.ui.FormSpinner
 import com.jacobusoettle.satmap.ui.Headline
 import com.jacobusoettle.satmap.ui.LabelIcon
+import com.jacobusoettle.satmap.ui.ListIconSize
 import com.jacobusoettle.satmap.ui.LabelPrimary
 import com.jacobusoettle.satmap.ui.LabelSecondary
 import com.jacobusoettle.satmap.ui.MultiLineRowPadding
@@ -88,11 +89,18 @@ fun MemberDot(initials: String, colourHex: String, size: Dp = 30.dp, modifier: M
     }
 }
 
-/** A list `Label` of several lines: the icon (28 dp, yellow), then the text, which wraps (S1, S3, S9). */
+/** A list `Label` of several lines: the icon (28 dp, yellow; `iconSize` for a wide one, centred on the same place),
+ *  then the text, which wraps (S1, S3, S9). */
 @Composable
-fun IconTextRow(text: String, icon: ImageVector, modifier: Modifier = Modifier, iconTint: Color = SystemYellow) {
+fun IconTextRow(
+    text: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    iconTint: Color = SystemYellow,
+    iconSize: Dp = ListIconSize,
+) {
     FormRow(modifier.dividerInset(60.dp), verticalPadding = MultiLineRowPadding) {
-        Box(Modifier.align(Alignment.Top)) { LabelIcon(icon, iconTint) }
+        Box(Modifier.align(Alignment.Top)) { LabelIcon(icon, iconTint, iconSize) }
         Spacer(Modifier.width(16.dp))
         Text(text, style = Body, color = LabelPrimary, modifier = Modifier.weight(1f))
     }

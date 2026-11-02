@@ -798,10 +798,11 @@ fun MapButton(
 
 /** How big a map button draws `icon`: 24 dp for SF's 20 pt semibold (UI spec §1.3), more where the Material glyph
  *  fills less of its box than the SF symbol does of its frame, to draw it as big as iOS (screenshots 01, 02, 19):
- *  mountain.2 is 35 × 17.5 pt (Landscape fills 22 × 12 of its 24), scope 23.5 (GpsFixed 22), xmark 15.5 (Close 14) and
- *  location 18.8 (NearMe 18). */
+ *  mountain.2 is 35 × 17.5 pt (Landscape fills 22 × 12 of its 24), scope 23.5 (GpsFixed 22), xmark 15.5 (Close 14),
+ *  location 18.8 (NearMe 18) and person.3.fill 36.7 × 17 (Person3 fills 23 × 10.5 of its 24; screenshots 36, 40). */
 private fun mapButtonIconSize(icon: ImageVector): Dp = when (icon) {
     Icons.Filled.Landscape, Icons.Outlined.Landscape -> 38.dp
+    SatIcons.Person3 -> 38.dp
     Icons.Filled.Close -> 27.dp
     Icons.Filled.GpsFixed, Icons.Filled.NearMe, Icons.Outlined.NearMe -> 26.dp
     else -> 24.dp
