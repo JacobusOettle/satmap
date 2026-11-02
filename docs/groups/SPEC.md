@@ -479,11 +479,12 @@ Readers reject a chunk (drop it, log it) if:
 body is 256 bytes or more. Readers must support both encodings.
 
 - Swift core: add `Deflate.raw(_:)` and `Deflate.inflateExact(_:size:)` in `Deflate.swift`.
-  - Compress: Apple `compression_encode_buffer(…, COMPRESSION_ZLIB)`, which is raw DEFLATE, or the Linux `CZlib`
-    `deflateInit2_` with windowBits −15.
-  - Inflate exactly: Apple `compression_stream` with `COMPRESSION_STREAM_FINALIZE` into an N + 1 byte buffer;
-    accept only status `COMPRESSION_STATUS_END` with N bytes written and no source bytes left. Linux zlib: accept
-    only `Z_STREAM_END` with `total_out == N` and `avail_in == 0`.
+  - zlib on every platform: the system's `zlib` module on Apple platforms, the `CZlib` shim on Linux. Apple's
+    Compression framework is not used: macOS CI showed it reports no source bytes left even when input follows the
+    end of the stream, so it can't apply the rule above.
+  - Compress: `deflateInit2_` with level 6 and windowBits −15 (raw DEFLATE), the same as the Kotlin core.
+  - Inflate exactly: `inflateInit2_` with windowBits −15 into an N + 1 byte buffer; accept only `Z_STREAM_END` with
+    `total_out == N` and `avail_in == 0`.
   - Do not use the existing `Inflate.raw` for chunks: on Apple it decodes into an exact-size buffer and so accepts a
     stream longer than N, which Linux rejects.
 - Kotlin core: `Deflater(6, true)`; `Inflater(true)` into an N + 1 byte buffer, accepting only `finished()` with
