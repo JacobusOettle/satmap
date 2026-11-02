@@ -481,8 +481,10 @@ class ScreenshotTest {
         openOfflineSheet()
         val ready = staticText("Ready offline")
         val alongRoads = staticText(containing = "along roads")
-        waitForDownload(900.0) { count(ready) >= 2 }
-        if (count(ready) < 2 || !exists(alongRoads)) return fail("No area downloaded along roads")
+        // The Farm roads area itself, not just two "Ready offline" texts (a row's text can change after the shot).
+        waitForDownload(900.0) { areaReady("Farm roads", 20) && count(ready) >= 2 }
+        if (!areaReady("Farm roads", 20) || count(ready) < 2 || !exists(alongRoads)) return fail("No area downloaded along roads")
+        sleep(2) // the rows drawn as they now read
         snap("13-offline-along-roads")
 
         // Open the roads area and add one deeper level (only zoom 21 is downloaded).
@@ -495,7 +497,9 @@ class ScreenshotTest {
             tap("Download zoom 21")
             sleep(2)
             tapBack() // back to Offline maps
-            waitForDownload(600.0) { count(ready) >= 2 }
+            waitForDownload(600.0) { areaReady("Farm roads", 21) && count(ready) >= 2 }
+            sleep(2)
+            check(areaReady("Farm roads", 21), "The roads area didn't finish its extra level")
             checkEqual(count(ready), 2, "The roads area didn't finish its extra level")
             check(exists(staticText(containing = "up to zoom 21")), "No area up to zoom 21")
         } else {
@@ -613,6 +617,11 @@ class ScreenshotTest {
         leaveSheets()
         sleep(12) // the camera's fit, and the imagery under it
         check(groupItems().count { it.kind == "pin" } == 6, "Not six pins on the map: ${groupItems().map { it.label }}")
+        // §9.5's layer order with the KML files shown: their fills and lines under the trails, their points under
+        // the pins and dots.
+        val layers = mapLayerIds()
+        check(layers.any { it.startsWith("kml/") }, "No KML layers on the map")
+        GroupLayers.orderProblems(layers).let { check(it.isEmpty(), "Layer order: $it") }
         snap("36-group-map")
 
         // 37-38: a pin dropped at an empty spot, then the Kudu pin's detail.
@@ -708,6 +717,19 @@ class ScreenshotTest {
             sleep(1.5)
         }
         check(!exists(id("screenTitle")), "A sheet stayed open")
+    }
+
+    /** The map's layer ids, bottom to top (`MapController.layerIds`, test-only). */
+    private fun mapLayerIds(): List<String> {
+        var ids = emptyList<String>()
+        instrumentation.runOnMainSync {
+            try {
+                ids = (AppModel.shared.map as? MapController)?.layerIds().orEmpty()
+            } catch (e: Throwable) {
+                Log.w(TAG, "The map's layers: ${short(e)}")
+            }
+        }
+        return ids
     }
 
     /** The group's dots and pins on the screen (`MapController.groupItemScreenPoints`, the test-only accessor). */
@@ -1053,6 +1075,11 @@ class ScreenshotTest {
 
     /** `waitForExistence(timeout:)`. */
     private fun waitForExistence(q: Query, seconds: Int) = waitUntil(seconds.toDouble()) { exists(q) }
+
+    /** The offline area called `name` is downloaded, up to zoom `maxZoom` (the app's own record, not the screen). */
+    private fun areaReady(name: String, maxZoom: Int) = AppModel.shared.offline.areas.value.any {
+        it.name == name && it.maxZoom == maxZoom && it.status == OfflineArea.Status.complete
+    }
 
     /** Waits up to `seconds` for `done`, as iOS waits for a download to finish, but only while a download is under way
      *  or will be: it gives up after a minute with no area queued, downloading or waiting for a network (none was
