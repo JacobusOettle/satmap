@@ -33,6 +33,32 @@ function gatedBucket(real: R2Bucket) {
   return { bucket, release: () => release(), written };
 }
 
+/** An R2 bucket whose first list waits until `release()`; `listed` resolves when that list starts. */
+function listGatedBucket(real: R2Bucket) {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let started!: () => void;
+  const listed = new Promise<void>((r) => (started = r));
+  let first = true;
+  const bucket = new Proxy(real, {
+    get(target, prop) {
+      if (prop === "list") {
+        return async (...args: Parameters<R2Bucket["list"]>) => {
+          if (first) {
+            first = false;
+            started();
+            await gate;
+          }
+          return target.list(...args);
+        };
+      }
+      const value = Reflect.get(target, prop) as unknown;
+      return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
+  return { bucket, release: () => release(), listed };
+}
+
 /** An R2 bucket whose list and delete throw `failures` times. */
 function failingBucket(real: R2Bucket, failures: number) {
   const state = { left: failures };
@@ -194,6 +220,40 @@ describe("archive pass", () => {
     expect(await rows(g.groupId, "SELECT * FROM r2_deletes")).toEqual([]);
   });
 
+  it("skips a member whose prefix was queued during the pass, keeping a window they uploaded after E22", async () => {
+    const { g, m, t } = await setup();
+    // Two old months for the member: the pass does March first, then April.
+    const april = t + 35 * DAY - ((t + 35 * DAY) % 600);
+    await advance(g, 70 * DAY);
+    await upload(g, m.pass, [t + 1200, april]);
+    const gated = gatedBucket(env.ARCHIVE);
+    await inGroup(g.groupId, (d) => {
+      d.bucketOverride = gated.bucket;
+    });
+    const pass = inGroup(g.groupId, (d) => d.archivePass(g.now));
+    await gated.written; // March is in R2; the pass waits
+    expect((await api("DELETE", `/v1/groups/${g.groupId}/trail/me`, { pass: m.pass })).status).toBe(204);
+    const late = april + 600; // a window uploaded after the clear, in the month the pass has yet to do
+    await upload(g, m.pass, [late], CHUNK2);
+    gated.release();
+    await pass;
+    expect(await rows(g.groupId, "SELECT start FROM chunks")).toEqual([{ start: late }]);
+    expect(await rows(g.groupId, "SELECT * FROM archives")).toEqual([]);
+    expect(await archiveObject(g, m.memberId, "2030-04")).toBeNull();
+
+    // The r2_delete job empties the prefix; the next pass archives the late window.
+    await inGroup(g.groupId, (d) => {
+      d.bucketOverride = null;
+    });
+    await runAlarm(g.groupId);
+    expect(await rows(g.groupId, "SELECT * FROM r2_deletes")).toEqual([]);
+    expect(await archiveObject(g, m.memberId, "2030-03")).toBeNull();
+    await inGroup(g.groupId, (d) => d.archivePass(g.now));
+    expect(await rows(g.groupId, "SELECT * FROM chunks")).toEqual([]);
+    expect(await rows(g.groupId, "SELECT member_id, month, count FROM archives")).toEqual([{ member_id: m.memberId, month: "2030-04", count: 1 }]);
+    expect((await archiveObject(g, m.memberId, "2030-04"))!.map((c) => [c.start, b64urlEncode(c.rec)])).toEqual([[late, CHUNK2]]);
+  });
+
   it("skips members with a pending R2 delete, and continues past 50 member-months with archive_more", async () => {
     const { g, m, t } = await setup();
     await inGroup(g.groupId, (_d, state) => {
@@ -282,5 +342,26 @@ describe("E22 clear my trail", () => {
     expect(await rows(g.groupId, "SELECT * FROM r2_deletes")).toEqual([]);
     expect(await rows(g.groupId, "SELECT * FROM jobs WHERE kind = 'r2_delete'")).toEqual([]);
     expect((await env.ARCHIVE.list({ prefix: `g/${g.groupId}/t/${m.memberId}/` })).objects).toEqual([]);
+  });
+
+  it("also empties a prefix queued while the job waits for R2 (another member leaves meanwhile)", async () => {
+    const { g, m } = await setup();
+    const other = await addMember(g);
+    for (const member of [m, other]) await env.ARCHIVE.put(`g/${g.groupId}/t/${member.memberId}/2030-01.bin`, new Uint8Array([1]));
+    expect((await api("DELETE", `/v1/groups/${g.groupId}/members/me`, { pass: m.pass })).status).toBe(204);
+    const gated = listGatedBucket(env.ARCHIVE);
+    await inGroup(g.groupId, (d) => {
+      d.bucketOverride = gated.bucket;
+    });
+    const alarm = runAlarm(g.groupId);
+    await gated.listed; // the job is emptying m's prefix
+    expect((await api("DELETE", `/v1/groups/${g.groupId}/members/me`, { pass: other.pass })).status).toBe(204);
+    gated.release();
+    await alarm;
+    for (const member of [m, other]) {
+      expect((await env.ARCHIVE.list({ prefix: `g/${g.groupId}/t/${member.memberId}/` })).objects).toEqual([]);
+    }
+    expect(await rows(g.groupId, "SELECT * FROM r2_deletes")).toEqual([]);
+    expect(await rows(g.groupId, "SELECT * FROM jobs WHERE kind = 'r2_delete'")).toEqual([]);
   });
 });

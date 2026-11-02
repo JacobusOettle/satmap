@@ -1871,12 +1871,19 @@ export class GroupDO extends DurableObject<AppEnv> {
     }
   }
 
-  /** Empties every queued R2 prefix; a row goes only when a list of its prefix comes back empty (SPEC §7.5). */
+  /**
+   * Empties every queued R2 prefix; a row goes only when a list of its prefix comes back empty (SPEC §7.5). The R2
+   * calls let requests run, and a leave, removal or E22 meanwhile queues another prefix: read the table again until
+   * it is empty, so the caller can delete the job without dropping that prefix.
+   */
   private async r2Delete(): Promise<void> {
-    const rows = this.sql.exec<{ prefix: string }>("SELECT prefix FROM r2_deletes ORDER BY at").toArray();
-    for (const { prefix } of rows) {
-      await this.emptyPrefix(prefix);
-      this.sql.exec("DELETE FROM r2_deletes WHERE prefix = ?", prefix);
+    for (;;) {
+      const rows = this.sql.exec<{ prefix: string }>("SELECT prefix FROM r2_deletes ORDER BY at").toArray();
+      if (rows.length === 0) return;
+      for (const { prefix } of rows) {
+        await this.emptyPrefix(prefix);
+        this.sql.exec("DELETE FROM r2_deletes WHERE prefix = ?", prefix);
+      }
     }
   }
 
@@ -2023,6 +2030,16 @@ export class GroupDO extends DurableObject<AppEnv> {
    * let other requests run in between, so the final transaction re-checks. Returns true when it hit the batch limit.
    */
   async archivePass(now: number): Promise<boolean> {
+    try {
+      return await this.archiveBatch(now);
+    } finally {
+      // Also after an R2 error: the member-months done before it are new archive items.
+      this.setNextAlarm();
+      this.scheduleFlush();
+    }
+  }
+
+  private async archiveBatch(now: number): Promise<boolean> {
     const grp = this.grp()!;
     const groupId = grp.group_id;
     const cutoff = now - ARCHIVE_AGE;
@@ -2037,6 +2054,9 @@ export class GroupDO extends DurableObject<AppEnv> {
       .filter((p) => !pending.has(memberPrefix(groupId, p.member_id)));
     const batch = pairs.slice(0, ARCHIVE_BATCH);
     for (const { member_id: memberId, month } of batch) {
+      // A clear, leave or removal during an earlier member-month's R2 calls queued this member's prefix: skip them
+      // until the r2_delete job is done, or new chunks would be merged into an object it is about to delete.
+      if (this.hasPendingDelete(groupId, memberId)) continue;
       const [monthStart, monthEnd] = monthRange(month);
       const startSeq = this.grp()!.seq;
       const rows = this.sql
@@ -2061,6 +2081,9 @@ export class GroupDO extends DurableObject<AppEnv> {
       await this.bucket.put(key, object);
       const archivedAt = this.now();
       this.ctx.storage.transactionSync(() => {
+        // Queued while R2 was written: the r2_delete job deletes the object just written, and the chunks stay for a
+        // later pass.
+        if (this.hasPendingDelete(groupId, memberId)) return;
         const gone =
           this.member(memberId) === null ||
           this.sql
@@ -2098,8 +2121,6 @@ export class GroupDO extends DurableObject<AppEnv> {
         );
       });
     }
-    this.setNextAlarm();
-    this.scheduleFlush();
     return pairs.length > batch.length;
   }
 
