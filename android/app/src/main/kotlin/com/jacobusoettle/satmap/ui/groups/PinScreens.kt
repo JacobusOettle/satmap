@@ -51,6 +51,8 @@ import com.jacobusoettle.satmap.core.PinType
 import com.jacobusoettle.satmap.core.ReportTarget
 import com.jacobusoettle.satmap.groups.GroupsRoute
 import com.jacobusoettle.satmap.ui.Accent
+import com.jacobusoettle.satmap.ui.Footnote
+import com.jacobusoettle.satmap.ui.SystemYellow
 import com.jacobusoettle.satmap.ui.Body
 import com.jacobusoettle.satmap.ui.Caption
 import com.jacobusoettle.satmap.ui.CellPressed
@@ -64,7 +66,31 @@ import com.jacobusoettle.satmap.ui.ScreenChrome
 import com.jacobusoettle.satmap.ui.SheetScreen
 import com.jacobusoettle.satmap.ui.TabularDigits
 import com.jacobusoettle.satmap.ui.pressable
+import com.jacobusoettle.satmap.ui.SatIcons
 import kotlinx.coroutines.delay
+
+/** A position's coordinates and height as for a tapped spot (the map's pills; tap the coordinates to copy them, the
+ *  height for the other unit), outside the cards. */
+@Composable
+fun GroupPositionRow(model: AppModel, p: GeoPoint, id: String, height: Double?) {
+    val unit by model.heightUnit.collectAsStateWithLifecycle()
+    androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides Color.White) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+            com.jacobusoettle.satmap.ui.CoordinateRow {
+                com.jacobusoettle.satmap.ui.CoordinateBar(SatIcons.MapPin, Format.coordinate(p), id, iconSlot = 19.7.dp)
+                com.jacobusoettle.satmap.ui.HeightBar(height, unit = unit, id = id + "Height", onTap = model::nextHeightUnit)
+            }
+        }
+    }
+}
+
+/** A secondary line of a card (subheadline, grey). */
+@Composable
+fun SmallTextRow(text: String) {
+    FormRow(verticalPadding = 8.dp) {
+        Text(text, style = com.jacobusoettle.satmap.ui.Subheadline, color = LabelSecondary, modifier = Modifier.weight(1f))
+    }
+}
 
 /** A pin type's badge: a circle in its colour with its white glyph (§9.4, as on the map). */
 @Composable
@@ -97,17 +123,20 @@ fun DropPinScreen(model: AppModel, route: GroupsRoute.DropPin, nav: GroupsNav) {
                                 Column(
                                     Modifier
                                         .weight(1f)
-                                        .background(if (selected) CellPressed else Color.Transparent, RoundedCornerShape(10.dp))
-                                        .border(2.dp, if (selected) Accent else Color.Transparent, RoundedCornerShape(10.dp))
+                                        .background(
+                                            if (selected) SystemYellow.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.06f),
+                                            RoundedCornerShape(10.dp),
+                                        )
+                                        .border(2.dp, if (selected) SystemYellow else Color.Transparent, RoundedCornerShape(10.dp))
                                         .testTag("pinType-${t.rawValue}")
                                         .semantics { this.selected = selected }
                                         .pressable { type = t.rawValue }
-                                        .padding(vertical = 10.dp),
+                                        .padding(vertical = 8.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
-                                    PinBadge(t, 40.dp)
-                                    Text(GroupTexts.pinShortLabel(t), style = Caption, color = LabelPrimary)
+                                    PinBadge(t, 36.dp)
+                                    Text(GroupTexts.pinShortLabel(t), style = Footnote.copy(fontWeight = FontWeight.SemiBold), color = LabelPrimary)
                                 }
                             }
                         }
@@ -149,17 +178,16 @@ fun DropPinScreen(model: AppModel, route: GroupsRoute.DropPin, nav: GroupsNav) {
             }
             FormSection(footer = footer) {
                 FormRow {
-                    Text(
-                        Format.coordinate(GeoPoint(route.lat, route.lon)),
-                        style = Body.copy(fontFeatureSettings = TabularDigits),
-                        color = LabelSecondary,
-                    )
+                    Icon(SatIcons.MapPin, contentDescription = null, tint = LabelSecondary, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(Format.coordinate(GeoPoint(route.lat, route.lon)), style = Body.copy(fontFeatureSettings = TabularDigits), color = LabelPrimary)
                 }
             }
         }
         item {
             FormSection {
-                ButtonRow("Drop pin", enabled = ready, tag = "dropPinConfirm") {
+                ButtonRow("Drop pin", enabled = ready, tag = "dropPinConfirm", style = com.jacobusoettle.satmap.ui.Headline) {
+                    message = null
                     val t = chosen ?: return@ButtonRow
                     try {
                         groups.hub.dropPin(route.groupId, t, if (t == PinType.animal) animal else null, note, route.lat, route.lon)
@@ -170,10 +198,10 @@ fun DropPinScreen(model: AppModel, route: GroupsRoute.DropPin, nav: GroupsNav) {
                         message = errorText(e)
                     }
                 }
+                message?.let { NoticeRow(it) }
             }
         }
     }
-    MessageAlert(message) { message = null }
 }
 
 /** S11 Pin detail (§9.3): what it is, its note, who dropped it and when, when an animal sighting disappears, its
@@ -208,46 +236,29 @@ fun PinDetailScreen(model: AppModel, route: GroupsRoute.Pin, nav: GroupsNav, bel
         item {
             FormSection(first = true) {
                 FormRow(verticalPadding = 12.dp) {
-                    PinBadge(p.knownType, 36.dp)
+                    PinBadge(p.knownType, 40.dp)
                     Spacer(Modifier.width(12.dp))
                     Text(
                         if (p.knownType == PinType.animal) p.animal ?: GroupTexts.pinLabel(p.knownType) else GroupTexts.pinLabel(p.knownType),
                         fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Bold,
                         color = LabelPrimary,
                     )
                 }
                 p.note?.let { TextRow(it) }
-                TextRow(
-                    GroupTexts.droppedBy(p.dropperName, GroupTexts.time(p.createdAt, use24), GroupFormat.ago(now - p.createdAt)),
-                    colour = LabelSecondary,
-                )
+                SmallTextRow(GroupTexts.droppedBy(p.dropperName, GroupTexts.time(p.createdAt, use24), GroupFormat.ago(now - p.createdAt)))
                 if (p.knownType == PinType.animal) {
-                    p.expiresAt?.let { TextRow("Disappears at ${GroupTexts.time(it, use24)}", colour = LabelSecondary) }
+                    p.expiresAt?.let { SmallTextRow("Disappears at ${GroupTexts.time(it, use24)}") }
                 }
             }
         }
-        item {
-            val text = Format.coordinate(GeoPoint(p.position.lat, p.position.lon))
-            FormSection {
-                FormRow(
-                    Modifier.pressable(onClickLabel = "Copy") {
-                        copyText(context, "Coordinates", text)
-                        copied = true
-                    },
-                ) {
-                    Text(if (copied) "Copied" else text, style = Body.copy(fontFeatureSettings = TabularDigits), color = LabelPrimary, modifier = Modifier.weight(1f))
-                    if (!copied) Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = Accent, modifier = Modifier.size(18.dp))
-                }
-                FormValueRow("Height", height?.let { Format.height(it, heightUnit) } ?: "…")
-            }
-        }
+        item { GroupPositionRow(model, GeoPoint(p.position.lat, p.position.lon), "pinCoordinates", height) }
         if (p.canDelete || p.canReport || p.canBlock) {
             item {
                 FormSection {
                     if (p.canDelete) ButtonRow("Delete pin", destructive = true) { confirmDelete = true }
                     if (p.canReport) ButtonRow("Report pin") { nav.push(GroupsRoute.Report(route.groupId, ReportTarget.Pin(p.pinId))) }
-                    if (p.canBlock) ButtonRow("Block ${p.dropperName}", destructive = true) { block = true }
+                    if (p.canBlock) ButtonRow("Block ${p.dropperName}") { block = true }
                 }
             }
         }

@@ -85,7 +85,7 @@ fun InviteScreen(model: AppModel, route: GroupsRoute.Invite, nav: GroupsNav) {
                     GroupTexts.time(invite.expiresAt, DateFormat.is24HourFormat(context)),
                 ))
                 failed -> item {
-                    FormSection(first = true) { TextRow("Couldn't make an invite. Check your connection and try again.") }
+                    FormSection(first = true) { NoticeRow("Couldn't make an invite. Check your connection and try again.") }
                 }
                 else -> item { FormSection(first = true) { BusyRow("Making an invite…") } }
             }
@@ -101,28 +101,25 @@ private fun androidx.compose.foundation.lazy.LazyListScope.inviteItems(
     footer: String,
 ) {
     item {
-        Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            val qr = remember(invite.link) { QRCode.bitmap(invite.link)?.asImageBitmap() }
-            if (qr != null) {
-                Image(
-                    qr,
-                    contentDescription = "Invite QR code",
-                    filterQuality = FilterQuality.None,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .size(240.dp)
-                        .background(Color.White, RoundedCornerShape(8.dp))
-                        .testTag("inviteQR"),
-                )
+        FormSection(first = true) {
+            Column(
+                Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                val qr = remember(invite.link) { QRCode.bitmap(invite.link)?.asImageBitmap() }
+                if (qr != null) {
+                    Image(
+                        qr,
+                        contentDescription = "Invite QR code",
+                        filterQuality = FilterQuality.None,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.size(240.dp).background(Color.White).testTag("inviteQR"),
+                    )
+                }
+                Text(invite.groupName, style = Headline, color = LabelPrimary, textAlign = TextAlign.Center)
             }
-            Text(invite.groupName, style = Headline, color = LabelPrimary, textAlign = TextAlign.Center)
-            Text(
-                "Ask them to scan this code with their phone's camera, or send them the link.",
-                style = Body,
-                color = LabelSecondary,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp),
-            )
+            TextRow("Ask them to scan this code with their phone's camera, or send them the link.")
         }
     }
     item {

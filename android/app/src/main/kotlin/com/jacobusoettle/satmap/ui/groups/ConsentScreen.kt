@@ -3,7 +3,14 @@ package com.jacobusoettle.satmap.ui.groups
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.ToggleOn
+import androidx.compose.ui.text.font.FontWeight
+import com.jacobusoettle.satmap.ui.FormRow
+import com.jacobusoettle.satmap.ui.Headline
+import com.jacobusoettle.satmap.ui.MultiLineRowPadding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -11,7 +18,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.groups.GroupsRoute
@@ -49,24 +55,24 @@ fun ConsentScreen(model: AppModel, route: GroupsRoute.Consent, nav: GroupsNav) {
     }
     SheetScreen(ScreenChrome("Share your location?", leading = null)) {
         item {
-            Text(
-                "SatMap collects location data to share your position and trail with $name, even when the app is in the background.",
-                style = Body,
-                color = LabelPrimary,
-                modifier = Modifier.padding(horizontal = 32.dp),
-            )
-        }
-        item {
-            FormSection {
-                TextRow("Members see where you are while sharing is on.")
-                TextRow("They see the trail you leave from now on, until you clear it.")
-                TextRow("Your location is encrypted on your phone. We can't read it.")
-                TextRow("Turn sharing off any time in the group.")
+            FormSection(first = true) {
+                FormRow(verticalPadding = MultiLineRowPadding) {
+                    Text(
+                        "SatMap collects location data to share your position and trail with $name, even when the app is in the background.",
+                        style = Body.copy(fontWeight = FontWeight.SemiBold),
+                        color = LabelPrimary,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                IconTextRow("Members see where you are while sharing is on.", Icons.Filled.NearMe)
+                IconTextRow("They see the trail you leave from now on, until you clear it.", Icons.Filled.Route)
+                IconTextRow("Your location is encrypted on your phone. We can't read it.", GroupSymbols.lock)
+                IconTextRow("Turn sharing off any time in the group.", Icons.Filled.ToggleOn)
             }
         }
         item {
             FormSection(footer = "Without sharing you can still see the group and drop pins.") {
-                ButtonRow("Share my location", tag = "consentShare") {
+                ButtonRow("Share my location", tag = "consentShare", style = Headline) {
                     when (recorder.authorization.value) {
                         LocationRecorder.Authorization.authorized -> share()
                         LocationRecorder.Authorization.notDetermined -> {

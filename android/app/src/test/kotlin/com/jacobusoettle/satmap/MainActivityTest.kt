@@ -13,8 +13,12 @@ import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Connectivity
 import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.ElevationSource
+import com.jacobusoettle.satmap.app.GroupConfig
 import com.jacobusoettle.satmap.app.MapHost
+import com.jacobusoettle.satmap.core.Base64URL
 import com.jacobusoettle.satmap.core.GeoBounds
+import com.jacobusoettle.satmap.core.GroupDemo
+import com.jacobusoettle.satmap.core.InviteLink
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.kml.KMLLibrary
 import com.jacobusoettle.satmap.location.GpsFix
@@ -256,5 +260,46 @@ class MainActivityTest {
         }
         assertEquals(1, ended)
         assertEquals(emptyList<Uri>(), chosen)
+    }
+
+    /** Group invites (groups §5.6): the App Links filter for the groups domain and the satmap://join scheme. */
+    @Test
+    fun inviteLinksReachMainActivity() {
+        val token = "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8"
+        for (uri in listOf("https://${GroupConfig.domain}/j/$token", "satmap://join/$token")) {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).addCategory(Intent.CATEGORY_BROWSABLE).setPackage(app.packageName)
+            val found = app.packageManager.queryIntentActivities(intent, 0)
+            assertEquals(uri, listOf(MainActivity::class.java.name), found.map { it.activityInfo.name })
+        }
+        val other = Intent(Intent.ACTION_VIEW, Uri.parse("https://elsewhere.example/j/$token")).addCategory(Intent.CATEGORY_BROWSABLE)
+            .setPackage(app.packageName)
+        assertTrue(app.packageManager.queryIntentActivities(other, 0).isEmpty())
+    }
+
+    @Test
+    fun anInviteLinkOpensTheJoinConfirmationOnceAndNeverJoins() {
+        val model = AppModel(app, noHeights)
+        val link = Intent(Intent.ACTION_VIEW, Uri.parse(GroupDemo.inviteLink))
+        assertFalse(MainActivity.handleIncoming(model, Intent(link).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)))
+        assertTrue(MainActivity.handleIncoming(model, link))
+        waitFor { model.groups.pendingInvite.value != null }
+        val expected = (InviteLink.parse(GroupDemo.inviteLink, GroupConfig.domain) as InviteLink.Parsed.Invite).link
+        assertEquals(expected, model.groups.pendingInvite.value!!.link)
+        assertTrue(model.groups.groups.value.isEmpty())
+        assertTrue(model.kml.files.value.isEmpty())
+    }
+
+    @Test
+    fun theLandingPagesIntentLinkCarriesTheKeyInAnExtra() {
+        val invite = InviteLink.parse(GroupDemo.inviteLink2, GroupConfig.domain) as InviteLink.Parsed.Invite
+        val data = Uri.parse("satmap://join/${invite.link.token}")
+        val withKey = Intent(Intent.ACTION_VIEW, data).putExtra("groupKey", Base64URL.encode(invite.link.groupKey))
+        assertEquals(invite, MainActivity.invite(withKey))
+        assertEquals(InviteLink.Parsed.MissingKey, MainActivity.invite(Intent(Intent.ACTION_VIEW, data)))
+        assertEquals(InviteLink.Parsed.NotInvite, MainActivity.invite(Intent(Intent.ACTION_VIEW, Uri.parse("content://x/Farm.kml"))))
+        val model = AppModel(app, noHeights)
+        assertTrue(MainActivity.handleIncoming(model, withKey))
+        waitFor { model.groups.pendingInvite.value != null }
+        assertEquals(invite.link, model.groups.pendingInvite.value!!.link)
     }
 }

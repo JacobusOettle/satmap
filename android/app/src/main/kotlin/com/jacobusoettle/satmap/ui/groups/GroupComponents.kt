@@ -49,7 +49,14 @@ import com.jacobusoettle.satmap.ui.LabelIcon
 import com.jacobusoettle.satmap.ui.LabelPrimary
 import com.jacobusoettle.satmap.ui.LabelSecondary
 import com.jacobusoettle.satmap.ui.MultiLineRowPadding
+import com.jacobusoettle.satmap.ui.SystemOrange
 import com.jacobusoettle.satmap.ui.SystemRed
+import com.jacobusoettle.satmap.ui.SystemYellow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.NorthEast
+import androidx.compose.material3.Icon
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import com.jacobusoettle.satmap.ui.dividerInset
 import com.jacobusoettle.satmap.ui.pill
 import com.jacobusoettle.satmap.ui.pressable
@@ -67,7 +74,10 @@ fun hexColour(hex: String): Color = try {
 /** The colour dot with initials (S5's rows, S12's header, S15's choices): white bold initials on the member's colour. */
 @Composable
 fun MemberDot(initials: String, colourHex: String, size: Dp = 30.dp, modifier: Modifier = Modifier) {
-    Box(modifier.size(size).background(hexColour(colourHex), CircleShape), contentAlignment = Alignment.Center) {
+    Box(
+        modifier.size(size).background(hexColour(colourHex), CircleShape).border(2.dp, Color.White, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
             initials,
             color = Color.White,
@@ -78,9 +88,9 @@ fun MemberDot(initials: String, colourHex: String, size: Dp = 30.dp, modifier: M
     }
 }
 
-/** A list `Label` of several lines: the icon (28 dp, accent), then the text, which wraps. */
+/** A list `Label` of several lines: the icon (28 dp, yellow), then the text, which wraps (S1, S3, S9). */
 @Composable
-fun IconTextRow(text: String, icon: ImageVector, modifier: Modifier = Modifier, iconTint: Color = Accent) {
+fun IconTextRow(text: String, icon: ImageVector, modifier: Modifier = Modifier, iconTint: Color = SystemYellow) {
     FormRow(modifier.dividerInset(60.dp), verticalPadding = MultiLineRowPadding) {
         Box(Modifier.align(Alignment.Top)) { LabelIcon(icon, iconTint) }
         Spacer(Modifier.width(16.dp))
@@ -108,6 +118,7 @@ fun ButtonRow(
     busy: Boolean = false,
     busyText: String? = null,
     tag: String? = null,
+    style: TextStyle = Body,
     onClick: () -> Unit,
 ) {
     val colour = when {
@@ -124,14 +135,54 @@ fun ButtonRow(
         if (busy) {
             FormSpinner()
             Spacer(Modifier.width(12.dp))
-            Text(busyText ?: title, style = Body, color = LabelSecondary)
+            Text(busyText ?: title, style = style, color = LabelSecondary)
         } else {
             if (icon != null) {
-                LabelIcon(icon, if (destructive) SystemRed else Accent)
+                LabelIcon(icon, if (destructive) SystemRed else if (enabled) Accent else LabelSecondary)
                 Spacer(Modifier.width(16.dp))
             }
-            Text(title, style = Body, color = colour)
+            Text(title, style = style, color = colour)
         }
+    }
+}
+
+/** A form's main button (S3's Subscribe, S4's Create group …): its title in the headline style, a spinner at the end
+ *  while it works. */
+@Composable
+fun PrimaryButtonRow(title: String, enabled: Boolean = true, busy: Boolean = false, tag: String? = null, onClick: () -> Unit) {
+    FormRow(
+        Modifier
+            .then(if (tag != null) Modifier.testTag(tag) else Modifier)
+            .pressable(enabled = enabled && !busy, onClick = onClick),
+    ) {
+        Text(title, style = Headline, color = if (enabled && !busy) Accent else LabelSecondary, modifier = Modifier.weight(1f))
+        if (busy) FormSpinner()
+    }
+}
+
+/** An error or notice under a form's button, in orange (iOS's `GroupsNotice`). */
+@Composable
+fun NoticeRow(text: String) {
+    FormRow(verticalPadding = MultiLineRowPadding) {
+        Text(text, style = Body, color = SystemOrange, modifier = Modifier.weight(1f).testTag("groupsError"))
+    }
+}
+
+/** A row that opens a page or a mail in another app: its title in the accent colour, a small arrow at the end. */
+@Composable
+fun LinkRow(title: String, url: String) {
+    val context = LocalContext.current
+    FormRow(Modifier.pressable { openLink(context, url) }) {
+        Text(title, style = Body, color = Accent, modifier = Modifier.weight(1f))
+        Icon(Icons.Filled.NorthEast, contentDescription = null, tint = LabelSecondary, modifier = Modifier.size(14.dp))
+    }
+}
+
+/** A big title as the first row of a screen's first card (S1, S3). */
+@Composable
+fun HeadlineRow(text: String) {
+    FormRow(verticalPadding = 14.dp) {
+        Text(text, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = LabelPrimary, modifier = Modifier.weight(1f))
     }
 }
 

@@ -53,10 +53,11 @@ class GroupsNav internal constructor(private val state: MutableState<RouteStack<
     }
 }
 
-/** The leading button of a screen: back (labelled with the screen under it) when it isn't the root, else Done. */
+/** The leading button of a screen: "Back" when it isn't the root (§9.3: "leading 'Back' in the list stack"), else
+ *  Done. */
 @Composable
 fun leading(model: AppModel, nav: GroupsNav, below: GroupsRoute?): ScreenChrome.Leading =
-    if (below != null) ScreenChrome.Leading.Back(title(model.groups, below), nav::pop) else ScreenChrome.Leading.Done(nav.close)
+    if (below != null) ScreenChrome.Leading.Back("Back", nav::pop) else ScreenChrome.Leading.Done(nav.close)
 
 /** A screen's title, which also labels the back button of a screen pushed over it. */
 fun title(groups: GroupsModel, r: GroupsRoute): String = when (r) {

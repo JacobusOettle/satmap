@@ -58,7 +58,10 @@ import com.jacobusoettle.satmap.ui.LabelSecondary
 import com.jacobusoettle.satmap.ui.ScreenChrome
 import com.jacobusoettle.satmap.ui.SheetPlainScreen
 import com.jacobusoettle.satmap.ui.SheetScreen
-import com.jacobusoettle.satmap.ui.SystemRed
+import com.jacobusoettle.satmap.ui.SystemOrange
+import com.jacobusoettle.satmap.ui.FormRow
+import com.jacobusoettle.satmap.ui.Headline
+import com.jacobusoettle.satmap.ui.MultiLineRowPadding
 import com.jacobusoettle.satmap.ui.pressable
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -78,7 +81,7 @@ fun JoinLinkScreen(model: AppModel, nav: GroupsNav, below: GroupsRoute?) {
     SheetScreen(ScreenChrome("Join a group", leading(model, nav, below))) {
         item {
             Column {
-                FormSection(first = true, footer = problem) {
+                FormSection(first = true, footer = "Invite links start with https://${GroupConfig.domain}/j/") {
                     FormTextFieldRow(
                         text,
                         { text = it },
@@ -101,13 +104,15 @@ fun JoinLinkScreen(model: AppModel, nav: GroupsNav, below: GroupsRoute?) {
                             )
                         },
                     )
+                    problem?.let { NoticeRow(it) }
                 }
             }
         }
         item {
-            FormSection(footer = "Invite links start with https://${GroupConfig.domain}/j/") {
-                ButtonRow("Continue", enabled = parsed is InviteLink.Parsed.Invite, tag = "continueJoin") {
-                    (parsed as? InviteLink.Parsed.Invite)?.let { nav.push(GroupsRoute.Join(it.link)) }
+            FormSection {
+                // S8 opens in its own sheet, over this one (as a link from another app).
+                ButtonRow("Continue", enabled = parsed is InviteLink.Parsed.Invite, tag = "continueJoin", style = Headline) {
+                    model.groups.openInvite(parsed)
                 }
                 ButtonRow("Scan QR code", icon = GroupSymbols.qrViewfinder, tag = "scanQR") { nav.push(GroupsRoute.Scan) }
             }
@@ -133,7 +138,7 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
     var checked by remember { mutableStateOf<Checked>(Checked.Checking) }
     var displayName by rememberSaveable { mutableStateOf(groups.lastDisplayName) }
     var busy by remember { mutableStateOf(false) }
-    var message by remember { mutableStateOf<String?>(null) }
+    var joinError by remember { mutableStateOf<GroupActionError?>(null) }
     val link = route.link
     LaunchedEffect(link, attempt) {
         link ?: return@LaunchedEffect
@@ -155,7 +160,7 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
         if (link == null) {
             item {
                 FormSection(first = true) {
-                    TextRow("This invite link is incomplete. Copy the whole link from the message, or scan the QR code.")
+                    NoticeRow("This invite link is incomplete. Copy the whole link from the message, or scan the QR code.")
                 }
             }
             return@SheetScreen
@@ -164,7 +169,7 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
             Checked.Checking -> item { FormSection(first = true) { BusyRow("Checking the invite…") } }
             is Checked.Failed -> item {
                 FormSection(first = true) {
-                    TextRow(c.text)
+                    NoticeRow(c.text)
                     when (val kind = c.error?.kind) {
                         is GroupActionError.Kind.AlreadyMember -> ButtonRow("Open group") {
                             groups.closeInvite()
@@ -179,22 +184,19 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
             is Checked.Ready -> {
                 val p = c.preview
                 item {
-                    Column(
-                        Modifier.fillMaxWidth().padding(horizontal = 32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(p.name, fontSize = 28.sp, lineHeight = 34.sp, fontWeight = FontWeight.Bold, color = LabelPrimary, textAlign = TextAlign.Center)
-                        p.inviterName?.let { Text("Invited by $it", style = Body, color = LabelSecondary) }
-                        Text(GroupTexts.members(p.memberCount), style = Body, color = LabelSecondary)
-                        if (p.isPaused) Text("This group is paused at the moment.", style = Footnote, color = SystemRed, textAlign = TextAlign.Center)
+                    FormSection(first = true) {
+                        FormRow(verticalPadding = 14.dp) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(p.name, fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Bold, color = LabelPrimary)
+                                p.inviterName?.let { Text("Invited by $it", style = Body, color = LabelPrimary) }
+                                Text(GroupTexts.members(p.memberCount), style = Body, color = LabelSecondary)
+                                if (p.isPaused) Text("This group is paused at the moment.", style = Body, color = SystemOrange)
+                            }
+                        }
                     }
                 }
                 item {
-                    FormSection(
-                        header = "Your name in the group",
-                        footer = "Members will see your name. If you share your location, they also see where you are and the trail you leave.",
-                    ) {
+                    FormSection(header = "Your name in the group") {
                         FormTextFieldRow(
                             displayName,
                             { displayName = it },
@@ -206,13 +208,22 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
                 }
                 item {
                     FormSection {
+                        FormRow(verticalPadding = MultiLineRowPadding) {
+                            Text(
+                                "Members will see your name. If you share your location, they also see where you are and the trail you leave.",
+                                style = Footnote,
+                                color = LabelSecondary,
+                            )
+                        }
                         ButtonRow(
-                            "Join group",
+                            style = Headline,
+                            title = "Join group",
                             enabled = GroupText.clean(displayName, GroupTextField.displayName) != null,
                             busy = busy,
                             busyText = "Joining…",
                             tag = "joinGroup",
                         ) {
+                            joinError = null
                             busy = true
                             scope.launch {
                                 try {
@@ -221,16 +232,19 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
-                                    val kind = (e as? GroupActionError)?.kind
-                                    if (kind is GroupActionError.Kind.AlreadyMember || kind == GroupActionError.Kind.InviteNotFound ||
-                                        kind == GroupActionError.Kind.DamagedLink
-                                    ) {
-                                        checked = Checked.Failed(e as GroupActionError, errorText(e))
-                                    } else {
-                                        message = errorText(e)
-                                    }
+                                    joinError = (e as? GroupActionError) ?: GroupActionError(GroupActionError.Kind.Server)
                                 } finally {
                                     busy = false
+                                }
+                            }
+                        }
+                        joinError?.let { e ->
+                            NoticeRow(e.message)
+                            val kind = e.kind
+                            if (kind is GroupActionError.Kind.AlreadyMember) {
+                                ButtonRow("Open group") {
+                                    groups.closeInvite()
+                                    groups.open(listOf(GroupsRoute.List, GroupsRoute.Detail(kind.groupId)))
                                 }
                             }
                         }
@@ -239,7 +253,6 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
             }
         }
     }
-    MessageAlert(message) { message = null }
 }
 
 /** S17 Scan QR code (§9.3, §5.3): the camera with a square guide; an invite found closes the scanner and opens S8.
@@ -265,8 +278,10 @@ fun ScanScreen(model: AppModel, nav: GroupsNav) {
                         if (done) return@QRScannerView
                         val parsed = InviteLink.parse(text, GroupConfig.domain)
                         if (parsed is InviteLink.Parsed.Invite) {
+                            // The scanner closes; S8 opens in its own sheet.
                             done = true
-                            nav.replaceTop(GroupsRoute.Join(parsed.link))
+                            nav.pop()
+                            model.groups.openInvite(parsed)
                         }
                     },
                     modifier = Modifier.fillMaxSize(),

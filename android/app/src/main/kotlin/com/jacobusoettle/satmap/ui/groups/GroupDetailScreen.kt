@@ -1,14 +1,21 @@
 package com.jacobusoettle.satmap.ui.groups
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Icon
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MenuDefaults
@@ -53,6 +60,7 @@ import com.jacobusoettle.satmap.ui.LabelPrimary
 import com.jacobusoettle.satmap.ui.LabelSecondary
 import com.jacobusoettle.satmap.ui.MultiLineRowPadding
 import com.jacobusoettle.satmap.ui.SatIcons
+import com.jacobusoettle.satmap.ui.SystemRed
 import com.jacobusoettle.satmap.ui.ScreenChrome
 import com.jacobusoettle.satmap.ui.SheetScreen
 import com.jacobusoettle.satmap.ui.SystemOrange
@@ -113,17 +121,18 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
             val d = detail ?: return@SheetScreen
             if (d.isPaused) {
                 item {
+                    // The warning style: the section's rows on an orange tint.
                     FormSection(first = true) {
-                        IconTextRow(
+                        val tint = Modifier.background(SystemOrange.copy(alpha = 0.22f))
+                        TextRow(
                             GroupTexts.pausedSection(d.pausedReason, d.canHandOver, d.deleteAt?.let { GroupTexts.date(it, now) }),
-                            Icons.Filled.Warning,
-                            iconTint = SystemOrange,
+                            modifier = tint,
                         )
                         if (d.canHandOver) {
-                            ButtonRow("Renew SatMap Pro") {
+                            ButtonRow("Renew SatMap Pro", modifier = tint) {
                                 if (isPro) run { groups.renewPro() } else nav.push(GroupsRoute.Paywall(AfterPro.Renew(groupId)))
                             }
-                            ButtonRow("Hand over ownership") { nav.push(GroupsRoute.Handover(groupId)) }
+                            ButtonRow("Hand over ownership", modifier = tint) { nav.push(GroupsRoute.Handover(groupId)) }
                         }
                     }
                 }
@@ -175,7 +184,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
             d.invites?.let { invites ->
                 item {
                     FormSection(header = "Invites", footer = "Each invite link works once, for one person, and expires after 7 days.") {
-                        FormLinkRow("Invite someone", GroupSymbols.personBadgePlus, Modifier.testTag("inviteSomeone")) {
+                        ButtonRow("Invite someone", icon = GroupSymbols.personBadgePlus, tag = "inviteSomeone") {
                             nav.push(GroupsRoute.Invite(groupId, null))
                         }
                         for (i in invites) key(i.inviteId) {
@@ -211,18 +220,27 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
             }
             item {
                 FormSection(footer = "Report a problem: ${GroupConfig.contactEmail}. Quote your support code when you write about your data.") {
-                    if (d.canHandOver) FormLinkRow("Hand over ownership") { nav.push(GroupsRoute.Handover(groupId)) }
+                    if (d.canHandOver) ButtonRow("Hand over ownership") { nav.push(GroupsRoute.Handover(groupId)) }
                     if (d.canDeleteGroup) ButtonRow("Delete group", destructive = true) { alert = DetailAlert.Delete }
                     if (d.canLeave) ButtonRow("Leave group", destructive = true) { alert = DetailAlert.Leave }
-                    FormValueRow(
-                        "Support code",
-                        d.supportCode,
-                        wraps = true,
-                        modifier = Modifier.testTag("supportCode").pressable {
+                    FormRow(
+                        Modifier.testTag("supportCode").pressable {
                             copyText(context, "Support code", d.supportCode)
                             toast = "Support code copied"
                         },
-                    )
+                        verticalPadding = MultiLineRowPadding,
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("Support code", style = Body, color = LabelPrimary)
+                            Text(
+                                d.supportCode,
+                                style = Caption.copy(fontFamily = FontFamily.Monospace),
+                                color = LabelSecondary,
+                                maxLines = 1,
+                                autoSize = TextAutoSize.StepBased(minFontSize = 7.sp, maxFontSize = 12.sp, stepSize = 0.5.sp),
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -337,6 +355,8 @@ private fun TrailsRow(mode: TrailsMode, onChoose: (TrailsMode) -> Unit) {
         ) {
             Text("Trails", style = Body, color = LabelPrimary, modifier = Modifier.weight(1f))
             Text(trailsTitle(mode), style = Body, color = LabelSecondary)
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.Filled.UnfoldMore, contentDescription = null, tint = LabelSecondary, modifier = Modifier.size(18.dp))
         }
         DropdownMenu(open, onDismissRequest = { open = false }, containerColor = CellBackground) {
             for (m in listOf(TrailsMode.off, TrailsMode.day, TrailsMode.all)) {
@@ -365,6 +385,6 @@ private fun InviteRow(i: PendingInvite, now: Long, open: () -> Unit, cancel: () 
             Text("Expires ${GroupTexts.date(i.expiresAt, now)}", style = Caption, color = LabelSecondary)
         }
         Spacer(Modifier.width(12.dp))
-        Text("Cancel", style = Body, color = Accent, modifier = Modifier.pressable(onClick = cancel))
+        Text("Cancel", style = Body, color = SystemRed, modifier = Modifier.pressable(onClick = cancel))
     }
 }

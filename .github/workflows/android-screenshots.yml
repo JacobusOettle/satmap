@@ -159,7 +159,7 @@ jobs:
           LOGCAT=$!
 
           # The walk: at most 45 minutes (it stops itself after 40, ScreenshotTest.WALK_MINUTES, to report what failed).
-          timeout -k 30 45m adb shell am instrument -w -e class $PKG.ScreenshotTest \
+          timeout -k 30 45m adb shell am instrument -w -e class $PKG.ScreenshotTest,$PKG.InviteIntentTest \
             $PKG.test/androidx.test.runner.AndroidJUnitRunner > test-output.txt 2>&1 &
           TEST=$!
 

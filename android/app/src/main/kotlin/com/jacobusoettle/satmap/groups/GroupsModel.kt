@@ -1,11 +1,15 @@
 package com.jacobusoettle.satmap.groups
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.jacobusoettle.satmap.BuildConfig
 import com.jacobusoettle.satmap.app.Connectivity
 import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.GroupConfig
+import androidx.annotation.VisibleForTesting
+import com.jacobusoettle.satmap.core.FakeGroupServer
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.GroupActionError
 import com.jacobusoettle.satmap.core.GroupAlert
@@ -32,13 +36,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -129,6 +132,11 @@ class GroupsModel(
     var isDemo = false
         private set
 
+    /** Demo mode's fake server (tests change it as another member would). */
+    @VisibleForTesting
+    internal var demoServer: FakeGroupServer? = null
+        private set
+
     lateinit var hub: GroupHub
         private set
     lateinit var pro: ProStore
@@ -201,7 +209,7 @@ class GroupsModel(
 
     private var nextId = 0
     private var foreground = false
-    private var tickJob: Job? = null
+    private var tickScheduled = false
     private var toastJob: Job? = null
     private val backgroundTimer = WakeTimer(context, "groups") { backgroundTick() }
 
@@ -282,6 +290,7 @@ class GroupsModel(
         for (f in listOf(file, File(file.path + "-wal"), File(file.path + "-shm"))) f.delete()
         val store = GroupStore(file.path, AndroidSqlDriver())
         val demo = GroupDemo.makeHub(store, words, clock, scope)
+        demoServer = demo.server
         install(Parts(demo.hub, FakeBillingGateway(clock = { clock() * 1000 }), proofFor = { GroupDemo.proProof(clock()) }))
     }
 
@@ -290,6 +299,7 @@ class GroupsModel(
     private fun changed(e: GroupHubEvent) {
         when (e) {
             GroupHubEvent.Groups -> {
+                if (foreground && !tickScheduled) scheduleForegroundTick()
                 _groups.value = hub.groups
                 updateShown()
             }
@@ -327,16 +337,31 @@ class GroupsModel(
         foreground = true
         backgroundTimer.cancel()
         if (started.isCompleted) wake()
-        tickJob?.cancel()
-        tickJob = scope.launch {
-            while (isActive) {
-                delay(GroupPolicyTicks.foregroundMillis)
-                if (started.isCompleted) runCatchingHub { hub.tick(foreground = true) }
-            }
+        scheduleForegroundTick()
+    }
+
+    /** The foreground tick every 5 s (§8.6), on the main looper, while there is a group (or a membership to restore);
+     *  `wake` and every hub change set it going again. */
+    private val foregroundTick = Runnable {
+        tickScheduled = false
+        if (!foreground) return@Runnable
+        scope.launch {
+            if (started.isCompleted) runCatchingHub { hub.tick(foreground = true) }
+            scheduleForegroundTick()
         }
+    }
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun scheduleForegroundTick() {
+        mainHandler.removeCallbacks(foregroundTick)
+        tickScheduled = false
+        if (!foreground || !started.isCompleted || hub.nextTickDelay(foreground = true) == null) return
+        tickScheduled = true
+        mainHandler.postDelayed(foregroundTick, GroupPolicyTicks.foregroundMillis)
     }
 
     private fun wake() {
+        scheduleForegroundTick()
         scope.launch {
             runCatchingHub { hub.becameActive() }
             pro.refresh()
@@ -346,8 +371,8 @@ class GroupsModel(
 
     fun didEnterBackground() {
         foreground = false
-        tickJob?.cancel()
-        tickJob = null
+        mainHandler.removeCallbacks(foregroundTick)
+        tickScheduled = false
         if (started.isCompleted) hub.enteredBackground()
         scheduleBackgroundTick()
     }

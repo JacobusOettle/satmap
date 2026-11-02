@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,27 +81,31 @@ fun MemberDetailScreen(model: AppModel, route: GroupsRoute.Member, nav: GroupsNa
     val row = member?.row
     // A blocked member's real name, for Unblock (their row says "Blocked member").
     val realName = row?.let { r -> detail?.blocked?.firstOrNull { it.memberId == r.memberId }?.name ?: r.name } ?: ""
-    SheetScreen(ScreenChrome(row?.let(GroupTexts::memberName) ?: "", leading(model, nav, below))) {
+    val liveHeight by androidx.compose.runtime.produceState<Double?>(null, member?.live) {
+        val l = member?.live ?: return@produceState
+        value = model.height(GeoPoint(l.lat, l.lon))
+    }
+    SheetScreen(ScreenChrome(row?.name ?: "", leading(model, nav, below))) {
         val m = member ?: return@SheetScreen
         val r = m.row
         item {
             FormSection(first = true) {
                 FormRow(verticalPadding = 12.dp) {
                     MemberDot(r.initials, r.colourHex, size = 44.dp)
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(GroupTexts.memberName(r), fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = LabelPrimary)
-                        GroupTexts.role(r.role)?.let { Text(it, style = Caption, color = LabelSecondary) }
+                        Text(GroupTexts.memberName(r), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = LabelPrimary)
+                        GroupTexts.role(r.role)?.let { Text(it, style = Body, color = LabelSecondary) }
                     }
                 }
                 TextRow(GroupTexts.memberDetailState(r.state, now), colour = LabelSecondary)
             }
         }
         m.live?.let { live ->
+            item { GroupPositionRow(model, GeoPoint(live.lat, live.lon), "memberCoordinates", liveHeight) }
             item {
                 FormSection {
-                    FormValueRow("Position", Format.coordinate(GeoPoint(live.lat, live.lon)), wraps = true)
-                    ButtonRow("Show on map") {
+                    ButtonRow("Show on map", icon = Icons.Outlined.Map) {
                         model.setFollowing(false)
                         model.map?.center(on = GeoPoint(live.lat, live.lon), animated = true)
                         nav.close()
@@ -117,34 +123,35 @@ fun MemberDetailScreen(model: AppModel, route: GroupsRoute.Member, nav: GroupsNa
                 }
             }
         }
-        item {
-            FormSection {
-                if (r.isYou) {
-                    FormLinkRow("Your name and colour") { nav.push(GroupsRoute.EditName(route.groupId)) }
-                } else {
-                    if (m.canReport) ButtonRow("Report ${r.name}") { nav.push(GroupsRoute.Report(route.groupId, ReportTarget.Member(r.memberId))) }
+        if (m.canReport || m.canBlock) {
+            item {
+                FormSection {
+                    if (m.canReport) ButtonRow("Report $realName") { nav.push(GroupsRoute.Report(route.groupId, ReportTarget.Member(r.memberId))) }
                     if (m.canBlock) {
                         if (r.isBlocked) {
                             ButtonRow("Unblock $realName") { groups.hub.unblock(r.memberId, route.groupId) }
                         } else {
-                            ButtonRow("Block ${r.name}", destructive = true) { alert = "block" }
+                            ButtonRow("Block $realName") { alert = "block" }
                         }
                     }
                 }
             }
         }
+        if (r.isYou) {
+            item { FormSection { FormLinkRow("Your name and colour") { nav.push(GroupsRoute.EditName(route.groupId)) } } }
+        }
     }
     val r = row ?: return
     when (alert) {
-        "owner" -> HandoverAlert(r.name, onDismiss = { alert = null }) {
+        "owner" -> HandoverAlert(realName, onDismiss = { alert = null }) {
             run {
                 groups.hub.offerOwnership(r.memberId, route.groupId)
                 nav.pop()
             }
         }
         "remove" -> AlertBox(
-            "Remove ${r.name}?",
-            "${r.name}'s trail and pins in this group are deleted. They can only come back with a new invite.",
+            "Remove $realName?",
+            "$realName's trail and pins in this group are deleted. They can only come back with a new invite.",
             listOf(AlertButton("Remove", destructive = true) {
                 run {
                     groups.hub.removeMember(r.memberId, route.groupId)
@@ -152,7 +159,7 @@ fun MemberDetailScreen(model: AppModel, route: GroupsRoute.Member, nav: GroupsNa
                 }
             }, AlertButton("Cancel") {}),
         ) { alert = null }
-        "block" -> BlockAlert(model, route.groupId, r.memberId, r.name, onBlocked = {}) { alert = null }
+        "block" -> BlockAlert(model, route.groupId, r.memberId, realName, onBlocked = {}) { alert = null }
     }
     MessageAlert(message) { message = null }
 }
@@ -237,6 +244,7 @@ fun EditNameScreen(model: AppModel, groupId: String, rename: Boolean, nav: Group
                         busy = true
                         scope.launch {
                             try {
+                                message = null
                                 if (rename) groups.hub.renameGroup(text, groupId) else groups.hub.setDisplayName(text, colour, groupId)
                                 nav.pop()
                             } catch (e: CancellationException) {
@@ -269,8 +277,8 @@ fun EditNameScreen(model: AppModel, groupId: String, rename: Boolean, nav: Group
                 }
             }
         }
+        message?.let { item { FormSection { NoticeRow(it) } } }
     }
-    MessageAlert(message) { message = null }
 }
 
 /** S16 Blocked (§9.3): the members blocked on this phone, by their real names, each with Unblock. */

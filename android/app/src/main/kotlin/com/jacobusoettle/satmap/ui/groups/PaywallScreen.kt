@@ -11,7 +11,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.outlined.Circle
+import com.jacobusoettle.satmap.ui.Subheadline
+import com.jacobusoettle.satmap.ui.SystemYellow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -103,9 +106,9 @@ fun PaywallScreen(model: AppModel, route: GroupsRoute.Paywall, nav: GroupsNav) {
     }
 
     SheetScreen(ScreenChrome("SatMap Pro", ScreenChrome.Leading.Cancel(nav::pop))) {
-        item { ScreenHeadline("Create your own groups") }
         item {
-            FormSection {
+            FormSection(first = true) {
+                HeadlineRow("Create your own groups")
                 IconTextRow("Create groups and invite as many people as you like", SatIcons.Person3)
                 IconTextRow("Members join free", GroupSymbols.gift)
                 IconTextRow("See everyone's position and trail, and share pins", GroupSymbols.map)
@@ -120,7 +123,7 @@ fun PaywallScreen(model: AppModel, route: GroupsRoute.Paywall, nav: GroupsNav) {
                         Spacer(Modifier.width(12.dp))
                         Text("Loading prices…", style = Body, color = LabelSecondary)
                     }
-                    ProStore.Prices.Failed -> TextRow(ProStore.STORE_UNAVAILABLE, colour = LabelSecondary)
+                    ProStore.Prices.Failed -> NoticeRow(ProStore.STORE_UNAVAILABLE)
                     is ProStore.Prices.Loaded -> {
                         val yearly = p.prices.getValue(ProPlan.yearly)
                         val monthly = p.prices.getValue(ProPlan.monthly)
@@ -140,31 +143,30 @@ fun PaywallScreen(model: AppModel, route: GroupsRoute.Paywall, nav: GroupsNav) {
             }
         }
         item {
-            FormSection {
-                FormRow(
-                    Modifier.dividerInset(16.dp).testTag("buyPro").pressable(enabled = prices is ProStore.Prices.Loaded && !busy) {
-                        busy = true
-                        scope.launch {
-                            try {
-                                handle(store.buy(activity, plan))
-                            } finally {
-                                busy = false
-                            }
-                        }
-                    },
+            FormSection(
+                footer = "Subscriptions renew automatically until you cancel them in your Google Play settings, at least 24 hours " +
+                    "before the end of the period. If Pro ends, groups you own pause until you renew or hand them to a member " +
+                    "who has Pro. Pro bought on an iPhone doesn't carry over to Android, or the other way round.",
+            ) {
+                PrimaryButtonRow(
+                    if (plan == ProPlan.lifetime) "Buy" else "Subscribe",
+                    enabled = prices is ProStore.Prices.Loaded,
+                    busy = busy,
+                    tag = "buyPro",
                 ) {
-                    if (busy) {
-                        FormSpinner()
-                        Spacer(Modifier.width(12.dp))
+                    busy = true
+                    message = null
+                    scope.launch {
+                        try {
+                            handle(store.buy(activity, plan))
+                        } finally {
+                            busy = false
+                        }
                     }
-                    Text(
-                        if (plan == ProPlan.lifetime) "Buy" else "Subscribe",
-                        style = Headline,
-                        color = if (prices is ProStore.Prices.Loaded) Accent else LabelSecondary,
-                    )
                 }
                 ButtonRow("Restore purchases", tag = "restorePurchases", enabled = !busy) {
                     busy = true
+                    message = null
                     scope.launch {
                         try {
                             handle(store.restore())
@@ -173,20 +175,16 @@ fun PaywallScreen(model: AppModel, route: GroupsRoute.Paywall, nav: GroupsNav) {
                         }
                     }
                 }
+                message?.let { NoticeRow(it) }
             }
         }
         item {
-            FormSection(
-                footer = "Subscriptions renew automatically until you cancel them in your Google Play settings, at least 24 hours " +
-                    "before the end of the period. If Pro ends, groups you own pause until you renew or hand them to a member " +
-                    "who has Pro. Pro bought on an iPhone doesn't carry over to Android, or the other way round.",
-            ) {
-                ButtonRow("Terms of use") { openLink(context, GroupConfig.termsURL) }
-                ButtonRow("Privacy notice") { openLink(context, GroupConfig.privacyURL) }
+            FormSection {
+                LinkRow("Terms of use", GroupConfig.termsURL)
+                LinkRow("Privacy notice", GroupConfig.privacyURL)
             }
         }
     }
-    MessageAlert(message) { message = null }
 }
 
 /** A plan: its name (with the saving capsule), its price below, a check when chosen. */
@@ -195,19 +193,24 @@ private fun PlanRow(title: String, detail: String, badge: String?, selected: Boo
     FormChoiceRow(selected, modifier = Modifier.testTag(tag), onClick = onClick) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(title, style = Body, color = LabelPrimary)
+                Text(title, style = Body.copy(fontWeight = FontWeight.SemiBold), color = LabelPrimary)
                 if (badge != null) {
                     Spacer(Modifier.width(8.dp))
                     Text(
                         badge,
-                        style = Caption2.copy(fontWeight = FontWeight.Bold),
+                        style = Caption.copy(fontWeight = FontWeight.Bold),
                         color = Color.Black,
-                        modifier = Modifier.background(SystemGreen, CircleShape).padding(horizontal = 7.dp, vertical = 2.dp),
+                        modifier = Modifier.background(SystemYellow, CircleShape).padding(horizontal = 8.dp, vertical = 2.dp),
                     )
                 }
             }
-            Text(detail, style = Caption, color = LabelSecondary)
+            Text(detail, style = Subheadline, color = LabelSecondary)
         }
-        if (selected) Icon(Icons.Filled.Check, contentDescription = null, tint = Accent, modifier = Modifier.size(22.dp))
+        Icon(
+            if (selected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+            contentDescription = null,
+            tint = if (selected) SystemYellow else LabelSecondary,
+            modifier = Modifier.size(24.dp),
+        )
     }
 }

@@ -22,6 +22,11 @@ import com.jacobusoettle.satmap.groups.GroupsRoute
 import com.jacobusoettle.satmap.ui.Accent
 import com.jacobusoettle.satmap.ui.Body
 import com.jacobusoettle.satmap.ui.FormChoiceRow
+import com.jacobusoettle.satmap.ui.Footnote
+import com.jacobusoettle.satmap.ui.FormRow
+import com.jacobusoettle.satmap.ui.Headline
+import com.jacobusoettle.satmap.ui.LabelSecondary
+import com.jacobusoettle.satmap.ui.MultiLineRowPadding
 import com.jacobusoettle.satmap.ui.FormSection
 import com.jacobusoettle.satmap.ui.FormTextFieldRow
 import com.jacobusoettle.satmap.ui.LabelPrimary
@@ -61,13 +66,17 @@ fun ReportScreen(model: AppModel, route: GroupsRoute.Report, nav: GroupsNav) {
             }
         }
         item {
-            FormSection(footer = GroupTexts.reportNote(route.target)) {
+            FormSection {
                 FormTextFieldRow(comment, { comment = it }, placeholder = "More details (optional)", singleLine = false, maxLines = 5)
             }
         }
         item {
             FormSection {
-                ButtonRow("Send report", enabled = reason != null, busy = busy, tag = "sendReport") {
+                FormRow(verticalPadding = MultiLineRowPadding) {
+                    Text(GroupTexts.reportNote(route.target), style = Footnote, color = LabelSecondary)
+                }
+                ButtonRow("Send report", enabled = reason != null, busy = busy, tag = "sendReport", style = Headline) {
+                    message = null
                     val r = ReportReason.entries.firstOrNull { it.rawValue == reason } ?: return@ButtonRow
                     busy = true
                     scope.launch {
@@ -83,6 +92,7 @@ fun ReportScreen(model: AppModel, route: GroupsRoute.Report, nav: GroupsNav) {
                         }
                     }
                 }
+                message?.let { NoticeRow(it) }
             }
         }
     }
@@ -107,5 +117,4 @@ fun ReportScreen(model: AppModel, route: GroupsRoute.Report, nav: GroupsNav) {
             ) { thanks = false }
         }
     }
-    MessageAlert(message) { message = null }
 }

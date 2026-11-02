@@ -136,12 +136,18 @@ object GroupTexts {
     /** S6's share text. */
     fun shareText(group: String, link: String) = "Join \"$group\" on SatMap: $link"
 
-    /** "9 Nov", with the year when it isn't this year (§9 intro), in the phone's time zone. */
-    fun date(seconds: Long, now: Long = System.currentTimeMillis() / 1000, zone: TimeZone = TimeZone.getDefault()): String {
+    /** "9 Nov", with the year when it isn't this year (§9 intro), in the phone's time zone and in its locale's order
+     *  ("Nov 9" in the US), as the iPhone app's day-and-month template. */
+    fun date(
+        seconds: Long,
+        now: Long = System.currentTimeMillis() / 1000,
+        zone: TimeZone = TimeZone.getDefault(),
+        locale: Locale = Locale.getDefault(),
+    ): String {
         val c = Calendar.getInstance(zone).apply { timeInMillis = seconds * 1000 }
         val thisYear = Calendar.getInstance(zone).apply { timeInMillis = now * 1000 }.get(Calendar.YEAR)
-        val pattern = if (c.get(Calendar.YEAR) == thisYear) "d MMM" else "d MMM yyyy"
-        return SimpleDateFormat(pattern, Locale.ENGLISH).apply { timeZone = zone }.format(Date(seconds * 1000))
+        val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, if (c.get(Calendar.YEAR) == thisYear) "dMMM" else "dMMMy")
+        return SimpleDateFormat(pattern, locale).apply { timeZone = zone }.format(Date(seconds * 1000))
     }
 
     /** The time as the phone shows it: "14:05" with a 24-hour clock, else "2:05 PM". */

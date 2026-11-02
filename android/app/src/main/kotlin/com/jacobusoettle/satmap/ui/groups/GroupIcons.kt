@@ -5,19 +5,19 @@ import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Pets
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Redeem
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.outlined.AddCircleOutline
+import androidx.compose.material.icons.outlined.PersonAddAlt
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
@@ -84,10 +84,10 @@ object GroupSymbols {
     val lock: ImageVector get() = Icons.Filled.Lock
     val flag: ImageVector get() = Icons.Filled.Flag
     val star: ImageVector get() = Icons.Filled.Star
-    val gift: ImageVector get() = Icons.Filled.CardGiftcard
+    val gift: ImageVector get() = Icons.Filled.Redeem
     val map: ImageVector get() = Icons.Filled.Map
     val plusCircle: ImageVector get() = Icons.Outlined.AddCircleOutline
-    val personBadgePlus: ImageVector get() = Icons.Filled.PersonAdd
+    val personBadgePlus: ImageVector get() = Icons.Outlined.PersonAddAlt
     val qrViewfinder: ImageVector get() = Icons.Filled.QrCodeScanner
 }
 

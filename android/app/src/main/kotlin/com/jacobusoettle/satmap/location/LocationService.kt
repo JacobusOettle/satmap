@@ -59,12 +59,12 @@ class LocationService : Service() {
             // On screen, the recorder carries on until SatMap goes to the background. Sharing goes off in every group
             // too (an Android-only difference, groups §11.6): Stop means nobody follows you any more.
             AppModel.shared.recorder.stop()
-            AppModel.shared.groups.stopSharingEverywhere()
+            AppModel.sharedOrNull?.groups?.stopSharingEverywhere()
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
-        sharing = AppModel.shared.groups.sharingNames.value
+        sharing = AppModel.sharedOrNull?.groups?.sharingNames?.value.orEmpty()
         try {
             ServiceCompat.startForeground(this, ID, notification(this, sharing), ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         } catch (e: Exception) {
@@ -73,9 +73,10 @@ class LocationService : Service() {
             return START_NOT_STICKY
         }
         // The groups shared with change while recording: the notification says so (§11.6).
-        if (watch == null) {
+        val names = AppModel.sharedOrNull?.groups?.sharingNames
+        if (watch == null && names != null) {
             watch = scope.launch {
-                AppModel.shared.groups.sharingNames.collect { names ->
+                names.collect { names ->
                     if (names == sharing) return@collect
                     sharing = names
                     try {

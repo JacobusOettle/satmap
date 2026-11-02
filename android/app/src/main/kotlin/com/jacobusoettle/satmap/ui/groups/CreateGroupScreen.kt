@@ -15,7 +15,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.GroupText
 import com.jacobusoettle.satmap.core.GroupTextField
+import com.jacobusoettle.satmap.groups.AfterPro
 import com.jacobusoettle.satmap.groups.GroupsRoute
+import com.jacobusoettle.satmap.ui.Headline
 import com.jacobusoettle.satmap.ui.FormSection
 import com.jacobusoettle.satmap.ui.FormTextFieldRow
 import com.jacobusoettle.satmap.ui.ScreenChrome
@@ -59,7 +61,10 @@ fun CreateGroupScreen(model: AppModel, nav: GroupsNav) {
         }
         item {
             FormSection {
-                ButtonRow("Create group", enabled = valid, busy = busy, busyText = "Creating…", tag = "createGroup") {
+                ButtonRow("Create group", enabled = valid, busy = busy, busyText = "Creating…", tag = "createGroup", style = Headline) {
+                    // Pro isn't confirmed on this phone now (the cache said Pro): the paywall, with Restore purchases.
+                    if (groups.pro.proof() == null) return@ButtonRow nav.replaceTop(GroupsRoute.Paywall(AfterPro.Create))
+                    message = null
                     busy = true
                     scope.launch {
                         try {
@@ -74,8 +79,8 @@ fun CreateGroupScreen(model: AppModel, nav: GroupsNav) {
                         }
                     }
                 }
+                message?.let { NoticeRow(it) }
             }
         }
     }
-    MessageAlert(message) { message = null }
 }

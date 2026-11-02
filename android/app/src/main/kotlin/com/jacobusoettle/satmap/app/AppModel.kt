@@ -338,6 +338,9 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
             shared = AppModel(app)
         }
 
+        /** The shared model, or null before `init` (a service a test starts on its own). */
+        val sharedOrNull: AppModel? get() = if (::shared.isInitialized) shared else null
+
         /** Seconds on a monotonic clock, for the reload's 20 s spacing (Swift: `Date`). */
         private fun now(): Double = SystemClock.elapsedRealtime() / 1000.0
     }
