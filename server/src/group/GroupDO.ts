@@ -375,7 +375,7 @@ export class GroupDO extends DurableObject<AppEnv> {
       case "E19":
         return this.changes(caller, url);
       case "E20":
-        return this.archive(caller, parseId(params.mid, "memberId"), params.month ?? "");
+        return this.archive(caller, this.memberParam(params.mid, caller), params.month ?? "");
       case "E21":
         return this.liveList(caller);
       case "E22":

@@ -487,7 +487,8 @@ export class ProDO extends DurableObject<AppEnv> {
       jobs.delete("check");
     }
     if (groups === 0) {
-      if (jobs.get("self_delete") === null) jobs.set("self_delete", now + SELF_DELETE_AFTER);
+      // 30 days after the last detach, or after a write, that left it with no groups (§7.4).
+      jobs.set("self_delete", now + SELF_DELETE_AFTER);
     } else {
       jobs.delete("self_delete");
     }

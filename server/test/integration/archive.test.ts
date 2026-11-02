@@ -118,6 +118,7 @@ describe("archive pass", () => {
     expect((await api("GET", path(m.memberId, "2030-03"), { pass: g.owner.pass })).status).toBe(404);
     expect((await api("GET", path(g.owner.memberId, "2030-03"), { pass: m.pass })).status).toBe(404); // only t, before m joined
     expect((await api("GET", path(g.owner.memberId, "2030-3"), { pass: g.owner.pass })).status).toBe(400);
+    expect((await api("GET", path("me", "2030-03"), { pass: g.owner.pass })).status).toBe(200); // "me" is the caller
     await inGroup(g.groupId, (_d, state) => {
       state.storage.sql.exec("INSERT INTO r2_deletes (prefix, at) VALUES (?, 0)", `g/${g.groupId}/t/${g.owner.memberId}/`);
     });
