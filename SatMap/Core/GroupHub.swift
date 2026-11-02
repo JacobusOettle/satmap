@@ -506,7 +506,8 @@ final class GroupHub {
         for st in states.values {
             if isEffectivelySharing(st) {
                 delay = min(delay ?? .max, st.watchers > 0 ? GroupPolicy.liveWatchedBackground : GroupPolicy.uploadInterval)
-            } else if st.stopLivePending || !store.ops(st.id).isEmpty || store.ownWindows(st.id).contains(where: { $0.version > $0.sentVersion }) {
+            } else if st.stopLivePending || store.ops(st.id).contains(where: { $0.kind != "archive" })
+                        || store.ownWindows(st.id).contains(where: { $0.version > $0.sentVersion }) {
                 delay = min(delay ?? .max, GroupPolicy.uploadInterval)
             }
         }
@@ -531,10 +532,12 @@ final class GroupHub {
                 secrets.delete(groupId: s.groupId)
                 continue
             }
-            if let row = store.group(s.groupId) {
+            if let row = store.group(s.groupId), row.memberId == s.memberId {
                 states[s.groupId] = GroupState(secret: s, keys: GroupKeys(groupKey: key, groupId: gid), row: row)
                 reload(s.groupId)
             } else {
+                // No local copy, or one of an earlier membership (another member id): restored from the server.
+                store.deleteGroup(s.groupId)
                 pendingSecrets[s.groupId] = s
             }
         }
@@ -638,6 +641,10 @@ final class GroupHub {
         for st in orderedStates where store.deleteExpiredPins(st.id, now: now) > 0 {
             reload(st.id)
             notify(st.id)
+        }
+        if states.values.contains(where: { $0.madeInvites.contains { $0.expiresAt <= now } }) {
+            store.deleteExpiredMadeInvites(now: now)
+            for st in states.values { st.madeInvites = store.madeInvites(st.id) }
         }
         if foreground {
             if sockets == nil, let gid = shownGroupId {
@@ -1407,7 +1414,7 @@ final class GroupHub {
         if states[groupId]?.row.shown == true { emit(.map) }
     }
 
-    private func background(_ work: @escaping (GroupHub) async -> Void) {
+    private func background(_ work: @escaping @MainActor (GroupHub) async -> Void) {
         let task = Task { @MainActor [weak self] in
             guard let self = self else { return }
             await work(self)
@@ -1638,6 +1645,7 @@ final class GroupHub {
     // MARK: - Internals: failures
 
     /// The error to throw for a failed request, after running §8.10 when it says the membership ended.
+    @MainActor
     private func failure(_ error: Error, _ groupId: String) async -> GroupActionError {
         let mapped = actionError(error)
         let gone = await handleFailure(error, groupId)
@@ -1667,6 +1675,7 @@ final class GroupHub {
     /// `401` or `404 group_not_found` only when E2 says the same (a check is made unless this was E2). Returns whether
     /// the group is gone from the phone.
     @discardableResult
+    @MainActor
     private func handleFailure(_ error: Error, _ groupId: String, fromStatus: Bool = false) async -> Bool {
         guard let a = error as? GroupAPIError else { return false }
         switch (a.status, a.code) {

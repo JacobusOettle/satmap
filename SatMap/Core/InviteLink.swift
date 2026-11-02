@@ -19,6 +19,13 @@ struct InviteLink: Equatable {
         self.groupKey = groupKey
     }
 
+    /// The fields as they are; `parse` and `init?(token:groupKey:)` are the checked ways to make one.
+    init(token: String, groupId: Data, groupKey: Data) {
+        self.token = token
+        self.groupId = groupId
+        self.groupKey = groupKey
+    }
+
     var groupIdText: String { Base64URL.encode(groupId) }
 
     func url(domain: String) -> String {
