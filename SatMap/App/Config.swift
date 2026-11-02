@@ -70,3 +70,52 @@ enum LocationPolicy {
     static let segmentBreakSeconds: TimeInterval = 300
     static let segmentBreakMeters: Double = 200
 }
+
+/// Groups (docs/groups/SPEC.md §5.1): the invite domain and the other fixed values of the groups feature.
+enum GroupConfig {
+    /// The invite domain: the build setting `GROUPS_DOMAIN`, through the Info.plist key `SatMapGroupsDomain`. The
+    /// placeholder `example.invalid` until the domain is chosen (§13.4).
+    static let domain: String = {
+        let value = (Bundle.main.object(forInfoDictionaryKey: "SatMapGroupsDomain") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty || value.hasPrefix("$(") ? "example.invalid" : value
+    }()
+
+    /// `https://{domain}`: invite links, the terms and the privacy notice.
+    static var publicBaseURL: String { "https://" + domain }
+
+    /// The API and WebSocket base: `https://{domain}`, or for tests the launch argument `-groupsBaseURL <url>` (read
+    /// only, never saved). Invite links always use `domain`.
+    static var apiBaseURL: URL {
+        if let text = UserDefaults.standard.string(forKey: "groupsBaseURL"), let url = URL(string: text),
+           url.scheme == "http" || url.scheme == "https", url.host != nil {
+            return url
+        }
+        return URL(string: publicBaseURL)!
+    }
+
+    static var termsURL: URL { URL(string: publicBaseURL + "/terms")! }
+    static var privacyURL: URL { URL(string: publicBaseURL + "/privacy")! }
+
+    /// Shown on the terms, the list, the group screen and the landing page. A release blocker until set (§14 R1).
+    static let contactEmail = "groups@example.invalid"
+    static let appStoreURL = ""
+    static let playStoreURL = ""
+
+    /// The terms version this app shows (§8.13); a later version shows the terms again.
+    static let termsVersion = 1
+
+    /// The Pro products (§10.1).
+    static let proProducts = ProProducts(monthly: "pro.monthly", yearly: "pro.yearly", lifetime: "pro.lifetime")
+
+    struct ProProducts {
+        let monthly: String
+        let yearly: String
+        let lifetime: String
+        var all: [String] { [yearly, monthly, lifetime] }
+    }
+
+    /// Demo mode (§8.15): the launch argument `-groupsDemo YES`. Groups then run against the core's fake server with
+    /// the demo seed, a fake Pro store and memberships in memory (walkthroughs and screenshots).
+    static var isDemo: Bool { UserDefaults.standard.bool(forKey: "groupsDemo") }
+}

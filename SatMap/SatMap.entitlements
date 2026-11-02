@@ -4,5 +4,9 @@
 <dict>
 	<key>com.apple.developer.carplay-maps</key>
 	<true/>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:$(GROUPS_DOMAIN)</string>
+	</array>
 </dict>
 </plist>

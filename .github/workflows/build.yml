@@ -38,7 +38,11 @@ jobs:
           plutil -p "$plist"
           for key in UIBackgroundModes BGTaskSchedulerPermittedIdentifiers NSLocationWhenInUseUsageDescription NSMotionUsageDescription \
                      CFBundleDocumentTypes UTImportedTypeDeclarations LSSupportsOpeningDocumentsInPlace \
-                     UIApplicationSceneManifest CPTemplateApplicationSceneSessionRoleApplication; do
+                     UIApplicationSceneManifest CPTemplateApplicationSceneSessionRoleApplication \
+                     NSCameraUsageDescription CFBundleURLTypes SatMapGroupsDomain; do
             plutil -p "$plist" | grep -q "\"$key\"" || { echo "Missing $key"; exit 1; }
           done
+          # Groups: the invite domain is filled in from the GROUPS_DOMAIN build setting, and satmap:// is registered.
+          plutil -extract SatMapGroupsDomain raw "$plist" | grep -Eq '^[A-Za-z0-9.-]+$' || { echo "SatMapGroupsDomain not filled in"; exit 1; }
+          plutil -p "$plist" | grep -q '"satmap"' || { echo "The satmap URL scheme is missing"; exit 1; }
           test -f "$(dirname "$plist")/PrivacyInfo.xcprivacy" || { echo "Missing privacy manifest"; exit 1; }
