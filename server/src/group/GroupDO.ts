@@ -167,14 +167,29 @@ function textWithin(value: string, [maxCodePoints, maxBytes]: readonly [number, 
   return [...value].length <= maxCodePoints && textEncoder.encode(value).byteLength <= maxBytes;
 }
 
-/** FNV-1a of a text, for the status fingerprint kept in a socket attachment. */
-function fingerprint(text: string): string {
+/** 32-bit FNV-1a of a text's UTF-16 code units. */
+function fnv1a(text: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  return (h >>> 0).toString(36) + ":" + text.length.toString(36);
+  return h >>> 0;
+}
+
+/** The status fingerprint kept in a socket attachment. */
+function fingerprint(text: string): string {
+  return fnv1a(text).toString(36) + ":" + text.length.toString(36);
+}
+
+/**
+ * The first run of the group's `daily` job after `t` (SPEC §7.4): once a day at a minute between 01:00 and 03:59
+ * UTC. The minute comes from the group's random id, so it is fixed at creation without being stored, and a daily
+ * run that was retried after a failure goes back to it.
+ */
+export function nextDaily(groupId: string, t: number): number {
+  const next = dayStart(t) + HOUR + (fnv1a(groupId) % (3 * 60)) * MINUTE;
+  return next > t ? next : next + DAY;
 }
 
 export class GroupDO extends DurableObject<AppEnv> {
@@ -675,7 +690,7 @@ export class GroupDO extends DurableObject<AppEnv> {
       createSchema(this.sql);
       this.hasSchema = true;
     }
-    const daily = dayStart(now) + DAY + HOUR + Math.floor(Math.random() * 3 * HOUR);
+    const daily = nextDaily(groupId, now);
     try {
       this.writeNewGroup(groupId, now, groupProfile, joinProofHash, pro, memberId, passHash, memberProfile, termsVersion, daily);
     } catch (err) {
@@ -1991,9 +2006,8 @@ export class GroupDO extends DurableObject<AppEnv> {
   }
 
   private async daily(now: number): Promise<void> {
-    const grp = this.grp()!;
-    const more = await this.archivePass(now);
-    if (more) this.jobs.set("archive_more", now + MINUTE);
+    const groupId = this.grp()!.group_id;
+    // Retention first, in SQLite only, so an R2 failure in the archive pass can't hold it up (R8, §7.10).
     this.ctx.storage.transactionSync(() => {
       const pruned = this.sql
         .exec<{ seq: number | null }>("DELETE FROM removals WHERE at < ? RETURNING seq", now - REMOVALS_RETENTION)
@@ -2010,16 +2024,22 @@ export class GroupDO extends DurableObject<AppEnv> {
       this.sql.exec("DELETE FROM live WHERE at < ?", now - LIVE_ROW_RETENTION);
       this.sql.exec("UPDATE members SET last_live_at = NULL WHERE last_live_at < ?", now - LIVE_ROW_RETENTION);
       this.sql.exec("DELETE FROM counters WHERE key != ? AND window_start < ?", PRO_RECHECK_KEY, now - 2 * DAY);
-      let next = this.jobs.get("daily")?.at ?? now;
-      while (next <= now) next += DAY;
-      this.jobs.done("daily", next);
+      this.jobs.done("daily", nextDaily(groupId, now));
     });
     for (const [memberId, entry] of this.live) if (entry.at < now - LIVE_ROW_RETENTION) this.live.delete(memberId);
+    try {
+      if (await this.archivePass(now)) this.jobs.set("archive_more", now + MINUTE);
+    } catch (err) {
+      // An R2 error: archive_more continues the pass under the jobs error rule (15 min, then hourly).
+      this.jobs.failed("archive_more", now, err);
+    }
     // Lifetime purchases have no expiry alarm: ask the store on the 1st of each month.
-    if (grp.pro_name !== null && grp.pro_expires_at === null && grp.status !== "deleted" && dayOfMonth(now) === 1) {
-      const result = await this.proStub(grp.pro_name).check(grp.group_id);
-      if (!result.unknown && this.grp()?.pro_name === grp.pro_name) {
-        this.ctx.storage.transactionSync(() => this.applyProStateTx(grp.pro_name!, result.state, now));
+    const current = this.grp()!;
+    const name = current.pro_name;
+    if (name !== null && current.pro_expires_at === null && current.status !== "deleted" && dayOfMonth(now) === 1) {
+      const result = await this.proStub(name).check(current.group_id);
+      if (!result.unknown && this.grp()?.pro_name === name) {
+        this.ctx.storage.transactionSync(() => this.applyProStateTx(name, result.state, now));
         this.afterStatusChange();
       }
     }
