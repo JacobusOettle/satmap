@@ -35,6 +35,27 @@ final class WordFilterTests: XCTestCase {
         }
     }
 
+    /// SatMap/Resources/GroupWords.txt: it catches the words it lists in their usual disguises, and leaves the
+    /// demo's texts and ordinary game-drive words alone.
+    func testShippedList() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("SatMap/Resources/GroupWords.txt")
+        let filter = WordFilter(list: try String(contentsOf: url, encoding: .utf8))
+        for text in ["Fucking hell", "what the f u c k", "FOK", "f0kken", "jou ma se poes", "Sipho is a kaffir", "k a f f i r",
+                     "shithead", "Msunu", "kwerekwere", "Ｆｕｃｋ"] {
+            XCTAssertFalse(filter.allows(text), text)
+        }
+        XCTAssertEqual(filter.masked("Sipho is a bitch!"), "Sipho is a •••!")
+        for text in ["Kruger trip", "Drone team", "Weekend ride", "Braai club", "Kudu", "Three bulls", "Loose gravel on the bend",
+                     "Two adults near the water hole", "Rhino", "Sam", "Thandi", "Pieter", "Lerato", "Sipho", "Ayesha", "Nomsa",
+                     "Bongani", "Lindiwe", "Johan", "Zanele", "Scunthorpe", "Cock ostrich at the dam", "Dolerite dyke",
+                     "Fire retardant strip", "Hoerskool reunion", "Fokus op die pad", "Shitake mushrooms", "Pakistan",
+                     "Spicy food", "Cocktails at sunset", "Watergat by die hek", "Kakebeen", "Dickens", "Push it up the hill",
+                     "Hyenas snigger"] {
+            XCTAssertTrue(filter.allows(text), text)
+        }
+    }
+
     func testListParsing() {
         // Comments, blank lines, spaces, tabs and CR around entries; "*" and "**" alone are exact entries.
         let filter = WordFilter(list: "# comment\r\n  badword \t\r\n\n\t*nasty*\r\n#worse*\nworse*\r\n*\n")
