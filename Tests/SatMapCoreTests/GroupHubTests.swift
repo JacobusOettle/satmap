@@ -696,6 +696,94 @@ final class GroupHubTests: XCTestCase {
         XCTAssertEqual(uploads().last?.keys.sorted(), ["chunks"])
     }
 
+    func testHTTPSendsLiveAndChunksTogether() async throws {
+        let (_, member, gid) = try await ownerAndMember()
+        share(member, gid)
+        server.clearLog()
+        var sends: [(at: Int64, body: [String: Any])] = []
+        // Stop and go in the background: 4 min moving (a point and a fix at every step), 2.5 min still (fixes only).
+        // The app ticks on every fix.
+        func stopAndGo(seconds: Int64, step: Int64) async {
+            let start = clock.now
+            while clock.now < start + seconds {
+                let lat = -24.99619 + Double(clock.now - start) * 0.00001
+                fix(member, lat: lat)
+                if (clock.now - start) % 390 < 240 { point(member, lat: lat) }
+                let before = uploads().count
+                await member.hub.tick(foreground: false)
+                for body in uploads().dropFirst(before) { sends.append((clock.now, body)) }
+                clock.advance(step)
+            }
+        }
+        func gaps(from: Int) -> [Int64] {
+            let times = sends.dropFirst(from).map(\.at)
+            return zip(times, times.dropFirst()).map { $1 - $0 }
+        }
+        func chunkCount(_ body: [String: Any]) -> Int { (body["chunks"] as? [Any])?.count ?? 0 }
+
+        // Nobody watches: one E18 a minute, carrying the live position and the changed chunks together.
+        await stopAndGo(seconds: 1800, step: 10)
+        XCTAssertTrue(gaps(from: 0).allSatisfy { $0 >= 60 }, "one E18 a minute, not more: \(gaps(from: 0))")
+        XCTAssertTrue((29...31).contains(sends.count), "\(sends.count) uploads")
+        let withChunks = sends.filter { chunkCount($0.body) > 0 }
+        XCTAssertGreaterThan(withChunks.count, 10)
+        XCTAssertTrue(withChunks.allSatisfy { $0.body["live"] is [String: Any] }, "chunks go with the live position")
+
+        // Someone watches: live every 15 s; the chunks ride along with every fourth.
+        server.setWatchers(1, groupId: gid)
+        let watched = sends.count
+        await stopAndGo(seconds: 900, step: 5)
+        XCTAssertTrue(gaps(from: watched).allSatisfy { $0 >= 15 }, "one E18 per 15 s, not more: \(gaps(from: watched))")
+        XCTAssertGreaterThanOrEqual(sends.count - watched, 55)
+        let chunkTimes = sends.dropFirst(watched).filter { chunkCount($0.body) > 0 }.map(\.at)
+        XCTAssertGreaterThan(chunkTimes.count, 5)
+        XCTAssertTrue(zip(chunkTimes, chunkTimes.dropFirst()).allSatisfy { $1 - $0 >= 60 }, "chunks every 60 s: \(chunkTimes)")
+        XCTAssertTrue(sends.dropFirst(watched).filter { chunkCount($0.body) > 0 }.allSatisfy { $0.body["live"] is [String: Any] })
+
+        // Nothing is left behind.
+        clock.advance(60)
+        await member.hub.tick(foreground: false)
+        XCTAssertTrue(member.store.ownWindows(gid).allSatisfy { $0.version <= $0.sentVersion })
+    }
+
+    func testSocketWithoutWatchersSendsTheLiveWithTheChunks() async throws {
+        let sockets = FakeSockets()
+        let owner = try phone()
+        let gid = try await owner.hub.createGroup(name: "Trip", displayName: "Sam", pro: pro)
+        let made = try await owner.hub.createInvite(groupId: gid)
+        guard case .invite(let link) = InviteLink.parse(made.link, domain: "example.invalid") else { return XCTFail("no link") }
+        let member = try phone(sockets: sockets)
+        _ = try await member.hub.join(link, displayName: "Thandi")
+        share(member, gid)
+        await member.hub.becameActive()
+        let socket = try XCTUnwrap(sockets.opened.last)
+        member.hub.socketDidOpen(groupId: gid)
+        let status = try await GroupAPI(transport: server).status(gid, pass: try XCTUnwrap(member.secrets.loadAll().first).pass)
+        let statusJSON = String(decoding: try JSONEncoder().encode(status), as: UTF8.self)
+        member.hub.socketDidReceive(groupId: gid, text: "{\"type\":\"welcome\",\"v\":1,\"status\":\(statusJSON),\"live\":[]}")
+        server.clearLog()
+        func socketUploads() -> [[String: Any]] { socket.messages.filter { $0["type"] as? String == "upload" } }
+        // becameActive's flush used the live slot over HTTP. Points start 20 s later: their chunk waits for the next
+        // live slot, and from then on both go in one message a minute.
+        var sends: [(at: Int64, body: [String: Any])] = []
+        clock.advance(20)
+        let end = clock.now + 400
+        while clock.now < end {
+            let lat = -24.99619 + Double(end - clock.now) * 0.00001
+            fix(member, lat: lat)
+            point(member, lat: lat)
+            let before = socketUploads().count
+            await member.hub.tick(foreground: true)
+            for body in socketUploads().dropFirst(before) { sends.append((clock.now, body)) }
+            clock.advance(5)
+        }
+        XCTAssertTrue(uploads().isEmpty)
+        XCTAssertGreaterThanOrEqual(sends.count, 6)
+        let times = sends.map(\.at)
+        XCTAssertTrue(zip(times, times.dropFirst()).allSatisfy { $1 - $0 >= 60 }, "one upload a minute: \(times)")
+        XCTAssertTrue(sends.allSatisfy { (($0.body["chunks"] as? [Any])?.count ?? 0) > 0 && $0.body["live"] is [String: Any] })
+    }
+
     func testCoarseFixesAreNeverSentAsLive() async throws {
         let (_, member, gid) = try await ownerAndMember()
         share(member, gid)

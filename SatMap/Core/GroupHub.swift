@@ -2149,20 +2149,22 @@ final class GroupHub {
         }
         let windows = paused || clearing ? [] : store.ownWindows(groupId).filter { $0.version > $0.sentVersion && !st.badTimeHold.contains($0.start) }
         let viaSocket = isSocketReady(groupId)
-        let chunkDue = !windows.isEmpty && (st.lastChunkUpload.map { now - $0 >= GroupPolicy.uploadInterval } ?? true)
+        let chunkTime = !windows.isEmpty && (st.lastChunkUpload.map { now - $0 >= GroupPolicy.uploadInterval } ?? true)
         var liveDue = false
+        // Whether the live position goes in fixed slots: every row of §8.6 but the watched socket's. The chunks then
+        // wait for a slot and go in the same request ("live and chunks together"): on two clocks, chunks falling due
+        // at the first point after a stop would go between two heartbeats from then on, two requests a minute.
+        var slotted = false
         if sharing {
             let since = st.lastLiveSlot.map { now - $0 } ?? .max
             if viaSocket && st.watchers > 0 {
                 liveDue = (since >= GroupPolicy.liveWatchedForeground && movedEnough(st)) || since >= GroupPolicy.liveHeartbeat
-            } else if viaSocket {
-                liveDue = since >= GroupPolicy.uploadInterval
-            } else if st.watchers > 0 {
-                liveDue = since >= GroupPolicy.liveWatchedBackground
             } else {
-                liveDue = since >= GroupPolicy.uploadInterval
+                slotted = true
+                liveDue = since >= (!viaSocket && st.watchers > 0 ? GroupPolicy.liveWatchedBackground : GroupPolicy.uploadInterval)
             }
         }
+        let chunkDue = chunkTime && (!slotted || liveDue)
         let stopDue = st.stopLivePending && !sharing
         guard chunkDue || liveDue || stopDue else { return }
 
