@@ -143,6 +143,25 @@ enum GroupsFlow {
         Array(path.dropLast())
     }
 
+    /// How S11 or S12 closes: by its leading button, after its own action (delete, block, remove, make owner), or when
+    /// its pin or member goes away while it is open.
+    enum ItemClose: Equatable {
+        /// The map item's sheet closes (the screen is its root).
+        case closeSheet
+        /// The screen pops.
+        case pop
+        /// Nothing: the screen isn't the top one (it closed already, or a screen is open over it).
+        case stay
+    }
+
+    /// Closes the screen for `route` only while it is the top one: the pin or member going away closes it too, so a
+    /// second close (the delete's own) must not close the screen under it. A screen under another closes when it
+    /// shows again.
+    static func closeItem(_ route: GroupsRoute, isSheetRoot: Bool, path: [GroupsRoute]) -> ItemClose {
+        if isSheetRoot { return path.isEmpty ? .closeSheet : .stay }
+        return path.last == route ? .pop : .stay
+    }
+
     /// How long SwiftUI takes to close a sheet (and anything over it) once told to.
     static let sheetCloseTime: TimeInterval = 0.65
 

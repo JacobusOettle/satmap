@@ -48,6 +48,25 @@ final class GroupsLogicTests: XCTestCase {
         XCTAssertEqual(GroupsFlow.pop(path).count, 3)
     }
 
+    func testAPinOrMemberScreenClosesOnlyWhileOnTop() {
+        let member = GroupsRoute.member(groupId: "g1", memberId: "m")
+        let pin = GroupsRoute.pin(groupId: "g1", pinId: "p")
+        // Pushed on the Groups sheet: it pops while it is the top screen.
+        XCTAssertEqual(GroupsFlow.closeItem(member, isSheetRoot: false, path: [.detail("g1"), member]), .pop)
+        XCTAssertEqual(GroupsFlow.closeItem(pin, isSheetRoot: false, path: [.detail("g1"), pin]), .pop)
+        // Closed already (the member went away, then "Remove" closes too): S5 stays.
+        XCTAssertEqual(GroupsFlow.closeItem(member, isSheetRoot: false, path: [.detail("g1")]), .stay)
+        // S13 over it: it waits until it shows again.
+        XCTAssertEqual(GroupsFlow.closeItem(pin, isSheetRoot: false,
+                                            path: [.detail("g1"), pin, .report(groupId: "g1", subject: .pin("p"))]), .stay)
+        // Another member's screen on top.
+        XCTAssertEqual(GroupsFlow.closeItem(member, isSheetRoot: false,
+                                            path: [.detail("g1"), .member(groupId: "g1", memberId: "n")]), .stay)
+        // Opened from the map: the item's sheet closes, unless S13 is open over it.
+        XCTAssertEqual(GroupsFlow.closeItem(pin, isSheetRoot: true, path: []), .closeSheet)
+        XCTAssertEqual(GroupsFlow.closeItem(pin, isSheetRoot: true, path: [.report(groupId: "g1", subject: .pin("p"))]), .stay)
+    }
+
     func testAnAlertWaitsForAScreenThatIsClosing() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         // Nothing closed: at once.

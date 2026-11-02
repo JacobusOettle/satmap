@@ -64,7 +64,7 @@ struct MapScreen: View {
                     Hint(text: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location.")
                 }
                 // The shown group is paused (§9.1): a tap opens it; ✕ hides the banner until the next launch.
-                if let banner = groups.pausedBanner, !model.isDrawingArea {
+                if let banner = groups.pausedBanner {
                     Hint(text: banner.text, onClose: { groups.hideBanner(banner.groupId) }, closeLabel: "Hide")
                         .contentShape(Rectangle())
                         .onTapGesture { groups.openPausedGroup(banner.groupId) }

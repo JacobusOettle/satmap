@@ -7,6 +7,15 @@ struct GroupsNav {
     let setPath: ([GroupsRoute]) -> Void
     let path: () -> [GroupsRoute]
     let closeSheet: () -> Void
+
+    /// Closes S11 or S12 for `route` while it is the top screen (§9.3; a map item sheet's root closes that sheet).
+    func closeItem(_ route: GroupsRoute, isSheetRoot: Bool) {
+        switch GroupsFlow.closeItem(route, isSheetRoot: isSheetRoot, path: path()) {
+        case .closeSheet: closeSheet()
+        case .pop: pop()
+        case .stay: break
+        }
+    }
 }
 
 /// The leading button of a groups screen (§9.3 gives each screen's).

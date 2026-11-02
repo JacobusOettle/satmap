@@ -48,7 +48,10 @@ struct GroupPositionRow: View {
             HeightBar(elevation: elevation, unit: model.heightUnit, id: id + "Height", onTap: model.nextHeightUnit)
         }
         .frame(maxWidth: .infinity)
+        // No card and no insets: the capsules sit side by side as on the map (the row's default insets would leave
+        // too little width, and they would stack).
         .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets())
         .task(id: p) { elevation = await TileRepository.shared.elevation(at: p) }
     }
 }
@@ -126,14 +129,16 @@ struct PinDetailView: View {
             }
             .blockAlert($block, groups: groups, groupId: groupId, onBlocked: close)
         } else {
-            Text("This is no longer in the group.")
-                .foregroundColor(.secondary)
+            // Deleted, expired or hidden (its dropper blocked) while open: the screen closes.
+            Color.clear
                 .groupsLeading(leading, action: close)
+                .onAppear(perform: close)
         }
     }
 
+    /// Closes this screen while it is the top one (`GroupsFlow.closeItem`): the pin going away closes it too.
     private func close() {
-        if leading == .done { nav.closeSheet() } else { nav.pop() }
+        nav.closeItem(.pin(groupId: groupId, pinId: pinId), isSheetRoot: leading == .done)
     }
 }
 
@@ -177,6 +182,8 @@ struct MemberDetailView: View {
                 if let live = md.live {
                     Section {
                         GroupPositionRow(model: model, position: live, id: "memberCoordinates")
+                    }
+                    Section {
                         Button {
                             groups.showOnMap(live)
                         } label: {
@@ -229,7 +236,11 @@ struct MemberDetailView: View {
                 switch a {
                 case .makeOwner:
                     Button("Send request") {
-                        run { try await $0.offerOwnership(to: memberId, groupId: groupId) }
+                        // Back to S5, which says who is asked ("Waiting for … to accept ownership."), as from S14.
+                        run { hub in
+                            try await hub.offerOwnership(to: memberId, groupId: groupId)
+                            close()
+                        }
                     }
                     Button("Cancel", role: .cancel) {}
                 case .remove:
@@ -255,9 +266,10 @@ struct MemberDetailView: View {
             }
             .blockAlert($block, groups: groups, groupId: groupId)
         } else {
-            Text("This is no longer in the group.")
-                .foregroundColor(.secondary)
+            // Removed, left or the group gone while open: the screen closes.
+            Color.clear
                 .groupsLeading(leading, action: close)
+                .onAppear(perform: close)
         }
     }
 
@@ -270,8 +282,9 @@ struct MemberDetailView: View {
         }
     }
 
+    /// Closes this screen while it is the top one (`GroupsFlow.closeItem`): the member going away closes it too.
     private func close() {
-        if leading == .done { nav.closeSheet() } else { nav.pop() }
+        nav.closeItem(.member(groupId: groupId, memberId: memberId), isSheetRoot: leading == .done)
     }
 
     private func run(_ work: @escaping @MainActor (GroupHub) async throws -> Void) {

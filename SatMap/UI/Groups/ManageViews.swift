@@ -148,19 +148,16 @@ struct NameEditView: View {
             }
             if kind == .yourName {
                 Section {
-                    LazyVGrid(columns: columns, spacing: 12) {
+                    LazyVGrid(columns: columns, spacing: 10) {
                         ForEach(GroupPolicy.palette.indices, id: \.self) { i in
                             Button {
                                 colour = i
                             } label: {
-                                ZStack {
-                                    Circle().fill(Color(groupHex: GroupPolicy.palette[i]))
-                                    Circle().stroke(Color.white, lineWidth: colour == i ? 3 : 0)
-                                    if colour == i {
-                                        Image(systemName: "checkmark").font(.caption.weight(.bold)).foregroundColor(.white)
-                                    }
-                                }
-                                .frame(width: 34, height: 34)
+                                // Your dot as the map draws it, with your initials on the chosen colour, ringed.
+                                MemberDot(colourHex: GroupPolicy.palette[i], initials: colour == i ? initials : "", size: 34)
+                                    .padding(4)
+                                    .overlay(Circle().stroke(Color.white, lineWidth: colour == i ? 2.5 : 0))
+                                    .contentShape(Circle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(Text("Colour \(i + 1)"))
@@ -188,6 +185,13 @@ struct NameEditView: View {
             }
         }
         .onAppear(perform: load)
+    }
+
+    /// The initials on the chosen colour: of the name being typed, or of your current name while the field is empty.
+    private var initials: String {
+        let typed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let current = groups.hub.detail(groupId)?.members.first(where: { $0.isYou })?.name ?? ""
+        return GroupText.initials(typed.isEmpty ? current : typed)
     }
 
     /// Starts from the current name (and your colour).
@@ -280,16 +284,13 @@ struct HandoverPickerView: View {
                             MemberDot(colourHex: m.colourHex, initials: m.initials)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(m.name).foregroundColor(.primary)
-                                if let role = GroupTexts.role(m.role) {
-                                    Text(role).font(.caption).foregroundColor(.secondary)
-                                }
+                                Text(GroupTexts.memberSubtitle(role: m.role, state: m.state, now: groupNow))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
                         }
                     }
                 }
-            }
-            if let e = error {
-                Section { GroupsNotice(text: e) }
             }
         }
         .navigationTitle("Hand over to")
@@ -301,6 +302,9 @@ struct HandoverPickerView: View {
             Button("Cancel", role: .cancel) {}
         } message: { m in
             Text("\(m.name) needs SatMap Pro to accept. You'll become an admin. If they don't accept within 7 days, the request ends.")
+        }
+        .alert(error ?? "", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("OK", role: .cancel) {}
         }
     }
 
