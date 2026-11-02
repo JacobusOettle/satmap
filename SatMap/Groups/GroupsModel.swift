@@ -45,6 +45,8 @@ final class GroupsModel: ObservableObject {
     private var ticking = false
     /// A group just shown from S5 or S8 whose live positions haven't arrived yet: the camera fits it when they do.
     private var pendingFit: (groupId: String, until: Date)?
+    /// When `closeScreensOfGoneGroups` last closed a screen: SwiftUI takes it away a moment later.
+    private var screensClosedAt: Date?
     private let invitePresenter = InviteSheetPresenter()
 
     init() {
@@ -142,8 +144,14 @@ final class GroupsModel: ObservableObject {
         }
     }
 
+    /// The hub work queued behind `start()` reads the app's state when it runs, not when it was queued: the app may
+    /// have gone to the background meanwhile, and the hub must not open the socket there (§8.7).
     private func becameActive() {
-        afterStart { await $0.becameActive() }
+        afterStart { [weak self] hub in
+            guard self?.isForeground == true else { return }
+            await hub.becameActive()
+            if self?.isForeground == false { hub.enteredBackground() }
+        }
         startForegroundTicks()
         bumpMap()
     }
@@ -189,10 +197,9 @@ final class GroupsModel: ObservableObject {
     private func tick() {
         guard !ticking else { return }
         ticking = true
-        let foreground = isForeground
         afterStart { [weak self] hub in
-            await hub.tick(foreground: foreground)
             guard let self = self else { return }
+            await hub.tick(foreground: self.isForeground)
             self.ticking = false
             if !self.isForeground { self.scheduleBackgroundTick() }
         }
@@ -239,8 +246,12 @@ final class GroupsModel: ObservableObject {
         case .alert(let a):
             let text = GroupTexts.alert(a)
             DispatchQueue.main.async { [weak self] in
-                self?.closeScreensOfGoneGroups()
-                TopPresenter.alert(title: text.title, message: text.message)
+                guard let self = self else { return }
+                self.closeScreensOfGoneGroups()
+                // A screen of the group told to close just now (here or by the `.groups` event before this one) is
+                // still up until SwiftUI has taken it away, and an alert over it would go with it: the alert waits.
+                TopPresenter.alert(title: text.title, message: text.message,
+                                   after: GroupsFlow.alertWait(screensClosedAt: self.screensClosedAt, now: Date()))
             }
         }
     }
@@ -259,19 +270,26 @@ final class GroupsModel: ObservableObject {
     /// Screens of a group that is no longer on the phone close (left, deleted, removed).
     private func closeScreensOfGoneGroups() {
         let ids = Set(hub.groups.map(\.groupId))
+        var closed = false
         if let gone = path.compactMap(\.groupId).first(where: { !ids.contains($0) }) {
             path = GroupsFlow.removingGroup(path, gone)
+            closed = true
         }
         if case .detail(let g) = root, !ids.contains(g) {
             root = .list
             path = []
+            closed = true
         }
         switch groupItem {
         case .pin(let g, _), .member(let g, _), .dropPin(let g, _, _):
-            if !ids.contains(g) { groupItem = nil }
+            if !ids.contains(g) {
+                groupItem = nil
+                closed = true
+            }
         case nil:
             break
         }
+        if closed { screensClosedAt = Date() }
     }
 
     // MARK: Reading
@@ -328,12 +346,14 @@ final class GroupsModel: ObservableObject {
         app?.sheet = .groups
     }
 
-    /// Opens the Groups sheet with a root and stack, closing whatever sheet is up first (§9.2 flows).
-    func openGroups(root newRoot: GroupsRoot = .list, path newPath: [GroupsRoute] = []) {
+    /// Opens the Groups sheet with a root and stack, closing whatever sheet is up first (§9.2 flows). `opened` runs
+    /// once the sheet has been told to open (at once when it is already up).
+    func openGroups(root newRoot: GroupsRoot = .list, path newPath: [GroupsRoute] = [], opened: (() -> Void)? = nil) {
         guard let app = app else { return }
         if app.sheet == .groups {
             root = newRoot
             path = newPath
+            opened?()
             return
         }
         let open = { [weak self, weak app] in
@@ -341,12 +361,13 @@ final class GroupsModel: ObservableObject {
             self.root = newRoot
             self.path = newPath
             app.sheet = .groups
+            opened?()
         }
         if app.sheet != nil || groupItem != nil || app.pendingArea != nil {
             app.sheet = nil
             groupItem = nil
             if app.pendingArea != nil { app.discardPendingArea() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65, execute: open)
+            DispatchQueue.main.asyncAfter(deadline: .now() + GroupsFlow.sheetCloseTime, execute: open)
         } else {
             open()
         }
@@ -356,9 +377,10 @@ final class GroupsModel: ObservableObject {
     /// (§5.6). A group you're already in opens its screen and says so instead.
     func openInvite(_ parsed: InviteLink.Parsed) {
         if case .invite(let link) = parsed, let d = hub.detail(link.groupIdText) {
-            openGroups(root: .detail(d.groupId))
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                TopPresenter.alert(title: "You're already in \(d.name).", message: nil)
+            // Over S5 once its sheet is up: timed from the sheet's opening (another sheet may close first), and the
+            // alert waits while the sheet is still sliding in.
+            openGroups(root: .detail(d.groupId)) {
+                TopPresenter.alert(title: "You're already in \(d.name).", message: nil, after: 0.6)
             }
             return
         }
@@ -536,12 +558,37 @@ enum TopPresenter {
         return top
     }
 
-    static func alert(title: String, message: String?) {
-        guard let top = top else { return }
-        let a = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        a.addAction(UIAlertAction(title: "OK", style: .cancel))
-        a.overrideUserInterfaceStyle = .dark
-        top.present(a, animated: true)
+    /// An alert over the top screen, after `delay` and once no screen is opening or closing.
+    static func alert(title: String, message: String?, after delay: TimeInterval = 0) {
+        whenSettled(after: delay) { top in
+            let a = UIAlertController(title: title, message: message, preferredStyle: .alert)
+            a.addAction(UIAlertAction(title: "OK", style: .cancel))
+            a.overrideUserInterfaceStyle = .dark
+            top.present(a, animated: true)
+        }
+    }
+
+    /// Runs `work` with the top screen after `delay`. UIKit refuses to present over a screen that is still opening
+    /// or closing, so while one is, it tries again every 0.25 s (for up to 3 s more).
+    static func whenSettled(after delay: TimeInterval = 0, tries: Int = 12, _ work: @escaping (UIViewController) -> Void) {
+        let run = {
+            guard let top = TopPresenter.top else { return }
+            if tries > 0, TopPresenter.isMoving(top) {
+                TopPresenter.whenSettled(after: 0.25, tries: tries - 1, work)
+            } else {
+                work(top)
+            }
+        }
+        if delay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: run)
+        } else {
+            run()
+        }
+    }
+
+    /// Opening or closing, or with a screen above it on its way out (`top` skips that one).
+    private static func isMoving(_ vc: UIViewController) -> Bool {
+        vc.isBeingPresented || vc.isBeingDismissed || vc.presentedViewController != nil || vc.transitionCoordinator != nil
     }
 
     /// A capsule near the bottom of the key window for two seconds.
@@ -587,23 +634,31 @@ private extension UIFont {
 /// Presents S8 (the join sheet) over whatever is on screen, so an invite link can open it over anything (§9.2).
 final class InviteSheetPresenter {
     private weak var presented: UIViewController?
+    /// Counts the requests: one still waiting for the screen to settle opens only if no newer one came.
+    private var ticket = 0
 
     func present<Content: View>(_ content: Content) {
+        ticket += 1
+        let mine = ticket
         let show = { [weak self] in
-            guard let self = self, let top = TopPresenter.top else { return }
-            let host = HostingSheet(rootView: AnyView(content.preferredColorScheme(.dark)))
-            host.overrideUserInterfaceStyle = .dark
-            self.presented = host
-            top.present(host, animated: true)
+            TopPresenter.whenSettled { top in
+                guard let self = self, self.ticket == mine else { return }
+                let host = HostingSheet(rootView: AnyView(content.preferredColorScheme(.dark)))
+                host.overrideUserInterfaceStyle = .dark
+                self.presented = host
+                top.present(host, animated: true)
+            }
         }
-        if let old = presented {
-            old.presentingViewController?.dismiss(animated: false, completion: show)
+        if let old = presented, let presenter = old.presentingViewController {
+            presented = nil
+            presenter.dismiss(animated: false, completion: show)
         } else {
             show()
         }
     }
 
     func dismiss(then: (() -> Void)?) {
+        ticket += 1
         guard let p = presented, let presenter = p.presentingViewController else {
             then?()
             return
