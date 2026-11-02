@@ -247,9 +247,9 @@ fun PinDetailScreen(model: AppModel, route: GroupsRoute.Pin, nav: GroupsNav, bel
                     )
                 }
                 p.note?.let { TextRow(it) }
-                SmallTextRow(GroupTexts.droppedBy(p.dropperName, GroupTexts.time(p.createdAt, use24), GroupFormat.ago(now - p.createdAt)))
+                SmallTextRow(GroupTexts.droppedBy(p.dropperName, GroupTexts.moment(p.createdAt, now, use24), GroupFormat.ago(now - p.createdAt)))
                 if (p.knownType == PinType.animal) {
-                    p.expiresAt?.let { SmallTextRow("Disappears at ${GroupTexts.time(it, use24)}") }
+                    p.expiresAt?.let { SmallTextRow("Disappears at ${GroupTexts.moment(it, now, use24)}") }
                 }
             }
         }

@@ -154,6 +154,21 @@ object GroupTexts {
     fun time(seconds: Long, use24Hour: Boolean, zone: TimeZone = TimeZone.getDefault()): String =
         SimpleDateFormat(if (use24Hour) "HH:mm" else "h:mm a", Locale.ENGLISH).apply { timeZone = zone }.format(Date(seconds * 1000))
 
+    /** A moment: its time when it is today, otherwise "9 Nov, 14:05" (S11's dropped and disappearing times). */
+    fun moment(
+        seconds: Long,
+        now: Long,
+        use24Hour: Boolean,
+        zone: TimeZone = TimeZone.getDefault(),
+        locale: Locale = Locale.getDefault(),
+    ): String {
+        val a = Calendar.getInstance(zone).apply { timeInMillis = seconds * 1000 }
+        val b = Calendar.getInstance(zone).apply { timeInMillis = now * 1000 }
+        val today = a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+        val t = time(seconds, use24Hour, zone)
+        return if (today) t else "${date(seconds, now, zone, locale)}, $t"
+    }
+
     /** S6's footer. */
     fun inviteFooter(date: String, time: String) =
         "This invite works once, for one person, and expires on $date at $time. Anyone who gets the link can use it, so send it only to the person you're inviting."

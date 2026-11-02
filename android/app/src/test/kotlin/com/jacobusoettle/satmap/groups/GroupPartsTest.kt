@@ -98,6 +98,10 @@ class GroupPartsTest {
         assertEquals("9 Nov", GroupTexts.date(nov9, now = nov9 - 86_400, zone = utc, locale = uk))
         assertEquals("9 Nov 2026", GroupTexts.date(nov9, now = nov9 + 400 * 86_400L, zone = utc, locale = uk))
         assertEquals("Nov 9", GroupTexts.date(nov9, now = nov9 - 86_400, zone = utc, locale = java.util.Locale.US))
+        // A moment: the time alone today, else with the day (S11).
+        assertEquals("12:00", GroupTexts.moment(nov9, now = nov9 + 3600, use24Hour = true, zone = utc, locale = uk))
+        assertEquals("Nov 9, 12:00 AM", GroupTexts.moment(nov9 - 12 * 3600, now = nov9 - 13 * 3600, use24Hour = false, zone = utc, locale = java.util.Locale.US))
+        assertEquals("10 Nov, 01:30", GroupTexts.moment(nov9 + 13 * 3600 + 1800, now = nov9, use24Hour = true, zone = utc, locale = uk))
         assertEquals("12:00", GroupTexts.time(nov9 + 0, use24Hour = true, zone = utc))
         assertEquals("2:05 PM", GroupTexts.time(nov9 + 2 * 3600 + 300, use24Hour = false, zone = utc))
     }
