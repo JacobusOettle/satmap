@@ -212,8 +212,9 @@ class ScreenshotTest {
         sleep(23)
         snap("05-blocks-on-map")
 
-        // Offline: download the blocks (and 15 m around the launch point).
-        tap("Offline maps")
+        // Offline: download the blocks (and 15 m around the launch point). The sheet must be open before the shot (a
+        // tap can be lost while the app is busy drawing the blocks).
+        openOfflineSheet()
         sleep(2)
         snap("06-offline-maps")
         tap("Use a GPX or KML file")
@@ -575,9 +576,17 @@ class ScreenshotTest {
         val inviteText = id("inviteText")
         if (waitForExistence(inviteText, 10)) {
             click(inviteText)
-            typeText(inviteText, GroupDemo.inviteLink)
-            sleep(1)
-            tap("Continue")
+            // Continue is enabled once the field holds a whole invite link. Typed while the keyboard comes up, the
+            // text can be lost: typed again then.
+            val continueJoin = id("continueJoin")
+            fun canContinue() = node(continueJoin)?.config?.contains(SemanticsProperties.Disabled) == false
+            for (attempt in 0 until 3) {
+                sleep(1)
+                typeText(inviteText, GroupDemo.inviteLink, replacing = true)
+                if (waitUntil(5.0) { canContinue() }) break
+            }
+            check(canContinue(), "The invite link typed wasn't taken")
+            click(continueJoin)
         } else {
             fail("No field for the invite link")
         }
