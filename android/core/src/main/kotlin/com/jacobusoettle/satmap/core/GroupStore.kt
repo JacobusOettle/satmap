@@ -465,10 +465,17 @@ class GroupStore(path: String, driver: SqlDriver = MBTiles.driver) : Closeable {
 
     // Ops
 
-    /** Queues an op; returns its id. */
-    fun addOp(groupId: String, kind: String, body: String, createdAt: Long): Long = lock.withLock {
-        run("INSERT INTO ops (group_id, kind, body, created_at) VALUES (?,?,?,?)", listOf(groupId, kind, body, createdAt))
-        scalar("SELECT last_insert_rowid()", emptyList()) ?: 0
+    /** Queues an op; returns its id (0 if it couldn't be stored). The insert and `last_insert_rowid()` run in one
+     *  transaction: the rowid is per connection, and outside a transaction Android may read on another connection of
+     *  its pool than the one that wrote (WAL). */
+    fun addOp(groupId: String, kind: String, body: String, createdAt: Long): Long = try {
+        transaction {
+            run("INSERT INTO ops (group_id, kind, body, created_at) VALUES (?,?,?,?)", listOf(groupId, kind, body, createdAt))
+            scalar("SELECT last_insert_rowid()", emptyList()) ?: 0
+        }
+    } catch (e: StoreError) {
+        GroupLog.note("store: an op couldn't be queued (${e.errorDescription})")
+        0
     }
 
     /** The queued ops, in the order they were queued. */
