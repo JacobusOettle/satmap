@@ -22,7 +22,8 @@ export { GroupDO } from "./group/GroupDO";
 export { ProDO } from "./pro/ProDO";
 export { AdminDO } from "./admin/AdminDO";
 
-export const VERSION: string = pkg.version;
+// Not exported: the main module may export only the handler and the Durable Object classes.
+const VERSION: string = pkg.version;
 
 interface Handled {
   route: string;

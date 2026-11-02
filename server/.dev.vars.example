@@ -1,0 +1,24 @@
+# Copy to .dev.vars for `npm run dev` (wrangler dev). Never commit .dev.vars. In production these are set with
+# `npx wrangler secret put NAME` (server/README.md, SPEC §7.8).
+
+# Admin endpoints (32+ random characters). Unset: every /v1/admin path answers 404.
+ADMIN_TOKEN=
+
+# App Store Server API (an In-App Purchase key from App Store Connect). Required for Apple purchases outside
+# TEST_MODE=1. APPLE_PRIVATE_KEY is the .p8 file's PEM text, newlines included.
+APPLE_ISSUER_ID=
+APPLE_KEY_ID=
+APPLE_PRIVATE_KEY=
+
+# Google Play Developer API: the service account's JSON key, on one line. Required for Google purchases.
+GOOGLE_SERVICE_ACCOUNT_JSON=
+
+# The secret in the Pub/Sub push URL, 32+ random characters. Unset or shorter: /v1/store/google answers 404.
+GOOGLE_RTDN_TOKEN=
+
+# Where report alerts go (an e-mail or chat relay). This or a written daily A1 routine is a release blocker.
+REPORT_WEBHOOK_URL=
+
+# For the local end-to-end check (SPEC §12.6) only: these override the wrangler.jsonc variables.
+# TEST_MODE=1
+# ALLOW_UNVERIFIED_PRO=true

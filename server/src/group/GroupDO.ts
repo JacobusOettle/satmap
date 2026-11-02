@@ -595,9 +595,8 @@ export class GroupDO extends DurableObject<AppEnv> {
     const grp = this.grp();
     if (grp === null || grp.status === "deleted" || grp.pro_name !== name) return;
     const now = this.now();
-    const wasActive = grp.status === "active";
     this.ctx.storage.transactionSync(() => this.applyProStateTx(name, state, now));
-    this.afterStatusChange(wasActive);
+    this.afterStatusChange();
   }
 
   /** RPC from ProDO: the group's purchase was replaced by `newName` (Google linkedPurchaseToken). */
@@ -605,9 +604,8 @@ export class GroupDO extends DurableObject<AppEnv> {
     const grp = this.grp();
     if (grp === null || grp.status === "deleted" || grp.pro_name !== oldName) return;
     const now = this.now();
-    const wasActive = grp.status === "active";
     this.ctx.storage.transactionSync(() => this.applyProStateTx(newName, state, now));
-    this.afterStatusChange(wasActive);
+    this.afterStatusChange();
   }
 
   // ───────────────────────────── pause and resume (SPEC §7.3)
@@ -641,7 +639,7 @@ export class GroupDO extends DurableObject<AppEnv> {
   }
 
   /** After any status change: next alarm and a tick. */
-  private afterStatusChange(_wasActive?: boolean): void {
+  private afterStatusChange(): void {
     this.setNextAlarm();
     this.scheduleFlush();
   }
@@ -678,6 +676,29 @@ export class GroupDO extends DurableObject<AppEnv> {
       this.hasSchema = true;
     }
     const daily = dayStart(now) + DAY + HOUR + Math.floor(Math.random() * 3 * HOUR);
+    try {
+      this.writeNewGroup(groupId, now, groupProfile, joinProofHash, pro, memberId, passHash, memberProfile, termsVersion, daily);
+    } catch (err) {
+      // Nothing was written: don't let the purchase count a group that doesn't exist (SD9).
+      await this.detachFrom(pro.name, groupId);
+      throw err;
+    }
+    this.setNextAlarm();
+    return json(this.status({ memberId, role: "owner", joinedAt: now }), 201);
+  }
+
+  private writeNewGroup(
+    groupId: string,
+    now: number,
+    groupProfile: Uint8Array,
+    joinProofHash: Uint8Array,
+    pro: { name: string; state: ProState },
+    memberId: string,
+    passHash: Uint8Array,
+    memberProfile: Uint8Array,
+    termsVersion: number,
+    daily: number,
+  ): void {
     this.ctx.storage.transactionSync(() => {
       this.sql.exec(
         `INSERT INTO grp (one, group_id, created_at, status, profile, profile_seq, join_proof_hash, seq, min_cursor,
@@ -704,8 +725,6 @@ export class GroupDO extends DurableObject<AppEnv> {
       this.jobs.set("daily", daily);
       if (pro.state.expiresAt !== null) this.jobs.set("pro_check", Math.max(pro.state.expiresAt, now));
     });
-    this.setNextAlarm();
-    return json(this.status({ memberId, role: "owner", joinedAt: now }), 201);
   }
 
   /** E1 retry: 200 with the status when the group exists and `pass` is its owner's; 409 when the id is taken. */
@@ -1769,6 +1788,9 @@ export class GroupDO extends DurableObject<AppEnv> {
         news = true;
       }
       if (!news) continue;
+      // A frame stays within 512 KiB: the changes page is at most 256 KiB, so only many live entries could pass
+      // the limit. Leave them out then; the client still has E21.
+      if (JSON.stringify(tick).length > WS_OUT_LIMIT) delete tick.live;
       ws.serializeAttachment(att);
       this.send(ws, tick);
     }
