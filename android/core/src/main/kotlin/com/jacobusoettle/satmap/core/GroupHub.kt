@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.core
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -422,6 +423,10 @@ class GroupHub(
 
     /** Secrets with no local group yet: a reinstall's restore (§8.3), or a create or join whose answer was lost. */
     private val pendingSecrets = HashMap<String, GroupSecret>()
+
+    /** The membership of the last create whose answer was lost, while it is still pending: a new create sends E1
+     *  again with its group id and pass (§6.7), so the server makes at most one group. */
+    private var pendingCreate: GroupSecret? = null
     private var foreground = false
     private var locationAuthorised = false
     private var locationPrecise = false
@@ -791,14 +796,30 @@ class GroupHub(
     suspend fun createGroup(name: String, displayName: String, pro: ProProof): String {
         val groupName = checked(name, GroupTextField.groupName)
         val myName = checked(displayName, GroupTextField.displayName)
+        // A create whose answer was lost, and that no E2 has settled since, is sent again with the same group id and
+        // pass: if the server made the group it answers 200 with it (§6.7) instead of a second group being made. The
+        // profiles are sealed from the names typed now; the server keeps the first ones if the group exists.
+        var retry = pendingCreate?.takeIf { pendingSecrets[it.groupId] == it && states[it.groupId] == null }
+        pendingCreate = null
         var clashes = 0
         while (true) {
-            val groupIdBytes = GroupRandom.bytes(16)
-            val groupKey = GroupRandom.bytes(32)
-            val keys = GroupKeys(groupKey, groupIdBytes)
-            val gid = keys.groupId
-            val secret = GroupSecret(groupId = gid, memberId = GroupRandom.id(), pass = Base64URL.encode(GroupRandom.bytes(32)),
+            val keys: GroupKeys
+            val secret: GroupSecret
+            val retried = retry
+            val retriedKey = retried?.let { Base64URL.decode(it.groupKey, count = 32) }
+            val retriedId = retried?.let { Base64URL.decode(it.groupId, count = 16) }
+            if (retried != null && retriedKey != null && retriedId != null) {
+                keys = GroupKeys(retriedKey, retriedId)
+                secret = retried
+                // Taken over: a restore running meanwhile leaves it to this create (§8.3).
+                pendingSecrets.remove(retried.groupId)
+            } else {
+                val groupKey = GroupRandom.bytes(32)
+                keys = GroupKeys(groupKey, GroupRandom.bytes(16))
+                secret = GroupSecret(groupId = keys.groupId, memberId = GroupRandom.id(), pass = Base64URL.encode(GroupRandom.bytes(32)),
                                      groupKey = Base64URL.encode(groupKey))
+            }
+            val gid = keys.groupId
             val body = try {
                 val request = CreateGroupRequest(
                     groupId = gid, memberId = secret.memberId, pass = secret.pass, joinProof = Base64URL.encode(keys.joinProof),
@@ -825,9 +846,11 @@ class GroupHub(
             } catch (e: Exception) {
                 if (e is GroupAPIError && e.status == 409 && e.code == "group_exists" && clashes == 0) {
                     secrets.delete(gid)
+                    retry = null
                     clashes += 1
                 } else {
                     forgetSecretIfDefinite(secret, e)
+                    if (pendingSecrets[gid] == secret) pendingCreate = secret
                     throw actionError(e)
                 }
             }
@@ -962,7 +985,15 @@ class GroupHub(
         } catch (e: GroupCrypto.Failure) {
             throw GroupActionError(GroupActionError.Kind.Server)
         }
+        // The rename must reach the server last: no queued profile change (a colour fix, §4.6) goes while it is on its
+        // way, and one already on its way is answered first.
+        st.renaming += 1
         try {
+            while (st.sendingOp?.kind == "profile") {
+                val answered = CompletableDeferred<Unit>()
+                st.opWaiters.add(answered)
+                answered.await()
+            }
             val seq = api.updateMyProfile(groupId, st.secret.pass, Base64URL.encode(env)).seq
             for (op in store.ops(groupId)) if (op.kind == "profile") store.deleteOp(op.id)
             states[groupId]?.members?.firstOrNull { it.memberId == me }?.copy()?.let { m ->
@@ -976,6 +1007,8 @@ class GroupHub(
             throw e
         } catch (e: Exception) {
             throw failure(e, groupId)
+        } finally {
+            st.renaming -= 1
         }
     }
 
@@ -1407,6 +1440,13 @@ class GroupHub(
         var pullAgain = false
         var flushing = false
 
+        /** The queued op whose request is on its way, and who waits for its answer. */
+        var sendingOp: GroupStore.QueuedOp? = null
+        val opWaiters = mutableListOf<CompletableDeferred<Unit>>()
+
+        /** Renames (E12 from `setDisplayName`) on their way; queued profile changes wait for them. */
+        var renaming = 0
+
         val id: String get() = secret.groupId
         val role: GroupRole get() = GroupRole(status?.you?.role ?: row.role) ?: GroupRole.member
         val isPaused: Boolean get() = status?.isPaused ?: false
@@ -1454,6 +1494,7 @@ class GroupHub(
             store.putGroup(row)
         }
         pendingSecrets.remove(secret.groupId)
+        if (pendingCreate?.groupId == secret.groupId) pendingCreate = null
         val st = GroupState(secret, keys, store.group(secret.groupId) ?: row)
         st.status = status
         st.watchers = status.watchers ?: 0
@@ -1779,14 +1820,16 @@ class GroupHub(
         }
     }
 
-    /** A membership with no local copy: E2, then the changes from 0 (§8.3). Only E2's 401, 404 or 410 deletes it. */
+    /** A membership with no local copy: E2, then the changes from 0 (§8.3). Only E2's 401, 404 or 410 deletes it.
+     *  Either answer counts only while the secret is still pending: a create or join that took it over while E2 was on
+     *  its way (its retry, §6.7) decides about it instead. */
     private suspend fun restore(groupId: String) {
         val s = pendingSecrets[groupId] ?: return
         val key = Base64URL.decode(s.groupKey, count = 32) ?: return
         val gidBytes = Base64URL.decode(s.groupId, count = 16) ?: return
         try {
             val status = api.status(groupId, s.pass)
-            if (pendingSecrets[groupId] == null || states[groupId] != null) return
+            if (pendingSecrets[groupId] != s || states[groupId] != null) return
             addGroup(s, GroupKeys(key, gidBytes), status)
             notify(groupId)
             pull(groupId)
@@ -1794,8 +1837,10 @@ class GroupHub(
             throw e
         } catch (e: Exception) {
             if (e is GroupAPIError && (e.status == 401 || e.status == 410 || (e.status == 404 && e.code == "group_not_found"))) {
+                if (pendingSecrets[groupId] != s || states[groupId] != null) return
                 secrets.delete(groupId)
                 pendingSecrets.remove(groupId)
+                if (pendingCreate == s) pendingCreate = null
             }
             // Otherwise offline or a server error: try again later.
         }
@@ -2036,7 +2081,8 @@ class GroupHub(
     }
 
     /** Sends the queued ops in order, including those queued while it runs (such as the `unpin` for a pin deleted while
-     *  its E23 was in flight). Returns false when it had to stop (offline, a server error, or the group gone). */
+     *  its E23 was in flight). Returns false when it had to stop (offline, a server error, or the group gone). A
+     *  profile change (a colour fix) waits while a rename is on its way, which replaces it. */
     private suspend fun sendOps(groupId: String, now: Long): Boolean {
         var after = 0L
         while (true) {
@@ -2044,6 +2090,8 @@ class GroupHub(
             after = op.id
             val st = states[groupId] ?: return false
             if (op.kind == "pin" && st.isPaused) continue // waits for the resume; deletes and the rest still go
+            if (op.kind == "profile" && st.renaming > 0) continue // the rename replaces it
+            st.sendingOp = op
             try {
                 when (op.kind) {
                     "pin" -> sendPin(st, op)
@@ -2100,6 +2148,11 @@ class GroupHub(
                         notify(groupId)
                     }
                 }
+            } finally {
+                st.sendingOp = null
+                val waiters = st.opWaiters.toList()
+                st.opWaiters.clear()
+                for (w in waiters) w.complete(Unit)
             }
         }
         return true
@@ -2172,7 +2225,8 @@ class GroupHub(
      *  group in the foreground, otherwise over HTTP; packed by 50 chunks or 192 KiB. */
     private suspend fun upload(groupId: String, now: Long) {
         val st = states[groupId] ?: return
-        store.deleteAcknowledgedClosedWindows(groupId, now = now)
+        // A window whose last upload went while it was open is deleted once it has been closed for the grace (§4.3).
+        store.deleteAcknowledgedClosedWindows(groupId, now = now - GroupPolicy.lateWindowGrace)
         val paused = st.isPaused
         if (paused && !st.stopLivePending) return
         val sharing = isEffectivelySharing(st)
@@ -2320,7 +2374,8 @@ class GroupHub(
         for ((start, version) in sent.windows) versions.putIfAbsent(start, version)
         for (start in result.accepted) {
             val version = versions[start] ?: continue
-            store.markOwnWindowSent(gid, start = start, version = version, closed = start + GroupPolicy.windowSeconds <= now)
+            store.markOwnWindowSent(gid, start = start, version = version,
+                                    closed = start + GroupPolicy.windowSeconds + GroupPolicy.lateWindowGrace <= now)
         }
         for (r in result.rejected) {
             when (r.error) {

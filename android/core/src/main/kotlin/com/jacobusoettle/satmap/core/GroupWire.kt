@@ -253,6 +253,11 @@ object GroupPolicy {
 
     /** Trail windows are 10 minutes, aligned to UTC (§4.1). */
     const val windowSeconds: Long = 600
+
+    /** An acknowledged window stays in `own_points` until it has been closed this long, so a point the recorder
+     *  delivers a little late still joins its whole window instead of starting a new one that would replace the
+     *  server's copy with that point alone. */
+    const val lateWindowGrace: Long = 60
     const val maxPointsPerChunk = 600
     const val maxChunkBody = 8192
 

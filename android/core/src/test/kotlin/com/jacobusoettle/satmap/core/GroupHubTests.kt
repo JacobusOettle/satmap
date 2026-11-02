@@ -2,6 +2,7 @@ package com.jacobusoettle.satmap.core
 
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
@@ -79,6 +80,51 @@ class HeldPins(private val server: FakeGroupServer) : GroupTransport {
         gate.await()
         if (loseAnswers) throw GroupTransportError.Offline()
         return response
+    }
+}
+
+/** The fake server behind a flaky network, as the iPhone core's FlakyTransport: a request that matches a rule is held
+ *  on its way (`HoldRequest`), or reaches the server and then has its answer held back (`HoldAnswer`) or lost
+ *  (`LoseAnswer`, as `GroupTransportError.Failed`). Each rule applies once. Held requests wait for `release()`. */
+class FlakyTransport(private val server: FakeGroupServer) : GroupTransport {
+    enum class Fate { HoldRequest, HoldAnswer, LoseAnswer }
+
+    private class Rule(val method: String, val pathContains: String, val fate: Fate)
+
+    private val rules = mutableListOf<Rule>()
+    private val gates = mutableListOf<CompletableDeferred<Unit>>()
+
+    fun next(method: String, pathContains: String, fate: Fate) {
+        rules.add(Rule(method, pathContains, fate))
+    }
+
+    /** The requests waiting for `release()`. */
+    val heldCount: Int get() = gates.count { !it.isCompleted }
+
+    fun release() {
+        val waiting = gates.toList()
+        gates.clear()
+        for (g in waiting) g.complete(Unit)
+    }
+
+    override suspend fun request(method: String, path: String, pass: String?, json: ByteArray?): GroupResponse {
+        val i = rules.indexOfFirst { it.method == method && path.contains(it.pathContains) }
+        val fate = if (i >= 0) rules.removeAt(i).fate else null
+        if (fate == null) return server.request(method, path, pass, json)
+        if (fate == Fate.HoldRequest) hold()
+        val answer = server.handle(method, path, pass, json)
+        when (fate) {
+            Fate.HoldAnswer -> hold()
+            Fate.LoseAnswer -> throw GroupTransportError.Failed()
+            Fate.HoldRequest -> {}
+        }
+        return answer
+    }
+
+    private suspend fun hold() {
+        val gate = CompletableDeferred<Unit>()
+        gates.add(gate)
+        gate.await()
     }
 }
 
@@ -177,6 +223,35 @@ class GroupHubTests {
     }
 
     private fun memberId(p: Phone, gid: String): String = p.hub.detail(gid)!!.yourMemberId
+
+    /** Waits until the flaky network holds `count` requests. */
+    private suspend fun waitUntilHeld(net: FlakyTransport, count: Int = 1) {
+        repeat(1000) {
+            if (net.heldCount >= count) return@repeat
+            yield()
+        }
+        assertEquals("requests held", count, net.heldCount)
+    }
+
+    private fun creates(): List<CreateGroupRequest> = requests("POST", "/v1/groups")
+        .filter { it.path == "/v1/groups" }
+        .mapNotNull { r -> r.body?.let { CreateGroupRequest.fromJson(GroupJSON.Fields(GroupJSON.parseObject(it))) } }
+
+    private fun redeems(): List<RedeemRequest> = requests("POST", "/invites/redeem")
+        .mapNotNull { r -> r.body?.let { RedeemRequest.fromJson(GroupJSON.Fields(GroupJSON.parseObject(it))) } }
+
+    /** A member profile envelope, sealed as the member's own phone seals it. */
+    private fun sealedProfile(secret: GroupSecret, name: String, colour: Int): String {
+        val keys = GroupKeys(Base64URL.decode(secret.groupKey, count = 32)!!, Base64URL.decode(secret.groupId, count = 16)!!)
+        return Base64URL.encode(GroupCrypto.seal(MemberProfile(name = name, colour = colour).json(), keys.member, GroupAAD.member(secret.groupId, secret.memberId)))
+    }
+
+    /** The profile the server holds for the member, opened. */
+    private fun serverProfile(secret: GroupSecret): MemberProfile {
+        val keys = GroupKeys(Base64URL.decode(secret.groupKey, count = 32)!!, Base64URL.decode(secret.groupId, count = 16)!!)
+        val env = Base64URL.decode(server.memberProfile(secret.groupId, secret.memberId)!!)!!
+        return MemberProfile.decode(GroupCrypto.open(env, keys.member, GroupAAD.member(secret.groupId, secret.memberId)))
+    }
 
     // Create, invite, join, see each other
 
@@ -346,6 +421,133 @@ class GroupHubTests {
         member.hub.join(link, displayName = "Thandi")
         assertEquals(listOf(gid), member.hub.groups.map { it.groupId })
         assertEquals(2, server.memberIds(gid).size)
+    }
+
+    @Test
+    fun testRetriedCreateAfterALostAnswerMakesOneGroup() = test {
+        val net = FlakyTransport(server)
+        val p = phone(transport = net)
+        // E1 went through, but its answer was lost: the person taps Create again.
+        net.next("POST", "/v1/groups", FlakyTransport.Fate.LoseAnswer)
+        assertEquals(GroupActionError.Kind.Server, actionError { p.hub.createGroup(name = "Trip", displayName = "Sam", pro = pro) }.kind)
+        val first = creates().first()
+        assertEquals("active", server.status(first.groupId))
+        val gid = p.hub.createGroup(name = "Trip", displayName = "Sam", pro = pro)
+        // The same group id and pass again: the server answers with the group it made (§6.7).
+        assertEquals(first.groupId, gid)
+        assertEquals(listOf(gid, gid), creates().map { it.groupId })
+        assertEquals(1, creates().map { it.pass }.toSet().size)
+        assertEquals(listOf(first.memberId, first.memberId), creates().map { it.memberId })
+        assertEquals(listOf(gid), p.hub.groups.map { it.groupId })
+        assertEquals(GroupRole.owner, p.hub.detail(gid)?.yourRole)
+        p.hub.becameActive()
+        assertEquals(listOf(gid), p.hub.groups.map { it.groupId })
+        assertEquals(listOf(gid), p.secrets.loadAll().map { it.groupId })
+
+        // An E1 that never reached the server: the retry makes the group with the names typed now.
+        clock.advance(10)
+        server.offline = true
+        assertEquals(GroupActionError.Kind.Offline, actionError { p.hub.createGroup(name = "Trip 2", displayName = "Sam", pro = pro) }.kind)
+        val offlineTry = creates().last()
+        assertNull(server.status(offlineTry.groupId))
+        server.offline = false
+        val second = p.hub.createGroup(name = "Second trip", displayName = "Sammy", pro = pro)
+        assertEquals(offlineTry.groupId, second)
+        assertEquals(listOf("Trip", "Second trip"), p.hub.groups.map { it.name })
+        assertEquals(listOf("Sammy"), p.hub.detail(second)?.members?.map { it.name })
+
+        // Once E2 found the group, a new create is a new group.
+        clock.advance(10)
+        net.next("POST", "/v1/groups", FlakyTransport.Fate.LoseAnswer)
+        try {
+            p.hub.createGroup(name = "Third", displayName = "Sam", pro = pro)
+        } catch (e: GroupActionError) {
+            // The answer was lost.
+        }
+        val lost = creates().last()
+        p.hub.becameActive()
+        assertEquals(listOf(gid, second, lost.groupId), p.hub.groups.map { it.groupId })
+        clock.advance(10)
+        val fourth = p.hub.createGroup(name = "Fourth", displayName = "Sam", pro = pro)
+        assertNotEquals(lost.groupId, fourth)
+        assertEquals(listOf("Trip", "Second trip", "Third", "Fourth"), p.hub.groups.map { it.name })
+    }
+
+    @Test
+    fun testJoinRetriedAfterALostAnswerSendsTheSamePass() = test {
+        val owner = phone()
+        val gid = owner.hub.createGroup(name = "Trip", displayName = "Sam", pro = pro)
+        val link = link(owner.hub.createInvite(gid))
+        val net = FlakyTransport(server)
+        val member = phone(transport = net)
+        server.clearLog()
+        // Offline: the membership saved before the request stays.
+        server.offline = true
+        assertEquals(GroupActionError.Kind.Offline, actionError { member.hub.join(link, displayName = "Thandi") }.kind)
+        assertEquals(listOf(gid), member.secrets.loadAll().map { it.groupId })
+        server.offline = false
+        // A lost answer: the redeem went through but the phone never heard. The retry sends the same member id and
+        // pass, which the server answers again (§6.7); a new pass would find the invite used.
+        net.next("POST", "/invites/redeem", FlakyTransport.Fate.LoseAnswer)
+        assertEquals(GroupActionError.Kind.Server, actionError { member.hub.join(link, displayName = "Thandi") }.kind)
+        assertEquals(2, server.memberIds(gid).size)
+        assertTrue(member.hub.groups.isEmpty())
+        member.hub.join(link, displayName = "Thandi")
+        assertEquals(listOf(gid), member.hub.groups.map { it.groupId })
+        assertEquals(2, server.memberIds(gid).size)
+        val tries = redeems()
+        assertEquals(3, tries.size)
+        assertEquals(1, tries.map { it.pass }.toSet().size)
+        assertEquals(1, tries.map { it.memberId }.toSet().size)
+        assertEquals(listOf(tries[0].memberId), member.secrets.loadAll().map { it.memberId })
+        assertEquals(tries[0].memberId, member.hub.detail(gid)?.yourMemberId)
+
+        // A member id clash makes a new id and pass once.
+        val link2 = link(owner.hub.createInvite(gid))
+        val third = phone()
+        server.clearLog()
+        server.fail("POST", "/invites/redeem", status = 409, code = "member_exists")
+        third.hub.join(link2, displayName = "Pieter")
+        val clash = redeems()
+        assertEquals(2, clash.size)
+        assertNotEquals(clash[0].memberId, clash[1].memberId)
+        assertNotEquals(clash[0].pass, clash[1].pass)
+        assertEquals(listOf(clash[1].memberId), third.secrets.loadAll().map { it.memberId })
+        assertEquals(3, server.memberIds(gid).size)
+    }
+
+    @Test
+    fun testRestoreLeavesASecretARetriedJoinTookOver() = test {
+        val owner = phone()
+        val gid = owner.hub.createGroup(name = "Trip", displayName = "Sam", pro = pro)
+        val link = link(owner.hub.createInvite(gid))
+        val net = FlakyTransport(server)
+        val member = phone(transport = net)
+        clock.advance(10)
+        server.offline = true
+        try {
+            member.hub.join(link, displayName = "Thandi")
+        } catch (e: GroupActionError) {
+            // Offline.
+        }
+        server.offline = false
+        // Back online, E2 for the pending membership is answered 401 (it isn't a member yet), but the answer is slow;
+        // meanwhile the person taps Join again, which takes the secret over and succeeds.
+        net.next("GET", "/v1/groups/$gid", FlakyTransport.Fate.HoldAnswer)
+        val online = scope.launch { member.hub.connectivityChanged(online = true) }
+        waitUntilHeld(net)
+        member.hub.join(link, displayName = "Thandi")
+        net.release()
+        online.join()
+        member.hub.waitForBackgroundWork()
+        assertEquals(listOf(gid), member.hub.groups.map { it.groupId })
+        assertEquals("the late 401 belongs to the old try", listOf(gid), member.secrets.loadAll().map { it.groupId })
+        // The membership survives a restart.
+        val again = GroupHub(store = member.store, secrets = member.secrets, transport = server, sockets = null, words = WordFilter(""),
+                             domain = "example.invalid", clock = { clock.now }, scope = scope)
+        again.start()
+        assertEquals(listOf(gid), again.groups.map { it.groupId })
+        assertEquals(listOf("Sam", "Thandi"), again.detail(gid)?.members?.map { it.name })
     }
 
     @Test
@@ -565,6 +767,42 @@ class GroupHubTests {
         clock.now = TrailChunk.windowStart(clock.now) + 600 + 120
         member.hub.tick(foreground = false)
         assertEquals(1, member.store.ownWindows(gid).size)
+    }
+
+    @Test
+    fun testLatePointJoinsItsWholeWindow() = test {
+        val (_, member, gid) = ownerAndMember()
+        share(member, gid)
+        val secret = member.secrets.loadAll().first()
+        val w = TrailChunk.windowStart(clock.now) + 600
+        // One point per window, each window sent while it is still open and never changed after.
+        for (k in 0 until 6) {
+            clock.now = w + k * 600L + 10
+            point(member)
+            member.hub.tick(foreground = false)
+        }
+        assertEquals(6, server.chunkStarts(gid, secret.memberId).size)
+        // Each goes once it has been closed for a minute; the last closed one and the open one are left.
+        val left = member.store.ownWindows(gid)
+        assertEquals(listOf(w + 2400, w + 3000), left.map { it.start })
+        assertTrue(left.all { it.sentVersion == it.version })
+
+        // A point the recorder delivers a few seconds late joins its whole window, which goes again with all its
+        // points instead of replacing the server's copy with that point alone: the window stays for a minute after it
+        // closed, even through an upload pass.
+        clock.now = w + 3600 + 2
+        member.hub.tick(foreground = false)
+        assertEquals(listOf(w + 3000), member.store.ownWindows(gid).map { it.start })
+        clock.now = w + 3600 + 5
+        point(member, at = w + 3599)
+        assertEquals(2L, member.store.ownWindows(gid).single { it.start == w + 3000 }.version)
+        clock.advance(60)
+        member.hub.tick(foreground = false)
+        val keys = GroupKeys(Base64URL.decode(secret.groupKey, count = 32)!!, Base64URL.decode(gid, count = 16)!!)
+        val rec = Base64URL.decode(server.chunkRecord(gid, secret.memberId, start = w + 3000)!!)!!
+        val plain = GroupCrypto.open(rec, keys.trail(secret.memberId), GroupAAD.trail(gid, secret.memberId, start = w + 3000))
+        assertEquals(listOf(w + 3010, w + 3599), TrailChunk.decode(plain, windowStart = w + 3000).map { it.time })
+        assertTrue(member.store.ownWindows(gid).isEmpty())
     }
 
     @Test
@@ -846,6 +1084,10 @@ class GroupHubTests {
             total += chunks
         }
         assertEquals(60, total)
+        // Acknowledged windows go once they have been closed for a minute; the newest waits for late points.
+        assertEquals(listOf(first + 59 * 600), member.store.ownWindows(gid).map { it.start })
+        clock.advance(GroupPolicy.lateWindowGrace)
+        member.hub.tick(foreground = false)
         assertTrue("closed and acknowledged windows are deleted", member.store.ownWindows(gid).isEmpty())
         // Oldest first.
         val starts = jsonObject(bodies[0])["chunks"]!!.jsonArray.map { it.jsonObject["start"]!!.jsonPrimitive.long }
@@ -936,7 +1178,10 @@ class GroupHubTests {
         server.fail("POST", "/upload", status = 413, code = "too_large")
         member.hub.tick(foreground = false)
         assertEquals(listOf(w + 600), member.store.ownWindows(gid).map { it.start })
-        // The rest goes at the next tick (the chunk time went back).
+        // The rest goes at the next tick (the chunk time went back), and is deleted once it has been closed a minute.
+        member.hub.tick(foreground = false)
+        assertTrue(member.store.ownWindows(gid).all { it.sentVersion == it.version })
+        clock.advance(GroupPolicy.lateWindowGrace)
         member.hub.tick(foreground = false)
         assertTrue(member.store.ownWindows(gid).isEmpty())
         assertEquals(listOf(w + 600), server.chunkStarts(gid, memberId(member, gid)))
@@ -1142,6 +1387,51 @@ class GroupHubTests {
             yield()
         }
         fail("no E23 was sent")
+    }
+
+    @Test
+    fun testRenameIsNotOverwrittenByAQueuedColourFix() = test {
+        val net = FlakyTransport(server)
+        val (_, member, gid) = ownerAndMember(memberTransport = net)
+        val secret = member.secrets.loadAll().first()
+        val colourFix = sealedProfile(secret, name = "Thandi", colour = 3)
+        fun profilePuts() = requests("PUT", "/members/me/profile").size
+
+        // A colour fix on its way when the person renames: the rename goes after its answer, so it lands last.
+        member.store.addOp(gid, kind = "profile", body = colourFix, createdAt = clock.now)
+        server.clearLog()
+        net.next("PUT", "/members/me/profile", FlakyTransport.Fate.HoldRequest)
+        val flush = scope.launch { member.hub.tick(foreground = false) }
+        waitUntilHeld(net)
+        val rename = scope.launch { member.hub.setDisplayName("Thandi M", colour = 5, groupId = gid) }
+        repeat(50) { yield() }
+        assertEquals("the rename waits for the colour fix's answer", 0, profilePuts())
+        net.release()
+        flush.join()
+        rename.join()
+        assertEquals(2, profilePuts())
+        assertEquals(MemberProfile(name = "Thandi M", colour = 5), serverProfile(secret))
+        assertEquals("Thandi M", member.hub.detail(gid)?.members?.last()?.name)
+        assertTrue(member.store.ops(gid).isEmpty())
+
+        // A colour fix queued behind a pin on its way, replaced by a rename meanwhile: it never goes.
+        server.offline = true
+        member.hub.dropPin(groupId = gid, type = PinType.water, animal = null, note = null, lat = -24.99, lon = 31.6)
+        member.hub.waitForBackgroundWork()
+        member.store.addOp(gid, kind = "profile", body = colourFix, createdAt = clock.now)
+        server.offline = false
+        server.clearLog()
+        net.next("POST", "/pins", FlakyTransport.Fate.HoldAnswer)
+        val online = scope.launch { member.hub.connectivityChanged(online = true) }
+        waitUntilHeld(net)
+        member.hub.setDisplayName("Thandi K", colour = 7, groupId = gid)
+        net.release()
+        online.join()
+        member.hub.waitForBackgroundWork()
+        assertEquals(1, profilePuts())
+        assertEquals(MemberProfile(name = "Thandi K", colour = 7), serverProfile(secret))
+        assertTrue(member.store.ops(gid).isEmpty())
+        assertEquals(1, server.pinIds(gid).size)
     }
 
     @Test
