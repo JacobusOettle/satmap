@@ -88,7 +88,7 @@ fun ConsentScreen(model: AppModel, route: GroupsRoute.Consent, nav: GroupsNav) {
     }
     if (refused) {
         AlertBox(
-            "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services to share.",
+            LOCATION_OFF,
             null,
             listOf(AlertButton("OK") { finish() }),
         ) { refused = false }

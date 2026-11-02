@@ -1,5 +1,8 @@
 package com.jacobusoettle.satmap.ui.groups
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.text.TextAutoSize
@@ -39,6 +42,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jacobusoettle.satmap.app.AppModel
+import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.GroupConfig
 import com.jacobusoettle.satmap.core.GroupDetail
 import com.jacobusoettle.satmap.core.PendingInvite
@@ -47,6 +51,7 @@ import com.jacobusoettle.satmap.core.TrailsMode
 import com.jacobusoettle.satmap.core.MadeInvite
 import com.jacobusoettle.satmap.groups.AfterPro
 import com.jacobusoettle.satmap.groups.GroupsRoute
+import com.jacobusoettle.satmap.location.LocationRecorder
 import com.jacobusoettle.satmap.ui.Accent
 import com.jacobusoettle.satmap.ui.Body
 import com.jacobusoettle.satmap.ui.Caption
@@ -81,6 +86,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
     var message by remember { mutableStateOf<String?>(null) }
     var alert by remember { mutableStateOf<DetailAlert?>(null) }
     var toast by remember { mutableStateOf<String?>(null) }
+    var makingInvite by remember { mutableStateOf(false) }
     val detail = remember(rev, groupId, now) { groups.hub.detail(groupId) }
     var seen by remember { mutableStateOf(false) }
     if (detail != null) seen = true
@@ -183,8 +189,22 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
             d.invites?.let { invites ->
                 item {
                     FormSection(header = "Invites", footer = "Each invite link works once, for one person, and expires after 7 days.") {
-                        ButtonRow("Invite someone", icon = GroupSymbols.personBadgePlus, tag = "inviteSomeone") {
-                            nav.push(GroupsRoute.Invite(groupId, null))
+                        // E6 here, with a spinner on the row, then S6 with the invite; a failure stays on S5 (iOS).
+                        ButtonRow("Invite someone", icon = GroupSymbols.personBadgePlus, busy = makingInvite, tag = "inviteSomeone") {
+                            makingInvite = true
+                            scope.launch {
+                                try {
+                                    groups.ready()
+                                    val made = groups.hub.createInvite(groupId)
+                                    nav.push(GroupsRoute.Invite(groupId, made))
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    message = "Couldn't make an invite. Check your connection and try again."
+                                } finally {
+                                    makingInvite = false
+                                }
+                            }
                         }
                         for (i in invites) key(i.inviteId) {
                             InviteRow(i, now, open = {
@@ -276,6 +296,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
                     AlertButton("Keep") {},
                 ),
             ) { alert = null }
+            DetailAlert.LocationOff -> MessageAlert(LOCATION_OFF) { alert = null }
             null -> {}
         }
     }
@@ -289,13 +310,30 @@ sealed interface DetailAlert {
     data object Leave : DetailAlert
     data object Delete : DetailAlert
     data class CancelInvite(val inviteId: String) : DetailAlert
+
+    /** Sharing switched on with location refused, denied before or off: sharing stays off (§8.13). */
+    data object LocationOff : DetailAlert
 }
 
-/** "On the map": show it, share your location (S9 first without consent; off asks whether to clear the trail too),
- *  and which trails show. */
+/** The alert when location can't be used for sharing (S9, and S5's switch). */
+const val LOCATION_OFF = "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services to share."
+
+/** "On the map": show it, share your location (S9 first without consent; with consent, location asked first if it
+ *  was never asked, as S9 does, and refused or off, the alert and sharing stays off; off asks whether to clear the
+ *  trail too), and which trails show. */
 @Composable
 private fun OnTheMap(model: AppModel, d: GroupDetail, first: Boolean, pushConsent: () -> Unit, showAlert: (DetailAlert) -> Unit) {
     val groups = model.groups
+    val recorder = model.recorder
+    val groupId = d.groupId
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        recorder.authorizationChanged()
+        if (recorder.authorization.value == LocationRecorder.Authorization.authorized) {
+            groups.hub.setSharing(true, groupId)
+        } else {
+            showAlert(DetailAlert.LocationOff)
+        }
+    }
     val footer = when {
         d.isPaused -> "Sharing is off while the group is paused."
         d.isSharing -> "Members see where you are and the trail you leave, also while SatMap is in the background."
@@ -308,7 +346,14 @@ private fun OnTheMap(model: AppModel, d: GroupDetail, first: Boolean, pushConsen
                 if (!d.hasConsent) {
                     pushConsent()
                 } else {
-                    groups.hub.setSharing(true, d.groupId)
+                    when (recorder.authorization.value) {
+                        LocationRecorder.Authorization.authorized -> groups.hub.setSharing(true, groupId)
+                        LocationRecorder.Authorization.notDetermined -> {
+                            Defaults.putBoolean("locationPermissionAsked", true)
+                            ask.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                        }
+                        LocationRecorder.Authorization.denied, LocationRecorder.Authorization.servicesOff -> showAlert(DetailAlert.LocationOff)
+                    }
                 }
             } else {
                 groups.hub.setSharing(false, d.groupId)

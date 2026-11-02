@@ -74,11 +74,7 @@ fun JoinLinkScreen(model: AppModel, nav: GroupsNav, below: GroupsRoute?) {
     val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf("") }
     val parsed = remember(text) { InviteLink.parse(text, GroupConfig.domain) }
-    val problem = when {
-        parsed == InviteLink.Parsed.MissingKey -> "This invite link is incomplete. Copy the whole link from the message, or scan the QR code."
-        parsed == InviteLink.Parsed.NotInvite && text.isNotBlank() -> "That isn't a SatMap invite link."
-        else -> null
-    }
+    val problem = GroupTexts.linkProblem(parsed, text)
     SheetScreen(ScreenChrome("Join a group", leading(model, nav, below))) {
         item {
             Column {
@@ -174,7 +170,7 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
                     when (val kind = c.error?.kind) {
                         is GroupActionError.Kind.AlreadyMember -> ButtonRow("Open group") {
                             groups.closeInvite()
-                            groups.open(listOf(GroupsRoute.List, GroupsRoute.Detail(kind.groupId)))
+                            groups.open(listOf(GroupsRoute.Detail(kind.groupId)))
                         }
                         GroupActionError.Kind.Offline, GroupActionError.Kind.Server, GroupActionError.Kind.RateLimited, null ->
                             ButtonRow("Try again") { attempt += 1 }
@@ -216,12 +212,10 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
                                 color = LabelSecondary,
                             )
                         }
-                        ButtonRow(
-                            style = Headline,
-                            title = "Join group",
+                        PrimaryButtonRow(
+                            "Join group",
                             enabled = GroupText.clean(displayName, GroupTextField.displayName) != null,
                             busy = busy,
-                            busyText = "Joining…",
                             tag = "joinGroup",
                         ) {
                             joinError = null
@@ -245,7 +239,7 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
                             if (kind is GroupActionError.Kind.AlreadyMember) {
                                 ButtonRow("Open group") {
                                     groups.closeInvite()
-                                    groups.open(listOf(GroupsRoute.List, GroupsRoute.Detail(kind.groupId)))
+                                    groups.open(listOf(GroupsRoute.Detail(kind.groupId)))
                                 }
                             }
                         }
@@ -257,7 +251,9 @@ fun JoinScreen(model: AppModel, route: GroupsRoute.Join, nav: GroupsNav) {
 }
 
 /** S17 Scan QR code (§9.3, §5.3): the camera with a square guide; an invite found closes the scanner and opens S8.
- *  The camera permission is asked on the first visit; without it, the way to Settings. */
+ *  A code that is an incomplete invite link, or no invite link, says so in orange above the text (S7's words, as
+ *  iOS; the spec is silent) and scanning goes on. The camera permission is asked on the first visit; without it, the
+ *  way to Settings. */
 @Composable
 fun ScanScreen(model: AppModel, nav: GroupsNav) {
     val context = LocalContext.current
@@ -271,6 +267,7 @@ fun ScanScreen(model: AppModel, nav: GroupsNav) {
     }
     LaunchedEffect(Unit) { if (!allowed) ask.launch(Manifest.permission.CAMERA) }
     var done by remember { mutableStateOf(false) }
+    var hint by remember { mutableStateOf<String?>(null) }
     SheetPlainScreen(ScreenChrome("Scan QR code", ScreenChrome.Leading.Cancel(nav::pop))) {
         if (allowed) {
             Box(Modifier.fillMaxSize()) {
@@ -283,6 +280,8 @@ fun ScanScreen(model: AppModel, nav: GroupsNav) {
                             done = true
                             nav.pop()
                             model.groups.openInvite(parsed)
+                        } else {
+                            hint = GroupTexts.linkProblem(parsed, text)
                         }
                     },
                     modifier = Modifier.fillMaxSize(),
@@ -294,13 +293,16 @@ fun ScanScreen(model: AppModel, nav: GroupsNav) {
                         .aspectRatio(1f)
                         .border(3.dp, Color.White, RoundedCornerShape(16.dp)),
                 )
-                Text(
-                    "Point the camera at the invite QR code.",
-                    style = Body,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(32.dp),
-                )
+                Column(
+                    Modifier.align(Alignment.BottomCenter).padding(32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    hint?.let {
+                        Text(it, style = Body, color = SystemOrange, textAlign = TextAlign.Center, modifier = Modifier.testTag("scanHint"))
+                    }
+                    Text("Point the camera at the invite QR code.", style = Body, color = Color.White, textAlign = TextAlign.Center)
+                }
             }
         } else if (refused) {
             Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {

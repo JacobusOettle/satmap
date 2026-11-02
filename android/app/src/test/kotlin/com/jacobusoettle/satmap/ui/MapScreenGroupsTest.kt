@@ -7,6 +7,7 @@ import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -105,10 +106,27 @@ class MapScreenGroupsTest {
         waitFor { model.groups.shown.value != null }
         compose.waitForIdle()
         compose.onNodeWithText("Drone team is paused: the owner's SatMap Pro has ended.").assertExists()
+        // Its close button reads "Hide" (as VoiceOver's).
+        compose.onNodeWithContentDescription("Hide").assertExists()
         compose.onNodeWithTag("groupPausedHint").performClick()
         compose.waitForIdle()
         assertEquals(ActiveSheet.groups, model.sheet.value)
         compose.onNodeWithTag("screenTitle").assertTextEquals("Drone team")
+        // S5 alone: "Done" closes the sheet, there is no "Back" to the list.
+        compose.onNodeWithTag("back").assertDoesNotExist()
+        compose.onNodeWithText("Done").performClick()
+        compose.waitForIdle()
+        assertEquals(null, model.sheet.value)
+    }
+
+    @Test
+    fun theBannersCloseButtonHidesIt() {
+        model.groups.setShown(id("Drone team"), true)
+        waitFor { model.groups.shown.value != null }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Hide").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithTag("groupPausedHint").assertDoesNotExist()
     }
 
     @Test

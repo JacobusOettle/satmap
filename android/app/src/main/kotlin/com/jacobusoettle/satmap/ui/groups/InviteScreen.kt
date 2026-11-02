@@ -30,7 +30,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.MadeInvite
 import com.jacobusoettle.satmap.groups.GroupsRoute
 import com.jacobusoettle.satmap.groups.QRCode
@@ -42,53 +41,32 @@ import com.jacobusoettle.satmap.ui.LabelSecondary
 import com.jacobusoettle.satmap.ui.ScreenChrome
 import com.jacobusoettle.satmap.ui.SheetScreen
 import com.jacobusoettle.satmap.ui.SharePresenter
-import kotlinx.coroutines.CancellationException
 
-/** S6 Invite (docs/groups/SPEC.md §9.3, §5.3): a new invite is made when the screen opens (E6); its QR code (240 dp,
- *  nearest-neighbour), the group's name, Share link (the system share sheet, with the share text) and Copy link (kept
- *  out of the clipboard preview: the link holds the group key). */
+/** S6 Invite (docs/groups/SPEC.md §9.3, §5.3): an invite S5 made (E6) or one this phone made before; its QR code
+ *  (240 dp, nearest-neighbour), the group's name, Share link (the system share sheet, with the share text) and Copy
+ *  link (kept out of the clipboard preview: the link holds the group key). */
 @Composable
-fun InviteScreen(model: AppModel, route: GroupsRoute.Invite, nav: GroupsNav) {
-    val groups = model.groups
+fun InviteScreen(route: GroupsRoute.Invite, nav: GroupsNav) {
     val context = LocalContext.current
-    var made by remember { mutableStateOf(route.made) }
-    var failed by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(route) {
-        if (made != null) return@LaunchedEffect
-        try {
-            groups.ready()
-            made = groups.hub.createInvite(route.groupId)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            failed = true
-        }
-    }
     LaunchedEffect(toast) {
         if (toast != null) {
             kotlinx.coroutines.delay(2000)
             toast = null
         }
     }
-    val invite = made
+    val invite = route.made
     Box {
         SheetScreen(ScreenChrome("Invite", ScreenChrome.Leading.Done(nav::pop))) {
-            when {
-                invite != null -> inviteItems(invite, share = {
-                    SharePresenter.presentText(GroupTexts.shareText(invite.groupName, invite.link))
-                }, copy = {
-                    copyText(context, "Invite link", invite.link, sensitive = true)
-                    toast = "Link copied"
-                }, footer = GroupTexts.inviteFooter(
-                    GroupTexts.date(invite.expiresAt),
-                    GroupTexts.time(invite.expiresAt, DateFormat.is24HourFormat(context)),
-                ))
-                failed -> item {
-                    FormSection(first = true) { NoticeRow("Couldn't make an invite. Check your connection and try again.") }
-                }
-                else -> item { FormSection(first = true) { BusyRow("Making an invite…") } }
-            }
+            inviteItems(invite, share = {
+                SharePresenter.presentText(GroupTexts.shareText(invite.groupName, invite.link))
+            }, copy = {
+                copyText(context, "Invite link", invite.link, sensitive = true)
+                toast = "Link copied"
+            }, footer = GroupTexts.inviteFooter(
+                GroupTexts.date(invite.expiresAt),
+                GroupTexts.time(invite.expiresAt, DateFormat.is24HourFormat(context)),
+            ))
         }
         Toast(toast)
     }

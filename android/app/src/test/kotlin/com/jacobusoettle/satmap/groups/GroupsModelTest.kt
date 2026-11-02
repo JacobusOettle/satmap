@@ -18,7 +18,9 @@ import com.jacobusoettle.satmap.core.GroupActionError
 import com.jacobusoettle.satmap.core.GroupDemo
 import com.jacobusoettle.satmap.core.InviteLink
 import com.jacobusoettle.satmap.core.PausedReason
+import com.jacobusoettle.satmap.core.ReportTarget
 import com.jacobusoettle.satmap.location.GpsFix
+import com.jacobusoettle.satmap.ui.groups.blockable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -146,9 +148,43 @@ class GroupsModelTest {
         val link = groups.hub.detail(kruger)!!.invites!!.first().link!!
         groups.openInvite(InviteLink.parse(link, GroupConfig.domain))
         waitFor { groups.navigation.value != null }
-        assertEquals(listOf(GroupsRoute.List, GroupsRoute.Detail(kruger)), groups.navigation.value!!.routes)
-        assertEquals("You're already in Kruger trip.", groups.toast.value)
+        // S5 alone (its leading button is Done), and the alert with OK (§5.6).
+        assertEquals(listOf(GroupsRoute.Detail(kruger)), groups.navigation.value!!.routes)
+        assertEquals("You're already in Kruger trip.", groups.notice.value)
         assertNull(groups.pendingInvite.value)
+        groups.dismissNotice()
+        assertNull(groups.notice.value)
+    }
+
+    @Test
+    fun theReportOffersToBlockOnlyWhoCanStillBeBlocked() {
+        val kruger = id("Kruger trip")
+        val members = groups.hub.detail(kruger)!!.members
+        val me = members.first { it.isYou }
+        val thandi = members.first { it.name == "Thandi" }
+        assertEquals(thandi.memberId to "Thandi", blockable(groups.hub, kruger, ReportTarget.Member(thandi.memberId)))
+        assertNull(blockable(groups.hub, kruger, ReportTarget.Member(me.memberId)))
+        assertNull(blockable(groups.hub, kruger, ReportTarget.Group))
+        // A pin another member dropped: its dropper.
+        groups.setShown(kruger, true)
+        waitFor { groups.mapContent()?.pins?.isNotEmpty() == true }
+        val pin = groups.mapContent()!!.pins.first()
+        val dropper = groups.hub.pinDetail(kruger, pin.pinId)!!
+        assertEquals(dropper.dropperId to dropper.dropperName, blockable(groups.hub, kruger, ReportTarget.Pin(pin.pinId)))
+        // Blocked already: "Thanks for reporting" with OK only (the row's name now reads "Blocked member").
+        groups.hub.block(thandi.memberId, kruger)
+        assertNull(blockable(groups.hub, kruger, ReportTarget.Member(thandi.memberId)))
+    }
+
+    @Test
+    fun aValidNameTypedIsKeptToPrefillTheNextCreateOrJoin() {
+        assertEquals("", groups.lastDisplayName)
+        groups.rememberDisplayName("  Sam ")
+        assertEquals("Sam", groups.lastDisplayName)
+        // An empty or too long name keeps the last good one.
+        groups.rememberDisplayName("   ")
+        groups.rememberDisplayName("x".repeat(41))
+        assertEquals("Sam", groups.lastDisplayName)
     }
 
     @Test

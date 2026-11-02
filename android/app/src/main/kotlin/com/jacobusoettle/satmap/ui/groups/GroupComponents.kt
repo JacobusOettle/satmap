@@ -114,8 +114,9 @@ fun TextRow(text: String, modifier: Modifier = Modifier, colour: Color = LabelPr
     }
 }
 
-/** A button row in the list: accent text (red when `destructive`), an optional icon; a spinner and `busyText` while
- *  it works. Disabled, its text is white and it takes no taps. */
+/** A button row in the list: accent text (red when `destructive`), an optional icon. While it works: a spinner and
+ *  `busyText` (S4's "Creating…"), or, without one, its icon and title dimmed and a spinner at the end (iOS's label,
+ *  spacer and `ProgressView`). Disabled, its text is white and it takes no taps. */
 @Composable
 fun ButtonRow(
     title: String,
@@ -140,16 +141,23 @@ fun ButtonRow(
             .then(if (tag != null) Modifier.testTag(tag) else Modifier)
             .pressable(enabled = enabled && !busy, onClick = onClick),
     ) {
-        if (busy) {
+        if (busy && busyText != null) {
             FormSpinner()
             Spacer(Modifier.width(12.dp))
-            Text(busyText ?: title, style = style, color = LabelSecondary)
+            Text(busyText, style = style, color = LabelSecondary)
         } else {
             if (icon != null) {
-                LabelIcon(icon, if (destructive) SystemRed else if (enabled) Accent else LabelSecondary)
+                val tint = when {
+                    busy -> LabelSecondary
+                    destructive -> SystemRed
+                    enabled -> Accent
+                    else -> LabelSecondary
+                }
+                LabelIcon(icon, tint)
                 Spacer(Modifier.width(16.dp))
             }
-            Text(title, style = style, color = colour)
+            Text(title, style = style, color = if (busy) LabelSecondary else colour, modifier = Modifier.weight(1f))
+            if (busy) FormSpinner()
         }
     }
 }

@@ -3,6 +3,7 @@ package com.jacobusoettle.satmap.ui.groups
 import com.jacobusoettle.satmap.core.GroupFormat
 import com.jacobusoettle.satmap.core.GroupRole
 import com.jacobusoettle.satmap.core.GroupSummary
+import com.jacobusoettle.satmap.core.InviteLink
 import com.jacobusoettle.satmap.core.MemberRow
 import com.jacobusoettle.satmap.core.MemberState
 import com.jacobusoettle.satmap.core.PausedReason
@@ -20,6 +21,14 @@ import java.util.TimeZone
 object GroupTexts {
     /** "{n} members" (one member: "1 member"). */
     fun members(n: Int): String = if (n == 1) "1 member" else "$n members"
+
+    /** What is wrong with a pasted (S7) or scanned (S17) `text`: an invite link without its key, or no invite link at
+     *  all (nothing for an empty field); null for a whole invite link. */
+    fun linkProblem(parsed: InviteLink.Parsed, text: String): String? = when (parsed) {
+        InviteLink.Parsed.MissingKey -> "This invite link is incomplete. Copy the whole link from the message, or scan the QR code."
+        InviteLink.Parsed.NotInvite -> if (text.isBlank()) null else "That isn't a SatMap invite link."
+        is InviteLink.Parsed.Invite -> null
+    }
 
     /** S2's row subtitle: an offer to you first, then paused, else the members and whether you share. */
     fun listSubtitle(g: GroupSummary): String = when {

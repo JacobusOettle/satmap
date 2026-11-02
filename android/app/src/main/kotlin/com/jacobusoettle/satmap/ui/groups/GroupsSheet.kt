@@ -1,7 +1,5 @@
 package com.jacobusoettle.satmap.ui.groups
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
@@ -9,7 +7,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.GroupAlert
@@ -104,11 +101,10 @@ fun GroupsSheet(model: AppModel, close: () -> Unit) {
         nav.replace(if (groups.needsTerms) listOf(GroupsRoute.Terms) else n.routes)
         groups.navigationTaken(n)
     }
-    val toast by groups.toast.collectAsStateWithLifecycle()
-    Box(Modifier.fillMaxSize()) {
-        SheetStack(nav.stack) { route, below -> GroupScreen(model, route, below, nav) }
-        Toast(toast)
-    }
+    SheetStack(nav.stack) { route, below -> GroupScreen(model, route, below, nav) }
+    // "You're already in {group}." over S5 (an invite to a group you are in, §5.6).
+    val notice by groups.notice.collectAsStateWithLifecycle()
+    MessageAlert(notice, groups::dismissNotice)
 }
 
 /** The sheet opened from the map (`model.groupItem`): a pin (S11), a member (S12) or dropping a pin (S10), with
@@ -144,7 +140,7 @@ private fun GroupScreen(model: AppModel, route: GroupsRoute, below: GroupsRoute?
         GroupsRoute.Create -> CreateGroupScreen(model, nav)
         is GroupsRoute.Detail -> GroupDetailScreen(model, route.groupId, nav, below)
         is GroupsRoute.Consent -> ConsentScreen(model, route, nav)
-        is GroupsRoute.Invite -> InviteScreen(model, route, nav)
+        is GroupsRoute.Invite -> InviteScreen(route, nav)
         GroupsRoute.JoinLink -> JoinLinkScreen(model, nav, below)
         GroupsRoute.Scan -> ScanScreen(model, nav)
         is GroupsRoute.Member -> MemberDetailScreen(model, route, nav, below)

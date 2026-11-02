@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.jacobusoettle.satmap.app.AppModel
+import com.jacobusoettle.satmap.core.GroupHub
 import com.jacobusoettle.satmap.core.ReportReason
 import com.jacobusoettle.satmap.core.ReportTarget
 import com.jacobusoettle.satmap.groups.GroupsRoute
@@ -46,14 +47,9 @@ fun ReportScreen(model: AppModel, route: GroupsRoute.Report, nav: GroupsNav) {
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var thanks by remember { mutableStateOf(false) }
-    // Whom a block would hide: the member, or the pin's dropper.
-    val who = remember(route) {
-        when (val t = route.target) {
-            is ReportTarget.Member -> groups.hub.memberDetail(route.groupId, t.memberId)?.row?.let { it.memberId to it.name }
-            is ReportTarget.Pin -> groups.hub.pinDetail(route.groupId, t.pinId)?.let { it.dropperId to it.dropperName }
-            ReportTarget.Group -> null
-        }
-    }
+    // Whom the offer to block after the report would hide: the member (not you, not blocked already), or the pin's
+    // dropper (not you); nobody for the group name, and then "Thanks for reporting" has OK only.
+    val who = remember(route) { blockable(groups.hub, route.groupId, route.target) }
     SheetScreen(ScreenChrome("Report", ScreenChrome.Leading.Cancel(nav::pop))) {
         item {
             FormSection(header = GroupTexts.reportQuestion(route.target), first = true) {
@@ -99,7 +95,9 @@ fun ReportScreen(model: AppModel, route: GroupsRoute.Report, nav: GroupsNav) {
     if (thanks) {
         val w = who
         if (w == null) {
-            AlertBox("Thanks for reporting", null, listOf(AlertButton("OK") { nav.pop() })) {
+            // OK and a tap outside both dismiss it, and back to the screen reported from (once: a button's tap
+            // dismisses the alert first).
+            AlertBox("Thanks for reporting", null, listOf(AlertButton("OK") {})) {
                 thanks = false
                 nav.pop()
             }
@@ -117,4 +115,13 @@ fun ReportScreen(model: AppModel, route: GroupsRoute.Report, nav: GroupsNav) {
             ) { thanks = false }
         }
     }
+}
+
+/** Whom "Block" after a report would block, as (member id, name): a pin's dropper when the pin can be blocked, a
+ *  member who can be blocked and isn't yet; null for the group name or when nobody can be (iOS's `blockable`). */
+fun blockable(hub: GroupHub, groupId: String, target: ReportTarget): Pair<String, String>? = when (target) {
+    is ReportTarget.Pin -> hub.pinDetail(groupId, target.pinId)?.takeIf { it.canBlock }?.let { it.dropperId to it.dropperName }
+    is ReportTarget.Member ->
+        hub.memberDetail(groupId, target.memberId)?.takeIf { it.canBlock && !it.row.isBlocked }?.let { it.row.memberId to it.row.name }
+    ReportTarget.Group -> null
 }

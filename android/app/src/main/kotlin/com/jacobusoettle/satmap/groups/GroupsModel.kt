@@ -37,8 +37,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,8 +58,8 @@ sealed interface GroupsRoute {
     /** S9: `afterCreate` (after create or join) replaces the stack with `[List, Detail]`; otherwise it pops back. */
     data class Consent(val groupId: String, val afterCreate: Boolean) : GroupsRoute
 
-    /** S6: a new invite (`made` null, made when the screen opens) or one this phone made before. */
-    data class Invite(val groupId: String, val made: MadeInvite?) : GroupsRoute
+    /** S6: an invite S5 has just made (E6, "Invite someone"), or one this phone made before. */
+    data class Invite(val groupId: String, val made: MadeInvite) : GroupsRoute
     data object JoinLink : GroupsRoute
     data object Scan : GroupsRoute
     data class Member(val groupId: String, val memberId: String) : GroupsRoute
@@ -180,10 +178,11 @@ class GroupsModel(
     private val _navigation = MutableStateFlow<GroupsNavigation?>(null)
     val navigation: StateFlow<GroupsNavigation?> = _navigation.asStateFlow()
 
-    private val _toast = MutableStateFlow<String?>(null)
+    private val _notice = MutableStateFlow<String?>(null)
 
-    /** A short message over the groups sheet ("You're already in Kruger trip."). */
-    val toast: StateFlow<String?> = _toast.asStateFlow()
+    /** An alert with OK over the groups sheet: "You're already in Kruger trip." for an invite to a group you are in
+     *  (§5.6), as iOS shows it. */
+    val notice: StateFlow<String?> = _notice.asStateFlow()
 
     private val _termsAccepted = MutableStateFlow(Defaults.int(TERMS_KEY) ?: 0)
     val termsAccepted: StateFlow<Int> = _termsAccepted.asStateFlow()
@@ -210,7 +209,6 @@ class GroupsModel(
     private var nextId = 0
     private var foreground = false
     private var tickScheduled = false
-    private var toastJob: Job? = null
     private val backgroundTimer = WakeTimer(context, "groups") { backgroundTick() }
 
     /** A group just shown from S5 or S8: the map fits it once its members' positions are known (§9.5 camera). */
@@ -456,17 +454,13 @@ class GroupsModel(
         if (_navigation.value == n) _navigation.value = null
     }
 
-    fun showToast(text: String) {
-        _toast.value = text
-        toastJob?.cancel()
-        toastJob = scope.launch {
-            delay(2000)
-            _toast.value = null
-        }
+    fun dismissNotice() {
+        _notice.value = null
     }
 
-    /** An invite link opened from another app, a scan or a paste (§5.6): the join confirmation, or the group's screen
-     *  when you are in it already. Opening a link never joins by itself. */
+    /** An invite link opened from another app, a scan or a paste (§5.6): the join confirmation, or, when you are in the
+     *  group already, its screen alone (S5 with "Done") and the alert "You're already in {group}.". Opening a link
+     *  never joins by itself. */
     fun openInvite(parsed: InviteLink.Parsed) {
         when (parsed) {
             is InviteLink.Parsed.Invite -> scope.launch {
@@ -474,8 +468,8 @@ class GroupsModel(
                 val d = hub.detail(parsed.link.groupIdText)
                 if (d != null) {
                     _pendingInvite.value = null
-                    open(listOf(GroupsRoute.List, GroupsRoute.Detail(d.groupId)))
-                    showToast("You're already in ${d.name}.")
+                    open(listOf(GroupsRoute.Detail(d.groupId)))
+                    _notice.value = "You're already in ${d.name}."
                 } else {
                     _pendingInvite.value = JoinRequest(++nextId, parsed.link)
                 }
@@ -508,10 +502,12 @@ class GroupsModel(
 
     val needsTerms: Boolean get() = _termsAccepted.value < GroupConfig.termsVersion
 
-    /** The last display name typed (`groupsDisplayName`), to prefill. */
+    /** The last display name typed (`groupsDisplayName`), to prefill S4 and S8. */
     val lastDisplayName: String get() = Defaults.string(NAME_KEY) ?: ""
 
-    private fun rememberName(name: String) {
+    /** Keeps a display name typed, when it is a valid one (§8.3: "the last display name typed, to prefill"): S4 as it
+     *  is typed, S8 after a join, S15 after a save. iOS's `rememberDisplayName`. */
+    fun rememberDisplayName(name: String) {
         GroupText.clean(name, GroupTextField.displayName)?.let { Defaults.putString(NAME_KEY, it) }
     }
 
@@ -522,7 +518,7 @@ class GroupsModel(
         ready()
         val proof = pro.proof() ?: throw GroupActionError(GroupActionError.Kind.ProNotConfirmed)
         val gid = hub.createGroup(name, displayName, proof)
-        rememberName(displayName)
+        rememberDisplayName(displayName)
         return gid
     }
 
@@ -530,7 +526,7 @@ class GroupsModel(
     suspend fun join(link: InviteLink, displayName: String): String {
         ready()
         val gid = hub.join(link, displayName)
-        rememberName(displayName)
+        rememberDisplayName(displayName)
         _pendingInvite.value = null
         requestFit(gid)
         return gid

@@ -46,8 +46,6 @@ import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.app.Format
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.GroupFormat
-import com.jacobusoettle.satmap.core.GroupText
-import com.jacobusoettle.satmap.core.GroupTextField
 import com.jacobusoettle.satmap.core.PinType
 import com.jacobusoettle.satmap.core.ReportTarget
 import com.jacobusoettle.satmap.groups.GroupsRoute
@@ -113,7 +111,9 @@ fun DropPinScreen(model: AppModel, route: GroupsRoute.DropPin, nav: GroupsNav) {
     var message by remember { mutableStateOf<String?>(null) }
     val chosen = type?.let { PinType(it) }
     val name = remember(route.groupId) { groups.hub.detail(route.groupId)?.name ?: "" }
-    val ready = chosen != null && (chosen != PinType.animal || GroupText.clean(animal, GroupTextField.animal) != null)
+    // Enabled once a type is chosen and, for Animal, something is typed; an animal name that is too long says so on the
+    // tap (the hub's "Type the animal, up to 40 characters.").
+    val ready = chosen != null && (chosen != PinType.animal || animal.isNotBlank())
     SheetScreen(ScreenChrome("Drop pin", ScreenChrome.Leading.Cancel(nav::pop))) {
         item {
             FormSection(first = true) {

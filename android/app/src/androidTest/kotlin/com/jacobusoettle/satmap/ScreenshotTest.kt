@@ -593,7 +593,8 @@ class ScreenshotTest {
         if (waitForExistence(id("joinGroup"), 20) && waitForExistence(staticText("Weekend ride"), 5)) {
             sleep(1)
             snap("34-join-group")
-            // As on iOS: the name, when none was kept from before (step 31's group wasn't made).
+            // The name typed at step 31 prefills it (kept as it was typed, §8.3), as on iOS; typed here only if it
+            // wasn't kept.
             if (node(id("joinGroup"))?.config?.contains(SemanticsProperties.Disabled) == true) {
                 val name = id("displayName")
                 click(name)

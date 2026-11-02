@@ -434,8 +434,8 @@ private fun GroupsButton(model: AppModel, modifier: Modifier) {
     )
 }
 
-/** The shown group is paused (groups §9.1): why, under the location hints. A tap opens its screen; its close button
- *  hides it until the next launch. */
+/** The shown group is paused (groups §9.1): why, under the location hints. A tap opens its screen alone (S5 with
+ *  "Done"); its close button ("Hide", as VoiceOver reads it on iOS) hides it until the next launch. */
 @Composable
 private fun GroupPausedHint(model: AppModel) {
     val shown by model.groups.shown.collectAsStateWithLifecycle()
@@ -445,17 +445,24 @@ private fun GroupPausedHint(model: AppModel) {
     Hint(
         GroupTexts.pausedBanner(g.name, g.pausedReason, g.isOwner),
         onClose = { model.groups.hidePausedHint(g.groupId) },
-        onTap = { model.groups.open(listOf(GroupsRoute.List, GroupsRoute.Detail(g.groupId))) },
-        closeLabel = "Close",
+        onTap = { model.groups.open(listOf(GroupsRoute.Detail(g.groupId))) },
+        closeLabel = "Hide",
         modifier = Modifier.testTag("groupPausedHint"),
     )
 }
 
-/** "Drop pin" over a tapped spot's coordinates while a group is shown and active (groups §9.1): S10 at the spot. */
+/** "Drop pin" over a tapped spot's coordinates while a group is shown and active (groups §9.1): S10 at the spot. A
+ *  capsule with a 1 dp white outline at 30 %, as iOS's, so it reads as a button; the outline goes before the pill's
+ *  padding, around the capsule (after it, it would ring the text). */
 @Composable
 private fun DropPinCapsule(onClick: () -> Unit) {
     Row(
-        Modifier.testTag("dropPin").blocksMap().pressable(onClick = onClick).pill(vertical = 5.dp),
+        Modifier
+            .testTag("dropPin")
+            .blocksMap()
+            .pressable(onClick = onClick)
+            .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+            .pill(vertical = 5.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

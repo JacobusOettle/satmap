@@ -52,7 +52,11 @@ fun CreateGroupScreen(model: AppModel, nav: GroupsNav) {
             FormSection(header = "Your name in the group", footer = "Members see these names. Names are encrypted on your phone.") {
                 FormTextFieldRow(
                     displayName,
-                    { displayName = it },
+                    {
+                        displayName = it
+                        // The last name typed prefills the next create or join (`groupsDisplayName`, §8.3).
+                        groups.rememberDisplayName(it)
+                    },
                     placeholder = "e.g. Sam",
                     modifier = Modifier.testTag("displayName"),
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words, imeAction = ImeAction.Done),

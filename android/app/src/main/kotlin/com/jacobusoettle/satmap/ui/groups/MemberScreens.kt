@@ -246,7 +246,12 @@ fun EditNameScreen(model: AppModel, groupId: String, rename: Boolean, nav: Group
                         scope.launch {
                             try {
                                 message = null
-                                if (rename) groups.hub.renameGroup(text, groupId) else groups.hub.setDisplayName(text, colour, groupId)
+                                if (rename) {
+                                    groups.hub.renameGroup(text, groupId)
+                                } else {
+                                    groups.hub.setDisplayName(text, colour, groupId)
+                                    groups.rememberDisplayName(text)
+                                }
                                 nav.pop()
                             } catch (e: CancellationException) {
                                 throw e

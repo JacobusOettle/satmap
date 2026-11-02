@@ -8,10 +8,12 @@ import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.GroupConfig
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.GroupCoordinate
+import com.jacobusoettle.satmap.core.GroupDemo
 import com.jacobusoettle.satmap.core.GroupMapContent
 import com.jacobusoettle.satmap.core.GroupRole
 import com.jacobusoettle.satmap.core.GroupSecret
 import com.jacobusoettle.satmap.core.GroupSummary
+import com.jacobusoettle.satmap.core.InviteLink
 import com.jacobusoettle.satmap.core.MapMember
 import com.jacobusoettle.satmap.core.MapPin
 import com.jacobusoettle.satmap.core.MapTrail
@@ -120,6 +122,16 @@ class GroupPartsTest {
         assertEquals("Animal sighting", GroupTexts.pinLabel(PinType.animal))
         assertEquals("Animal", GroupTexts.pinShortLabel(PinType.animal))
         assertEquals("Pin", GroupTexts.pinLabel(null))
+    }
+
+    @Test
+    fun aPastedOrScannedLinkSaysWhatIsWrongWithIt() {
+        val incomplete = "This invite link is incomplete. Copy the whole link from the message, or scan the QR code."
+        assertEquals(incomplete, GroupTexts.linkProblem(InviteLink.Parsed.MissingKey, "https://satmap.app/j/abc"))
+        assertEquals("That isn't a SatMap invite link.", GroupTexts.linkProblem(InviteLink.Parsed.NotInvite, "https://example.com"))
+        assertNull(GroupTexts.linkProblem(InviteLink.Parsed.NotInvite, "  "))
+        val whole = InviteLink.parse(GroupDemo.inviteLink, GroupDemo.domain)
+        assertNull(GroupTexts.linkProblem(whole, GroupDemo.inviteLink))
     }
 
     // The map (§9.5)
