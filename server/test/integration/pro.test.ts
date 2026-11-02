@@ -84,6 +84,34 @@ async function googleGroup(now: number, google: FakeGoogle, token = purchaseToke
   return { g, token };
 }
 
+/**
+ * Points `proName`'s ProDO at the fake Play API and holds its first purchases call until `release()`; `asked`
+ * resolves when that call starts. The held call answers `answer` when given, otherwise from the fake.
+ */
+async function holdFirstPurchaseCall(proName: string, google: FakeGoogle, now: number, answer?: [number, unknown]) {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  let started!: () => void;
+  const asked = new Promise<void>((r) => (started = r));
+  let first = true;
+  await inPro(proName, (p) => {
+    p.clockOverride = now;
+    p.envOverride = { GOOGLE_SERVICE_ACCOUNT_JSON: google.serviceAccountJson };
+    p.httpFetch = async (input, init) => {
+      if (first && input.includes("/purchases/")) {
+        first = false;
+        started();
+        await gate;
+        if (answer !== undefined) return new Response(JSON.stringify(answer[1]), { status: answer[0] });
+      }
+      return google.fetch(input, init);
+    };
+  });
+  return { asked, release: () => release() };
+}
+
+const googlePro = (token: string) => ({ platform: "google", productId: "pro", purchaseToken: token });
+
 describe("pause when the store says Pro ended (R7)", () => {
   it("pauses on a REFUND notification: no uploads, no new pins, live cleared; the rest still works", async () => {
     const g = await createGroup();
@@ -288,6 +316,142 @@ describe("pro_check at expiry (SPEC §7.4)", () => {
     await runAlarm(g.groupId);
     expect(calls).toBe(1);
     expect(await status(g)).toMatchObject({ status: "paused", pausedReason: "pro_refunded" });
+  });
+
+  it("keeps the pro_check of a purchase E5 attached while the old purchase's check waited for the store", async () => {
+    const google = await fakeGoogle();
+    const { g, token } = await googleGroup(T0, google, purchaseToken(), T0 + 600);
+    google.purchases.set(token, [503, {}]);
+    const held = await holdFirstPurchaseCall(g.proName, google, T0);
+    await advance(g, 600);
+    const alarm = runAlarm(g.groupId);
+    await held.asked;
+    const fresh = await appleProofAt(g.now);
+    const res = await api("PUT", `/v1/groups/${g.groupId}/pro`, { pass: g.owner.pass, body: { pro: fresh.pro } });
+    expect(res.status).toBe(200);
+    const expiresAt = res.body.pro.expiresAt as number;
+    expect(expiresAt).toBeGreaterThan(g.now);
+    held.release();
+    await alarm;
+    // The old purchase's "unknown" answer neither pauses the group nor drops the new purchase's check.
+    expect(await status(g)).toMatchObject({ status: "active", pro: { platform: "apple", expiresAt } });
+    expect(await rows(g.groupId, "SELECT kind, at FROM jobs WHERE kind IN ('pro_check', 'pro_retry')")).toEqual([{ kind: "pro_check", at: expiresAt }]);
+    expect(await proStub(g.proName).groupCount()).toBe(0);
+    expect(await proStub(fresh.proName).groupCount()).toBe(1);
+  });
+
+  it("drops a stale 'unknown' answer when E5 proved the same purchase renewed meanwhile", async () => {
+    const google = await fakeGoogle();
+    const { g, token } = await googleGroup(T0, google, purchaseToken(), T0 + 600);
+    const held = await holdFirstPurchaseCall(g.proName, google, T0, [503, {}]);
+    await advance(g, 600);
+    const alarm = runAlarm(g.groupId);
+    await held.asked;
+    const renewed = g.now + 30 * 86400;
+    google.purchases.set(token, [200, subscription(g.now, { lineItems: [{ productId: "pro", expiryTime: rfc3339(renewed) }] })]);
+    const res = await api("PUT", `/v1/groups/${g.groupId}/pro`, { pass: g.owner.pass, body: { pro: googlePro(token) } });
+    expect(res.status).toBe(200);
+    expect(res.body.pro.expiresAt).toBe(renewed);
+    held.release();
+    await alarm;
+    expect(await status(g)).toMatchObject({ status: "active", pausedReason: null, pro: { platform: "google", expiresAt: renewed } });
+    expect(await rows(g.groupId, "SELECT kind, at FROM jobs WHERE kind IN ('pro_check', 'pro_retry')")).toEqual([{ kind: "pro_check", at: renewed }]);
+  });
+});
+
+describe("requests that lose a race during their store call (SD9, §1.3)", () => {
+  it("E1: the create that lost the groupId leaves its purchase without the group", async () => {
+    const google = await fakeGoogle();
+    const token = purchaseToken();
+    google.purchases.set(token, [200, subscription(T0)]);
+    const proName = await googleProName(token);
+    const held = await holdFirstPurchaseCall(proName, google, T0);
+    const groupId = randomId();
+    await setClock(groupId, T0);
+    const owner = newMember();
+    const losing = api("POST", "/v1/groups", {
+      body: {
+        groupId,
+        memberId: owner.memberId,
+        pass: owner.pass,
+        joinProof: randomSecret(),
+        groupProfile: GROUP_PROFILE,
+        memberProfile: MEMBER_PROFILE,
+        termsVersion: 1,
+        pro: googlePro(token),
+      },
+    });
+    await held.asked;
+    const winner = await createGroup({ groupId });
+    held.release();
+    const res = await losing;
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("group_exists");
+    expect(await proStub(proName).groupCount()).toBe(0);
+    expect(await proStub(winner.proName).groupCount()).toBe(1);
+  });
+
+  it("E5: a purchase sent while the group was deleted is detached again", async () => {
+    const google = await fakeGoogle();
+    const token = purchaseToken();
+    google.purchases.set(token, [200, subscription(T0)]);
+    const g = await createGroup();
+    const proName = await googleProName(token);
+    const held = await holdFirstPurchaseCall(proName, google, g.now);
+    const sending = api("PUT", `/v1/groups/${g.groupId}/pro`, { pass: g.owner.pass, body: { pro: googlePro(token) } });
+    await held.asked;
+    expect((await api("DELETE", `/v1/groups/${g.groupId}`, { pass: g.owner.pass })).status).toBe(204);
+    held.release();
+    const res = await sending;
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe("group_deleted");
+    expect(await proStub(proName).groupCount()).toBe(0);
+    expect(await proStub(g.proName).groupCount()).toBe(0);
+  });
+
+  it("E17: a purchase sent while the group was deleted is detached again", async () => {
+    const google = await fakeGoogle();
+    const token = purchaseToken();
+    google.purchases.set(token, [200, subscription(T0)]);
+    const g = await createGroup();
+    const m = await addMember(g);
+    expect((await api("POST", `/v1/groups/${g.groupId}/transfer`, { pass: g.owner.pass, body: { to: m.memberId } })).status).toBe(200);
+    const proName = await googleProName(token);
+    const held = await holdFirstPurchaseCall(proName, google, g.now);
+    const accepting = api("POST", `/v1/groups/${g.groupId}/transfer/accept`, { pass: m.pass, body: { pro: googlePro(token) } });
+    await held.asked;
+    expect((await api("DELETE", `/v1/groups/${g.groupId}`, { pass: g.owner.pass })).status).toBe(204);
+    held.release();
+    const res = await accepting;
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe("group_deleted");
+    expect(await proStub(proName).groupCount()).toBe(0);
+  });
+
+  it("E5 from an owner who handed the group over (E17) meanwhile is refused and leaves the new owner's purchase", async () => {
+    const google = await fakeGoogle();
+    const token = purchaseToken();
+    google.purchases.set(token, [200, subscription(T0)]);
+    const g = await createGroup();
+    const m = await addMember(g);
+    expect((await api("POST", `/v1/groups/${g.groupId}/transfer`, { pass: g.owner.pass, body: { to: m.memberId } })).status).toBe(200);
+    const proName = await googleProName(token);
+    const held = await holdFirstPurchaseCall(proName, google, g.now);
+    const sending = api("PUT", `/v1/groups/${g.groupId}/pro`, { pass: g.owner.pass, body: { pro: googlePro(token) } });
+    await held.asked;
+    const theirs = await appleProofAt(g.now);
+    const accepted = await api("POST", `/v1/groups/${g.groupId}/transfer/accept`, { pass: m.pass, body: { pro: theirs.pro } });
+    expect(accepted.status).toBe(200);
+    held.release();
+    const res = await sending;
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("forbidden");
+    expect(await rows(g.groupId, "SELECT pro_name FROM grp")).toEqual([{ pro_name: theirs.proName }]);
+    expect(await rows(g.groupId, "SELECT role FROM members WHERE member_id = ?", g.owner.memberId)).toEqual([{ role: "admin" }]);
+    expect(await rows(g.groupId, "SELECT role FROM members WHERE member_id = ?", m.memberId)).toEqual([{ role: "owner" }]);
+    expect(await proStub(theirs.proName).groupCount()).toBe(1);
+    expect(await proStub(proName).groupCount()).toBe(0);
+    expect(await proStub(g.proName).groupCount()).toBe(0);
   });
 });
 

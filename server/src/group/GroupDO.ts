@@ -579,6 +579,15 @@ export class GroupDO extends DurableObject<AppEnv> {
     }
   }
 
+  /**
+   * After an attach whose request then failed: detach the purchase unless the group runs on it. A deleted (or
+   * purged) group runs on none; E4 detached its purchase before this attach may have landed.
+   */
+  private async detachUnused(name: string, groupId: string): Promise<void> {
+    const grp = this.grp();
+    if (grp === null || grp.status === "deleted" || grp.pro_name !== name) await this.detachFrom(name, groupId);
+  }
+
   /** Writes a purchase's state into `grp` and pauses or resumes; call inside transactionSync. */
   private applyProStateTx(name: string, state: ProState, now: number): void {
     this.sql.exec(
@@ -680,9 +689,19 @@ export class GroupDO extends DurableObject<AppEnv> {
 
     const pro = await this.attachProof(groupId, proof);
 
-    // The store call let other requests run; check again.
-    const again = this.createRetry(passHash);
-    if (again !== null) return again;
+    // The store call let other requests run; check again. A create that lost the race must not leave its purchase
+    // counting this group (SD9) unless the winner uses the same purchase.
+    let again: Response | null;
+    try {
+      again = this.createRetry(passHash);
+    } catch (err) {
+      await this.detachUnused(pro.name, groupId);
+      throw err;
+    }
+    if (again !== null) {
+      await this.detachUnused(pro.name, groupId);
+      return again;
+    }
 
     const now = this.now();
     const joinProofHash = await sha256(joinProof);
@@ -814,14 +833,23 @@ export class GroupDO extends DurableObject<AppEnv> {
     const proof = this.parseProof(body.pro);
     const grp = this.grp()!;
     const pro = await this.attachProof(grp.group_id, proof);
+    // The store call let other requests run: the group may be gone, or E17 may have made someone else the owner
+    // (only the owner sends a proof, §1.3). Then leave the purchases as they are.
     const now = this.now();
-    const current = this.grp()!;
-    if (current.status === "deleted") throw new ApiError("group_deleted");
+    const current = this.grp();
+    if (current === null || current.status === "deleted") {
+      await this.detachUnused(pro.name, grp.group_id);
+      throw new ApiError(current === null ? "group_not_found" : "group_deleted");
+    }
+    const me = this.callerFor(caller.memberId);
+    if (me === null || me.role !== "owner") {
+      await this.detachUnused(pro.name, grp.group_id);
+      throw new ApiError("forbidden");
+    }
     const oldName = current.pro_name;
     this.ctx.storage.transactionSync(() => this.applyProStateTx(pro.name, pro.state, now));
     if (oldName !== null && oldName !== pro.name) await this.detachFrom(oldName, grp.group_id);
     this.afterStatusChange();
-    const me = this.callerFor(caller.memberId) ?? caller;
     return json(this.status(me));
   }
 
@@ -1147,12 +1175,15 @@ export class GroupDO extends DurableObject<AppEnv> {
     const grp = this.grp()!;
     const pro = await this.attachProof(grp.group_id, proof);
     const now = this.now();
-    const current = this.grp()!;
-    if (current.status === "deleted") throw new ApiError("group_deleted");
+    const current = this.grp();
+    if (current === null || current.status === "deleted") {
+      await this.detachUnused(pro.name, grp.group_id);
+      throw new ApiError(current === null ? "group_not_found" : "group_deleted");
+    }
     const still = this.openOffer(now);
     if (still === null || still.to_member !== caller.memberId || this.member(caller.memberId) === null) {
       // The offer went away while the store was asked; leave the new purchase as it was.
-      if (current.pro_name !== pro.name) await this.detachFrom(pro.name, grp.group_id);
+      await this.detachUnused(pro.name, grp.group_id);
       throw new ApiError("not_found");
     }
     const oldName = current.pro_name;
@@ -1859,7 +1890,7 @@ export class GroupDO extends DurableObject<AppEnv> {
         jobs.done("r2_delete", null);
         return false;
       case "pro_check":
-        await this.proCheck(now);
+        await this.proCheck(job, now);
         return false;
       case "pro_retry":
         await this.proRetry(now);
@@ -1926,7 +1957,7 @@ export class GroupDO extends DurableObject<AppEnv> {
     return true;
   }
 
-  private async proCheck(now: number): Promise<void> {
+  private async proCheck(job: Job, now: number): Promise<void> {
     const grp = this.grp()!;
     if (grp.pro_name === null || grp.status === "deleted") {
       this.jobs.done("pro_check", null);
@@ -1934,11 +1965,12 @@ export class GroupDO extends DurableObject<AppEnv> {
     }
     const name = grp.pro_name;
     const result = await this.proStub(name).check(grp.group_id);
-    const current = this.grp()!;
-    if (current.pro_name !== name) {
-      this.jobs.done("pro_check", null);
-      return;
-    }
+    // The store call let requests run. E5, E17 or a store notification may have put another purchase (or a fresh
+    // answer for this one) in place and scheduled its own pro_check, and E4 may have deleted the group: their
+    // schedule stands, and this older answer is dropped.
+    const current = this.grp();
+    const moved = this.jobs.get("pro_check")?.at !== job.at;
+    if (current === null || current.status === "deleted" || current.pro_name !== name || moved) return;
     this.ctx.storage.transactionSync(() => {
       if (result.unknown) {
         // SD8: the renewal couldn't be confirmed; pause and keep checking.
