@@ -343,6 +343,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				GROUPS_DOMAIN = example.invalid;
 				INFOPLIST_FILE = SatMap/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SatMap;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";
@@ -373,6 +374,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				GROUPS_DOMAIN = example.invalid;
 				INFOPLIST_FILE = SatMap/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = SatMap;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";

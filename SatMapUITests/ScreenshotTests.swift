@@ -56,6 +56,16 @@ final class ScreenshotTests: XCTestCase {
     }
 
     func testScreenshots() throws {
+        // Groups run in demo mode (docs/groups/SPEC.md §8.15): the core's fake server with a fixed seed and a fake Pro
+        // store. "Kruger trip" starts hidden, so shots 01–27 show only the (inactive) Groups button.
+        app.launchArguments += ["-groupsDemo", "YES"]
+        mapScreenshots()
+        groupScreenshots()
+    }
+
+    /// Shots 01–27: the map, measuring, blocks, offline maps and drone mode. A step that can't go on returns early;
+    /// the groups shots follow either way.
+    private func mapScreenshots() {
         setLocation(arrival[0])
         app.launch()
         allowPermissionPrompts()
@@ -267,6 +277,7 @@ final class ScreenshotTests: XCTestCase {
             field.tap()
             field.typeText("33°55'10\"S 18°55'20\"E")
             sleep(1)
+            dismissTypingTip()
             snap("21-go-to-coordinates")
             tap("Show and measure from here")
             sleep(3)
@@ -388,6 +399,253 @@ final class ScreenshotTests: XCTestCase {
         guard saveToFiles.waitForExistence(timeout: 30) else { return XCTFail("No share sheet") }
         sleep(2)
         snap("14-export-backup")
+    }
+
+    // MARK: - Groups (docs/groups/SPEC.md §9.7)
+
+    /// `GroupDemo.inviteLink` ("Weekend ride", not joined) and the satmap:// form of `GroupDemo.inviteLink2` ("Braai
+    /// club"), as the core makes them (pinned by GroupsLogicTests).
+    private let weekendRideLink = "https://example.invalid/j/EBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8#MDEyMzQ1Njc4OTo7PD0-P0BBQkNERUZHSElKS0xNTk8"
+    private let braaiClubSchemeLink = "satmap://join/YGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn8#gIGCg4SFhoeIiYqLjI2Oj5CRkpOUlZaXmJmam5ydnp8"
+
+    /// Shots 28–40 and the link check (step 41), from a fresh start in demo mode: the terms not yet accepted, the seed
+    /// made anew (whatever the steps before left open).
+    private func groupScreenshots() {
+        app.terminate()
+        app.launch()
+        sleep(6) // the map and the demo seed
+
+        // 28: the terms, the first time Groups opens.
+        openGroups()
+        guard app.buttons["agreeTerms"].waitForExistence(timeout: 10) else { return XCTFail("The terms didn't show") }
+        sleep(1)
+        snap("28-groups-terms")
+
+        // 29: the list.
+        tap("agreeTerms")
+        XCTAssertTrue(text(containing: "Kruger trip").waitForExistence(timeout: 10), "Kruger trip isn't listed")
+        XCTAssertTrue(text(containing: "Drone team").exists, "Drone team isn't listed")
+        sleep(1)
+        snap("29-groups-list")
+
+        // 30: the paywall, with the fake store's prices.
+        tap("createGroupRow")
+        XCTAssertTrue(text(containing: "R399.99 a year").waitForExistence(timeout: 10), "No yearly price")
+        XCTAssertTrue(text(containing: "Save 58%").exists, "No saving on the yearly plan")
+        sleep(1)
+        snap("30-paywall")
+
+        // 31: the fake purchase succeeds; the new group's names typed.
+        tap("buyPro")
+        let groupName = app.textFields["groupName"]
+        if groupName.waitForExistence(timeout: 10) {
+            groupName.tap()
+            groupName.typeText("Weekend braai")
+            let displayName = app.textFields["displayName"]
+            displayName.tap()
+            displayName.typeText("Sam\n")
+            sleep(1)
+            XCTAssertTrue(app.buttons["createGroup"].isEnabled, "Create group stays disabled with both names")
+            snap("31-create-group")
+        } else {
+            XCTFail("The purchase didn't lead to the new group's screen")
+        }
+        tap("Cancel")
+
+        // 32: the group's screen.
+        tapRow(startingWith: "Kruger trip")
+        guard app.switches["showOnMap"].waitForExistence(timeout: 10) else { return XCTFail("The group's screen didn't open") }
+        sleep(3) // members' states and the invites
+        snap("32-group-detail")
+
+        // 33: an invite's QR code.
+        scrollTo(app.buttons["inviteSomeone"].firstMatch)
+        tap("inviteSomeone")
+        if app.descendants(matching: .any)["inviteQR"].firstMatch.waitForExistence(timeout: 10) {
+            sleep(1)
+            snap("33-invite-qr")
+        } else {
+            XCTFail("No invite QR code")
+        }
+        tap("Done")
+
+        // 34: joining with a pasted link.
+        tap("Back")
+        tap("joinLinkRow")
+        let field = app.descendants(matching: .any)["inviteText"].firstMatch
+        guard field.waitForExistence(timeout: 10) else { return XCTFail("No field for the invite link") }
+        field.tap()
+        field.typeText(weekendRideLink)
+        tap("continueJoin")
+        guard app.buttons["joinGroup"].waitForExistence(timeout: 15) else { return XCTFail("The join sheet didn't show the invite") }
+        XCTAssertTrue(text(containing: "Weekend ride").exists, "The join sheet doesn't name the group")
+        sleep(1)
+        snap("34-join-group")
+
+        // 35: consent after joining, then sharing. (The name is prefilled with the one typed in step 31.)
+        if !app.buttons["joinGroup"].isEnabled {
+            let name = app.textFields["displayName"]
+            name.tap()
+            name.typeText("Sam\n")
+        }
+        tap("joinGroup")
+        guard app.buttons["consentShare"].waitForExistence(timeout: 15) else { return XCTFail("No consent screen after joining") }
+        sleep(1)
+        snap("35-share-consent")
+        tap("consentShare")
+        XCTAssertTrue(app.switches["showOnMap"].waitForExistence(timeout: 10), "The joined group's screen didn't follow the consent")
+
+        // 36: Kruger trip on the map: the camera fits the members.
+        tap("Back")
+        tapRow(startingWith: "Kruger trip")
+        guard app.switches["showOnMap"].waitForExistence(timeout: 10) else { return XCTFail("Kruger trip didn't open") }
+        setSwitch("showOnMap", on: true)
+        tap("Back")
+        closeSheet("Groups")
+        sleep(10) // the camera, the tiles, the members' live positions
+        let members = app.descendants(matching: .any).matching(identifier: "groupMember")
+        let pins = app.descendants(matching: .any).matching(identifier: "groupPin")
+        XCTAssertGreaterThanOrEqual(members.count, 3, "The members' dots aren't on the map")
+        XCTAssertEqual(pins.count, 6, "The group's six pins aren't on the map")
+        XCTAssertTrue(app.buttons["Groups"].exists)
+        snap("36-group-map")
+
+        // 37: a pin dropped at an empty spot.
+        if let spot = emptyMapSpot(avoiding: (members.allElementsBoundByIndex + pins.allElementsBoundByIndex).map(\.frame)) {
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: spot.x, dy: spot.y)).tap()
+            if app.buttons["dropPin"].waitForExistence(timeout: 10) {
+                tap("dropPin")
+                tap("pinType-animal")
+                let animal = app.textFields["pinAnimal"]
+                if animal.waitForExistence(timeout: 10) {
+                    animal.tap()
+                    animal.typeText("Rhino\n")
+                    sleep(1)
+                    snap("37-drop-pin")
+                } else {
+                    XCTFail("No field for the animal")
+                }
+                scrollTo(app.buttons["dropPinConfirm"].firstMatch)
+                tap("dropPinConfirm")
+                sleep(3)
+            } else {
+                XCTFail("No Drop pin button at the tapped spot")
+            }
+        } else {
+            XCTFail("No empty spot on the map")
+        }
+
+        // 38: the Kudu pin.
+        let kudu = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Kudu")).firstMatch
+        if kudu.waitForExistence(timeout: 10) {
+            // The pin's circle is the top 30 pt of its view (its label is under it).
+            let f = kudu.frame
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.minY + min(15, f.height / 2))).tap()
+            if app.navigationBars["Animal sighting"].waitForExistence(timeout: 10) {
+                sleep(1)
+                snap("38-pin-detail")
+            } else {
+                XCTFail("The pin didn't open")
+            }
+            tap("Done")
+        } else {
+            XCTFail("The Kudu pin isn't on the map")
+        }
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@", "Rhino")).firstMatch.exists,
+                      "The dropped pin isn't on the map")
+
+        // 39: a member.
+        openGroups()
+        tapRow(startingWith: "Kruger trip")
+        // The member row, not Thandi's dot on the map under the sheet (its label starts with the name too).
+        let thandi = app.buttons.matching(identifier: "memberRow").matching(NSPredicate(format: "label BEGINSWITH %@", "Thandi")).firstMatch
+        if thandi.waitForExistence(timeout: 10) {
+            thandi.tap()
+        } else {
+            XCTFail("No member row for Thandi")
+        }
+        if app.navigationBars["Thandi"].waitForExistence(timeout: 10) {
+            sleep(1)
+            snap("39-member-detail")
+        } else {
+            XCTFail("Thandi didn't open")
+        }
+
+        // 40: a paused group on the map, with its banner.
+        tap("Back")
+        tap("Back")
+        tapRow(startingWith: "Drone team")
+        if app.switches["showOnMap"].waitForExistence(timeout: 10) {
+            setSwitch("showOnMap", on: true)
+        } else {
+            XCTFail("Drone team didn't open")
+        }
+        tap("Back")
+        closeSheet("Groups")
+        if app.descendants(matching: .any)["groupPausedHint"].firstMatch.waitForExistence(timeout: 10) {
+            sleep(3)
+            snap("40-group-paused")
+        } else {
+            XCTFail("No paused banner on the map")
+        }
+
+        // 41: the link check (§5.6): the landing page's satmap:// link opens the join sheet.
+        XCUIDevice.shared.system.open(URL(string: braaiClubSchemeLink)!)
+        let open = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Open"]
+        if open.waitForExistence(timeout: 5) { open.tap() }
+        XCTAssertTrue(app.buttons["joinGroup"].waitForExistence(timeout: 10), "The invite link didn't open the join sheet")
+        XCTAssertTrue(text(containing: "Braai club").exists, "The join sheet doesn't name Braai club")
+    }
+
+    /// The keyboard shows a one-time "slide to type" tip in place of its keys on some runs: it goes, so the screenshot
+    /// shows the keyboard as on other runs.
+    private func dismissTypingTip() {
+        let tip = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Speed up your typing")).firstMatch
+        guard tip.exists else { return }
+        let continueButton = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Continue", "continueJoin")).firstMatch
+        if continueButton.exists {
+            continueButton.tap()
+            sleep(1)
+        }
+    }
+
+    /// Any element whose label holds the text (a row's texts may be one button's label).
+    private func text(containing t: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", t)).firstMatch
+    }
+
+    /// The Groups button, tapped again if a tap was lost.
+    private func openGroups() {
+        for _ in 0..<4 {
+            tap("Groups")
+            if app.navigationBars["Groups"].waitForExistence(timeout: 5) { return }
+        }
+        XCTFail("The Groups sheet didn't open")
+    }
+
+    /// Step 37: the first point of a 40 pt grid, scanning outwards from the map's middle, at least 44 pt from every
+    /// member dot and group pin (and the KML point) and clear of the screen's overlays.
+    private func emptyMapSpot(avoiding frames: [CGRect]) -> CGPoint? {
+        let window = app.windows.firstMatch.frame
+        var avoid = frames
+        let launch = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Launch 1")).firstMatch
+        if launch.exists { avoid.append(launch.frame) }
+        // The coordinates and hints at the top, the controls on the right, Groups and the legends on the left, the
+        // tapped spot's coordinates at the bottom.
+        let clear = CGRect(x: window.minX + 90, y: window.minY + 200, width: window.width - 190, height: window.height - 460)
+        let centre = CGPoint(x: window.midX, y: window.midY)
+        var grid: [CGPoint] = []
+        for i in -8...8 {
+            for j in -10...10 {
+                grid.append(CGPoint(x: centre.x + CGFloat(i) * 40, y: centre.y + CGFloat(j) * 40))
+            }
+        }
+        grid.sort { hypot($0.x - centre.x, $0.y - centre.y) < hypot($1.x - centre.x, $1.y - centre.y) }
+        return grid.first { p in
+            clear.contains(p) && avoid.allSatisfy { f in
+                hypot(p.x - min(max(p.x, f.minX), f.maxX), p.y - min(max(p.y, f.minY), f.maxY)) >= 44
+            }
+        }
     }
 
     // MARK: - Helpers

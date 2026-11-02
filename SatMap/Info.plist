@@ -3,7 +3,24 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>SatMap shows where you are on the map and records the dotted track of where you have been, also while the app is in the background.</string>
+	<string>SatMap shows where you are on the map and records the dotted track of where you have been, also while the app is in the background. If you turn on sharing in a group, your position and track are also shared with that group's members.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>SatMap uses the camera to scan a group's invite QR code.</string>
+	<key>SatMapGroupsDomain</key>
+	<string>$(GROUPS_DOMAIN)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.jacobusoettle.satmap.invite</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>satmap</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSMotionUsageDescription</key>
 	<string>SatMap uses motion detection to switch the GPS off while you stand still and back on when you move, to save battery.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>

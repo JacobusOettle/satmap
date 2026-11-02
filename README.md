@@ -33,6 +33,19 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/22-contours-and-colours.jpg" width="250"> | <img src="docs/screenshots/23-elevation-colours.jpg" width="250"> | <img src="docs/screenshots/24-kml-point.jpg" width="250"> |
 | **Drone mode** | **Finding a place to save offline** | **Saving a reserve within its boundary** |
 | <img src="docs/screenshots/25-drone-mode.jpg" width="250"> | <img src="docs/screenshots/26-find-place.jpg" width="250"> | <img src="docs/screenshots/27-place-area.jpg" width="250"> |
+| **Groups: the terms** | **Your groups** | **SatMap Pro** |
+| <img src="docs/screenshots/28-groups-terms.jpg" width="250"> | <img src="docs/screenshots/29-groups-list.jpg" width="250"> | <img src="docs/screenshots/30-paywall.jpg" width="250"> |
+| **A new group** | **A group** | **Inviting with a QR code** |
+| <img src="docs/screenshots/31-create-group.jpg" width="250"> | <img src="docs/screenshots/32-group-detail.jpg" width="250"> | <img src="docs/screenshots/33-invite-qr.jpg" width="250"> |
+| **Joining with an invite link** | **Sharing your location** | **The group on the map** |
+| <img src="docs/screenshots/34-join-group.jpg" width="250"> | <img src="docs/screenshots/35-share-consent.jpg" width="250"> | <img src="docs/screenshots/36-group-map.jpg" width="250"> |
+| **Dropping a pin** | **A pin** | **A member** |
+| <img src="docs/screenshots/37-drop-pin.jpg" width="250"> | <img src="docs/screenshots/38-pin-detail.jpg" width="250"> | <img src="docs/screenshots/39-member-detail.jpg" width="250"> |
+| **A paused group** | | |
+| <img src="docs/screenshots/40-group-paused.jpg" width="250"> | | |
+
+The groups screenshots run in demo mode (`-groupsDemo YES`): the app talks to a fake server built into the core,
+with a fixed set of groups, members, trails and pins near the walk, and a fake store for SatMap Pro.
 
 The Android app's screenshots, taken the same way on an Android emulator (`.github/workflows/android-screenshots.yml`),
 are in [docs/screenshots/android](docs/screenshots/android):
@@ -53,6 +66,21 @@ are in [docs/screenshots/android](docs/screenshots/android):
 | Go to coordinates | The button with the magnifying glass: paste or type a position in any common format (decimal degrees signed or with N/S/E/W; degrees and minutes; degrees, minutes and seconds with any symbols; decimal commas; GPS/NMEA; Google, Apple, OpenStreetMap and geo: links; UTM; MGRS; plus codes). It shows how it was read and how far it is from you; **Show and measure from here** puts it on the map as measuring point A, with the live distance from you, as if you had tapped it. |
 | Coordinates | Your own coordinates (latitude, longitude in decimal degrees) show at the top and follow you, with your height above sea level beside them (from the elevation model; from the GPS, marked, where there is no elevation data). Tap a spot on the map: a pin marks it and its coordinates show at the bottom, within easy reach, with its height beside them. Tap either to copy it to the clipboard.  To move the pin or a measuring point precisely, press and hold it: a glass square above your finger shows 15 m × 15 m of ground around it, magnified. Keep your finger down and drag: the point follows at the square's scale, and beyond 5 m from the square's middle (the dashed ring) the map scrolls that way, faster the further you drag. Lift your finger to leave it there. Tap a height to show heights in feet, and again for metres. |
 | Offline maps | **Offline** button → **Find a park, reserve or town** (search for Kruger, Sabi Sand, Skukuza, Hazyview …: parks and reserves are saved within their boundary from OpenStreetMap, towns and camps with the area around them; inside Kruger, "Only along roads" uses the road list shipped with the app), or **Draw an area on the map** (switch between *Move map* and *Draw*, then draw a loop around the area with one finger), or **Use a GPX or KML file** (the imagery inside the file's shapes and 15 m around its lines and points; see below), or **Where I've been** (along your dotted track; see below). Choose the detail: every zoom level from 15 (about 4 m per pixel) to 22 (about 3 cm) is listed with its download size, and your choice is remembered. Tick **Only along roads** to save imagery only 15 m to each side of the roads and tracks in the area (for a file: in its shapes; see below). Allow mobile data or wait for Wi-Fi, and download. |
+
+### Groups
+
+A group is a small set of people (a drone team, friends on a Kruger trip) who see each other on the map: each
+member's live position, the trail each member leaves, and pins they drop (an animal sighting, shelter, water,
+danger, a pothole, police), each with a short note. Tap **Groups** (the button at the left of the map) to create a
+group (it needs SatMap Pro: monthly, yearly or once; members join free) or to join one with an invite link or QR
+code, which works once, for 7 days. Everything a group shares is encrypted on the phones (AES-256-GCM, with a key
+that travels only inside the invite link), so the server stores and forwards only what it can't read. In a group's
+screen you choose whether it shows on the map and whether you share your location with it (asked once, with what
+it means); sharing goes on in the background through the same recording as your dotted track, and stops for a
+group whose owner's Pro has ended (the group pauses, and is deleted 30 days later unless it comes back). Members,
+pins and the group name can be reported and blocked, names and notes pass a word filter, and owners and admins can
+invite, cancel invites and remove members. The full design is in [docs/groups/SPEC.md](docs/groups/SPEC.md); the
+server is in `server/`.
 
 ### Offline downloads
 
@@ -252,7 +280,8 @@ SatMap/
   Map/        MapController (MKMapView), tile overlays, contour renderer, tile repository, overlays
   Offline/    OfflineManager – offline areas, download queue
   KML/        imported KML and GPX files
-  UI/         SwiftUI screens
+  Groups/     groups in the app: the hub's HTTP and WebSocket transport, Keychain, SatMap Pro (StoreKit 2), QR codes
+  UI/         SwiftUI screens (UI/Groups: the groups screens)
   Core/       platform-independent logic: tile maths, area → tile coverage, PNG/Terrarium decoding,
               marching-squares contours, KML/KMZ and GPX parsing, MBTiles (SQLite, tiles encrypted), track log,
               download engine
