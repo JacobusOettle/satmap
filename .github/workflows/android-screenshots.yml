@@ -275,7 +275,12 @@ jobs:
           heap-size: 576M
           disk-size: 8G
           disable-animations: false
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          # ANGLE on SwiftShader's Vulkan, not the emulator's own SwiftShader GLES translator: since early November
+          # 2026 that translator's JIT crashes the emulator (SIGSEGV on its RenderThread, core dumps in
+          # swiftshader_jit) in about half of the walks, at random points and with the app from before groups too.
+          # With swangle_indirect, walks finish and the screenshots are the same. (debug.hwui.renderer=skiavk also
+          # stops the crash, but every screenshot then comes out black.)
+          emulator-options: -no-window -gpu swangle_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash "$RUNNER_TEMP/walkthrough.sh"
 
       - name: Collect what the run left
