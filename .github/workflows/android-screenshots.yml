@@ -31,6 +31,11 @@ concurrency:
 
 jobs:
   screenshots:
+    name: screenshots (proof ${{ matrix.rep }})
+    strategy:
+      fail-fast: false
+      matrix:
+        rep: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     outputs:
@@ -317,7 +322,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: android-screenshots
+          name: android-screenshots-${{ matrix.rep }}
           path: |
             shots
             jpg
@@ -331,7 +336,7 @@ jobs:
   # cut short later on (each is a screenshot of this build), and is skipped when none was taken.
   commit:
     needs: screenshots
-    if: ${{ !cancelled() && github.ref_type == 'branch' && needs.screenshots.outputs.captured != '' && needs.screenshots.outputs.captured != '0' }}
+    if: ${{ false && !cancelled() && github.ref_type == 'branch' && needs.screenshots.outputs.captured != '' && needs.screenshots.outputs.captured != '0' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
