@@ -271,7 +271,9 @@ class TileCryptoTests {
             // It stops soon, to run again later.
             assertEquals(false, encrypted)
             assertTrue(System.nanoTime() - start < 5_000_000_000L)
-            assertTrue("${longestRead / 1_000_000} ms", longestRead < 1_000_000_000L)
+            // Far below the 10 s a read waited before (the usual busy timeout), with room for a slow, shared CI
+            // machine: a read can wait for the 200 ms brief timeout plus the batch thread being descheduled.
+            assertTrue("${longestRead / 1_000_000} ms", longestRead < 3_000_000_000L)
             assertFalse(store.isEncrypted)
 
             // Once the download has committed, it runs.

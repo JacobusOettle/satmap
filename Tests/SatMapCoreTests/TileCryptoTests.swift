@@ -245,7 +245,9 @@ final class TileCryptoTests: XCTestCase {
         // It stops soon, to run again later.
         XCTAssertEqual(outcome.encrypted, false)
         XCTAssertLessThan(Date().timeIntervalSince(start), 5)
-        XCTAssertLessThan(longestRead, 1)
+        // Far below the 10 s a read waited before (the usual busy timeout), with room for a slow, shared CI machine:
+        // a read can wait for the 200 ms brief timeout plus the batch thread being descheduled (1.01 s was seen).
+        XCTAssertLessThan(longestRead, 3)
         XCTAssertFalse(store.isEncrypted)
 
         // Once the download has committed, it runs.
