@@ -9,7 +9,10 @@ SatMap/Core/Roads.swift reads them).
         [folder of extra .kml/.kmz files]
 
 Roads from the extra KML/KMZ files (their lines; polygons such as drone blocks and points are ignored) are added
-too, for roads OpenStreetMap doesn't have. The output tells how much of them OpenStreetMap already covered.
+too, for roads OpenStreetMap doesn't have. A file with a folder named "Roads" gives only the lines inside that folder
+(so other lines in it, such as section outlines, are left out). A stretch is added only where neither OpenStreetMap
+nor a line added before it has a road within 15 m, so files and folders that repeat a road add it once. The output
+tells how much of them was already covered.
 """
 import bisect
 import collections
@@ -142,9 +145,13 @@ def kml_lines(path):
             root = ET.fromstring(z.read(name))
     else:
         root = ET.parse(path).getroot()
+    tag = lambda el: el.tag.rsplit("}", 1)[-1]
+    # A file that has a "Roads" folder: only the lines inside it are roads.
+    roads = [el for el in root.iter() if tag(el) == "Folder"
+             and any(tag(c) == "name" and (c.text or "").strip().lower() == "roads" for c in el)]
     lines = []
-    for el in root.iter():
-        if el.tag.rsplit("}", 1)[-1] != "LineString":
+    for el in (e for top in (roads or [root]) for e in top.iter()):
+        if tag(el) != "LineString":
             continue
         for c in el:
             if c.tag.rsplit("}", 1)[-1] == "coordinates" and c.text:
@@ -166,12 +173,16 @@ class NearRoads:
         self.cell = max(radius, 50.0)
         self.grid = collections.defaultdict(list)
         for line in lines_xy:
-            for a, b in zip(line, line[1:]):
-                x0, x1 = sorted((a[0], b[0]))
-                y0, y1 = sorted((a[1], b[1]))
-                for gx in range(int((x0 - radius) // self.cell), int((x1 + radius) // self.cell) + 1):
-                    for gy in range(int((y0 - radius) // self.cell), int((y1 + radius) // self.cell) + 1):
-                        self.grid[(gx, gy)].append((a, b))
+            self.add(line)
+
+    def add(self, line):
+        radius = self.r
+        for a, b in zip(line, line[1:]):
+            x0, x1 = sorted((a[0], b[0]))
+            y0, y1 = sorted((a[1], b[1]))
+            for gx in range(int((x0 - radius) // self.cell), int((x1 + radius) // self.cell) + 1):
+                for gy in range(int((y0 - radius) // self.cell), int((y1 + radius) // self.cell) + 1):
+                    self.grid[(gx, gy)].append((a, b))
 
     def __call__(self, x, y):
         for (ax, ay), (bx, by) in self.grid.get((int(x // self.cell), int(y // self.cell)), ()):
@@ -234,7 +245,8 @@ def main(src, dst):
             kept.append(r)
     osm_count = len(kept)
 
-    # Roads from KML files: added where OpenStreetMap has no road within 15 m (the imagery corridor).
+    # Roads from KML files: added where neither OpenStreetMap nor a KML road added before has a road within 15 m (the
+    # imagery corridor), so a road that several files or folders repeat is added once.
     extra_dir = sys.argv[3] if len(sys.argv) > 3 else None
     if extra_dir and os.path.isdir(extra_dir):
         near = NearRoads(kept, 15.0)
@@ -249,18 +261,22 @@ def main(src, dst):
                     # Split into pieces OpenStreetMap already covers and pieces it doesn't; keep the latter.
                     piece = []
                     dense = clip_runs(r, lambda x, y: True)[0]
+                    added = []
                     for p in dense:
                         if near(*p):
                             if len(piece) >= 2:
-                                km_new += length_m(piece) / 1000
-                                kept.append(piece)
+                                added.append(piece)
                             piece = []
                         else:
                             piece.append(p)
                     if len(piece) >= 2:
+                        added.append(piece)
+                    for piece in added:
                         km_new += length_m(piece) / 1000
                         kept.append(piece)
-            print(f"{name}: {len(lines)} lines, {km_in:.1f} km inside the park, {km_new:.1f} km not in OpenStreetMap (added)")
+                        near.add(piece)
+            print(f"{name}: {len(lines)} lines, {km_in:.1f} km inside the park, {km_new:.1f} km not in OpenStreetMap "
+                  f"or an earlier line (added)")
     kept = [[proj.ll(*p) for p in simplify(r, ROAD_TOL_M)] for r in kept]
 
     outer_simple = []
