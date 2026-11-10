@@ -1,6 +1,10 @@
-# Throwaway probe (branch claude/cdngi-speedtest only): load the CD:NGI geoportal in a headless browser as an anonymous
-# visitor and ask it the same read-only question its own search panel asks (may this visitor use Download / Clip-Zip-Ship?).
-name: cdngi-probe
+# Throwaway (branch claude/cdngi-speedtest only): measure download speed from CD:NGI's public ERDAS APOLLO host
+# (bp-cdngiapollo.dlrrd.gov.za) to a GitHub-hosted (Azure) runner. The original orthophoto GeoTIFFs have no public URL
+# (the geoportal emails a Clip-Zip-Ship link), so this measures login-free proxies on the same server:
+#   - an 82 MB static file (raw network/server transfer speed), single, parallel, 4-range split, tuned client window;
+#   - WCS GetCoverage 4000x4000 GeoTIFF crops (real 25 cm pixels, rendered by the server on request).
+# Polite: a handful of requests, honest User-Agent, jobs run one after another, nothing is kept or uploaded.
+name: cdngi-speedtest
 
 on:
   push:
@@ -10,67 +14,106 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  speed:
+    name: speed run ${{ matrix.run }} (${{ matrix.mode }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - { run: 1, mode: full, wcs: "yes" }
+          - { run: 2, mode: full, wcs: "no" }
+          - { run: 3, mode: light, wcs: "no" }
+          - { run: 4, mode: light, wcs: "no" }
+    env:
+      UA: "SatMap download speed test (one-off, a few files)"
+      HOST: bp-cdngiapollo.dlrrd.gov.za
+      FILE_URL: https://bp-cdngiapollo.dlrrd.gov.za/erdas-apollo/studio/main.5f5fe70e0db35047ab51.js
+      FILE_SIZE: "82286046"
+      MODE: ${{ matrix.mode }}
+      DO_WCS: ${{ matrix.wcs }}
     steps:
-      - name: Install Playwright
+      - name: Speed test
+        shell: bash
         run: |
-          pip install -q playwright==1.47.0
-          python -m playwright install --with-deps chromium > /dev/null
-      - name: Load portal anonymously and check download access
-        run: |
-          mkdir -p out && cd out
-          cat > probe.py <<'PY'
-          import json
-          from playwright.sync_api import sync_playwright
-          UA = "SatMap download speed test (one-off, a few files)"
-          JS = """() => new Promise((resolve) => {
-            const out = {};
-            try {
-              out.identity = (typeof $sessionManager !== 'undefined') ? 'sessionManager present' : 'no sessionManager';
-              const r = $webRequest.create({ name: "ApolloSearch", query: { action: "getCZSAccess" },
-                body: { mapServiceId: "3f0cc9ff-234f-4c3a-a184-77dae330a137" },
-                callback: function (ex) { try { out.getCZSAccess = ex.get_object(); } catch (e) { out.getCZSAccess = 'ERR ' + e; } resolve(out); } });
-              r.invoke();
-            } catch (e) { out.exception = '' + e; resolve(out); }
-            setTimeout(() => { out.timeout = true; resolve(out); }, 60000);
-          })"""
-          with sync_playwright() as p:
-              b = p.chromium.launch()
-              pg = b.new_page(user_agent=UA, viewport={"width": 1600, "height": 1000})
-              calls = []
-              pg.on("request", lambda r: calls.append(r.method + " " + r.url[:160]) if ".ashx" in r.url or "erdas" in r.url else None)
-              cons = []
-              pg.on("console", lambda m: cons.append(m.type + ": " + m.text[:200]))
-              pg.on("pageerror", lambda e: cons.append("pageerror: " + str(e)[:200]))
-              pg.goto("https://ngigeoportal.dlrrd.gov.za/cdngiportal/", wait_until="load", timeout=180000)
-              try:
-                  pg.wait_for_function("() => typeof theForm !== 'undefined' && !!document.forms[0]", timeout=240000)
-                  print("theForm ready")
-              except Exception as e:
-                  print("theForm never appeared:", str(e)[:200])
-              pg.wait_for_timeout(15000)
-              print("console:"); [print("  ", c) for c in cons[:40]]
-              pg.screenshot(path="portal.png")
-              print("title:", pg.title())
-              print("result:", json.dumps(pg.evaluate(JS), indent=1))
-              txt = pg.evaluate("() => document.body.innerText")
-              for k in ["Log in", "Login", "Sign in", "Register", "Sign up", "Logout"]:
-                  print(f"text contains {k!r}:", k in txt)
-              print("ashx/erdas requests during load:")
-              seen = set()
-              for c in calls:
-                  key = c.split("?")[0]
-                  if key not in seen:
-                      seen.add(key); print("  ", c)
-              b.close()
+          set -u
+          D=/tmp/cdngi; mkdir -p "$D"; cd "$D"; : > res.txt
+          W='%{http_code} %{http_version} %{size_download} %{time_connect} %{time_appconnect} %{time_starttransfer} %{time_total} %{speed_download} %{content_type}\n'
+          cg() { curl -sS -A "$UA" -H 'Accept-Encoding: identity' --max-time 600 "$@"; }
+          now() { date +%s.%N; }
+
+          echo "=== runner"
+          curl -s --max-time 10 https://ipinfo.io/json | python3 -c 'import json,sys; d=json.load(sys.stdin); print("runner ipinfo:", d.get("city"), d.get("region"), d.get("country"), d.get("org"))' || echo "ipinfo failed"
+          curl -s --max-time 3 -H Metadata:true "http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("azure IMDS location:", d.get("location"), "vmSize:", d.get("vmSize"))' 2>/dev/null || echo "azure IMDS not reachable"
+          echo "kernel $(uname -r), $(nproc) cpus"; curl --version | head -1
+          sysctl net.ipv4.tcp_congestion_control net.ipv4.tcp_rmem net.core.rmem_max
+          IP=$(getent hosts "$HOST" | awk '{print $1}' | head -1); echo "server $HOST -> $IP"
+          curl -s --max-time 10 "https://ipinfo.io/$IP/json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("server ipinfo:", d.get("city"), d.get("region"), d.get("country"), d.get("org"))' || echo "ipinfo failed"
+
+          echo "=== latency (new connection each time: connect = TCP handshake = 1 round trip; tls = TCP+TLS done; ttfb = first byte)"
+          lat() { local u=$1; shift; for i in 1 2 3; do cg -o /dev/null -w "  code=%{http_code} connect=%{time_connect}s tls=%{time_appconnect}s ttfb=%{time_starttransfer}s total=%{time_total}s bytes=%{size_download}  $u\n" "$@" "$u" || echo "  failed $u"; sleep 1; done; }
+          lat "$FILE_URL" -r 0-0
+          lat https://ngigeoportal.dlrrd.gov.za/ --max-time 30
+          lat https://ngi.dlrrd.gov.za/ -r 0-1023 --max-time 30
+          echo "ping:"; ping -c 4 -W 2 "$IP" 2>&1 | tail -2 || true
+          if command -v traceroute >/dev/null; then echo "tcp traceroute:"; timeout 90 sudo traceroute -T -p 443 -n -q 1 -w 2 -m 30 "$IP" 2>&1 | tail -n 30 || true; else echo "no traceroute on runner"; fi
+
+          # watch the TCP connection (rtt, receive window) a few times during a download
+          watchss() { sleep 3; for i in 1 2 3; do ss -tin dst "$IP" 2>/dev/null | grep -Eo '(rtt:[^ ]+|rcv_rtt:[^ ]+|rcv_space:[^ ]+|rcv_wnd:[^ ]+|bytes_received:[^ ]+|retrans:[^ ]+|wscale:[^ ]+)' | tr '\n' ' '; echo; sleep 2; done; }
+          one() { local label=$1 out=$2; shift 2; cg -o "$out" -w "$label $W" "$@" "$FILE_URL" >> res.txt || echo "$label FAILED" >> res.txt; }
+          par() { local label=$1 n=$2; shift 2; local t0=$(now); for i in $(seq 1 "$n"); do one "$label-$i" "$D/p$i" "$@" & done; wait; echo "$label WALL $t0 $(now)" >> res.txt; rm -f "$D"/p[0-9]; }
+
+          echo "=== static file, one at a time (HTTP/1.1)"
+          n=3; [ "$MODE" = light ] && n=1
+          for i in $(seq 1 "$n"); do
+            if [ "$i" = 1 ]; then watchss & fi
+            one "seq-h1-$i" "$D/seq$i" --http1.1; wait; sleep 2
+          done
+          md5ref=$(md5sum "$D/seq1" | cut -d' ' -f1); rm -f "$D"/seq[0-9]
+          if [ "$MODE" = full ]; then
+            if [ "$DO_WCS" = yes ]; then echo "=== static file, one HTTP/2 download"; one "seq-h2-1" /dev/null --http2; sleep 2; fi
+            echo "=== static file, 3 downloads at once (3 connections)"; par par3 3 --http1.1; sleep 2
+            echo "=== static file split into 4 byte ranges fetched at once"
+            q=$((FILE_SIZE/4)); t0=$(now)
+            for i in 0 1 2 3; do s=$((i*q)); e=$(( i==3 ? FILE_SIZE-1 : (i+1)*q-1 )); cg --http1.1 -r "$s-$e" -o "$D/r$i" -w "range4-$i $W" "$FILE_URL" >> res.txt & done; wait
+            echo "range4 WALL $t0 $(now)" >> res.txt
+            cat "$D"/r0 "$D"/r1 "$D"/r2 "$D"/r3 > "$D/rj"; echo "range4 joined md5 $(md5sum "$D/rj" | cut -d' ' -f1) vs full $md5ref, $(stat -c %s "$D/rj") bytes"; rm -f "$D"/r[0-3] "$D/rj"; sleep 2
+          fi
+
+          echo "=== client receive window raised to 128 MB (what a tuned download server would do), one download"
+          sudo sysctl -w net.core.rmem_max=134217728 net.ipv4.tcp_rmem="4096 131072 134217728" >/dev/null
+          watchss & one "tuned-h1-1" "$D/t1" --http1.1; wait; rm -f "$D/t1"; sleep 2
+
+          if [ "$DO_WCS" = yes ]; then
+            echo "=== WCS GetCoverage: 1 km x 1 km at 25 cm = 4000x4000 RGB GeoTIFF (server renders each one), Kruger sheet 2431DC_22"
+            wcs() { local label=$1 x=$2 y=$3; cg -o "$D/$label.tif" -w "$label $W" "https://$HOST/erdas-apollo/coverage_public/EAIM?SERVICE=WCS&VERSION=1.0.0&REQUEST=GetCoverage&COVERAGE=2431DC_22_2024_1832_RGB_RECT&CRS=EPSG:20541&BBOX=$x,$y,$((x+1000)),$((y+1000))&WIDTH=4000&HEIGHT=4000&FORMAT=GeoTIFF&Band=band1,band2,band3" >> res.txt || echo "$label FAILED" >> res.txt; echo "  $label starts with: $(head -c 4 "$D/$label.tif" | od -An -c | tr -s ' ')"; rm -f "$D/$label.tif"; }
+            wcs wcs-seq-1 55500 -2766000; sleep 2
+            wcs wcs-seq-2 56600 -2765000; sleep 2
+            wcs wcs-seq-3 58600 -2764200; sleep 2
+            t0=$(now); wcs wcs-par3-1 59500 -2763000 & wcs wcs-par3-2 55500 -2762000 & wcs wcs-par3-3 57600 -2761600 & wait
+            echo "wcs-par3 WALL $t0 $(now)" >> res.txt
+          fi
+          rm -f "$D"/*.tif "$D"/p[0-9] "$D"/r[0-3] "$D/rj" "$D"/seq[0-9] "$D/t1"
+
+          echo "=== results (MB = 10^6 bytes)"
+          python3 - res.txt <<'PY'
+          import sys, collections
+          rows, walls = [], {}
+          for line in open(sys.argv[1]):
+              f = line.split()
+              if len(f) >= 4 and f[1] == "WALL":
+                  walls[f[0]] = float(f[3]) - float(f[2]); continue
+              if len(f) < 9:
+                  print("  ", line.strip()); continue
+              label, code, ver, size, conn, tls, ttfb, total, speed = f[:9]
+              rows.append((label, code, ver, int(float(size)), float(conn), float(tls), float(ttfb), float(total), float(speed), " ".join(f[9:])))
+          print(f"{'label':<14}{'code':>5}{'http':>5}{'MB':>9}{'tls s':>7}{'ttfb s':>8}{'total s':>9}{'MB/s':>8}{'Mbit/s':>8}  type")
+          for r in rows:
+              print(f"{r[0]:<14}{r[1]:>5}{r[2]:>5}{r[3]/1e6:>9.2f}{r[5]:>7.2f}{r[6]:>8.2f}{r[7]:>9.2f}{r[8]/1e6:>8.2f}{r[8]*8/1e6:>8.1f}  {r[9]}")
+          for g, wall in walls.items():
+              b = sum(r[3] for r in rows if r[0].startswith(g + "-"))
+              print(f"COMBINED {g}: {b/1e6:.2f} MB in {wall:.2f} s wall = {b/1e6/wall:.2f} MB/s ({b*8/1e6/wall:.1f} Mbit/s)")
+          print(f"TOTAL downloaded this job: {sum(r[3] for r in rows)/1e6:.1f} MB")
           PY
-          python probe.py
-      - name: Upload screenshot
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cdngi-portal-shot
-          path: out/portal.png
-          retention-days: 3
