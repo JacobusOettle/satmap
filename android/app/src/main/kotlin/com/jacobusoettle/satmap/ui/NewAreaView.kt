@@ -38,6 +38,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.app.AppPaths
 import com.jacobusoettle.satmap.app.Defaults
@@ -164,7 +165,7 @@ class NewAreaState(
         }
 
     val rememberedZoom: Int
-        get() = min(max(trackZoom ?: maxZoom, zoomChoices.last()), zoomChoices.first())
+        get() = offered(trackZoom ?: maxZoom)
 
     /** Once the sizes are known, the most detailed level taking at most half the free space (above what downloads
      *  stop at); the least detailed when none does. None below that space: nothing fits, as the warning says. */
@@ -173,9 +174,7 @@ class NewAreaState(
             val counts = counts ?: return null
             val imagery = imageryCounts ?: return null
             val free = freeSpace ?: return null
-            if (free <= OfflineManager.minimumFreeSpace) return null
-            val room = (free - OfflineManager.minimumFreeSpace) / 2
-            return zoomChoices.firstOrNull { estimate(imagery, counts, depth = it).bytes <= room } ?: zoomChoices.last()
+            return deepestFitting(imagery, counts, free)
         }
 
     /** Download size up to zoom z: about, where Esri's imagery usually reaches; an upper limit deeper down. */
@@ -304,6 +303,30 @@ class NewAreaState(
             val bytes = imagery.toDouble() * imageryTileBytes + terrain.toDouble() * terrainTileBytes
             return Estimate(imagery + terrain, bytes.toLong())
         }
+
+        /** The level, kept to those offered. */
+        fun offered(zoom: Int): Int = min(max(zoom, zoomChoices.last()), zoomChoices.first())
+
+        /** The most detailed level taking at most half the free space (above what downloads stop at); the least
+         *  detailed when none does. None below that space: nothing fits. */
+        fun deepestFitting(imageryCounts: Map<Int, Long>, terrainCounts: Map<Int, Long>, free: Long): Int? {
+            if (free <= OfflineManager.minimumFreeSpace) return null
+            val room = (free - OfflineManager.minimumFreeSpace) / 2
+            return zoomChoices.firstOrNull { estimate(imageryCounts, terrainCounts, depth = it).bytes <= room } ?: zoomChoices.last()
+        }
+
+        /** The level the Where I've been screen chooses for a new track area along `lines` when none is tapped
+         *  (`chosenZoom`): the one remembered from the last area, lowered until the download takes at most half the
+         *  free space. For auto download (`AppModel`). Slow for a long track: not on the main thread. */
+        fun zoomForNewTrackArea(lines: List<List<GeoPoint>>, freeSpace: Long?): Int {
+            val remembered = offered(Defaults.int(maxZoomKey) ?: TileSources.imageryMaxZoom)
+            val free = freeSpace ?: return remembered
+            // Imagery and elevation (to its own deepest level) along the same corridor, as the screen counts them.
+            val corridor = Roads.corridor(lines)
+            val counts = (0..TileSources.imageryMaxZoom).associateWith { TileCoverage(shape = corridor, zoom = it).tileCount }
+            val fits = deepestFitting(counts, counts, free) ?: return remembered
+            return min(remembered, fits)
+        }
     }
 }
 
@@ -343,6 +366,7 @@ fun NewAreaView(
         }
         item { DetailSection(state) }
         item { RoadsSection(state, onRetry = { scope.launch { state.loadRoads() } }) }
+        if (state.track != null) item { AutoDownloadSection(model) }
         item {
             // Android: the download goes on in a foreground service, its progress in a notification (iOS: the Lock
             // Screen's).
@@ -482,6 +506,19 @@ private fun RoadsSection(state: NewAreaState, onRetry: () -> Unit) {
             FormToggleRow("Only along roads", state.alongRoads) { state.alongRoads = it }
             if (state.alongRoads) RoadsStatus(state, onRetry)
         }
+    }
+}
+
+/** Your track only: "Auto download", for the whole app (`AppModel.trackAutoDownload`), saved as soon as it is
+ *  switched. */
+@Composable
+private fun AutoDownloadSection(model: AppModel) {
+    val on by model.trackAutoDownload.collectAsStateWithLifecycle()
+    FormSection(
+        footer = "Saves imagery along the new parts of your track by itself, as the Download button below does, once " +
+            "you've been somewhere new. Without mobile data it waits for Wi-Fi.",
+    ) {
+        FormToggleRow("Auto download", on, onCheckedChange = model::setTrackAutoDownload)
     }
 }
 

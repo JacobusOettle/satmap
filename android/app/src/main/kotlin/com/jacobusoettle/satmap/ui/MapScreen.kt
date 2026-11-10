@@ -143,7 +143,6 @@ import com.jacobusoettle.satmap.app.DroneReport
 import com.jacobusoettle.satmap.app.Format
 import com.jacobusoettle.satmap.app.MapLegend
 import com.jacobusoettle.satmap.app.MapScale
-import com.jacobusoettle.satmap.app.MeasureMode
 import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.DownloadProgress
 import com.jacobusoettle.satmap.core.ElevationColours
@@ -151,6 +150,7 @@ import com.jacobusoettle.satmap.core.ElevationRange
 import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
+import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.TerrainMode
 import com.jacobusoettle.satmap.core.rounded

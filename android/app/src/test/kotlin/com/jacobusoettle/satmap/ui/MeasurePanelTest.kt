@@ -18,12 +18,12 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.app.Format
-import com.jacobusoettle.satmap.app.MeasureMode
 import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.ElevationRange
 import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
+import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.map.ContourInterval
 import org.junit.Assert.assertEquals
 import org.junit.Rule

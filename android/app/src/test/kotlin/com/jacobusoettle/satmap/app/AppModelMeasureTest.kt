@@ -10,6 +10,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
+import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.location.GpsFix
 import com.jacobusoettle.satmap.map.MovablePoint
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,8 @@ import org.junit.runner.RunWith
 import kotlin.math.cos
 
 /** The measuring tool's state machine (state spec §1.3) with a fake map whose crosshair the test moves and whose
- *  screen distance is one dp per metre: the button and map taps, the 6 dp "no leg of 0 m" and 20 dp "close on A"
+ *  screen distance is one dp per metre: the button and map taps (the button measuring from a selected spot), the 6 dp
+ *  "no leg of 0 m" and 20 dp "close on A"
  *  thresholds, undo back to aiming, closing, clearing, the elevation resets in `setMeasure` and `movePoint`, the
  *  selected spot and its name, "Go to coordinates", and the derived distance and area. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -213,7 +215,10 @@ class AppModelMeasureTest {
         model.mapTapped(tapped)
         assertEquals(tapped, model.selectedPoint.value)
         assertEquals(MeasureMode.Off, measure)
+        // Its coordinates hidden (✕): nothing selected, so the button aims.
+        model.setSelectedPoint(null)
         model.measureButtonTapped()
+        assertEquals(MeasureMode.Aiming, measure)
         val crosshair = at(0.0)
         map.centerCoordinate = crosshair
         // The finger covers the spot it taps: the point goes under the crosshair.
@@ -224,6 +229,58 @@ class AppModelMeasureTest {
         map.centerCoordinate = next
         model.mapTapped(tapped)
         assertEquals(MeasureMode.Path(listOf(crosshair, next)), measure)
+    }
+
+    @Test
+    fun withASpotTappedTheButtonMeasuresFromItWithoutMovingTheMap() = runTest(main) {
+        val tapped = at(400.0)
+        model.mapTapped(tapped)
+        pass()
+        assertEquals(1400.0, model.selectedElevation.value)
+        map.centerCoordinate = at(0.0, 250.0)
+        model.measureButtonTapped()
+        // A at the tapped spot, not at the crosshair; no aiming in between.
+        assertEquals(MeasureMode.Placed(tapped), measure)
+        assertNull(model.aim.point.value)
+        assertEquals(tapped, model.selectedPoint.value)
+        assertEquals(1400.0, model.selectedElevation.value)
+        assertTrue(model.recorder.measuring)
+        assertEquals(emptyList<String>(), map.calls)
+        // The live distance and height from you to it.
+        val me = at(-100.0)
+        model.recorder.setForTests(fixAt(me))
+        assertEquals(500.0, model.markerDistance!!, 0.1)
+        pass()
+        assertEquals(1400.0, model.markerElevation.value)
+        // From there as before: the next press puts B at the crosshair.
+        val b = map.centerCoordinate
+        model.measureButtonTapped()
+        assertEquals(MeasureMode.Path(listOf(tapped, b)), measure)
+        assertEquals(b, model.selectedPoint.value)
+        assertEquals(emptyList<String>(), map.calls)
+        // Cleared: nothing selected, so the button aims again.
+        model.clearMeasure()
+        model.measureButtonTapped()
+        assertEquals(MeasureMode.Aiming, measure)
+    }
+
+    @Test
+    fun aKMLPointSelectedIsWhereMeasuringStartsWithItsNameShown() {
+        val gate = at(10.0, 10.0)
+        model.pointTapped(gate, "Gate")
+        map.centerCoordinate = at(300.0)
+        model.measureButtonTapped()
+        assertEquals(MeasureMode.Placed(gate), measure)
+        assertEquals(gate, model.selectedPoint.value)
+        assertEquals("Gate", model.selectedName.value)
+        // B elsewhere: the name goes with the selection.
+        model.measureButtonTapped()
+        assertEquals(MeasureMode.Path(listOf(gate, at(300.0))), measure)
+        assertNull(model.selectedName.value)
+        // Undo back to A alone: A is selected again, without the name (as for any point).
+        model.undoMeasurePoint()
+        assertEquals(MeasureMode.Placed(gate), measure)
+        assertEquals(gate, model.selectedPoint.value)
     }
 
     @Test
@@ -260,15 +317,20 @@ class AppModelMeasureTest {
         val a = at(0.0)
         val b = at(100.0)
         val c = at(100.0, 100.0)
-        // Off and aiming: nothing changes, not even the selected spot.
+        // Off: nothing changes, not even the selected spot.
         model.mapTapped(at(-300.0))
         model.undoMeasurePoint()
         assertEquals(MeasureMode.Off, measure)
         assertEquals(at(-300.0), model.selectedPoint.value)
+        // Measuring from it, then its point taken off: aiming, with nothing selected, which undo doesn't change.
         model.measureButtonTapped()
+        assertEquals(MeasureMode.Placed(at(-300.0)), measure)
         model.undoMeasurePoint()
         assertEquals(MeasureMode.Aiming, measure)
-        assertEquals(at(-300.0), model.selectedPoint.value)
+        assertNull(model.selectedPoint.value)
+        model.undoMeasurePoint()
+        assertEquals(MeasureMode.Aiming, measure)
+        assertNull(model.selectedPoint.value)
         placeAt(a)
         placeAt(b)
         placeAt(c)
@@ -505,8 +567,9 @@ class AppModelMeasureTest {
         model.mapTapped(at(30.0))
         assertNull(model.selectedName.value)
         model.pointTapped(gate, "Gate")
-        // Measuring from it: a point placed elsewhere ends the name.
+        // Measuring from it (A there, the name kept), then a point placed elsewhere: the name goes.
         model.measureButtonTapped()
+        assertEquals("Gate", model.selectedName.value)
         placeAt(at(500.0))
         assertNull(model.selectedName.value)
         model.pointTapped(gate, "Gate")

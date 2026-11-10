@@ -74,9 +74,10 @@ class ScreenRendersNewAreaTest {
         return state
     }
 
-    /** As the iPhone test's `scrollTo(Download)`: the form scrolled to its end (the Download button, its last row). */
-    private fun scrollToDownload() {
-        compose.onNode(hasScrollAction()).performScrollToIndex(5)
+    /** As the iPhone test's `scrollTo(Download)`: the form scrolled to its end (the Download button, its last row; the
+     *  seventh item for your track, which has "Auto download" too). */
+    private fun scrollToDownload(index: Int = 5) {
+        compose.onNode(hasScrollAction()).performScrollToIndex(index)
         compose.waitForIdle()
     }
 
@@ -176,7 +177,7 @@ class ScreenRendersNewAreaTest {
             worked = true
         }
         compose.setSheet { TrackAreaView(model, screen, back = back("Offline maps"), close = {}) }
-        scrollToDownload()
+        scrollToDownload(6)
         compose.render("20-where-ive-been")
     }
 

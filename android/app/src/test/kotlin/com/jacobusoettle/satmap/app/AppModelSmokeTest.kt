@@ -8,6 +8,7 @@ import com.jacobusoettle.satmap.TestApplication
 import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
+import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.core.TerrainMode
 import org.junit.After
 import org.junit.Assert.assertEquals

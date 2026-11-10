@@ -51,6 +51,7 @@ other, and how the work is ordered and tested.
 | D28 | A fix's course and speed | `GpsFix` gains `course` and `speed` (nullable, from `Location.bearing` and `speed`): a group's live position takes its heading from the course while moving (groups §4.4), as iOS's `CLLocation` gives it. Every other use of `GpsFix` is unchanged. |
 | D29 | Groups sheets | Three `SheetHost`s (§4.2): `ActiveSheet.groups`, `groups.groupItem` (S11, S12, and S10 at a tapped spot) and `groups.pendingInvite` (S8 over anything). `GroupsRoute` is the spec's list plus `DropPin` (S10, from the map and S5) and `Join` (S8: pushed from S7 inside the groups sheet; the root of the join sheet for links from other apps). A finished flow replaces the stack with a new `RouteStack` (its root can change, as S1 to S2). S5 opened from outside the list (the paused banner, an invite to a group you are in, S8's "Open group") is `[Detail]` alone, whose leading button is Done, as iOS's; "You're already in {group}." is an alert with OK over it (`GroupsModel.notice`), not a toast: the only toasts are "Link copied" and "Support code copied". |
 | D30 | Groups glyph sizes | The groups' SF Symbols are matched by size as drawn, not by box: `Person3` is drawn as wide for its height as `person.3.fill` (23 × 10.5 of 24) and at 38 dp on the map button and in list rows, where the symbol is 36.7 × 17 pt. Pin glyphs keep about 2 of their 24 units clear all round (as Material's do), so a 16 pt glyph is a 20 dp box: on the map (`GroupLayers.PIN_GLYPH_DP`) and 9/16 of S10's and S11's badges. `House` and `Drop` are custom (Material's Home has no chimney, its WaterDrop a highlight cut out). |
+| D31 | Where I've been: auto download | The switch "Auto download" on the Where I've been download screen (its own section after "Your track", before "Allow mobile data") is app-wide: `AppModel.trackAutoDownload` / `setTrackAutoDownload`, stored as `trackAutoDownload` (default on) and saved as it is switched. It is read with `Defaults.storedBool`, the stored value alone: any app can start the exported activity with extras, and no intent may switch it. The rule is core's `TrackAutoDownload`, the iPhone's names and tests ported (`isDue`, `update`, `Area`, `Update`; offline spec §1.9). `AppModel` checks in `didBecomeActive`, when the switch is turned on and in `appendTrack`; the free space is asked on `Dispatchers.IO` and `update` (merging the track) runs on `Dispatchers.Default` with a copy of the track, and what it returns goes through `startTrackDownload` → `OfflineManager.updateTrackArea`, so Wi-Fi waiting and the foreground service work as for the Download button and no other background work is added. A new track area's level is `NewAreaState.zoomForNewTrackArea` (iOS `DownloadSizes.zoomForNewTrackArea`): the screen's `chosenZoom` with nothing tapped, worked out from the corridor's tile counts. The walkthrough holds it off with `AppModel.trackAutoDownloadSuspended`, set by the instrumentation in the app's own process (the iPhone uses the launch argument `skipTrackAutoDownload`; a launch extra on Android would be read by a release build too), so the setting still shows on in screenshot 20. |
 
 ---
 
@@ -65,7 +66,7 @@ package owns the file (§7). Only the owner edits a file.
 | --- | --- | --- | --- |
 | `MainActivity.kt` | `SatMapApp.swift` (`WindowGroup`, `onOpenURL`) | Edge-to-edge dark Compose host. It creates `MapController` and `PermissionFlow`, handles incoming KML and GPX intents, `ACTION_SAVE_TO_FOLDER` and launch extras, and forwards `onSaveInstanceState`. | A |
 | `app/SatMapApp.kt` | `AppDelegate` | `SatMapApplication`: the init order (§2.2) and memory trims. | A |
-| `app/AppModel.kt` | `AppModel.swift` | `MeasureMode`, `CrosshairAim`, `MapScale`, `DroneReport`, `MapLegend`, `HeightLookup`, `PendingArea`, `ActiveSheet`, `AppModel`, plus the seams `MapHost`, `CarMapHost` and `ElevationSource` (§2.5). | A |
+| `app/AppModel.kt` | `AppModel.swift` | `CrosshairAim`, `MapScale`, `DroneReport`, `MapLegend`, `HeightLookup`, `PendingArea`, `ActiveSheet`, `AppModel`, plus the seams `MapHost`, `CarMapHost` and `ElevationSource` (§2.5). | A |
 | `app/AppPaths.kt` | `AppPaths.swift` | `AppPaths` (folders, `size`, `freeDiskSpace`) and `Format` (all formatting through core `stringFormat`; `bytes` = ByteCountFormatter `.file`). | A |
 | `app/Config.kt` | `Config.swift` | `TileSources` and `LocationPolicy`, constants verbatim. | A |
 | `app/Connectivity.kt` | `Connectivity.swift` | `Connectivity` (§5.8). | A |
@@ -275,9 +276,12 @@ interface MapHost {                                    // MapController implemen
 }
 interface CarMapHost { fun locationUpdated(fix: GpsFix); fun reload() }   // CarMapController implements it
 
+// core/MeasureMode.kt (Core/MeasureMode.swift): what the measure button does is MeasureMode.buttonAction(selected)
 sealed interface MeasureMode { data object Off; data object Aiming; data class Placed(val a: GeoPoint)
     data class Path(val pts: List<GeoPoint>); data class Closed(val pts: List<GeoPoint>)
-    val points: List<GeoPoint>; fun moving(i: Int, p: GeoPoint): MeasureMode; companion object { fun label(i: Int): String } }
+    val points: List<GeoPoint>; fun moving(i: Int, p: GeoPoint): MeasureMode
+    fun buttonAction(selected: GeoPoint?): MeasureButtonAction; companion object { fun label(i: Int): String } }
+sealed interface MeasureButtonAction { data class Start(val mode: MeasureMode); data object AddPointAtCrosshair; data object Clear }
 enum class ActiveSheet { blocks, offline, coordinates }
 data class PendingArea(val id: UUID = UUID.randomUUID(), val name: String, val shape: CoverageShape)
 data class DroneReport(val you: String? = null, val pin: String? = null)
@@ -314,6 +318,7 @@ class AppModel(app: Application, elevation: ElevationSource = TileRepository.sha
     fun startDrawingArea(); fun finishDrawing(ring: List<GeoPoint>); fun cancelDrawing(); fun confirmDrawnArea(); fun discardPendingArea()
     fun startDownload(area: PendingArea, roads: List<List<GeoPoint>>?, preset: String?, maxZoom: Int, allowCellular: Boolean)
     fun startTrackDownload(name: String, lines: List<List<GeoPoint>>, maxZoom: Int, allowCellular: Boolean)
+    val trackAutoDownload: StateFlow<Boolean>;    fun setTrackAutoDownload(on: Boolean)   // D31
     fun applyLaunchArguments()
 }
 
@@ -1266,6 +1271,7 @@ There is no `Export/` folder (D8).
 | `heightUnit` | String | AppModel | `metres`, `feet` |
 | `kmlFileColours` | Boolean | KMLLibrary | missing means true |
 | `offlineMaxZoom` | Int | NewAreaView | default 22 |
+| `trackAutoDownload` | Boolean | AppModel | Where I've been's auto download, missing means true; the stored value only, launch extras don't change it (D31) |
 | `camera` | String | MapController | `"lat,lon,latDelta,lonDelta"`, `Locale.ROOT`; missing means first launch |
 | `zoomScript` | Boolean | — | launch extra only |
 | `locationPermissionAsked`, `motionPermissionAsked`, `notificationPermissionAsked` | Boolean | PermissionFlow / UI | Android only (S9 sets the first when it asks) |

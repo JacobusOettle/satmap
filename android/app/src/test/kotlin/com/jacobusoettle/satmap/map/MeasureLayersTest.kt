@@ -3,8 +3,8 @@ package com.jacobusoettle.satmap.map
 import android.graphics.PointF
 import android.graphics.RectF
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.jacobusoettle.satmap.app.MeasureMode
 import com.jacobusoettle.satmap.core.GeoPoint
+import com.jacobusoettle.satmap.core.MeasureMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull

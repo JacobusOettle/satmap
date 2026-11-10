@@ -13,7 +13,11 @@ import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
+import com.jacobusoettle.satmap.core.MeasureButtonAction
+import com.jacobusoettle.satmap.core.MeasureMode
+import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TrackAutoDownload
 import com.jacobusoettle.satmap.core.TrackLog
 import com.jacobusoettle.satmap.core.TrackPoint
 import com.jacobusoettle.satmap.core.rounded
@@ -29,6 +33,7 @@ import com.jacobusoettle.satmap.map.SatelliteRenderer
 import com.jacobusoettle.satmap.map.TerrainKey
 import com.jacobusoettle.satmap.map.TileRepository
 import com.jacobusoettle.satmap.offline.OfflineManager
+import com.jacobusoettle.satmap.ui.NewAreaState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,55 +85,6 @@ interface MapHost {
 interface CarMapHost {
     fun locationUpdated(fix: GpsFix)
     fun reload()
-}
-
-/** The measuring tool. A point is placed at the crosshair, with the measure button or a tap anywhere on the map.
- *  off → aiming → placed (distance from you to A) → path (A → B → C …, total distance) → closed (back to A: area). */
-sealed interface MeasureMode {
-    data object Off : MeasureMode
-
-    /** Crosshair shown, waiting for the first point. */
-    data object Aiming : MeasureMode
-
-    /** One point: the live distance and height from you to it. */
-    data class Placed(val a: GeoPoint) : MeasureMode
-
-    /** Two or more points: the line through them, its total length and the height from first to last. */
-    data class Path(val pts: List<GeoPoint>) : MeasureMode
-
-    /** Three or more points joined back to the first: the shape's area and perimeter. */
-    data class Closed(val pts: List<GeoPoint>) : MeasureMode
-
-    val points: List<GeoPoint>
-        get() = when (this) {
-            Off, Aiming -> emptyList()
-            is Placed -> listOf(a)
-            is Path -> pts
-            is Closed -> pts
-        }
-
-    /** The same with point `i` moved (`PointAdjuster`). */
-    fun moving(i: Int, p: GeoPoint): MeasureMode = when (this) {
-        is Placed -> if (i == 0) Placed(p) else this
-        is Path -> if (i in pts.indices) Path(pts.toMutableList().also { it[i] = p }) else this
-        is Closed -> if (i in pts.indices) Closed(pts.toMutableList().also { it[i] = p }) else this
-        Off, Aiming -> this
-    }
-
-    companion object {
-        /** "A", "B", … "Z", "AA", "AB", … "ZZ", "AAA", … */
-        fun label(i: Int): String {
-            val letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            var n = i + 1
-            var s = ""
-            while (n > 0) {
-                n -= 1
-                s = letters[n % 26] + s
-                n /= 26
-            }
-            return s
-        }
-    }
 }
 
 /** A height asked of the source; a failure counts as none (the Swift lookup can't fail). */
@@ -508,6 +464,39 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         _sheet.value = s
     }
 
+    /** "Auto download" on the Where I've been screen: the track area is updated by itself, as that screen's Download
+     *  button would, once you've been somewhere new (`TrackAutoDownload`). For the whole app, remembered, on unless
+     *  switched off. Only the stored value counts: no launch extra changes it, so no other app's intent can switch it
+     *  off. */
+    private val _trackAutoDownload = MutableStateFlow(Defaults.storedBool(TrackAutoDownload.settingKey) ?: TrackAutoDownload.enabledByDefault)
+    val trackAutoDownload: StateFlow<Boolean> = _trackAutoDownload.asStateFlow()
+
+    /** While true nothing is downloaded by itself, whatever the setting (which still shows as it is). For the
+     *  walkthrough, whose simulated walk mustn't add a "Where I've been" area to the screenshots: set there through
+     *  the instrumentation, in the app's own process, so no user, web page or other app can set it. */
+    @VisibleForTesting
+    internal var trackAutoDownloadSuspended = false
+
+    /** When the last check began (`wallClock`, whatever it found), and whether one is under way (tests wait for it). */
+    private var lastTrackCheck: Double? = null
+
+    @VisibleForTesting
+    internal var trackCheckRunning = false
+        private set
+
+    /** Seconds on the wall clock, for the checks' spacing. Tests give their own. */
+    @VisibleForTesting
+    internal var wallClock: () -> Double = { System.currentTimeMillis() / 1000.0 }
+
+    /** The space free for the app's files, asked on `Dispatchers.IO`. Tests give their own. */
+    @VisibleForTesting
+    internal var freeSpace: () -> Long? = { AppPaths.freeDiskSpace() }
+
+    /** The level the Where I've been screen would choose for a new track area along these lines, with this much free
+     *  (on `Dispatchers.Default`). Tests give their own. */
+    @VisibleForTesting
+    internal var newTrackAreaZoom: (List<List<GeoPoint>>, Long?) -> Int = NewAreaState::zoomForNewTrackArea
+
     private var mapRef: WeakReference<MapHost>? = null
 
     /** Set by the map so the model can read the centre of the screen and move the camera (held weakly). */
@@ -661,6 +650,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         _trackRevision.value += 1
         // Queued for every group that shares (groups §8.5).
         groups.trackPoint(p)
+        // Somewhere new may be worth saving.
+        checkTrackAutoDownload()
     }
 
     fun clearTrack() {
@@ -697,12 +688,15 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     // Measuring
 
     /** The measure button: shows the crosshair, then places a point at it each time (A, B, C …); after a shape is
-     *  closed it clears. */
+     *  closed it clears. With a spot selected on the map (tapped, or a KML point), it starts from that spot instead:
+     *  A there, with the live distance and height from you, as "Go to coordinates" does, but the map stays where it
+     *  is (`MeasureMode.buttonAction`). */
     fun measureButtonTapped() {
-        when (_measure.value) {
-            MeasureMode.Off -> setMeasure(MeasureMode.Aiming)
-            MeasureMode.Aiming, is MeasureMode.Placed, is MeasureMode.Path -> addPointAtCrosshair()
-            is MeasureMode.Closed -> clearMeasure()
+        when (val action = _measure.value.buttonAction(selected = _selectedPoint.value)) {
+            // A at the selected spot: it stays selected, so its height and a KML point's name stay shown for A.
+            is MeasureButtonAction.Start -> setMeasure(action.mode)
+            MeasureButtonAction.AddPointAtCrosshair -> addPointAtCrosshair()
+            MeasureButtonAction.Clear -> clearMeasure()
         }
     }
 
@@ -937,6 +931,60 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         offline.updateTrackArea(name = name, lines = lines, maxZoom = maxZoom, allowCellular = allowCellular)
     }
 
+    // Where I've been: auto download
+
+    /** The switch: saved at once; turned on, a check follows. */
+    fun setTrackAutoDownload(on: Boolean) {
+        if (on == _trackAutoDownload.value) return
+        _trackAutoDownload.value = on
+        Defaults.putBoolean(TrackAutoDownload.settingKey, on)
+        if (on) checkTrackAutoDownload()
+    }
+
+    /** Auto download (`trackAutoDownload`): whether the track area should be updated, and if so, the update the
+     *  Download button on the Where I've been screen would make (`TrackAutoDownload`). Looked at when SatMap becomes
+     *  active, when the setting is turned on and when track points arrive, at most every 10 minutes; the track is worked
+     *  out off the main thread. A download it starts waits for Wi-Fi, or runs in the background, like any other. */
+    private fun checkTrackAutoDownload() {
+        if (trackAutoDownloadSuspended || trackCheckRunning) return
+        val now = wallClock()
+        if (!TrackAutoDownload.isDue(enabled = _trackAutoDownload.value, lastCheck = lastTrackCheck, now = now)) return
+        lastTrackCheck = now
+        if (_track.isEmpty()) return // nothing recorded: nothing to work out
+        val area = trackAreaForAutoDownload()
+        // The track is read on the main thread only: a copy goes to the background.
+        val track = ArrayList(_track)
+        trackCheckRunning = true
+        scope.launch {
+            val update = try {
+                val free = withContext(Dispatchers.IO) { freeSpace() }
+                withContext(Dispatchers.Default) {
+                    TrackAutoDownload.update(track = track, area = area, freeBytes = free) { lines -> newTrackAreaZoom(lines, free) }
+                }
+            } finally {
+                trackCheckRunning = false
+            }
+            // Not if it was turned off meanwhile, or the track area changed (its download started, Download was tapped,
+            // it was deleted …): the next check starts from what there is then.
+            if (update == null || !_trackAutoDownload.value || trackAutoDownloadSuspended || trackAreaForAutoDownload() != area) {
+                return@launch
+            }
+            startTrackDownload(update.name, update.lines, maxZoom = update.maxZoom, allowCellular = update.allowCellular)
+        }
+    }
+
+    /** The track area as auto download sees it (null without one). */
+    private fun trackAreaForAutoDownload(): TrackAutoDownload.Area? =
+        offline.areas.value.firstOrNull { it.isTrack == true }?.let {
+            TrackAutoDownload.Area(
+                name = it.name,
+                lines = it.roads ?: emptyList(),
+                maxZoom = it.maxZoom,
+                allowCellular = it.allowCellular,
+                isDownloading = it.status == OfflineArea.Status.downloading,
+            )
+        }
+
     fun discardPendingArea() {
         setPendingArea(null)
         setDraftArea(null)
@@ -969,6 +1017,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         if (_selectedElevation.value == null) selectedLookup.retry()
         // Groups: status, changes, queued uploads, the shown group's live positions and socket (§8.4).
         groups.didBecomeActive()
+        // Where I've been: what was recorded meanwhile.
+        checkTrackAutoDownload()
     }
 
     override fun didEnterBackground() {

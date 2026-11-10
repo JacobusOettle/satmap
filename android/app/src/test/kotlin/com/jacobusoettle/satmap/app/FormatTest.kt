@@ -4,6 +4,7 @@ import com.jacobusoettle.satmap.core.DistanceUnit
 import com.jacobusoettle.satmap.core.FileShapes
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
+import com.jacobusoettle.satmap.core.MeasureMode
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before

@@ -156,6 +156,10 @@ class ScreenshotTest {
         } catch (e: Exception) {
             fail("No mock positions (allowed with appops … android:mock_location allow?): ${short(e)}")
         }
+        // Where I've been's auto download would save the simulated walk by itself (an area the offline screenshots
+        // don't have, and downloads beside the walk's own): held off for the walk, in the app's own process, with the
+        // setting left on as a user has it (screenshot 20 shows the switch on).
+        instrumentation.runOnMainSync { AppModel.shared.trackAutoDownloadSuspended = true }
         try {
             setLocation(arrival[0])
             val scenario = launch()
@@ -352,6 +356,21 @@ class ScreenshotTest {
         sleep(1)
         check(value(tappedHeight)?.contains(" m ") == true, "Height not back in metres")
 
+        // With a spot selected (the one tapped in drone mode), the measure button measures from it: A there at once,
+        // with the distance from you. ✕ ends it, and the spot with it.
+        val tappedSpot = id("tappedCoordinates")
+        if (exists(tappedSpot)) {
+            val spot = label(tappedSpot)
+            tap("Measure")
+            sleep(2)
+            checkEqual(currentMeasureState(), MeasureState.placed, "The measure button didn't measure from the tapped spot")
+            checkEqual(if (exists(tappedSpot)) label(tappedSpot) else null, spot, "Point A isn't at the tapped spot")
+            setMeasure(MeasureState.off)
+            check(!exists(tappedSpot), "The tapped spot stayed after measuring from it")
+        } else {
+            fail("No tapped spot to measure from")
+        }
+
         // Measuring between two points: a tap anywhere puts a point at the crosshair; the map is moved between them.
         setMeasure(MeasureState.aiming)
         tapScreen(0.3, 0.4) // A, in the middle
@@ -443,6 +462,7 @@ class ScreenshotTest {
         if (tap("Where I've been") && waitForExistence(staticText("Your track"), 30)) {
             sleep(3) // size estimate
             scrollTo(button("Download"))
+            check(isOn(switch("Auto download")) == true, "No 'Auto download' switch, on")
             snap("20-where-ive-been")
         } else {
             fail("The track didn't load")
@@ -1039,6 +1059,10 @@ class ScreenshotTest {
     private fun exists(q: Query) = node(q) != null
 
     private fun count(q: Query) = nodes(q).size
+
+    /** A switch's `.value` as on or off; null when there is no such switch. */
+    private fun isOn(q: Query): Boolean? =
+        node(q)?.let { it.config.getOrNull(SemanticsProperties.ToggleableState) == ToggleableState.On }
 
     /** `.label`. */
     private fun label(q: Query): String = node(q)?.let(::labelOf).orEmpty()
