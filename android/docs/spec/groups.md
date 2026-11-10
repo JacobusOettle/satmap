@@ -200,8 +200,10 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
 ## 8. Map screen (§9.1)
 
 - **Groups button**: a `MapButton` (`SatIcons.Person3`, drawn at 38 dp to be as big as iOS's `person.3.fill`,
-  DESIGN.md D30; "Groups", testTag `groupsButton`), active while a group is shown. `MapOverlay`'s bottom `Row` is wrapped in a `Box`; the button is `Modifier.align(Alignment.TopStart)` in it, so
-  its top is the row's top (the compass slot) and it adds no height. Shown whenever the row is (not while drawing).
+  DESIGN.md D30; "Groups", testTag `groupsButton`), active while a group is shown. The first button of `Controls`:
+  under the compass slot, 12 dp over the terrain button, as the others. Shown whenever the column is (not while
+  drawing). Where the column doesn't fit the height `MapOverlay`'s `Column` leaves it, `Controls` lays the buttons
+  out in a grid instead (`mapButtonGrid`, UI spec §2.4.5, groups §9.1).
 - **Paused banner**: `Hint` (now with `closeLabel` and `modifier`) under the location hints, tag `groupPausedHint`,
   texts from `GroupTexts.pausedBanner`; a tap opens S5 alone (`[Detail]`, Done), its close button ("Hide" to
   TalkBack, as VoiceOver reads it) hides it for that group until the next launch.
@@ -254,7 +256,7 @@ again when it changes. Stop also calls `groups.stopSharingEverywhere()` (an Andr
 | `ui/ScreenRendersGroupsTest` | Renders 28–40 at `IPHONE_SCREEN` (36 and 40: overlays only) |
 | `ui/GroupScreensTest` | S4's name kept and prefilled in S8; S5's "Invite someone" making the invite, then S6, and its failure alert; S5's sharing switch with location off, then allowed; S10's animal checked on the tap |
 | `groups/GroupIconsTest` | The map pins' glyphs about 16 dp as drawn; the solid drop, the house's door and chimney, person.3's proportions |
-| `ui/MapScreenGroupsTest` | The Groups button's place, its sheet, the paused banner (S5 alone with Done; "Hide"), the drop-pin capsule |
+| `ui/MapScreenGroupsTest` | The Groups button's place (the top of the column; the grid in a small landscape window, mirrored right to left), its sheet, the paused banner (S5 alone with Done; "Hide"), the drop-pin capsule |
 | `MainActivityTest` | The https and satmap filters resolve to MainActivity; a link opens S8 once (not from Recents) and never joins; the `intent://` form with `groupKey` |
 | `location/LocationServiceTest` | The big-text lines; Stop ends sharing everywhere |
 | `map/MapStyleTest` | The overlay stack with the group's layers |

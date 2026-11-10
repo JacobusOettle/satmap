@@ -4,6 +4,11 @@ name: Android screenshots
 # iPhone walkthrough SatMapUITests/ScreenshotTests.swift step for step) and commits the screenshots to
 # docs/screenshots/android on the branch it was started on (android/DESIGN.md §8.2).
 #
+# The run is green only when the walk finished with every check passed ("OK (" in the test's output): a failed check
+# (the walk goes on after one and lists them all at the end) or a walk cut short fails it, once the screenshots are kept
+# in the artifact, and only a passed walk's screenshots are committed. (Failed checks used to leave the run green, so
+# they went unnoticed.)
+#
 # A run never waits for ever: the walk has 45 minutes (it stops itself after 40 and reports what failed), every adb
 # command has a time limit, an emulator that quits is reported as soon as the walk ends and one that stops answering
 # within a minute, and the screenshots are pulled while the walk goes on, so a run cut short keeps the ones it got. (The
@@ -240,10 +245,15 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
           ls -lR shots
+          # (Not a failure: the walk's downloads ran on mobile data, counted as unmetered, as the emulator's Wi-Fi
+          # didn't work. TestNetwork.kt.)
+          if grep -q "Wi-Fi doesn't reach the internet" logcat.txt 2> /dev/null; then
+            echo "::warning::The emulator's Wi-Fi didn't reach the internet: the walk's downloads ran on mobile data."
+          fi
           [ -z "$PROBLEM" ] || echo "::error::$PROBLEM"
           [ "$COUNT" -gt 0 ] || { echo "::error::No screenshots were taken."; exit 1; }
           [ -z "$PROBLEM" ] || exit 1
-          echo "Test reported failures, if any, above; keeping the screenshots taken."
+          # Failed checks fail the job in its last step, once the screenshots are kept.
           EOF
 
           # When the emulator step was cut off by its time limit the emulator may still run: what it holds is pulled.
@@ -327,11 +337,33 @@ jobs:
             diagnostics
           if-no-files-found: warn
 
-  # Only this job can write: it commits the screenshots a walk took to the branch, also when the walk failed or was
-  # cut short later on (each is a screenshot of this build), and is skipped when none was taken.
+      # Last, with the screenshots kept in the artifact: the job fails unless the walk finished with every check passed
+      # (JUnit's "OK (3 tests)"), naming the checks that failed. The commit job then leaves the screenshots out.
+      - name: Fail unless every check passed
+        if: always()
+        run: |
+          # Map taps that needed more than one try (ScreenshotTest.tapMap retries a tap the app didn't take): shown as
+          # warnings, so an app that starts dropping taps is noticed even when the retry makes the check pass.
+          grep -hoE 'after [0-9a-z-]+: tapping .* took [0-9]+ taps' logcat-full.txt logcat.txt 2> /dev/null | sort -u | sed 's/^/::warning::/' || true
+          if grep -qE '^OK \(' test-output.txt 2> /dev/null; then
+            echo "The walk finished with every check passed: $(grep -E '^OK \(' test-output.txt)"
+            exit 0
+          fi
+          checks=$(awk '/failed checks:/ { p = 1 } p && /^[[:space:]]+at / { exit } p' test-output.txt 2> /dev/null || true)
+          if [ -n "$checks" ]; then
+            echo "$checks" | sed 's/^/::error::/'
+          else
+            echo "::error::The walk didn't finish with every check passed (no \"OK (\" in test-output.txt): see the steps above."
+            grep -E '^(Tests run|FAILURES|INSTRUMENTATION_)' test-output.txt 2> /dev/null || true
+          fi
+          exit 1
+
+  # Only this job can write: it commits the screenshots of a walk that finished with every check passed to the branch.
+  # It is skipped when the walk had failed checks or was cut short (the screenshots stay in the run's artifact), and when
+  # none was taken.
   commit:
     needs: screenshots
-    if: ${{ !cancelled() && github.ref_type == 'branch' && needs.screenshots.outputs.captured != '' && needs.screenshots.outputs.captured != '0' }}
+    if: ${{ !cancelled() && github.ref_type == 'branch' && needs.screenshots.result == 'success' && needs.screenshots.outputs.captured != '' && needs.screenshots.outputs.captured != '0' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

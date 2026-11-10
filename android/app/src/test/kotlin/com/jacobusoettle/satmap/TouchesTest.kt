@@ -2,6 +2,8 @@ package com.jacobusoettle.satmap
 
 import android.content.Context
 import android.graphics.PointF
+import android.os.Looper
+import android.os.SystemClock
 import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -11,7 +13,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.maplibre.android.gestures.AndroidGesturesManager
 import org.maplibre.android.gestures.MoveGestureDetector
+import org.maplibre.android.gestures.StandardGestureDetector
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.time.Duration
 
 /** Where the screenshot walk touches the screen: the iPhone walk's taps and drags as far from the map's centre in dp
  *  as on the iPhone in points, and map drags that move the map by the whole drag and leave it there, as MapLibre's own
@@ -89,6 +94,28 @@ class TouchesTest {
     }
 
     @Test
+    fun aTapIsATapEvenWhenTheMapHandlesItLate() {
+        // On time, a tap as UiDevice.click gives it (the up once the down has been handled, and 100 ms later) is one.
+        assertEquals(listOf("tap"), tapSeen(lateMs = 0, upGivenWithDown = false))
+        // But with the down handled two seconds after it was made (the emulator had stalled), the long-press time has
+        // passed when the down is handled, and the main thread runs the long press before the up is given: a long press,
+        // which the map ignores. (The drone-mode tap and the group map's empty spot in the screenshot walk.)
+        assertEquals(listOf("long press"), tapSeen(lateMs = 2000, upGivenWithDown = false))
+        // Given together (Touches.tap, Gestures.tap), the up is handled straight after the down, late or not.
+        assertEquals(listOf("tap"), tapSeen(lateMs = 2000, upGivenWithDown = true))
+        assertEquals(listOf("tap"), tapSeen(lateMs = 0, upGivenWithDown = true))
+    }
+
+    @Test
+    fun aTapIsADownAndAnUpTogether() {
+        val at = PointF(100f, 200f)
+        assertEquals(
+            listOf(Touch(MotionEvent.ACTION_DOWN, at, 0), Touch(MotionEvent.ACTION_UP, at, 0)),
+            Touches.tap(at),
+        )
+    }
+
+    @Test
     fun theThresholdIsMapLibres() {
         assertEquals(Touches.MOVE_THRESHOLD_DP * density, gestures().moveGestureDetector.moveThreshold, 0.01f)
     }
@@ -121,6 +148,45 @@ class TouchesTest {
             e.recycle()
         }
         return moved
+    }
+
+    /** What MapLibre's gesture detector (MapView hands it every event; the map's click comes from its
+     *  `onSingleTapConfirmed`, a long press from its `onLongPress`) makes of a tap whose down the app handles `lateMs`
+     *  after it was made: with the up given together with the down (`Touches.tap`), or as UiDevice.click gives it,
+     *  once the down has been handled (the main thread runs what is due meanwhile) and 100 ms later. */
+    private fun tapSeen(lateMs: Long, upGivenWithDown: Boolean): List<String> {
+        val looper = shadowOf(Looper.getMainLooper())
+        looper.idleFor(Duration.ofSeconds(10)) // a clock well past the start
+        val seen = mutableListOf<String>()
+        val manager = gestures()
+        manager.setStandardGestureListener(object : StandardGestureDetector.SimpleStandardOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                seen += "tap"
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                seen += "long press"
+            }
+        })
+        // Made `lateMs` ago, handled now.
+        val down = SystemClock.uptimeMillis() - lateMs
+        fun handle(t: Touch, madeAt: Long) {
+            val e = MotionEvent.obtain(down, madeAt, t.action, t.at.x, t.at.y, 0)
+            manager.onTouchEvent(e)
+            e.recycle()
+        }
+        val (d, u) = Touches.tap(PointF(540f, 1200f))
+        handle(d, down)
+        if (upGivenWithDown) {
+            handle(u, down)
+        } else {
+            looper.idle()
+            looper.idleFor(Duration.ofMillis(100))
+            handle(u, SystemClock.uptimeMillis())
+        }
+        looper.idleFor(Duration.ofSeconds(1))
+        return seen
     }
 
     private fun assertPoint(x: Float, y: Float, actual: PointF) {
