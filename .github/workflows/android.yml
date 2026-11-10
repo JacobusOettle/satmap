@@ -139,6 +139,12 @@ jobs:
           # header, then 4 bytes a pixel), taken right after the screenshot: imagery (many colours), or, when Esri's
           # servers don't answer the emulator, mostly the map's background #202020, which only a running map renderer
           # draws. A black or other flat screen fails.
+          # This APK is a test build reading the live switch (android/docs/spec/test-builds.md): while the owner has
+          # test builds switched off it opens on the full-screen lock, not the map. So the screen's accessibility tree
+          # is read first (android-launch.xml; MapScreen sets testTagsAsResourceId, so its test tags are resource ids),
+          # and a lock found there (resource-id testBuildLock…) is a good launch: the map check is skipped, the crash,
+          # ANR and resumed-activity checks above still count. The tree's other ids are printed (the map's buttons on a
+          # normal launch), which shows the read works.
           script: |
             adb install -r SatMap.apk
             adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_FINE_LOCATION || true
@@ -158,14 +164,18 @@ jobs:
             if adb logcat -d -b crash | grep -q com.jacobusoettle.satmap; then echo "SatMap crashed after it was opened (and was started again): not publishing this build."; adb logcat -d -b crash; exit 1; fi
             if adb logcat -d -b events | grep am_anr | grep -q com.jacobusoettle.satmap; then echo "SatMap stopped responding after it was opened: not publishing this build."; adb logcat -d -b events | grep am_anr; adb logcat -d | grep -iE "satmap|ANR" | tail -n 150; exit 1; fi
             adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | grep -q 'com.jacobusoettle.satmap/.MainActivity' || { echo "SatMap's map is not the resumed activity: not publishing this build."; adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp|mCurrentFocus'; adb logcat -d | grep -iE "satmap|AndroidRuntime" | tail -n 150; exit 1; }
-            python3 -I -c "import collections, struct, sys; d = open('android-launch.raw', 'rb').read(); w, h = struct.unpack('<2I', d[:8]); head = len(d) - w * h * 4; assert head in (12, 16), 'not a 4-byte-a-pixel capture'; px = [tuple(d[head + (y * w + x) * 4:head + (y * w + x) * 4 + 3]) for y in range(h * 35 // 100, h * 65 // 100, 8) for x in range(w * 30 // 100, w * 70 // 100, 8)]; common = collections.Counter(px).most_common(1)[0][0]; kinds = len(set(px)); print('Middle of the', w, 'x', h, 'screen:', kinds, 'colours, mostly', common); sys.exit(not (common == (32, 32, 32) or kinds > 64))" || { echo "SatMap's map was not drawn: the middle of the screen is neither imagery nor the map's background colour #202020. Not publishing this build."; adb logcat -d | grep -iE "satmap|maplibre|mbgl|EGL|OpenGLRenderer" | tail -n 150; exit 1; }
-            echo "SatMap is running, with its map in front and drawn."
+            timeout 90 adb shell uiautomator dump /sdcard/satmap-launch.xml > /dev/null 2>&1 || echo "The accessibility tree couldn't be read (the screen never went idle)."
+            adb shell cat /sdcard/satmap-launch.xml > android-launch.xml 2> /dev/null || true
+            echo "Test tags on screen: $(grep -o 'resource-id="[A-Za-z0-9_-][A-Za-z0-9_-]*"' android-launch.xml 2> /dev/null | sed 's/resource-id=//' | sort -u | tr '\n' ' ')"
+            if grep -q 'resource-id="testBuildLock' android-launch.xml 2> /dev/null; then echo "SatMap is running and shows its test-build lock: test builds are switched off (test-builds.json on the app-status branch), so this test build locks instead of showing the map. Counted as a good launch; the map check is skipped."; else python3 -I -c "import collections, struct, sys; d = open('android-launch.raw', 'rb').read(); w, h = struct.unpack('<2I', d[:8]); head = len(d) - w * h * 4; assert head in (12, 16), 'not a 4-byte-a-pixel capture'; px = [tuple(d[head + (y * w + x) * 4:head + (y * w + x) * 4 + 3]) for y in range(h * 35 // 100, h * 65 // 100, 8) for x in range(w * 30 // 100, w * 70 // 100, 8)]; common = collections.Counter(px).most_common(1)[0][0]; kinds = len(set(px)); print('Middle of the', w, 'x', h, 'screen:', kinds, 'colours, mostly', common); sys.exit(not (common == (32, 32, 32) or kinds > 64))" || { echo "SatMap's map was not drawn: the middle of the screen is neither imagery nor the map's background colour #202020. Not publishing this build."; adb logcat -d | grep -iE "satmap|maplibre|mbgl|EGL|OpenGLRenderer" | tail -n 150; exit 1; }; echo "SatMap is running, with its map in front and drawn."; fi
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: android-launch-screenshot
-          path: android-launch.png
+          path: |
+            android-launch.png
+            android-launch.xml
           if-no-files-found: ignore
 
   # Only builds of main and claude/satmap-ios-app (and a workflow_dispatch) replace the APK people install; work

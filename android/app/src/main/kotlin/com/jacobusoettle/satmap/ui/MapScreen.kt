@@ -187,10 +187,10 @@ fun MapScreen(model: AppModel, offline: OfflineManager, recorder: LocationRecord
     var confirmClearTrack by remember { mutableStateOf(false) }
     // A test build switched off (android/docs/spec/test-builds.md) shows the lock alone: nothing else is composed, so
     // no sheet, dialog or menu (each a window of its own) can show over it, nothing behind it can be focused or pressed
-    // with a keyboard or TalkBack, and the map is hidden. What was asked for meanwhile (an invite, a sheet) shows when
-    // it is switched on again; an open "Clear track" question doesn't come back.
+    // with a keyboard or TalkBack, and the map is hidden. What was open (a sheet, an area drawn, the "Clear track"
+    // question) is kept and shows again when it is switched on, as on the iPhone; nothing new opens meanwhile (links
+    // and files are ignored while locked, `MainActivity.handleIncoming`).
     val lock by model.testBuildLock.collectAsStateWithLifecycle()
-    LaunchedEffect(lock != null) { if (lock != null) confirmClearTrack = false }
     Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
         if (map != null) MapViewRepresentable(map, visible = lock == null)
         val locked = lock

@@ -88,8 +88,8 @@ class MainActivity : ComponentActivity() {
     }
 
     /** A group invite link (the join confirmation), KML/KMZ or GPX opened or shared from another app (zoom to it, or
-     *  the Blocks sheet with the error), and "Save to a folder" from the backup chooser. Once handled, a recreated
-     *  activity (its intent kept) doesn't handle it again. */
+     *  the Blocks sheet with the error), and "Save to a folder" from the backup chooser. Once handled (or ignored
+     *  behind the test-build lock), a recreated activity (its intent kept) doesn't handle it again. */
     private fun handleIncoming(intent: Intent) {
         if (handleIncoming(AppModel.shared, intent)) setIntent(Intent(intent).setAction(null))
     }
@@ -111,9 +111,12 @@ class MainActivity : ComponentActivity() {
         /** What another app sent SatMap, as it first comes: the files of an "Open with" or a share (`openFiles`), and
          *  "Save to a folder" chosen in the backup chooser, which asks for the folder (`ShareHost` shows the picker;
          *  `SaveToFolderActivity` has asked already, and asking again changes nothing). False when there was nothing
-         *  to do. */
+         *  to do. While a test build is switched off (android/docs/spec/test-builds.md) everything is ignored, as the
+         *  iPhone's `onOpenURL` ignores it: no file is imported and no invite or sheet waits for the unlock. That
+         *  counts as handled (true), so the intent is dropped, not kept for later. */
         fun handleIncoming(model: AppModel, intent: Intent): Boolean {
             if (isReplay(intent)) return false
+            if (model.testBuildLock.value != null) return true
             if (intent.action == BackupSharing.ACTION_SAVE_TO_FOLDER) {
                 SharePresenter.requestFolder()
                 return true

@@ -104,10 +104,16 @@ observer of its own; `AppModel` drives it):
 - **The lock screen** (`TestBuildLockScreen`, as the iPhone's `TestBuildLockView`: black, a yellow lock, the title, the
   message, the buttons at the bottom). `MapScreen` composes it **alone**: no map overlay, sheet, dialog, menu, alert
   or share host is composed, so no window can show over it and nothing behind it can be focused or pressed with a
-  keyboard or TalkBack; the map view is `GONE` (its surface released, drawing and loading nothing). An open sheet is
-  closed when it locks; a sheet or invite asked for meanwhile (a failed "Open with", an invite link) shows once it is
-  switched on again. A long message or a large font scrolls, so the buttons stay reachable. Back leaves SatMap, as on
-  the bare map.
+  keyboard or TalkBack; the map view is `GONE` (its surface released, drawing and loading nothing). What was open
+  over the map is kept, only not composed, and is there again once it is switched on, as on the iPhone (which keeps
+  it behind its lock): a sheet, an area drawn but not saved yet (`draftArea`, `pendingArea`), a pin's or an invite's
+  sheet, the "Clear track" question. A long message or a large font scrolls, so the buttons stay reachable. Back
+  leaves SatMap, as on the bare map.
+- **Links and files are ignored** (`MainActivity.handleIncoming` returns at once, as the iPhone's `onOpenURL`): an
+  invite link does nothing (`GroupsModel.openInvite` is guarded too) and a shared or opened KML/KMZ/GPX is not
+  imported. The intent counts as handled, so nothing waits to pop up after the unlock. (A backup's share that was
+  already open when it locked is kept like the rest: "Save to a folder" chosen in its chooser, which
+  `SaveToFolderActivity` notes itself, asks for the folder once it is switched on again.)
 - **Downloads pause** (`OfflineManager.setLockedOut`): the running one is re-queued so it continues on unlock, nothing
   new starts, the files saved are kept, a user-paused area stays paused. On unlock `releaseHold` runs, so an area
   paused for an export whose share sheet closed meanwhile goes on too.
@@ -128,7 +134,8 @@ recording and the compass restart (on screen), the permissions skipped are asked
 - App: `TestBuildGateTest` (the kept *off* locks before the fetch and offline; a later *on* unlocks; an unreadable file
   keeps the state; the addresses in order with `?t=`; a store build and a debug build never fetch, keep or lock; one
   fetch for a launch that is also a foregrounding; the hooks), `MapScreenTestBuildTest` (the lock alone, nothing
-  behind it, sheets and invites only after), `LocationRecorderTest` (the service stopped, nothing restarts behind the
+  behind it; an open sheet, a drawn area and the "Clear track" question there again after; links and files opened
+  while locked ignored), `LocationRecorderTest` (the service stopped, nothing restarts behind the
   lock, all back after), `GroupsModelTest` (nothing sent when the network comes back while locked), `BackupTest`
   (downloads held and resumed, an export's paused area resumed), `CarMapScreenTest` (the car's message),
   `ScreenRendersTestBuildTest` (renders 41, and the longest texts at twice the font size scroll to the buttons).
@@ -145,6 +152,10 @@ purpose and privacy files (`SatMap/PrivacyInfo.xcprivacy`, Info.plist purpose st
 
 ## 8. Known effect on CI
 
-`android.yml`'s "Check that the app opens" starts the release APK, a test build, on an emulator and expects the map in
-the middle of the screen. While test builds are switched off, that build shows the lock instead, so the check fails and
-no new test build is published until the switch is on again (a new test build would be locked anyway).
+`android.yml`'s "Check that the app opens" starts the release APK, a test build reading the live switch, on an
+emulator and expects the map in the middle of the screen. While test builds are switched off, that build shows the lock
+instead, so the check first reads the screen's accessibility tree (`adb shell uiautomator dump`; `MapScreen` sets
+`testTagsAsResourceId`): when it finds `resource-id="testBuildLock"`, the lock is counted as a good launch and the
+map-pixel check is skipped (the crash, ANR and resumed-activity checks still run). So pushes stay green and the
+`android-test-build` release is still updated while the switch is off; that build shows the lock too, until the switch
+is on again.

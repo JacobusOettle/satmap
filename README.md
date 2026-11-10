@@ -281,6 +281,9 @@ Store builds (App Store and Google Play, later) are never affected, and neither 
 plain anonymous request for the file: no device or user identifier is sent, only a `SatMap/<version>` User-Agent. The
 rule itself lives in `SatMap/Core/TestBuildSwitch.swift` and its Kotlin twin, with shared tests.
 
+While the switch is off, the Android CI's launch check (the release APK is a test build, so it shows the lock too)
+treats the lock screen as a good launch, so pushes stay green and the `android-test-build` release is still updated.
+
 ## Map data and licensing — please read
 
 - **Roads:** [OpenStreetMap](https://www.openstreetmap.org/copyright) via the public Overpass API, © OpenStreetMap

@@ -599,7 +599,9 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
      *  user file (offline maps, the track, KML, groups): downloads pause (keeping what is saved), recording, the
      *  compass and the location service stop, and the groups' live sharing and uploads pause. On unlock everything
      *  resumes as before: a paused download continues, recording restarts (if on screen) and groups wake. The map
-     *  screen shows only the lock meanwhile; the sheets over the map are closed so they don't come back with it. */
+     *  screen shows only the lock meanwhile; what was open over the map (a sheet, an area drawn but not saved yet, a
+     *  pin's or an invite's sheet) is kept, not composed behind the lock, and is there again after it, as on the
+     *  iPhone. */
     private fun applyLock(locked: Boolean) {
         if (locked == lockedOut) return
         lockedOut = locked
@@ -607,11 +609,6 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         groups.setLockedOut(locked)
         if (locked) {
             recorder.stopForLock()
-            setSheet(null)
-            setPendingArea(null)
-            setDraftArea(null)
-            groups.closeInvite()
-            groups.openItem(null)
         } else {
             recorder.resumeAfterLock()
         }

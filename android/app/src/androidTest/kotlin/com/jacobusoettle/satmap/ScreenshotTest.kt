@@ -774,17 +774,22 @@ class ScreenshotTest {
             platform = TestBuildSwitch.Platform.android,
         )
         instrumentation.runOnMainSync { AppModel.shared.testBuild.forceLockedForTests(sample) }
-        if (waitForExistence(id("testBuildLock"), 10)) {
-            sleep(2)
-            snap("41-test-build-off")
-            check(exists(id("testBuildLink-googlePlay")), "No Google Play button on the lock screen")
-            check(exists(id("testBuildLink-website")), "No Website button on the lock screen")
-            check(!exists(id("terrainButton")), "The map's buttons are still there behind the lock")
-        } else {
-            fail("The test-build lock didn't show")
+        try {
+            if (waitForExistence(id("testBuildLock"), 10)) {
+                sleep(2)
+                snap("41-test-build-off")
+                check(exists(id("testBuildLink-googlePlay")), "No Google Play button on the lock screen")
+                check(exists(id("testBuildLink-website")), "No Website button on the lock screen")
+                check(!exists(id("terrainButton")), "The map's buttons are still there behind the lock")
+            } else {
+                fail("The test-build lock didn't show")
+            }
+        } finally {
+            // Switched on again whatever happened above: a locked app ignores links, and `InviteIntentTest` runs next
+            // in the same process.
+            instrumentation.runOnMainSync { AppModel.shared.testBuild.forceLockedForTests(null) }
         }
-        // Switched on again: the map and its buttons come back (the walk is over, but leave nothing paused).
-        instrumentation.runOnMainSync { AppModel.shared.testBuild.forceLockedForTests(null) }
+        // The map and its buttons come back (the walk is over, but leave nothing paused).
         check(waitForExistence(id("terrainButton"), 10), "The map didn't come back after the lock")
     }
 

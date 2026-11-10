@@ -487,11 +487,14 @@ class GroupsModel(
 
     /** An invite link opened from another app, a scan or a paste (§5.6): the join confirmation, or, when you are in the
      *  group already, its screen alone (S5 with "Done") and the alert "You're already in {group}.". Opening a link
-     *  never joins by itself. */
+     *  never joins by itself. Ignored while a test build is switched off (`setLockedOut`), as on the iPhone: nothing
+     *  waits to show after the unlock. */
     fun openInvite(parsed: InviteLink.Parsed) {
+        if (lockedOut) return
         when (parsed) {
             is InviteLink.Parsed.Invite -> scope.launch {
                 ready()
+                if (lockedOut) return@launch
                 val d = hub.detail(parsed.link.groupIdText)
                 if (d != null) {
                     _pendingInvite.value = null
