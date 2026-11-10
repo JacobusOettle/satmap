@@ -71,9 +71,10 @@ struct MapScreen: View {
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("groupPausedHint")
                 }
-                Spacer()
                 // Map credits are in the Offline maps sheet.
-                if !model.isDrawingArea {
+                if model.isDrawingArea {
+                    Spacer()
+                } else {
                     HStack(alignment: .bottom) {
                         // The contour interval above the scale bar, the elevation colours' heights under it.
                         VStack(alignment: .leading, spacing: 8) {
@@ -82,19 +83,17 @@ struct MapScreen: View {
                             ColourKeyView(legend: model.legend)
                         }
                         Spacer()
+                        // Offered the row's width less the legends' smallest, so a grid too wide for the row spills
+                        // to the left rather than widening the screen (groups §9.1).
                         controls
-                    }
-                    // Groups at the left edge, level with the top of the controls (the compass): an overlay, so the
-                    // row keeps its height and the right-hand column doesn't grow (SD21). (Tests find it by its
-                    // label, as the other map buttons; the id `groupsButton` is Android's test tag, §9.6.)
-                    .overlay(alignment: .topLeading) {
-                        MapButton(systemImage: "person.3.fill", label: "Groups", active: groups.shownGroupId != nil) {
-                            groups.openFromButton()
-                        }
+                            .layoutPriority(1)
                     }
                     // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
                     // bottom of the screen to a tapped spot's coordinates.
                     .padding(.bottom, Self.controlsLift)
+                    // All the room under the panels (in place of a Spacer above), so the buttons are offered the
+                    // height the panels leave (groups §9.1).
+                    .frame(maxHeight: .infinity, alignment: .bottom)
                 }
             }
             .padding(.horizontal, 12)
@@ -183,11 +182,18 @@ struct MapScreen: View {
             .accessibilityIdentifier("tappedName")
     }
 
+    /// The map's buttons, top to bottom: the compass slot, Groups, Terrain, Blocks, Offline maps, Go to coordinates,
+    /// Measure and My location, in one column where it fits, else a grid (`MapButtonsLayout`).
     private var controls: some View {
-        VStack(spacing: 12) {
+        MapButtonsLayout {
             if let map = model.map?.mapView {
                 CompassButton(mapView: map)
                     .frame(width: 44, height: 44)
+            }
+            // Groups, the first button, above the terrain button (groups §9.1, SD21). (Tests find it by its label, as
+            // the other map buttons; the id `groupsButton` is Android's test tag, §9.6.)
+            MapButton(systemImage: "person.3.fill", label: "Groups", active: groups.shownGroupId != nil) {
+                groups.openFromButton()
             }
             MapButton(systemImage: terrainIcon, label: "Contour lines", dimmed: model.terrainMode == .off,
                       heightColours: model.terrainMode.showsColours) { nextTerrainMode() }
@@ -283,6 +289,33 @@ struct MapScreen: View {
         case .aiming, .placed, .path: return true
         case .off, .closed: return false
         }
+    }
+}
+
+/// The map's buttons at their own sizes (50-pt circles, the compass slot 44), 12 apart: one column while it fits the
+/// height offered (what the panels at the top leave over the lift), else a grid with My location at the bottom right
+/// (`MapButtonGrid`, groups §9.1; Android `Controls`). No bigger than offered and anchored at the bottom right, so a
+/// block bigger than its room (not even one row fits, or the row is too narrow) spills up and to the left, as on
+/// Android.
+struct MapButtonsLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let size = Self.grid(proposal, subviews).size
+        return CGSize(width: min(size.width, proposal.width ?? .infinity),
+                      height: min(size.height, proposal.height ?? .infinity))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let grid = Self.grid(proposal, subviews)
+        for (subview, offset) in zip(subviews, grid.offsets) {
+            subview.place(at: CGPoint(x: bounds.maxX - grid.size.width + offset.x,
+                                      y: bounds.maxY - grid.size.height + offset.y),
+                          proposal: .unspecified)
+        }
+    }
+
+    private static func grid(_ proposal: ProposedViewSize, _ subviews: Subviews) -> MapButtonGrid {
+        MapButtonGrid(sizes: subviews.map { $0.sizeThatFits(.unspecified) }, cell: 50, gap: 12,
+                      maxHeight: proposal.height ?? .infinity)
     }
 }
 

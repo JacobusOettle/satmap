@@ -48,8 +48,11 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -69,7 +72,8 @@ import kotlin.math.hypot
 
 /** The map screen's pieces on their own (UI spec §2.3–2.4; DESIGN.md §8.1): the height pill's spoken value and units,
  *  the coordinates' "Copied", side by side or stacked, the scale bar, the crosshair's and the bar's shadow, the sizes of
- *  the buttons' symbols, the pills and the colour key as iOS's, the compass and the hint. */
+ *  the buttons' symbols, the pills and the colour key as iOS's, the compass, the buttons' column or grid and the
+ *  hint. */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "w402dp-h874dp") // the iPhone of the screenshots, in points
 class MapScreenPiecesTest {
@@ -502,6 +506,48 @@ class MapScreenPiecesTest {
         bearing = 0.0
         compose.waitForIdle()
         compose.onNodeWithTag("compassButton").assertDoesNotExist()
+    }
+
+    /** The compass slot (44), then Groups, Terrain, Blocks, Offline maps, Go to coordinates, Measure and My location. */
+    private val buttonSizes = listOf(IntSize(44, 44)) + List(7) { IntSize(50, 50) }
+
+    @Test
+    fun theButtonsStayInOneColumnWhileItFits() {
+        for (maxHeight in listOf(478, 900, Constraints.Infinity)) {
+            val grid = mapButtonGrid(buttonSizes, cell = 50, gap = 12, maxHeight = maxHeight)
+            assertEquals(IntSize(50, 478), grid.size)
+            // The compass slot centred across the column at its top, the buttons 12 apart under it.
+            assertEquals(IntOffset(3, 0), grid.offsets[0])
+            assertEquals((0 until 7).map { IntOffset(0, 56 + 62 * it) }, grid.offsets.drop(1))
+        }
+    }
+
+    @Test
+    fun buttonsThatDontFitFillAGridFromTheBottomRight() {
+        // One short: seven rows, the compass alone at the top of a second column, centred in its cell, beside Groups.
+        var grid = mapButtonGrid(buttonSizes, cell = 50, gap = 12, maxHeight = 477)
+        assertEquals(IntSize(112, 422), grid.size)
+        assertEquals(IntOffset(3, 3), grid.offsets[0])
+        assertEquals((0 until 7).map { IntOffset(62, 62 * it) }, grid.offsets.drop(1))
+
+        // Room for three rows (landscape): Go to, Measure and My location on the right; Terrain, Blocks and Offline
+        // maps; then the compass and Groups from the top of the leftmost column.
+        grid = mapButtonGrid(buttonSizes, cell = 50, gap = 12, maxHeight = 200)
+        assertEquals(IntSize(174, 174), grid.size)
+        assertEquals(
+            listOf(
+                IntOffset(3, 3), IntOffset(0, 62),
+                IntOffset(62, 0), IntOffset(62, 62), IntOffset(62, 124),
+                IntOffset(124, 0), IntOffset(124, 62), IntOffset(124, 124),
+            ),
+            grid.offsets,
+        )
+
+        // No room even for one: a single row, My location at its right.
+        grid = mapButtonGrid(buttonSizes, cell = 50, gap = 12, maxHeight = 0)
+        assertEquals(IntSize(8 * 50 + 7 * 12, 50), grid.size)
+        assertEquals(IntOffset(3, 3), grid.offsets[0])
+        assertEquals((1 until 8).map { IntOffset(62 * it, 0) }, grid.offsets.drop(1))
     }
 
     @Test

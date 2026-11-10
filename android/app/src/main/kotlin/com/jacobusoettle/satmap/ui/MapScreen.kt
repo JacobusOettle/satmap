@@ -132,6 +132,10 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -170,6 +174,7 @@ import com.jacobusoettle.satmap.ui.groups.MapPinAndEllipse
 import com.jacobusoettle.satmap.ui.groups.Person3
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.shadow.Shadow as DropShadow
@@ -247,20 +252,15 @@ private fun MapOverlay(
             if (!drawing) {
                 // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
                 // bottom of the screen to a tapped spot's coordinates.
-                // The Groups button is laid over the row, at its top left (groups §9.1, SD21): level with the top of
-                // the buttons on the right, adding no height to the row.
-                Box(Modifier.fillMaxWidth().padding(bottom = controlsLift)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                        // The contour interval above the scale bar, the elevation colours' heights under it.
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.Start) {
-                            ContourKeyView(model.legend)
-                            ScaleBarView(model.scale, onTap = model::nextDistanceUnit)
-                            ColourKeyView(model.legend)
-                        }
-                        Spacer(Modifier.weight(1f))
-                        Controls(model, offline, map, onClearTrack)
+                Row(Modifier.fillMaxWidth().padding(bottom = controlsLift), verticalAlignment = Alignment.Bottom) {
+                    // The contour interval above the scale bar, the elevation colours' heights under it.
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.Start) {
+                        ContourKeyView(model.legend)
+                        ScaleBarView(model.scale, onTap = model::nextDistanceUnit)
+                        ColourKeyView(model.legend)
                     }
-                    GroupsButton(model, Modifier.align(Alignment.TopStart))
+                    Spacer(Modifier.weight(1f))
+                    Controls(model, offline, map, onClearTrack)
                 }
             }
         }
@@ -420,17 +420,17 @@ private fun TappedSpot(model: AppModel, modifier: Modifier) {
     }
 }
 
-/** Groups (groups §9.1, SD21): a map button at the left edge, yellow while a group is shown on the map; a tap opens
- *  the groups sheet. */
+/** Groups (groups §9.1, SD21): the top map button, yellow while a group is shown on the map; a tap opens the groups
+ *  sheet. */
 @Composable
-private fun GroupsButton(model: AppModel, modifier: Modifier) {
+private fun GroupsButton(model: AppModel) {
     val shown by model.groups.shown.collectAsStateWithLifecycle()
     MapButton(
         SatIcons.Person3,
         "Groups",
         active = shown != null,
         onClick = { model.setSheet(ActiveSheet.groups) },
-        modifier = modifier.testTag("groupsButton"),
+        modifier = Modifier.testTag("groupsButton"),
     )
 }
 
@@ -483,30 +483,77 @@ private fun KeepScreenOn(offline: OfflineManager) {
     }
 }
 
-/** The map's buttons, top to bottom: the compass slot, Terrain, Blocks, Offline maps, Go to coordinates, Measure and
- *  My location (50 dp circles, 12 dp apart), with the terrain toast and the long-press menus. `onClearTrack`: My
- *  location's menu chose "Clear recorded track". */
+/** The map's buttons, top to bottom: the compass slot, Groups, Terrain, Blocks, Offline maps, Go to coordinates,
+ *  Measure and My location (50 dp circles, 12 dp apart), with the terrain toast and the long-press menus, laid out by
+ *  `mapButtonGrid`: one column when it fits the height left under the panels at the top, else columns side by side.
+ *  `onClearTrack`: My location's menu chose "Clear recorded track". */
 @Composable
 fun Controls(model: AppModel, offline: OfflineManager, map: MapController?, onClearTrack: () -> Unit) {
-    Column(
-        Modifier.width(50.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        if (map != null) CompassButton(map)
-        TerrainButton(model)
-        BlocksButton(model)
-        OfflineButton(model, offline)
-        MapButton(
-            SatIcons.LocationMagnifyingGlass,
-            "Go to coordinates",
-            onClick = { model.setSheet(ActiveSheet.coordinates) },
-            modifier = Modifier.testTag("goToButton"),
+    Layout(
+        content = {
+            if (map != null) CompassButton(map)
+            GroupsButton(model)
+            TerrainButton(model)
+            BlocksButton(model)
+            OfflineButton(model, offline)
+            MapButton(
+                SatIcons.LocationMagnifyingGlass,
+                "Go to coordinates",
+                onClick = { model.setSheet(ActiveSheet.coordinates) },
+                modifier = Modifier.testTag("goToButton"),
+            )
+            MeasureButton(model)
+            MyLocationButton(model, onClearTrack)
+        },
+    ) { measurables, constraints ->
+        val placeables = measurables.map { it.measure(Constraints()) }
+        val grid = mapButtonGrid(
+            placeables.map { IntSize(it.width, it.height) },
+            cell = 50.dp.roundToPx(),
+            gap = 12.dp.roundToPx(),
+            maxHeight = constraints.maxHeight,
         )
-        MeasureButton(model)
-        MyLocationButton(model, onClearTrack)
+        val width = constraints.constrainWidth(grid.size.width)
+        val height = constraints.constrainHeight(grid.size.height)
+        layout(width, height) {
+            // Anchored at the bottom right: anything too big for the space given spills up and to the left. Mirrored
+            // in a right-to-left language, as the rest of the overlay (and iOS's Layout), so My location stays at the
+            // screen's edge there too.
+            placeables.forEachIndexed { i, p ->
+                p.placeRelative(grid.offsets[i].x + width - grid.size.width, grid.offsets[i].y + height - grid.size.height)
+            }
+        }
     }
 }
+
+/** Where the map's buttons go (`sizes`, top to bottom, in px): one column, `gap` apart, while it is no taller than
+ *  `maxHeight` (the usual; the compass slot keeps its 44 dp). Else (a small phone, landscape, tall panels at the top) a
+ *  grid of `cell`-sized cells, `gap` apart both ways, with as many rows as fit: filled from the last button (My
+ *  location stays at the bottom right) up each column, right to left; the leftmost column holds the first buttons
+ *  from its top, and a smaller button (the compass) is centred in its cell. Offsets are from the grid's top left. */
+internal fun mapButtonGrid(sizes: List<IntSize>, cell: Int, gap: Int, maxHeight: Int): MapButtonGrid {
+    // Centred as Compose's alignments centre (halves rounded up).
+    fun centred(size: Int) = ((cell - size) / 2f).roundToInt()
+    val column = sizes.sumOf { it.height } + gap * (sizes.size - 1).coerceAtLeast(0)
+    if (column <= maxHeight) {
+        var y = 0
+        val offsets = sizes.map { s -> IntOffset(centred(s.width), y).also { y += s.height + gap } }
+        return MapButtonGrid(IntSize(cell, column), offsets)
+    }
+    val rows = ((maxHeight + gap) / (cell + gap)).coerceIn(1, sizes.size)
+    val columns = (sizes.size + rows - 1) / rows
+    val width = columns * cell + (columns - 1) * gap
+    val offsets = sizes.mapIndexed { i, s ->
+        val fromEnd = sizes.size - 1 - i
+        val col = fromEnd / rows // 0: the rightmost
+        val row = if (col == columns - 1) i else rows - 1 - fromEnd % rows
+        IntOffset(width - (col + 1) * cell - col * gap + centred(s.width), row * (cell + gap) + centred(s.height))
+    }
+    return MapButtonGrid(IntSize(width, rows * cell + (rows - 1) * gap), offsets)
+}
+
+/** `mapButtonGrid`'s answer: the whole block's size and each button's top left in it. */
+internal class MapButtonGrid(val size: IntSize, val offsets: List<IntOffset>)
 
 /** Contour lines, contours with elevation colours, colours alone (in the colours: `heightColours`), drone mode, or
  *  none; a tap moves on to the next and says it beside the button for a moment. */
