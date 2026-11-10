@@ -32,6 +32,10 @@ object Touches {
         (centre.y + (y - 0.5) * IPHONE_HEIGHT * density).toFloat(),
     )
 
+    /** A tap at `at`: down and up together, the up given straight after the down (`Gestures.tap`), not once the down
+     *  has been handled. */
+    fun tap(at: PointF): List<Touch> = listOf(Touch(MotionEvent.ACTION_DOWN, at, 0), Touch(MotionEvent.ACTION_UP, at, 0))
+
     /** iOS's `press(forDuration:thenDragTo:)`: down at `from`, held for `holdMs`, moved to `to` in 20 steps 16 ms
      *  apart, then up. A map under it leaves out the first step (`MOVE_THRESHOLD_DP`); a point being moved doesn't. */
     fun pressAndDrag(from: PointF, to: PointF, holdMs: Long): List<Touch> =

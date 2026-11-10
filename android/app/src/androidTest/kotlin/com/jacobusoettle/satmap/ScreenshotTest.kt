@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap
 
 import android.Manifest
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.graphics.Point
 import android.graphics.PointF
@@ -9,6 +10,7 @@ import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import android.view.accessibility.AccessibilityWindowInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -46,6 +48,7 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Drives the app through its main screens on an emulator and saves screenshots (run by
@@ -62,7 +65,10 @@ import kotlin.math.roundToInt
  *  For the emulator in CI (Android only): each screenshot is written under another name and then renamed, so the
  *  workflow can pull them while the walk goes on; the waits for a download end early when no download is under way
  *  or it stopped moving; and the walk stops itself after `WALK_MINUTES`, before the workflow's own limit, so the
- *  failures found so far are still reported. */
+ *  failures found so far are still reported. The emulator is slow and stalls now and then: the walk first makes sure
+ *  the downloads have a network (`TestNetwork`), taps the map only once it stands still and until the tap has taken
+ *  (`tapMap`), each tap's down and up given together (`Gestures.tap`), closes a keyboard left up before it scrolls a
+ *  form (`hideKeyboard`), and while a download runs it doesn't wait for Compose to be idle (`whileDownloading`). */
 @RunWith(AndroidJUnit4::class)
 class ScreenshotTest {
     private val arrival = listOf(
@@ -151,6 +157,8 @@ class ScreenshotTest {
         realStart = SystemClock.uptimeMillis()
         clockStart = compose.mainClock.currentTime
         deadline = realStart + WALK_MINUTES * 60_000L
+        // Not a check of the app: the emulator's Wi-Fi (the workflow warns when mobile data stood in for it).
+        TestNetwork.ensureWifi()
         try {
             TestLocations.setUp()
         } catch (e: Exception) {
@@ -233,13 +241,15 @@ class ScreenshotTest {
         snap("07-download-area")
         scrollTo(button("Download"))
         tap("Download")
-        sleep(25)
-        snap("08-downloading")
+        whileDownloading {
+            sleep(25)
+            snap("08-downloading")
 
-        tap("Offline maps")
-        // As on iOS, up to a quarter of an hour for the download, whether or not the sheet opened; but only while it
-        // is under way and moving (without a download, as before M4, the wait ends after a minute).
-        waitForDownload(900.0) { exists(staticText("Ready offline")) }
+            tap("Offline maps")
+            // As on iOS, up to a quarter of an hour for the download, whether or not the sheet opened; but only while
+            // it is under way and moving (without a download, as before M4, the wait ends after a minute).
+            waitForDownload(900.0) { exists(staticText("Ready offline")) }
+        }
         sleep(2)
         snap("09-offline-areas")
 
@@ -270,9 +280,8 @@ class ScreenshotTest {
         setTerrain("Contour lines")
 
         // Tap a spot: its coordinates at the top (your own at the bottom); tapping them copies them.
-        tapScreen(0.35, 0.45)
         val tapped = id("tappedCoordinates")
-        if (waitForExistence(tapped, 10)) {
+        if (tapMap("a spot", { screenPoint(0.35, 0.45) }) { exists(tapped) }) {
             sleep(3)
             snap("15-coordinates")
             click(tapped)
@@ -289,20 +298,24 @@ class ScreenshotTest {
         // A tap on a point in the KML file selects it, with its name.
         // (MapKit may give the point's name as its own text or as the whole annotation, dot on top. The map here gives
         // accessibility services the names it shows, each as an element over the whole symbol, dot on top.)
-        val launch = mapElement(Pattern.compile(Pattern.quote("Launch 1")), 5)
-        if (launch != null) {
-            device.click(launch.centerX(), launch.top - 1)
-            check(waitForExistence(id("tappedName"), 5), "Tapping the KML point didn't select it")
+        val launchName = Pattern.compile(Pattern.quote("Launch 1"))
+        val selectedName = id("tappedName")
+        if (mapElement(launchName, 5) != null) {
+            val selected = tapMap("the KML point", {
+                mapElement(launchName, 5)?.let { PointF(it.centerX().toFloat(), it.top - 1f) }
+            }) { exists(selectedName) }
+            check(selected, "Tapping the KML point didn't select it")
             sleep(3)
             snap("24-kml-point")
         } else {
             // The map itself is asked whether it draws the point, to tell the two failures apart; when it does, the
             // point is tapped there, so the step still runs.
-            val drawn = mapLabel("Launch 1", kmlPointLayers())
-            if (drawn != null) {
+            if (mapLabel("Launch 1", kmlPointLayers()) != null) {
                 fail("The KML point is on the map, but accessibility services don't see it")
-                device.click(drawn.x, drawn.y)
-                check(waitForExistence(id("tappedName"), 5), "Tapping the KML point didn't select it")
+                val selected = tapMap("the KML point", {
+                    mapLabel("Launch 1", kmlPointLayers())?.let { PointF(it.x.toFloat(), it.y.toFloat()) }
+                }) { exists(selectedName) }
+                check(selected, "Tapping the KML point didn't select it")
                 sleep(3)
                 snap("24-kml-point")
             } else {
@@ -328,7 +341,7 @@ class ScreenshotTest {
             fail("No field for coordinates")
         }
         val airfield = Pattern.compile("(Airport |Airstrip )?FASH Stellenbosch")
-        tapScreen(0.7, 0.62)
+        tapMap("the map in drone mode", { screenPoint(0.7, 0.62) }) { exists(id("tappedCoordinates")) }
         sleep(6)
         check(exists(id("droneCard")), "No reporting card in drone mode")
         check(exists(id("tappedCoordinates")), "Tapping the map in drone mode didn't place a pin")
@@ -503,12 +516,14 @@ class ScreenshotTest {
               "No explanation of what a file saves along roads")
         snap("12-download-along-roads")
         tap("Download")
-        sleep(5)
-        openOfflineSheet()
         val ready = staticText("Ready offline")
         val alongRoads = staticText(containing = "along roads")
-        // The Farm roads area itself, not just two "Ready offline" texts (a row's text can change after the shot).
-        waitForDownload(900.0) { areaReady("Farm roads", 20) && count(ready) >= 2 }
+        whileDownloading {
+            sleep(5)
+            openOfflineSheet()
+            // The Farm roads area itself, not just two "Ready offline" texts (a row's text can change after the shot).
+            waitForDownload(900.0) { areaReady("Farm roads", 20) && count(ready) >= 2 }
+        }
         if (!areaReady("Farm roads", 20) || count(ready) < 2 || !exists(alongRoads)) return fail("No area downloaded along roads")
         sleep(2) // the rows drawn as they now read
         snap("13-offline-along-roads")
@@ -521,9 +536,11 @@ class ScreenshotTest {
             scrollTo(button("Download zoom 21"))
             snap("18-area-deeper-level")
             tap("Download zoom 21")
-            sleep(2)
-            tapBack() // back to Offline maps
-            waitForDownload(600.0) { areaReady("Farm roads", 21) && count(ready) >= 2 }
+            whileDownloading {
+                sleep(2)
+                tapBack() // back to Offline maps
+                waitForDownload(600.0) { areaReady("Farm roads", 21) && count(ready) >= 2 }
+            }
             sleep(2)
             check(areaReady("Farm roads", 21), "The roads area didn't finish its extra level")
             checkEqual(count(ready), 2, "The roads area didn't finish its extra level")
@@ -660,10 +677,8 @@ class ScreenshotTest {
         snap("36-group-map")
 
         // 37-38: a pin dropped at an empty spot, then the Kudu pin's detail.
-        val spot = emptySpot()
-        if (spot != null) {
-            device.click(spot.x.roundToInt(), spot.y.roundToInt())
-            if (waitForExistence(id("dropPin"), 10)) {
+        if (emptySpot() != null) {
+            if (tapMap("an empty spot", ::emptySpot) { exists(id("dropPin")) }) {
                 click(id("dropPin"))
                 if (waitForExistence(id("pinType-animal"), 10)) {
                     click(id("pinType-animal"))
@@ -689,10 +704,9 @@ class ScreenshotTest {
         }
         sleep(3)
         check(groupItems().any { it.kind == "pin" && it.label.startsWith("Rhino") }, "The dropped pin isn't on the map")
-        val kudu = groupItems().firstOrNull { it.kind == "pin" && it.label.startsWith("Kudu") }
-        if (kudu != null) {
-            device.click(kudu.point.x.roundToInt(), kudu.point.y.roundToInt())
-            if (waitForExistence(navigationBar("Animal sighting"), 10)) {
+        fun kudu() = groupItems().firstOrNull { it.kind == "pin" && it.label.startsWith("Kudu") }
+        if (kudu() != null) {
+            if (tapMap("the Kudu pin", { kudu()?.point }) { exists(navigationBar("Animal sighting")) }) {
                 sleep(2)
                 snap("38-pin-detail")
             } else {
@@ -895,9 +909,35 @@ class ScreenshotTest {
             ) {
                 return
             }
+            hideKeyboard() // the swipe starts where it is
             Gestures.pressAndDrag(screenPoint(0.5, 0.75), screenPoint(0.5, 0.4), 100)
             sleep(1)
         }
+    }
+
+    /** Closes the soft keyboard when it is still up, with back (which the keyboard takes for itself). The return key
+     *  typed into a field closes it, but on the slow emulator the keyboard's opening animation, still running, can drop
+     *  that: the keyboard then stayed up, and the swipes that were to scroll the form went to it (the switch "Only along
+     *  roads" was never reached). */
+    private fun hideKeyboard() {
+        if (!keyboardShown()) return
+        Log.w(TAG, "after $step: the keyboard was still up: closed with back")
+        device.pressBack()
+        waitUntil(5.0) { !keyboardShown() }
+    }
+
+    /** The soft keyboard is on screen: its window is among those accessibility services see. */
+    private fun keyboardShown(): Boolean = try {
+        val ui = instrumentation.uiAutomation
+        val info = ui.serviceInfo
+        if (info.flags and AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS == 0) {
+            info.flags = info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            ui.serviceInfo = info
+        }
+        ui.windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+    } catch (e: RuntimeException) {
+        Log.w(TAG, "The keyboard's window: ${short(e)}")
+        false
     }
 
     private fun setLocation(p: GeoPoint) {
@@ -1166,6 +1206,21 @@ class ScreenshotTest {
         return finished
     }
 
+    /** While a download runs. The screens showing it change with its progress, four times a second; on the slow
+     *  emulator, with the Offline maps sheet open, Compose then always has the next change to apply by the time it has
+     *  applied one, so it never reports idle, and every query of the screens, which first waits for idle (moving the
+     *  clock on to get there), gave up after 15 s with a ComposeNotIdleException (after screenshot 08 in most walks).
+     *  Meanwhile the clock isn't moved on to reach idle (`autoAdvance`): it moves with real time (`syncClock`), as
+     *  everywhere in the walk, so the screens keep up as on a phone, and queries read them as they are. */
+    private fun <T> whileDownloading(block: () -> T): T {
+        compose.mainClock.autoAdvance = false
+        try {
+            return block()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
     private fun waitUntil(seconds: Double, condition: () -> Boolean): Boolean {
         val end = SystemClock.uptimeMillis() + (seconds * 1000).toLong()
         while (true) {
@@ -1251,9 +1306,64 @@ class ScreenshotTest {
 
     private val density: Float get() = instrumentation.targetContext.resources.displayMetrics.density
 
+    /** A tap on the map at the iPhone's `(x, y)` (`screenPoint`), once the map stands still. */
     private fun tapScreen(x: Double, y: Double) {
+        waitForStillMap()
         val p = screenPoint(x, y)
-        device.click(p.x.roundToInt(), p.y.roundToInt())
+        if (!Gestures.tap(p)) Log.w(TAG, "after $step: the tap at (${p.x}, ${p.y}) wasn't taken")
+    }
+
+    /** Taps the map at `at` (screen pixels, asked again for each tap; null: nowhere to tap) until `took` holds: each tap
+     *  once the map stands still (so it lands on the spot the walk means, which a moving map takes away), each given 20 s
+     *  to take effect (the slow emulator has stalled for as long), and a tap that didn't take tried again, up to three
+     *  times, while nothing has come over the map. Returns whether it took. */
+    private fun tapMap(what: String, at: () -> PointF?, took: () -> Boolean): Boolean {
+        for (attempt in 1..3) {
+            if (attempt > 1 && exists(id("screenTitle"))) break // a sheet came: not the map's tap to try again
+            waitForStillMap()
+            val p = at() ?: return false
+            if (!Gestures.tap(p)) Log.w(TAG, "after $step: the tap on $what wasn't taken")
+            if (waitUntil(20.0) { took() }) {
+                if (attempt > 1) Log.w(TAG, "after $step: tapping $what took $attempt taps")
+                return true
+            }
+            Log.w(TAG, "after $step: tap $attempt on $what at (${p.x}, ${p.y}) didn't take")
+        }
+        return false
+    }
+
+    /** Waits (up to 20 s) until the map has stood still for a second: the camera's centre and scale unchanged. A camera
+     *  animation (My location, a fit) can take far longer than its time on the slow emulator. */
+    private fun waitForStillMap() {
+        var last = camera()
+        var since = SystemClock.uptimeMillis()
+        val still = waitUntil(20.0) {
+            val now = camera()
+            val same = now != null && last != null && now.indices.all { abs(now[it] - last!![it]) < 1e-7 }
+            if (!same) {
+                last = now
+                since = SystemClock.uptimeMillis()
+            }
+            same && SystemClock.uptimeMillis() - since >= 1000
+        }
+        if (!still) Log.w(TAG, "after $step: the map didn't stand still")
+    }
+
+    /** The camera as far as a tap cares: the coordinate at the map's centre, and how far apart on the screen two points
+     *  0.001° apart are (the scale); null without a map. */
+    private fun camera(): List<Double>? {
+        var camera: List<Double>? = null
+        instrumentation.runOnMainSync {
+            // (On the main thread an exception would end the app.)
+            try {
+                val map = AppModel.shared.map ?: return@runOnMainSync
+                val c = map.centerCoordinate
+                camera = listOf(c.lat, c.lon, map.pointsApart(c, GeoPoint(c.lat, c.lon + 0.001)) / 1e4)
+            } catch (e: Throwable) {
+                Log.w(TAG, "The map's camera: ${short(e)}")
+            }
+        }
+        return camera
     }
 
     /** `.frame`, in screen pixels. */

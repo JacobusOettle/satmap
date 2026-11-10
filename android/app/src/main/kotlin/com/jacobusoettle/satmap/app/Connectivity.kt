@@ -6,6 +6,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,17 +27,29 @@ class Connectivity private constructor(context: Context) {
         fun init(context: Context) {
             shared = Connectivity(context.applicationContext)
         }
-
-        /** Online means the network offers the internet, without Android's VALIDATED check: iOS's `.satisfied`
-         *  doesn't validate either (a drone controller's Wi-Fi without internet is caught by TileRepository's own
-         *  network pause). */
-        private fun read(c: NetworkCapabilities?) = State(
-            isOnline = c?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
-            isExpensive = c != null && !c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
-        )
     }
 
     private val cm = context.getSystemService(ConnectivityManager::class.java)
+
+    /** Test-only: mobile data counts as unmetered, as Wi-Fi does. For the screenshot walkthrough on an emulator whose
+     *  Wi-Fi doesn't reach the internet (now and then it comes up without working DNS, and Android uses mobile data):
+     *  the walk's downloads, Wi-Fi only as every new area is, then run on mobile data instead of waiting for Wi-Fi.
+     *  Set through the instrumentation, in the app's own process, so no user, web page or other app can set it. */
+    @VisibleForTesting
+    @Volatile
+    internal var meteredAsUnmetered = false
+        set(value) {
+            field = value
+            update(read(cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }))
+        }
+
+    /** Online means the network offers the internet, without Android's VALIDATED check: iOS's `.satisfied` doesn't
+     *  validate either (a drone controller's Wi-Fi without internet is caught by TileRepository's own network pause). */
+    private fun read(c: NetworkCapabilities?) = State(
+        isOnline = c?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true,
+        isExpensive = c != null && !c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) &&
+            !meteredAsUnmetered,
+    )
 
     // The first state is read at once. iOS starts at "online" until its first path update, but Android's
     // default-network callback never fires when there is no network at all, so that would stay online for good.
