@@ -4,6 +4,8 @@ import XCTest
 /// Zooms and pans the map the same way each time, without and with contour lines (and elevation colours), while
 /// .github/workflows/zoomtest.yml records the screen, to see where it shows empty blocks while tiles load.
 final class ZoomTests: XCTestCase {
+    /// Every launch passes "-testBuildSwitch skip", so the real test-build switch never locks these runs (read only in
+    /// the simulator and debug builds, `TestBuildConfig`).
     private let app = XCUIApplication()
 
     func testZoomRenderer() { zoomAround() }
@@ -18,7 +20,7 @@ final class ZoomTests: XCTestCase {
         XCUIDevice.shared.location = XCUILocation(location: CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: -33.918292, longitude: 18.921204),
             altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date()))
-        app.launchArguments = ["-terrainMode", terrain, "-zoomScript", "YES"]
+        app.launchArguments = ["-terrainMode", terrain, "-zoomScript", "YES", "-testBuildSwitch", "skip"]
         app.launch()
         allowPermissionPrompts()
         XCTAssertTrue(app.maps.firstMatch.waitForExistence(timeout: 30), "No map")
@@ -30,7 +32,7 @@ final class ZoomTests: XCTestCase {
         XCUIDevice.shared.location = XCUILocation(location: CLLocation(
             coordinate: CLLocationCoordinate2D(latitude: -33.918292, longitude: 18.921204),
             altitude: 0, horizontalAccuracy: 5, verticalAccuracy: 5, timestamp: Date()))
-        app.launchArguments = ["-terrainMode", terrain]
+        app.launchArguments = ["-terrainMode", terrain, "-testBuildSwitch", "skip"]
         app.launch()
         allowPermissionPrompts()
         let map = app.maps.firstMatch

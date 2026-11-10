@@ -46,3 +46,23 @@ jobs:
           plutil -extract SatMapGroupsDomain raw "$plist" | grep -Eq '^[A-Za-z0-9.-]+$' || { echo "SatMapGroupsDomain not filled in"; exit 1; }
           plutil -p "$plist" | grep -q '"satmap"' || { echo "The satmap URL scheme is missing"; exit 1; }
           test -f "$(dirname "$plist")/PrivacyInfo.xcprivacy" || { echo "Missing privacy manifest"; exit 1; }
+          # Test builds can be switched off (README): this build is on the test channel.
+          plutil -extract SatMapChannel raw "$plist" | grep -qx test || { echo "SatMapChannel isn't test"; exit 1; }
+
+      - name: Check the test-build channel settings
+        run: |
+          # The channel is the SATMAP_CHANNEL build setting, through the Info.plist key and compiled in as the Swift
+          # condition SATMAP_CHANNEL_<value> (SatMap/App/Config.swift). A store build sets SATMAP_CHANNEL=store, which
+          # must reach the compiled condition, and Debug must keep DEBUG (debug builds never check).
+          conditions() {
+            xcodebuild -showBuildSettings -project SatMap.xcodeproj -target SatMap "$@" 2>/dev/null \
+              | sed -n 's/^ *SWIFT_ACTIVE_COMPILATION_CONDITIONS = //p' | head -n 1
+          }
+          release=" $(conditions -configuration Release) "; echo "Release:$release"
+          debug=" $(conditions -configuration Debug) "; echo "Debug:$debug"
+          store=" $(conditions -configuration Release SATMAP_CHANNEL=store) "; echo "Release, SATMAP_CHANNEL=store:$store"
+          case "$release" in *" SATMAP_CHANNEL_test "*) ;; *) echo "Release isn't on the test channel"; exit 1 ;; esac
+          case "$release" in *" DEBUG "*) echo "Release has DEBUG"; exit 1 ;; esac
+          case "$debug" in *" DEBUG "*) ;; *) echo "Debug lost DEBUG"; exit 1 ;; esac
+          case "$store" in *" SATMAP_CHANNEL_store "*) ;; *) echo "SATMAP_CHANNEL=store doesn't reach the compiled channel"; exit 1 ;; esac
+          case "$store" in *SATMAP_CHANNEL_test*) echo "A store build still has the test condition"; exit 1 ;; esac

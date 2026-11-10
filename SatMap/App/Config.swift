@@ -73,12 +73,20 @@ enum LocationPolicy {
 
 /// Test builds can be switched off (README; the rule is `TestBuildSwitch`, the app's side `TestBuildGate`).
 enum TestBuildConfig {
-    /// The build's channel: the build setting `SATMAP_CHANNEL`, through the Info.plist key `SatMapChannel`. The
-    /// project sets `test`, which the IPA CI publishes on GitHub (`.github/workflows/ipa.yml`) keeps. A store build sets
-    /// `store`: `xcodebuild archive … SATMAP_CHANNEL=store`, or in Xcode the SatMap target › Build Settings ›
-    /// User-Defined › SATMAP_CHANNEL for the configuration that is archived. Anything but exactly `store` (also an
-    /// empty or missing setting) is `test`.
+    /// The build's channel: the build setting `SATMAP_CHANNEL`, through the Info.plist key `SatMapChannel` and, at
+    /// compile time, the Swift condition `SATMAP_CHANNEL_<value>` (the target's SWIFT_ACTIVE_COMPILATION_CONDITIONS).
+    /// The project sets `test`, which the IPA CI publishes on GitHub (`.github/workflows/ipa.yml`) keeps. A store build
+    /// sets `store`: `xcodebuild archive … SATMAP_CHANNEL=store`, or in Xcode the SatMap target › Build Settings ›
+    /// User-Defined › SATMAP_CHANNEL for the configuration that is archived; that one setting sets both. Anything but
+    /// exactly `store` (also an empty or missing setting) is `test`.
+    ///
+    /// A store build needs both to say so: the IPA is unsigned and every tester re-signs it, so the Info.plist key
+    /// alone could be edited in a copy that is passed on. The compiled condition can't be without patching the binary.
+    #if SATMAP_CHANNEL_store
     static let channel = TestBuildSwitch.Channel(setting: Bundle.main.object(forInfoDictionaryKey: "SatMapChannel") as? String)
+    #else
+    static let channel = TestBuildSwitch.Channel.test
+    #endif
 
     /// Debug builds (Xcode's Debug configuration) never check and never lock.
     #if DEBUG

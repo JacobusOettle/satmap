@@ -613,7 +613,14 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     }
 
     private func startNextIfIdle() {
-        guard task == nil, startingArea == nil, !lockedDown else { return }
+        guard task == nil, startingArea == nil else { return }
+        guard !lockedDown else {
+            // Locked (test builds switched off) with nothing running: the screen may sleep, and the system's progress
+            // bar and background time end, as after a pause.
+            updateIdleTimer()
+            background.end(success: false)
+            return
+        }
         guard inForeground || background.allowsBackgroundWork, !holdDownloads else {
             background.end(success: lastRunComplete)
             return

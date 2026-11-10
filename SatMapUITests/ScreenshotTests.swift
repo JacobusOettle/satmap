@@ -71,7 +71,8 @@ final class ScreenshotTests: XCTestCase {
     }
 
     /// Shot 41: the full-screen lock test builds show when the switch is off, forced with sample texts and links
-    /// (`-testBuildSwitch sampleOff`, the simulator / debug only), from a fresh start.
+    /// (`-testBuildSwitch sampleOff`, the simulator / debug only), from a fresh start. Then the checks that nothing
+    /// opens over it and that it scrolls.
     private func testBuildOffScreenshot() {
         app.terminate()
         app.launchArguments = ["-groupsDemo", "YES", "-testBuildSwitch", "sampleOff"]
@@ -97,6 +98,32 @@ final class ScreenshotTests: XCTestCase {
             sleep(1)
         }
         snap("41-test-build-off")
+
+        // Nothing opens over the lock: the landing page's satmap:// invite link does nothing while locked.
+        XCUIDevice.shared.system.open(URL(string: braaiClubSchemeLink)!)
+        let open = springboard.buttons["Open"]
+        if open.waitForExistence(timeout: 5) { open.tap() }
+        sleep(4)
+        XCTAssertFalse(app.buttons["joinGroup"].exists, "An invite link opened the join sheet while locked")
+        XCTAssertTrue(app.buttons["testBuildLink-appStore"].isHittable, "Something covers the lock after an invite link")
+
+        testBuildLockScrolls()
+    }
+
+    /// The lock scrolls when its texts don't fit (here the largest accessibility text size), so its buttons can always
+    /// be reached.
+    private func testBuildLockScrolls() {
+        app.terminate()
+        app.launchArguments = ["-groupsDemo", "YES", "-testBuildSwitch", "sampleOff",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let website = app.buttons["testBuildLink-website"]
+        guard website.waitForExistence(timeout: 20) else { return XCTFail("The test-build lock didn't show with large text") }
+        for _ in 0..<8 where !website.isHittable {
+            app.swipeUp()
+            sleep(1)
+        }
+        XCTAssertTrue(website.isHittable, "The lock's Website button can't be reached with large text")
     }
 
     /// Shots 01–27: the map, measuring, blocks, offline maps and drone mode. A step that can't go on returns early;

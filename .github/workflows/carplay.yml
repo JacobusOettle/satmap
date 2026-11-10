@@ -95,7 +95,8 @@ jobs:
           xcrun simctl spawn "$UDID" log stream --level debug --style compact \
             --predicate 'subsystem == "com.jacobusoettle.satmap"' > carplay/app.log 2>&1 &
           LOGPID=$!
-          xcrun simctl launch "$UDID" com.jacobusoettle.satmap
+          # The real test-build switch never locks this run (the launch argument is read only in the simulator).
+          xcrun simctl launch "$UDID" com.jacobusoettle.satmap -testBuildSwitch skip
           sleep 40
           xcrun simctl io "$UDID" screenshot --display=internal carplay/phone.png || true
           xcrun simctl io "$UDID" screenshot --display=external carplay/car-home.png || true

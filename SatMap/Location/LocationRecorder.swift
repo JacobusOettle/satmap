@@ -123,7 +123,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         self.locked = locked
         if locked {
             manager.stopUpdatingLocation()
-            manager.stopUpdatingHeading()
+            updateHeading() // stops the compass
             motion.stopActivityUpdates()
             motionAvailable = false
             for t in [stationaryTimer, dutyTimer, peekTimer, peekEndTimer] { t?.invalidate() }
@@ -196,7 +196,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     private func updateHeading() {
         guard CLLocationManager.headingAvailable() else { return }
-        if headingWanted {
+        // No compass while test builds are switched off, whatever the map wants (`setLocked` calls this again).
+        if headingWanted && !locked {
             manager.headingFilter = 2
             applyHeadingOrientation()
             manager.startUpdatingHeading()
@@ -219,7 +220,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateHeading heading: CLHeading) {
-        guard headingWanted else { return }
+        guard headingWanted, !locked else { return }
         guard heading.headingAccuracy >= 0 else {
             onHeading?(nil)
             return
@@ -229,7 +230,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     /// iOS's calibration screen only while the compass can't tell at all (the arrow is hidden then).
     func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
-        headingWanted && (manager.heading?.headingAccuracy ?? -1) < 0
+        headingWanted && !locked && (manager.heading?.headingAccuracy ?? -1) < 0
     }
 
     // MARK: - CLLocationManagerDelegate
@@ -247,7 +248,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let loc = locations.last, loc.horizontalAccuracy >= 0, abs(loc.timestamp.timeIntervalSinceNow) < 20 else { return }
+        // A fix still on its way when test builds were switched off isn't recorded.
+        guard !locked, let loc = locations.last, loc.horizontalAccuracy >= 0, abs(loc.timestamp.timeIntervalSinceNow) < 20 else { return }
         let now = Date()
 
         if power == .sleeping {

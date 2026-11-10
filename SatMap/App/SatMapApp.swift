@@ -15,6 +15,9 @@ struct SatMapApp: App {
                 // (`TestBuildLockHost`). Shown from the gate, which also starts locked from the kept state.
                 .onReceive(model.testBuild.$lock) { TestBuildLockHost.shared.update($0) }
                 .onOpenURL { url in
+                    // Nothing while test builds are switched off: the lock covers everything, links and files shared
+                    // into the app too (a shared file stays where it was).
+                    guard model.testBuild.lock == nil else { return }
                     // A group invite (https://{domain}/j/… as a universal link, or the landing page's satmap://join/…):
                     // the join sheet, never a join by itself (docs/groups/SPEC.md §5.6). A link without its key shows
                     // the incomplete-link text.

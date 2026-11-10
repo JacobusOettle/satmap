@@ -117,7 +117,8 @@ final class GroupsModel: ObservableObject {
             .filter { $0 }
             .sink { [weak self] _ in
                 DispatchQueue.main.async {
-                    guard let self = self else { return }
+                    // Locked (test builds switched off): nothing is uploaded; unlocking flushes everything.
+                    guard let self = self, !self.locked else { return }
                     self.afterStart { await $0.connectivityChanged(online: true) }
                 }
             }
@@ -396,6 +397,8 @@ final class GroupsModel: ObservableObject {
     /// An invite link arrived (`onOpenURL`, the paste field or the scanner): S8 over anything, never a join by itself
     /// (§5.6). A group you're already in opens its screen and says so instead.
     func openInvite(_ parsed: InviteLink.Parsed) {
+        // Nothing while test builds are switched off: the lock covers everything, links too.
+        guard !locked else { return }
         if case .invite(let link) = parsed, let d = hub.detail(link.groupIdText) {
             // Over S5 once its sheet is up: timed from the sheet's opening (another sheet may close first), and the
             // alert waits while the sheet is still sliding in.
@@ -572,8 +575,7 @@ final class GroupsModel: ObservableObject {
 /// Alerts and toasts over whatever is on screen (a sheet, another sheet over it), for what the hub says on its own.
 enum TopPresenter {
     static var top: UIViewController? {
-        let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
-        guard var top = window?.rootViewController else { return nil }
+        guard var top = UIApplication.shared.screensWindow?.rootViewController else { return nil }
         while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
         return top
     }
@@ -611,9 +613,9 @@ enum TopPresenter {
         vc.isBeingPresented || vc.isBeingDismissed || vc.presentedViewController != nil || vc.transitionCoordinator != nil
     }
 
-    /// A capsule near the bottom of the key window for two seconds.
+    /// A capsule near the bottom of the app's window for two seconds.
     static func toast(_ text: String) {
-        guard let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return }
+        guard let window = UIApplication.shared.screensWindow else { return }
         let label = PaddedLabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)
