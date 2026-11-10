@@ -781,6 +781,9 @@ class ScreenshotTest {
                 check(exists(id("testBuildLink-googlePlay")), "No Google Play button on the lock screen")
                 check(exists(id("testBuildLink-website")), "No Website button on the lock screen")
                 check(!exists(id("terrainButton")), "The map's buttons are still there behind the lock")
+                // How android.yml's launch check knows a shown lock when the live switch is off: its resource id in
+                // the accessibility tree (`MapScreen` sets testTagsAsResourceId), as `uiautomator dump` reads it.
+                check(device.hasObject(By.res("testBuildLock")), "The lock has no resource id testBuildLock for UiAutomator")
             } else {
                 fail("The test-build lock didn't show")
             }

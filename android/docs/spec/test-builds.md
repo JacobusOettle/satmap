@@ -142,8 +142,9 @@ recording and the compass restart (on screen), the permissions skipped are asked
 - The walkthrough never checks the live switch: `TestBuildGate.disableForTests()` is called in the app's own process
   (never an intent extra, which a release build would read; the earlier security review found exactly that risk,
   D24). Screenshot **41-test-build-off** forces `TestBuildSwitch.sample`'s lock through `forceLockedForTests`, as the
-  iPhone forces it with its launch argument, checks both buttons and that the map's buttons are gone, then unlocks and
-  checks that the map comes back.
+  iPhone forces it with its launch argument, checks both buttons, that the map's buttons are gone and that UiAutomator
+  finds the lock by its resource id `testBuildLock` (what the CI launch check looks for, section 8), then unlocks
+  (whatever happened, as `InviteIntentTest` follows in the same process) and checks that the map comes back.
 
 ## 7. Privacy
 
@@ -154,8 +155,9 @@ purpose and privacy files (`SatMap/PrivacyInfo.xcprivacy`, Info.plist purpose st
 
 `android.yml`'s "Check that the app opens" starts the release APK, a test build reading the live switch, on an
 emulator and expects the map in the middle of the screen. While test builds are switched off, that build shows the lock
-instead, so the check first reads the screen's accessibility tree (`adb shell uiautomator dump`; `MapScreen` sets
-`testTagsAsResourceId`): when it finds `resource-id="testBuildLock"`, the lock is counted as a good launch and the
+instead, so the check first reads the accessibility tree of every window on screen (`adb shell uiautomator dump
+--windows`, as a system dialog can be the active window; `MapScreen` sets `testTagsAsResourceId`): when it finds
+`resource-id="testBuildLock"`, the lock is counted as a good launch and the
 map-pixel check is skipped (the crash, ANR and resumed-activity checks still run). So pushes stay green and the
 `android-test-build` release is still updated while the switch is off; that build shows the lock too, until the switch
 is on again.
