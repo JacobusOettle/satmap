@@ -1,0 +1,99 @@
+# Throwaway probe (branch claude/cdngi-speedtest only): how the CD:NGI geoportal serves orthophoto downloads,
+# and a few polite single-request throughput measurements from an Azure-hosted runner.
+name: cdngi-probe
+
+on:
+  push:
+    branches: [claude/cdngi-speedtest]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Runner location
+        run: |
+          curl -sS -m 20 https://ipinfo.io/json | grep -E '"(city|region|country|org)"' || true
+
+      - name: Portal page and its scripts
+        run: |
+          UA="SatMap download speed test (one-off, a few files)"
+          mkdir -p out/portal && cd out/portal
+          P=https://ngigeoportal.dlrrd.gov.za/cdngiportal/
+          curl -sS -A "$UA" -m 90 -L -c cj.txt -b cj.txt -v -o portal.html \
+            -w 'final=%{url_effective} code=%{http_code} size=%{size_download} t=%{time_total}\n' "$P" 2> portal.verbose || true
+          grep -E '^(< |> GET|> Host)' portal.verbose | grep -v -i cookie | head -60
+          ls -la
+          python3 - <<'PY'
+          import re, html, urllib.parse, subprocess, json
+          page = open('portal.html', encoding='utf-8', errors='replace').read()
+          eff = 'https://ngigeoportal.dlrrd.gov.za/cdngiportal/'
+          srcs = re.findall(r'<script[^>]*\bsrc="([^"]+)"', page)
+          links = re.findall(r'href="([^"]+\.(?:pdf|js|aspx|ashx)[^"]*)"', page)
+          print("SCRIPTS:", json.dumps(srcs, indent=1))
+          print("LINKS:", json.dumps(sorted(set(links)), indent=1))
+          idx = []
+          for i, s in enumerate(srcs):
+              u = urllib.parse.urljoin(eff, html.unescape(s))
+              if 'googleapis' in u: continue
+              fn = f'script_{i:02d}.js'
+              r = subprocess.run(['curl','-sS','-A','SatMap download speed test (one-off, a few files)','-m','120','-b','cj.txt',
+                                  '-o',fn,'-w','%{http_code} %{size_download}',u], capture_output=True, text=True)
+              idx.append((fn, u, r.stdout))
+              print(fn, r.stdout, u[:200])
+          open('scripts_index.txt','w').write('\n'.join(f'{a}\t{c}\t{b}' for a,b,c in idx))
+          PY
+          ls -la
+
+      - name: Grep scripts for download / Apollo / email logic
+        run: |
+          cd out/portal
+          for k in apolloLinksEnabled getApolloFileLinksEnabled ClipZipShip clipZipShip EntireImage entireImage provision Provision emailAddress 'erdas-apollo' '/content/catalog' 'catalog/items' 'Download' 'download.ashx' 'Download.ashx' 'Login' 'login' 'Register' 'register' 'ProxyHandler' 'Proxy.WebClient' 'wps' 'WPS'; do
+            n=$(cat script_*.js portal.html 2>/dev/null | grep -a -o -- "$k" | wc -l); echo "== $k : $n"
+          done
+          python3 - <<'PY'
+          import glob, re
+          keys = ['apolloLinksEnabled','getApolloFileLinksEnabled','ClipZipShip','entireImage','EntireImage','provision','emailAddress',
+                  'erdas-apollo','catalog/items','downloadEnabled','downloadIsAllowed','fileURI','ApolloDownload','DownloadApollo','sendEmail']
+          for f in sorted(glob.glob('script_*.js')) + ['portal.html']:
+              d = open(f, encoding='utf-8', errors='replace').read()
+              for k in keys:
+                  for mm in list(re.finditer(re.escape(k), d))[:6]:
+                      s = d[max(0, mm.start()-300): mm.end()+300].replace('\n', ' ')
+                      print(f'--- {f} [{k}] @{mm.start()}: {s}')
+          PY
+
+      - name: Login / account pages (GET only, nothing submitted)
+        run: |
+          UA="SatMap download speed test (one-off, a few files)"
+          cd out/portal
+          for u in https://ngigeoportal.dlrrd.gov.za/cdngiportal/Login.aspx https://ngigeoportal.dlrrd.gov.za/cdngiportal/CDNGI.aspx https://ngigeoportal.dlrrd.gov.za/; do
+            echo "== $u"; curl -sS -A "$UA" -m 60 -o /dev/null -D - "$u" | grep -i -E '^(HTTP|location|content-type|content-length)' || true; sleep 2
+          done
+
+      - name: Throughput (one request each, single connection)
+        run: |
+          UA="SatMap download speed test (one-off, a few files)"
+          W='code=%{http_code} bytes=%{size_download} ttfb=%{time_starttransfer}s total=%{time_total}s speed=%{speed_download}B/s connect=%{time_connect}s tls=%{time_appconnect}s ip=%{remote_ip}\n'
+          echo "== Apollo static file (Studio bundle, ~82 MB, no compression)"
+          curl -sS -A "$UA" -m 600 -H 'Accept-Encoding: identity' -o /dev/null -w "$W" https://bp-cdngiapollo.dlrrd.gov.za/erdas-apollo/studio/main.5f5fe70e0db35047ab51.js || true
+          sleep 3
+          echo "== Portal static PDF (ContactDetails.pdf)"
+          curl -sS -A "$UA" -m 300 -o /dev/null -w "$W" https://ngigeoportal.dlrrd.gov.za/CDNGIPORTAL/docs/ContactDetails.pdf || true
+          sleep 3
+          echo "== WMS GetMap 4096x4096 JPEG, 25 cm Western Cape mosaic (3319AA_01 sheet area)"
+          curl -sS -A "$UA" -m 600 -o wms.jpg -w "$W" 'https://bp-cdngiapollo.dlrrd.gov.za/erdas-iws/ogc/wms/CDNGI_IMAGERY_MOSAICS?SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=CDNGI_Imagery_25cm_MOSAIC_Western_Cape_2021&STYLES=&SRS=EPSG:4326&BBOX=18.9984,-33.0514,19.0516,-32.9986&WIDTH=4096&HEIGHT=4096&FORMAT=image/jpeg' || true
+          file wms.jpg || true
+          echo "== Apollo catalog item JSON (3319AA_01_2022_1563_RGB_RECT)"
+          curl -sS -A "$UA" -m 60 -o /dev/null -w "$W" https://bp-cdngiapollo.dlrrd.gov.za/erdas-apollo/content/catalog/items/1b70e1f28f095e4f018f09ff98860f41 || true
+
+      - name: Upload portal files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdngi-portal
+          path: out/portal
+          retention-days: 3
