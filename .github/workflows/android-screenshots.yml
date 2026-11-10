@@ -342,6 +342,9 @@ jobs:
       - name: Fail unless every check passed
         if: always()
         run: |
+          # Map taps that needed more than one try (ScreenshotTest.tapMap retries a tap the app didn't take): shown as
+          # warnings, so an app that starts dropping taps is noticed even when the retry makes the check pass.
+          grep -hoE 'after [0-9a-z-]+: tapping .* took [0-9]+ taps' logcat-full.txt logcat.txt 2> /dev/null | sort -u | sed 's/^/::warning::/' || true
           if grep -qE '^OK \(' test-output.txt 2> /dev/null; then
             echo "The walk finished with every check passed: $(grep -E '^OK \(' test-output.txt)"
             exit 0
