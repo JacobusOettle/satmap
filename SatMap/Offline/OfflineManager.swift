@@ -213,21 +213,19 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Pauses or resumes downloads while test builds are switched off (`TestBuildGate`). A running download is paused
-    /// (keeping what is saved) and continues when it unlocks; nothing else starts meanwhile.
+    /// Stops or lets downloads go on while test builds are switched off (`TestBuildGate`). A running download stops
+    /// (keeping what is saved) and is queued again, as when the background time ends, so it carries on by itself when
+    /// it unlocks, even after SatMap was closed meanwhile; nothing starts while locked (`startNextIfIdle`).
     func setLocked(_ locked: Bool) {
         guard locked != lockedDown else { return }
         lockedDown = locked
         if locked {
             if let id = activeID {
-                pausedForLock = id
-                pause(id)
+                // The run ends as cancelled; `finished` keeps a queued area queued.
+                update(id) { if $0.status == .downloading { $0.status = .queued } }
+                task?.cancel()
             }
-        } else if let id = pausedForLock, areas.contains(where: { $0.id == id && $0.status == .paused }) {
-            pausedForLock = nil
-            resume(id)
         } else {
-            pausedForLock = nil
             startNextIfIdle()
         }
     }
@@ -263,10 +261,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     /// From an export starting until its share sheet closes no download starts: an exported area's files must not
     /// change while they are prepared or copied.
     private var holdDownloads = false
-    /// While test builds are switched off (`TestBuildGate`): no download starts, and the one running is paused and
-    /// resumed when it unlocks. What is saved is kept.
+    /// While test builds are switched off (`TestBuildGate`): no download starts, and the one running is queued again
+    /// and continues when it unlocks. What is saved is kept.
     private var lockedDown = false
-    private var pausedForLock: UUID?
     /// The download paused for an export, resumed by `finishExport`.
     private var pausedForExport: UUID?
 
