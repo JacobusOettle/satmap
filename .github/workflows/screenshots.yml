@@ -59,6 +59,8 @@ jobs:
         run: |
           xcrun simctl install "$UDID" build/Build/Products/Release-iphonesimulator/SatMap.app
           xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
+          # Pre-grant Motion & Fitness too, so its prompt never floats over a screenshot (the lock shot especially).
+          xcrun simctl privacy "$UDID" grant motion com.jacobusoettle.satmap || true
           DATA=$(xcrun simctl get_app_container "$UDID" com.jacobusoettle.satmap data)
           KML="$DATA/Library/Application Support/SatMap/KML"
           mkdir -p "$KML"
