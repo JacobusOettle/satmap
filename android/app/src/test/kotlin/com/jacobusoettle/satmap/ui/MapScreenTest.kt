@@ -85,6 +85,7 @@ class MapScreenTest {
     }
 
     private val buttons = listOf(
+        "groupsButton" to "Groups",
         "terrainButton" to "Contour lines",
         "blocksButton" to "Blocks",
         "offlineButton" to "Offline maps",

@@ -846,8 +846,10 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 └─ ShareHost()                                                       // WP-E: chooser + folder picker launchers
 ```
 
-- `Controls` (top to bottom): a 44 dp compass slot, then Terrain, Blocks, Offline maps, Go to coordinates, Measure and My location.
+- `Controls` (top to bottom): a 44 dp compass slot, then Groups, Terrain, Blocks, Offline maps, Go to coordinates, Measure and My location.
   - The buttons are 50 dp circles with 12 dp between them.
+  - One column while it fits the height the top panels leave; otherwise a grid of 50 dp cells, 12 dp apart, filled from
+    My location at the bottom right (`mapButtonGrid`, UI spec §2.4.5, groups §9.1).
   - The terrain toast is laid out at zero size beside the Terrain button.
 - Each composable collects only what it shows (UI spec §6.5). A pan therefore recomposes only `AimPanel`; a zoom only the scale bar and the keys.
 - The screen stays on while `offline.activeID != null` (`view.keepScreenOn` in a `DisposableEffect`).
