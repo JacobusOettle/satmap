@@ -1,0 +1,106 @@
+name: Switch test builds
+
+# Turns SatMap's test builds (the IPA and APK on GitHub releases; never App Store or Google Play builds) on or off.
+# It rewrites test-builds.json on the app-status branch, which test builds read at launch, when they come to the
+# foreground and every 5 minutes while open: "off" locks every test build that is online within minutes (a copy that is
+# offline locks as soon as it next gets signal); "on" unlocks them. Run it from the Actions tab (or the GitHub app):
+# "Run workflow", pick on or off. The links are shown as buttons on the lock screen; only apps.apple.com,
+# play.google.com and github.com/JacobusOettle links are shown by the apps.
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: "Test builds"
+        type: choice
+        options: ["off", "on"]
+        required: true
+        default: "off"
+      title:
+        description: "Lock screen title (empty: the default)"
+        type: string
+        default: ""
+      message:
+        description: "Lock screen message (empty: the default)"
+        type: string
+        default: ""
+      app_store_url:
+        description: "App Store link (https://apps.apple.com/...), optional"
+        type: string
+        default: ""
+      play_store_url:
+        description: "Google Play link (https://play.google.com/...), optional"
+        type: string
+        default: ""
+      website_url:
+        description: "Website link (https://github.com/JacobusOettle/...), optional"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: switch-test-builds
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: app-status
+
+      - name: Write test-builds.json
+        env:
+          STATE: ${{ inputs.state }}
+          TITLE: ${{ inputs.title }}
+          MESSAGE: ${{ inputs.message }}
+          APP_STORE_URL: ${{ inputs.app_store_url }}
+          PLAY_STORE_URL: ${{ inputs.play_store_url }}
+          WEBSITE_URL: ${{ inputs.website_url }}
+        run: |
+          python3 -I - <<'EOF'
+          import datetime, json, os, sys
+          from urllib.parse import urlparse
+
+          def link(name, hosts):
+              v = os.environ.get(name, "").strip()
+              if not v:
+                  return None
+              u = urlparse(v)
+              ok = u.scheme == "https" and (u.hostname in hosts or (u.hostname == "github.com" and u.path.startswith("/JacobusOettle/")))
+              if not ok:
+                  sys.exit(f"{name}: {v!r} is not an https link the apps would show")
+              return v
+
+          state = os.environ["STATE"]
+          if state not in ("on", "off"):
+              sys.exit(f"state must be on or off, not {state!r}")
+          doc = {
+              "schema": 1,
+              "testBuilds": state,
+              "title": os.environ.get("TITLE", "").strip()[:120] or "This test version of SatMap has been switched off",
+              "message": os.environ.get("MESSAGE", "").strip()[:500]
+                  or "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+              "appStoreURL": link("APP_STORE_URL", {"apps.apple.com"}),
+              "playStoreURL": link("PLAY_STORE_URL", {"play.google.com"}),
+              "websiteURL": link("WEBSITE_URL", set()),
+              "updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+          }
+          with open("test-builds.json", "w") as f:
+              json.dump(doc, f, indent=2)
+              f.write("\n")
+          print(json.dumps(doc, indent=2))
+          EOF
+
+      - name: Publish it
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test-builds.json
+          if git diff --cached --quiet; then echo "Already ${{ inputs.state }}."; exit 0; fi
+          git commit -q -m "Test builds: ${{ inputs.state }}"
+          git push origin HEAD:app-status
+          echo "Test builds are now ${{ inputs.state }}. Online test builds follow within about 5 to 10 minutes."
