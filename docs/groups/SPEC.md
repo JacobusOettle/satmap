@@ -102,7 +102,7 @@ blocking also work while the group is paused.
 | SD18 | Invites still work while a group is paused, so a friend with Pro can be invited and take over. |
 | SD19 | Coordinates travel as integer micro-degrees (1e-6°, about 11 cm). |
 | SD20 | While `ALLOW_TEST_PURCHASES` is true (the default), the server accepts App Store Sandbox purchases (App Review and TestFlight use them) and Google test purchases, and treats each as ending 14 days after its original purchase date (Apple `originalPurchaseDate`; Google subscription `startTime`, one-time `purchaseCompletionTime`), so a tester's sandbox Lifetime is not free Pro for good. The "Xcode" environment is accepted only when a test variable is set. |
-| SD21 | The Groups button is the first button of the right-hand column, directly above the terrain button. Where the taller column doesn't fit two buttons above the bottom, the buttons come down into the room kept for a tapped spot's coordinates, but not onto them (§9.1). |
+| SD21 | The Groups button is the top button of the right-hand button column, directly above the terrain button (under the compass's place). Where the taller column doesn't fit (small phones, landscape, tall panels at the top), the buttons go in columns side by side, with My location still at the bottom right (§9.1). |
 | SD22 | For 30 days after removal, a removed member's requests get "removed" (so the app can say so); a deleted group answers "deleted". After that both get the generic answers. |
 | SD23 | An invite dies with its maker's admin role: removing an admin, demoting an admin to member, or an admin leaving cancels every pending invite they made (R4: a removed admin's links must not let anyone back in). |
 | SD24 | Deleted ids are never reused. A `pinId` or `memberId` that appears in `removals` is refused (§6.5 E10, E23), so a retry can't bring back a pin a moderator deleted. |
@@ -2753,24 +2753,29 @@ year).
 
 - **Groups button** (SD21): a `MapButton` with SF Symbol `person.3.fill` (Android: a matching `SatIcons.Person3`
   vector) and label "Groups" (the VoiceOver label; Android `contentDescription` "Groups", testTag `groupsButton`).
-  - The first button of the right-hand `controls` column: under the compass's place, directly above the terrain
-    button (the mountain; the plane in drone mode), with the column's 12 pt/dp gap.
+  - The first button of the right-hand `controls` column: under the compass's 44 pt/dp slot and 12 pt/dp above the
+    terrain button (the mountain, a plane in drone mode), like every button there. Nothing is at the left edge.
   - It is shown whenever the column is (not while drawing an area).
   - It is `active` (yellow) while a group is shown on the map.
   - Tap: `model.sheet = .groups` (new `ActiveSheet` case `groups`).
-  - The column is one button (62 pt/dp) taller: 478 pt/dp with the compass's place. The row of legends and buttons
-    still sits two buttons (`controlsLift`, 124 pt/dp) above the bottom wherever that fits. Where the room under
-    the panels at the top is shorter (a small phone, or tall panels such as measuring), the row comes down into the
-    room kept for a tapped spot's coordinates, staying the stack's 8 pt/dp under the panels, but never lower than
-    42 pt/dp above the bottom (that coordinate row, 34, and a gap of 8). The buttons keep their size and gaps.
-    Shorter still, the screen overflows as before.
-    - iOS: `BottomRowLayout` (a `Layout`) holds the row, in place of the `Spacer` above it and its bottom padding.
-    - Android: the same, in `MapOverlay`.
-    - An iPhone SE (375 × 667 pt) with your coordinates at the top: the row is 119 pt above the bottom; with the
-      paused banner too, about 60. On the iPhone of the screenshots it comes down only under the taller measuring
-      panels (shots 02, 08, 16 and 19).
-    - Landscape has no layout of its own (as before): a phone's landscape height (about 410 pt at most) can't hold
-      the column, with or without the Groups button (it was 416 pt before).
+- **Fitting the buttons** (the same rule on both apps): the column is now the compass slot and seven buttons, 478
+  pt/dp tall. Over the lift (124 pt/dp, plus the 8 pt/dp bottom padding) it doesn't fit under the top panels on a
+  small phone (iPhone SE, 375 × 667 pt; a 360 × 640 dp Android phone; both stack the coordinate bars), in
+  landscape on any phone, or under tall panels (a download banner over a measure panel). Tighter spacing alone
+  can't help in landscape: with no gaps at all the slots are 394 pt/dp, and a phone on its side has at most about
+  420 pt/dp of safe height, before the lift and the top bars.
+  - While the column fits the height it is offered (what the top panels leave), it is one column, exactly as above.
+  - Otherwise the buttons form a grid of 50 pt/dp cells, 12 pt/dp apart both ways, with as many rows as fit (at least
+    one). It is filled from the last button: My location stays at the bottom right, and each column is filled from
+    the bottom up, right to left. The leftmost column holds the first buttons from its top, so the compass slot is at
+    the top left (centred in its cell) and Groups under it. The grid sits where the column did, on the lift.
+  - So the first 56 pt/dp of shortfall only moves the compass slot (empty unless the map is turned) to a second
+    column beside Groups, and no button moves; in landscape the buttons are two or three rows of columns.
+  - iOS: `controls` is a `Layout` (`MapButtonsLayout`, the grid from core's `MapButtonGrid`), offered the height the
+    `VStack` leaves: the bottom `HStack` takes the room under the panels with `.frame(maxHeight: .infinity,
+    alignment: .bottom)` in place of the `Spacer` above it. (Not `.layoutPriority(1)`: that offers the row the room
+    less the panels' smallest sizes, so a hint that wraps could be cut to one line.) Android: `Controls` is a
+    `Layout` (`mapButtonGrid`), measured with the height `MapOverlay`'s `Column` leaves.
 - **Paused banner:** an existing `Hint` in the top stack, under the location hints, while the shown group is paused
   (id `groupPausedHint`).
 
@@ -3662,7 +3667,8 @@ Each core has the same tests: Swift in `Tests/SatMapCoreTests/Group*Tests.swift`
 - `GroupHttpTest`: OkHttp transport and socket against MockWebServer (headers, status mapping, offline)
 - `ProStoreTest`: with the fake `BillingGateway`; `updatePro` gets `expiresAt` nil
 - `LocationServiceTest`: the notification title, content text and big-text lines (§11.6)
-- `MapScreenTest`: the Groups button position and the banner
+- `MapScreenTest`, `MapScreenGroupsTest`: the Groups button at the top of the right-hand column (columns side by side
+  in a small landscape window, §9.1) and the banner
 
 **Instrumented** (emulator, `android-screenshots.yml`): the walkthrough steps in §9.7, plus `InviteIntentTest`
 (§5.6).
@@ -3671,6 +3677,8 @@ Each core has the same tests: Swift in `Tests/SatMapCoreTests/Group*Tests.swift`
 
 - `build.yml` compiles the app and checks the plist keys.
 - The walkthrough (`screenshots.yml`) covers §9.7.
+- `MapButtonGridTests` (core): the map buttons' column, or grid where it doesn't fit (§9.1), the same cases as
+  Android's `MapScreenPiecesTest`.
 - The link check is walkthrough step 41, inside `ScreenshotTests` (§9.7), not a shell step: a shell step can't see
   accessibility ids, and `simctl openurl` would launch the app without its demo arguments.
 - There is no iOS unit-test target: the logic is in core.

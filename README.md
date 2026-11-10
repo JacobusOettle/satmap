@@ -79,9 +79,9 @@ are in [docs/screenshots/android](docs/screenshots/android):
 
 A group is a small set of people (a drone team, friends on a Kruger trip) who see each other on the map: each
 member's live position, the trail each member leaves, and pins they drop (an animal sighting, shelter, water,
-danger, a pothole, police), each with a short note. Tap **Groups** (the top button on the right of the map) to create a
-group (it needs SatMap Pro: monthly, yearly or once; members join free) or to join one with an invite link or QR
-code, which works once, for 7 days. Everything a group shares is encrypted on the phones (AES-256-GCM, with a key
+danger, a pothole, police), each with a short note. Tap **Groups** (the top button on the right of the map) to
+create a group (it needs SatMap Pro: monthly, yearly or once; members join free) or to join one with an invite link
+or QR code, which works once, for 7 days. Everything a group shares is encrypted on the phones (AES-256-GCM, with a key
 that travels only inside the invite link), so the server stores and forwards only what it can't read. In a group's
 screen you choose whether it shows on the map and whether you share your location with it (asked once, with what
 it means); sharing goes on in the background through the same recording as your dotted track, and stops for a

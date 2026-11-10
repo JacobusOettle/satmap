@@ -75,20 +75,22 @@ struct MapScreen: View {
                 if model.isDrawingArea {
                     Spacer()
                 } else {
-                    // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
-                    // bottom of the screen to a tapped spot's coordinates; lower on a short screen (groups §9.1).
-                    BottomRowLayout(lift: Self.minControlsLift...Self.controlsLift) {
-                        HStack(alignment: .bottom) {
-                            // The contour interval above the scale bar, the elevation colours' heights under it.
-                            VStack(alignment: .leading, spacing: 8) {
-                                ContourKeyView(legend: model.legend)
-                                ScaleBarView(scale: model.scale, onTap: model.nextDistanceUnit)
-                                ColourKeyView(legend: model.legend)
-                            }
-                            Spacer()
-                            controls
+                    HStack(alignment: .bottom) {
+                        // The contour interval above the scale bar, the elevation colours' heights under it.
+                        VStack(alignment: .leading, spacing: 8) {
+                            ContourKeyView(legend: model.legend)
+                            ScaleBarView(scale: model.scale, onTap: model.nextDistanceUnit)
+                            ColourKeyView(legend: model.legend)
                         }
+                        Spacer()
+                        controls
                     }
+                    // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
+                    // bottom of the screen to a tapped spot's coordinates.
+                    .padding(.bottom, Self.controlsLift)
+                    // All the room under the panels (in place of a Spacer above), so the buttons are offered the
+                    // height the panels leave (groups §9.1).
+                    .frame(maxHeight: .infinity, alignment: .bottom)
                 }
             }
             .padding(.horizontal, 12)
@@ -163,8 +165,6 @@ struct MapScreen: View {
 
     /// Two side buttons and the gap between them.
     private static let controlsLift: CGFloat = 2 * (50 + 12)
-    /// The least the buttons stay above the bottom on a short screen: a tapped spot's coordinate row (34) and a gap.
-    private static let minControlsLift: CGFloat = 34 + 8
 
     /// A selected KML point's name, over its coordinates.
     private func nameCapsule(_ name: String) -> some View {
@@ -179,8 +179,10 @@ struct MapScreen: View {
             .accessibilityIdentifier("tappedName")
     }
 
+    /// The map's buttons, top to bottom: the compass slot, Groups, Terrain, Blocks, Offline maps, Go to coordinates,
+    /// Measure and My location, in one column where it fits, else a grid (`MapButtonsLayout`).
     private var controls: some View {
-        VStack(spacing: 12) {
+        MapButtonsLayout {
             if let map = model.map?.mapView {
                 CompassButton(mapView: map)
                     .frame(width: 44, height: 44)
@@ -287,28 +289,28 @@ struct MapScreen: View {
     }
 }
 
-/// The row of legends and map buttons, in the room under the panels at the top: `lift.upperBound` above the bottom,
-/// or lower where that room is short (a small phone, tall panels), as far as `lift.lowerBound` (groups §9.1). Shorter
-/// than that, the room overflows, as a stack does.
-struct BottomRowLayout: Layout {
-    let lift: ClosedRange<CGFloat>
-
+/// The map's buttons at their own sizes (50-pt circles, the compass slot 44), 12 apart: one column while it fits the
+/// height offered (what the panels at the top leave over the lift), else a grid with My location at the bottom right
+/// (`MapButtonGrid`, groups §9.1; Android `Controls`). Anchored at the bottom right, so a block taller than the room
+/// (not even one row fits) spills up over the panels, as on Android.
+struct MapButtonsLayout: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let row = rowSize(width: proposal.width, subviews)
-        return CGSize(width: proposal.width ?? row.width,
-                      height: max(row.height + lift.lowerBound, proposal.height ?? row.height + lift.upperBound))
+        let size = Self.grid(proposal, subviews).size
+        return CGSize(width: size.width, height: min(size.height, proposal.height ?? .infinity))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        guard let row = subviews.first else { return }
-        let size = rowSize(width: bounds.width, subviews)
-        let raised = min(lift.upperBound, max(lift.lowerBound, bounds.height - size.height))
-        row.place(at: CGPoint(x: bounds.minX, y: bounds.maxY - raised), anchor: .bottomLeading,
-                  proposal: ProposedViewSize(width: bounds.width, height: size.height))
+        let grid = Self.grid(proposal, subviews)
+        for (subview, offset) in zip(subviews, grid.offsets) {
+            subview.place(at: CGPoint(x: bounds.maxX - grid.size.width + offset.x,
+                                      y: bounds.maxY - grid.size.height + offset.y),
+                          proposal: .unspecified)
+        }
     }
 
-    private func rowSize(width: CGFloat?, _ subviews: Subviews) -> CGSize {
-        subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: nil)) ?? .zero
+    private static func grid(_ proposal: ProposedViewSize, _ subviews: Subviews) -> MapButtonGrid {
+        MapButtonGrid(sizes: subviews.map { $0.sizeThatFits(.unspecified) }, cell: 50, gap: 12,
+                      maxHeight: proposal.height ?? .infinity)
     }
 }
 
