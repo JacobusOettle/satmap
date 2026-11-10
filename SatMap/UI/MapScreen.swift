@@ -83,7 +83,10 @@ struct MapScreen: View {
                             ColourKeyView(legend: model.legend)
                         }
                         Spacer()
+                        // Offered the row's width less the legends' smallest, so a grid too wide for the row spills
+                        // to the left rather than widening the screen (groups §9.1).
                         controls
+                            .layoutPriority(1)
                     }
                     // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
                     // bottom of the screen to a tapped spot's coordinates.
@@ -291,12 +294,14 @@ struct MapScreen: View {
 
 /// The map's buttons at their own sizes (50-pt circles, the compass slot 44), 12 apart: one column while it fits the
 /// height offered (what the panels at the top leave over the lift), else a grid with My location at the bottom right
-/// (`MapButtonGrid`, groups §9.1; Android `Controls`). Anchored at the bottom right, so a block taller than the room
-/// (not even one row fits) spills up over the panels, as on Android.
+/// (`MapButtonGrid`, groups §9.1; Android `Controls`). No bigger than offered and anchored at the bottom right, so a
+/// block bigger than its room (not even one row fits, or the row is too narrow) spills up and to the left, as on
+/// Android.
 struct MapButtonsLayout: Layout {
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let size = Self.grid(proposal, subviews).size
-        return CGSize(width: size.width, height: min(size.height, proposal.height ?? .infinity))
+        return CGSize(width: min(size.width, proposal.width ?? .infinity),
+                      height: min(size.height, proposal.height ?? .infinity))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
