@@ -168,7 +168,7 @@ Box(fillMaxSize, semantics { testTagsAsResourceId = true })
 │  │    if (!isDrawingArea) Row(fillMaxWidth, verticalAlignment = Bottom, padding(bottom = 124.dp)) {
 │  │        Column(spacedBy 8, horizontalAlignment = Start) { ContourKeyView; ScaleBarView; ColourKeyView }
 │  │        Spacer(weight 1f)
-│  │        controls (side buttons)
+│  │        controls (side buttons: one column, or a grid where it doesn't fit, §2.4.5)
 │  │    }
 │  └─ selected-point overlay (align BottomCenter, padding(start 12, end 12, bottom 8)), if selectedPoint != null && !isDrawingArea
 ├─ sheet host for model.sheet       (ModalBottomSheet, §3)
@@ -399,18 +399,25 @@ Every element gets a black shadow with radius 1.5 dp. Draw with `drawIntoCanvas 
 - **Interaction:** `combinedClickable(onClick, onLongClick, onLongClickLabel)` with a ripple.
 - **Semantics:** `contentDescription = label`, `role = Role.Button`, plus the per-button test tag below.
 
-#### 2.4.5 `controls`: `Column(spacedBy 12.dp, CenterHorizontally)`, 50 dp wide, top to bottom
+#### 2.4.5 `controls` (`Controls`): one column, 50 dp wide, 12 dp apart, centred across it, top to bottom
 
 | # | Button | Icon (state) | `contentDescription` / extra semantics | Tap | Long press | Android test tag |
 | --- | --- | --- | --- | --- | --- | --- |
 | 0 | **Compass slot** (always 44 × 44 dp, even when the compass is hidden) | `CompassButton` (§2.4.6) | `Compass` | `model.map?.resetNorth()` | none | `compassButton` |
-| 1 | Terrain | contours or contoursAndColours: `Icons.Filled.Landscape`; colours: `Icons.Filled.Palette`; drone: `Icons.Filled.Flight` rotated 90° (points right like SF `airplane`); off: `Icons.Outlined.Landscape`. `dimmed = mode == off`; `heightColours = mode.showsColours` | `Contour lines`, **`stateDescription = terrainMode.title`** | `nextTerrainMode()` | none | `terrainButton` |
-| 2 | Blocks | `SquareDashed` (custom) | `Blocks` | `model.sheet = blocks` | DropdownMenu (below), only when `kml.files` is not empty; `onLongClickLabel = "Show or hide files"` | `blocksButton` |
-| 3 | Offline maps | `Icons.Outlined.ArrowCircleDown`, or custom `ArrowDownCircleFill` while downloading (a black disc 20 dp across with the arrow cut out of it in the button's yellow, as `arrow.down.circle.fill` in screenshot 08; Material's `Filled.ArrowCircleDown` is the ring); `active = offline.activeID != null` | `Offline maps` | `model.sheet = offline` | none | `offlineButton` |
-| 4 | Go to coordinates | `LocationMagnifyingGlass` (custom) | `Go to coordinates` | `model.sheet = coordinates` | none | `goToButton` |
-| 5 | Measure | off: `Icons.Outlined.Straighten`; aiming/placed/path: `Icons.Filled.GpsFixed`; closed: `Icons.Filled.Close`. `active = measure != off` | `Measure` | `model.measureButtonTapped()` | none | `measureButton` |
-| 6 | My location | `Icons.Filled.NearMe` when `following`, else `Icons.Outlined.NearMe` | `My location` | `model.centerOnUser()` | DropdownMenu with one item: `Clear recorded track`, `Icons.Outlined.Delete`, text and icon `SystemRed`. Its click sets `confirmClearTrack = true`. `onLongClickLabel = "Clear recorded track"` | `myLocationButton` |
+| 1 | Groups (groups §9.1; `docs/spec/groups.md` §8) | `SatIcons.Person3` (38 dp); `active` while a group is shown | `Groups` | `model.sheet = groups` | none | `groupsButton` |
+| 2 | Terrain | contours or contoursAndColours: `Icons.Filled.Landscape`; colours: `Icons.Filled.Palette`; drone: `Icons.Filled.Flight` rotated 90° (points right like SF `airplane`); off: `Icons.Outlined.Landscape`. `dimmed = mode == off`; `heightColours = mode.showsColours` | `Contour lines`, **`stateDescription = terrainMode.title`** | `nextTerrainMode()` | none | `terrainButton` |
+| 3 | Blocks | `SquareDashed` (custom) | `Blocks` | `model.sheet = blocks` | DropdownMenu (below), only when `kml.files` is not empty; `onLongClickLabel = "Show or hide files"` | `blocksButton` |
+| 4 | Offline maps | `Icons.Outlined.ArrowCircleDown`, or custom `ArrowDownCircleFill` while downloading (a black disc 20 dp across with the arrow cut out of it in the button's yellow, as `arrow.down.circle.fill` in screenshot 08; Material's `Filled.ArrowCircleDown` is the ring); `active = offline.activeID != null` | `Offline maps` | `model.sheet = offline` | none | `offlineButton` |
+| 5 | Go to coordinates | `LocationMagnifyingGlass` (custom) | `Go to coordinates` | `model.sheet = coordinates` | none | `goToButton` |
+| 6 | Measure | off: `Icons.Outlined.Straighten`; aiming/placed/path: `Icons.Filled.GpsFixed`; closed: `Icons.Filled.Close`. `active = measure != off` | `Measure` | `model.measureButtonTapped()` | none | `measureButton` |
+| 7 | My location | `Icons.Filled.NearMe` when `following`, else `Icons.Outlined.NearMe` | `My location` | `model.centerOnUser()` | DropdownMenu with one item: `Clear recorded track`, `Icons.Outlined.Delete`, text and icon `SystemRed`. Its click sets `confirmClearTrack = true`. `onLongClickLabel = "Clear recorded track"` | `myLocationButton` |
 
+- **Fitting** (groups §9.1; `Layout` + `mapButtonGrid`): each button is measured at its own size, and the block is
+  offered the height `MapOverlay`'s `Column` leaves under the top panels. While the column (478 dp with the compass
+  slot) fits that height, it is the column above. Otherwise the buttons form a grid of 50 dp cells, 12 dp apart both
+  ways, with as many rows as fit (at least one), filled from My location (bottom right) up each column, right to
+  left; the leftmost column holds the first buttons from its top, the compass slot centred in its cell. The block is
+  anchored at its bottom right (on the lift), so a block too big for its space spills up and to the left.
 - **Blocks long-press menu** (`DropdownMenu` anchored to the button, `containerColor = CellBackground`; it closes after any item):
   - For each file: `DropdownMenuItem(text = f.name, leadingIcon = Icons.Filled.CheckCircle if f.isShown else Icons.Outlined.Circle)`, calling `model.kml.setShown(f.id, !f.isShown)`.
   - Then `HorizontalDivider()` and `Colours from the files` with `Icons.Filled.CheckBox` or `Icons.Outlined.CheckBoxOutlineBlank`, calling `model.kml.useFileColours = !useFileColours`.
@@ -925,7 +932,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
   CoordinateRow { CoordinateBar(icon, text, id, iconSlot, onClose); HeightBar(elevation, gpsAltitude, unit, id, onTap) }
   DroneCard(report) · Hint(text, onClose)
   ContourKeyView(legend) · ScaleBarView(scale, onTap) · ColourKeyView(legend)
-  Controls(model, offline) { CompassButton(map); MapButton(...) ×6 + DropdownMenus + TerrainToast }
+  Controls(model, offline) { CompassButton(map); MapButton(...) ×7 + DropdownMenus + TerrainToast }   // Layout: mapButtonGrid
   SheetHost(model.sheet) { when (it) { blocks -> BlocksSheet(model, model.kml); offline -> OfflineSheet(model, offline, model.kml); coordinates -> CoordinateEntryView(model) } }
   PendingAreaHost(model.pendingArea) { NewAreaView(model, it, showsCancel = true) }
   ClearTrackDialog
