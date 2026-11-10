@@ -7,10 +7,11 @@ Kotlin package root: `com.jacobusoettle.satmap`.
 | Swift | Kotlin (android/app/src/main/kotlin/com/jacobusoettle/satmap/…) |
 | --- | --- |
 | `App/SatMapApp.swift` (`SatMapApp`, `AppDelegate`) | `app/SatMapApp.kt`: `SatMapApplication : Application`. `MainActivity` (already in `MainActivity.kt`) hosts the UI. |
-| `App/AppModel.swift` | `app/AppModel.kt`: `MeasureMode`, `CrosshairAim`, `MapScale`, `DroneReport`, `MapLegend`, `HeightLookup`, `PendingArea`, `ActiveSheet`, `AppModel` |
+| `App/AppModel.swift` | `app/AppModel.kt`: `CrosshairAim`, `MapScale`, `DroneReport`, `MapLegend`, `HeightLookup`, `PendingArea`, `ActiveSheet`, `AppModel` |
 | `App/AppPaths.swift` | `app/AppPaths.kt`: `AppPaths`, `Format` |
 | `App/Connectivity.swift` | `app/Connectivity.kt` |
 | `App/Config.swift` | `app/Config.kt`: `TileSources`, `LocationPolicy` |
+| `Core/MeasureMode.swift` | core `MeasureMode.kt`: `MeasureMode`, `MeasureButtonAction` |
 | `Location/LocationRecorder.swift` | `location/LocationRecorder.kt` |
 | (none: Android only) | `app/AppLifecycle.kt` (UIApplication state), `app/Defaults.kt` (UserDefaults), `location/LocationService.kt` (foreground service), `location/WakeTimer.kt` (timers that fire while the CPU sleeps), `app/PermissionFlow.kt` (runtime permissions, used by `MainActivity`) |
 
@@ -106,7 +107,8 @@ All of it is main-thread only.
 
 | Action | From | Result |
 | --- | --- | --- |
-| `measureButtonTapped()` | off | `setMeasure(.aiming)` |
+| `measureButtonTapped()` (core `MeasureMode.buttonAction(selected)`) | off, with a `selectedPoint` p (a tapped spot or KML point) | `setMeasure(.placed(p))`: measuring from the spot, with the live distance and height from you. The map doesn't move; p stays selected, with `selectedName`. |
+| | off, nothing selected | `setMeasure(.aiming)` |
 | | aiming, placed, path | `addPointAtCrosshair()` |
 | | closed | `clearMeasure()` |
 | `mapTapped(p)` (after MapController's own handling, below) | off | `selectedPoint = p` |

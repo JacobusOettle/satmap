@@ -702,6 +702,8 @@ No row opens it now (§3.2); it is kept for the areas saved from it and the ship
    - **Otherwise:** a toggle row `Only along roads` (`alongRoads`), followed by `roadsStatus` when on. Footer: `Saves satellite imagery only 15 m to each side of every road and track in the area, including gravel and farm roads, as mapped on OpenStreetMap. Elevation for contours and heights is still saved for the whole area.`
    - "15" is `Roads.corridorMeters.toInt()`.
 
+3a. **Auto download** (your track only: `track != null`), a section of its own. A toggle row `Auto download` bound to `model.trackAutoDownload` (app-wide, not the area's); switching it calls `model.setTrackAutoDownload(on)`, which saves it at once (no Download tap). Footer: `Saves imagery along the new parts of your track by itself, as the Download button below does, once you've been somewhere new. Without mobile data it waits for Wi-Fi.` What it does: offline spec §1.9, item 5.
+
 4. **Mobile data.** A toggle row `Allow mobile data`. Footer (Android wording): `Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, with its progress in a notification. If Android stops it, it continues when you open SatMap again.`
 
 5. **Header `Download size`.**
@@ -1029,7 +1031,7 @@ All are from `material-icons-extended` 1.7.8; every name below exists in the cac
 - **Writes** go through the Swift-named setters and functions:
   - `model.selectedPoint = null` runs the Swift `didSet` logic.
   - `kml.useFileColours = …`, `model.lassoActive = …`, `model.draftArea = null`.
-  - `nextDistanceUnit()`, `nextHeightUnit()`, `measureButtonTapped()`, `clearMeasure()`, `undoMeasurePoint()`, `closeMeasureShape()`, `centerOnUser()`, `clearTrack()`, `startDrawingArea()`, `cancelDrawing()`, `confirmDrawnArea()`, `discardPendingArea()`, `startDownload(...)`, `startTrackDownload(...)`, `measure(from = …)`.
+  - `nextDistanceUnit()`, `nextHeightUnit()`, `measureButtonTapped()`, `clearMeasure()`, `undoMeasurePoint()`, `closeMeasureShape()`, `centerOnUser()`, `clearTrack()`, `startDrawingArea()`, `cancelDrawing()`, `confirmDrawnArea()`, `discardPendingArea()`, `startDownload(...)`, `startTrackDownload(...)`, `setTrackAutoDownload(on)`, `measure(from = …)`.
 - **Screen-local state lives in route holders** (plain classes with `mutableStateOf` fields) created at push:
   - `PlaceSearchState(text, results, searching, message)`
   - `PlaceAreaState(shape, failed)`

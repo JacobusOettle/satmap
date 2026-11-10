@@ -12,6 +12,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasClickAction
@@ -38,6 +40,7 @@ import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.Roads
 import com.jacobusoettle.satmap.core.TileCoverage
+import com.jacobusoettle.satmap.core.TrackAutoDownload
 import com.jacobusoettle.satmap.offline.OfflineManager
 import com.jacobusoettle.satmap.offline.RoadFetcher
 import com.jacobusoettle.satmap.offline.RoadPresets
@@ -501,6 +504,73 @@ class NewAreaViewTest {
         ).assertExists()
         // No switch for roads: imagery always goes along the track.
         compose.onNodeWithText("Only along roads").assertDoesNotExist()
+    }
+
+    @Test
+    fun yourTrackHasAnAutoDownloadSwitchForTheWholeAppSavedAtOnce() {
+        Defaults.prefs.edit().remove(TrackAutoDownload.settingKey).commit()
+        val model = AppModel(app, noHeights)
+        val line = listOf(listOf(GeoPoint(-33.920, 18.920), GeoPoint(-33.920, 18.930)))
+        val s = newState(TrackDownload(line, newLines = line, previousLines = emptyList(), maxZoom = null, allowCellular = null, completeTo = null))
+        compose.setContent {
+            SatMapTheme { NewAreaView(model, s, back = ScreenChrome.Leading.Back("Offline maps") {}, close = {}) }
+        }
+        compose.waitUntil(10_000) { s.roads is NewAreaState.RoadsState.Loaded }
+        list().performScrollToNode(hasText("Allow mobile data"))
+        val switch = compose.onNode(hasText("Auto download") and SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState))
+        // On unless switched off.
+        switch.assertIsOn()
+        compose.onNodeWithText(
+            "Saves imagery along the new parts of your track by itself, as the Download button below does, once you've " +
+                "been somewhere new. Without mobile data it waits for Wi-Fi.",
+        ).assertExists()
+        // In a section of its own between your track and mobile data.
+        fun top(text: String) = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot.top
+        assertTrue(top("Your track") < top("Auto download"))
+        assertTrue(top("Auto download") < top("Allow mobile data"))
+        // Saved as it is switched, for the whole app, without a tap on Download.
+        switch.performClick()
+        switch.assertIsOff()
+        assertFalse(model.trackAutoDownload.value)
+        assertEquals(false, Defaults.storedBool(TrackAutoDownload.settingKey))
+        assertTrue(model.offline.areas.value.isEmpty())
+        switch.performClick()
+        switch.assertIsOn()
+        assertEquals(true, Defaults.storedBool(TrackAutoDownload.settingKey))
+        model.setTrackAutoDownload(false)
+        compose.waitForIdle()
+        switch.assertIsOff()
+    }
+
+    @Test
+    fun onlyYourTrackHasAutoDownload() {
+        val model = AppModel(app, noHeights)
+        val s = newState()
+        compose.setContent {
+            SatMapTheme { NewAreaView(model, s, back = ScreenChrome.Leading.Back("Choose a file") {}, close = {}) }
+        }
+        list().performScrollToNode(hasText("Allow mobile data"))
+        compose.onNodeWithText("Auto download").assertDoesNotExist()
+    }
+
+    @Test
+    fun aNewTrackAreasLevelIsTheOneTheScreenChooses() = runBlocking {
+        val line = listOf(listOf(GeoPoint(-33.920, 18.920), GeoPoint(-33.926, 18.921)))
+        // The Where I've been screen with no track area yet, its sizes counted.
+        val download = TrackDownload(line, newLines = line, previousLines = emptyList(), maxZoom = null, allowCellular = null, completeTo = null)
+        for (remembered in listOf(22, 19, 16)) {
+            Defaults.putInt(NewAreaState.maxZoomKey, remembered)
+            val s = NewAreaState(PendingArea(name = "Where I've been", shape = Roads.corridor(line)), track = download)
+            s.count()
+            s.loadRoads()
+            // Free space unknown, too little for anything, plenty, and so little that the level is lowered to fit.
+            for (free in listOf(null, OfflineManager.minimumFreeSpace, 40_000_000_000L, freeFor(300_000), freeFor(1_000_000))) {
+                s.freeSpace = free
+                assertEquals("$remembered, $free", s.chosenZoom, NewAreaState.zoomForNewTrackArea(line, free))
+            }
+            assertEquals(remembered, NewAreaState.zoomForNewTrackArea(line, null))
+        }
+        assertTrue(NewAreaState.zoomForNewTrackArea(line, freeFor(300_000)) < 19)
     }
 
     /** The Download button's `arrow.down.circle.fill`: a solid disc 20 of the icon's 24 units across, the arrow cut out

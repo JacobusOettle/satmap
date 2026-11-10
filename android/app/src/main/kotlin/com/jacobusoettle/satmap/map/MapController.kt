@@ -38,11 +38,11 @@ import androidx.lifecycle.LifecycleOwner
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.MapHost
-import com.jacobusoettle.satmap.app.MeasureMode
 import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.KMLGeometry
+import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.core.Simplify
 import com.jacobusoettle.satmap.core.TerrainMode
 import com.jacobusoettle.satmap.core.WebMercator

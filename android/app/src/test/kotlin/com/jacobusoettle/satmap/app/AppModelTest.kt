@@ -18,6 +18,7 @@ import com.jacobusoettle.satmap.core.GeoBounds
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.HeightUnit
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TrackAutoDownload
 import com.jacobusoettle.satmap.core.TrackLog
 import com.jacobusoettle.satmap.core.TrackPoint
 import com.jacobusoettle.satmap.location.GpsFix
@@ -121,6 +122,9 @@ class AppModelTest {
         AppLifecycle.resetForTests()
         if (!process.currentState.isAtLeast(Lifecycle.State.CREATED)) process.currentState = Lifecycle.State.CREATED
         Defaults.init(app)
+        // Where I've been's auto download off (AppModelTrackAutoDownloadTest has it): its checks of the tracks recorded
+        // here would come back to the main thread from the background after a test has put its test dispatcher away.
+        Defaults.putBoolean(TrackAutoDownload.settingKey, false)
         AppPaths.init(app)
         Connectivity.init(app)
         AppLifecycle.init()
@@ -131,6 +135,7 @@ class AppModelTest {
     fun tearDown() {
         process.currentState = Lifecycle.State.CREATED
         Defaults.setLaunchArguments(null)
+        Defaults.prefs.edit().remove(TrackAutoDownload.settingKey).commit()
         AppLifecycle.resetForTests()
         Dispatchers.resetMain()
     }

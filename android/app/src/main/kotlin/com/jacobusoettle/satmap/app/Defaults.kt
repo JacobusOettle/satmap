@@ -9,8 +9,9 @@ import android.os.Bundle
  *  `adb shell am start -n com.jacobusoettle.satmap/.MainActivity --es terrainMode colours --ez zoomScript true`.
  *
  *  Keys: terrainMode, showContours (legacy, read only), distanceUnit, heightUnit, kmlFileColours, offlineMaxZoom,
- *  camera ("lat,lon,latDelta,lonDelta"), zoomScript (launch extra only), and Android's locationPermissionAsked,
- *  motionPermissionAsked and notificationPermissionAsked (Android can't tell "never asked" from "denied"). */
+ *  trackAutoDownload (stored value only, `storedBool`), camera ("lat,lon,latDelta,lonDelta"), zoomScript (launch extra
+ *  only), and Android's locationPermissionAsked, motionPermissionAsked and notificationPermissionAsked (Android can't
+ *  tell "never asked" from "denied"). */
 object Defaults {
     lateinit var prefs: SharedPreferences
         private set
@@ -50,6 +51,17 @@ object Defaults {
             is Boolean -> return a
             is String -> return boolValue(a)
         }
+        if (!prefs.contains(key)) return null
+        return try {
+            prefs.getBoolean(key, false)
+        } catch (e: ClassCastException) {
+            null
+        }
+    }
+
+    /** The stored value alone (null when unset, or set as another type), whatever the launch extras say: for a setting
+     *  no intent may change (`trackAutoDownload`; any app can start SatMap with extras). */
+    fun storedBool(key: String): Boolean? {
         if (!prefs.contains(key)) return null
         return try {
             prefs.getBoolean(key, false)

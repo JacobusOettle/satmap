@@ -18,9 +18,9 @@ import android.util.DisplayMetrics
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
-import com.jacobusoettle.satmap.app.MeasureMode
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.KMLColor
+import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.location.GpsFix
 import org.maplibre.android.maps.MapLibreMap
 import org.maplibre.android.maps.Style
