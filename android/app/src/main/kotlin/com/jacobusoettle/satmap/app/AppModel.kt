@@ -315,6 +315,15 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     /** Groups (docs/groups/SPEC.md §8.1): made here because recording runs with no screen. It is told of the app's
      *  lifecycle by this model (it registers no observer of its own), and gets the track points and fixes. */
     val groups = GroupsModel(app)
+
+    /** The test-build remote switch (android/docs/spec/test-builds.md): checks the status file and, for a test build
+     *  switched off, publishes a lock. This model acts on it (`applyLock`); the map screen shows it. Told of the
+     *  foreground by this model, like groups. */
+    val testBuild = TestBuildGate()
+
+    /** The lock to show over everything while a test build is switched off (null when not locked). */
+    val testBuildLock: StateFlow<com.jacobusoettle.satmap.core.TestBuildSwitch.Lock?> get() = testBuild.lock
+
     private val trackLog = TrackLog(AppPaths.track)
 
     /** The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the list). Read on
@@ -570,6 +579,39 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         // next didEnterBackground): it starts with each willEnterForeground.
         if (AppLifecycle.isForeground) startRetryTimer()
         recorder.start()
+
+        // The test-build switch: show the lock the saved state implies at once, then act on every change (downloads,
+        // recording and sharing pause while locked and resume when unlocked). A debug or store build never locks.
+        testBuild.start()
+        testBuild.lock
+            .onEach { applyLock(it != null) }
+            .launchIn(scope)
+        if (AppLifecycle.isForeground) testBuild.foregrounded()
+    }
+
+    /** Whether a test build is switched off right now (`applyLock`). */
+    private var lockedOut = false
+
+    /** The test-build switch turned off (locked) or on again. While locked the app stops what runs but keeps every
+     *  user file (offline maps, the track, KML, groups): downloads pause (keeping what is saved), recording and the
+     *  background location work stop, and the groups' live sharing and uploads pause. On unlock everything resumes as
+     *  before: a paused download continues, recording restarts (if on screen) and groups wake. The sheets over the map
+     *  are closed so nothing shows behind the lock. */
+    private fun applyLock(locked: Boolean) {
+        if (locked == lockedOut) return
+        lockedOut = locked
+        offline.setLockedOut(locked)
+        groups.setLockedOut(locked)
+        if (locked) {
+            recorder.stopForLock()
+            setSheet(null)
+            setPendingArea(null)
+            setDraftArea(null)
+            groups.closeInvite()
+            groups.openItem(null)
+        } else {
+            recorder.resumeAfterLock()
+        }
     }
 
     // Reloading tiles
@@ -1008,6 +1050,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         TileRepository.shared.restoreAfterBackground()
         startRetryTimer()
         if (reloadPending) requestReload()
+        // Check the switch on return to the foreground (and keep checking every five minutes); nothing in background.
+        testBuild.foregrounded()
     }
 
     /** Elevations aren't looked up in the background; catch up when the app is opened. */
@@ -1028,5 +1072,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         TileRepository.shared.trimForBackground()
         ImageryMemory.enteredBackground()
         ContourRenderer.shared.clearCaches()
+        // The switch isn't checked in the background.
+        testBuild.backgrounded()
     }
 }

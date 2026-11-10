@@ -12,6 +12,7 @@ import androidx.car.app.Session
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarIcon
+import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.validation.HostValidator
@@ -87,11 +88,21 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
         lifecycleScope.launch(Dispatchers.Main) {
             model.terrainMode.drop(1).collect { invalidate() }
         }
+        // The test-build switch going off (or on) swaps the car screen for the "switched off" message (and back).
+        lifecycleScope.launch(Dispatchers.Main) {
+            model.testBuildLock.drop(1).collect { invalidate() }
+        }
     }
 
     /** Zoom in, zoom out and follow you on the map, and the host's pan mode to move it; the terrain in the bar along
-     *  the top. */
+     *  the top. While a test build is switched off, the car shows the short "switched off" message instead of the
+     *  map (android/docs/spec/test-builds.md). */
     override fun onGetTemplate(): Template {
+        if (model.testBuildLock.value != null) {
+            return MessageTemplate.Builder(SWITCHED_OFF_MESSAGE)
+                .setTitle("SatMap")
+                .build()
+        }
         val terrain = Action.Builder()
             .setTitle(shortTitle(model.terrainMode.value))
             .setOnClickListener { model.setTerrainMode(model.terrainMode.value.next) }
@@ -116,6 +127,9 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
         .build()
 
     companion object {
+        /** The car's line while a test build is switched off (the phone's lock has the full message and links). */
+        const val SWITCHED_OFF_MESSAGE = "This test version of SatMap has been switched off. Get SatMap from the Play Store to keep using it."
+
         /** What the map shows of the terrain, short enough for the car's bar. */
         fun shortTitle(mode: TerrainMode): String = when (mode) {
             TerrainMode.contours -> "Contours"

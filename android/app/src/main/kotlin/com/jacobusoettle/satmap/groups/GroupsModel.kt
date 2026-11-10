@@ -209,6 +209,10 @@ class GroupsModel(
     private var nextId = 0
     private var foreground = false
     private var tickScheduled = false
+
+    /** The test-build switch is off (`AppModel.applyLock`): no ticks, uploads or sockets run until it is on again
+     *  (`setLockedOut`). The memberships and queued data stay; nothing is deleted. */
+    private var lockedOut = false
     private val backgroundTimer = WakeTimer(context, "groups") { backgroundTick() }
 
     /** A group just shown from S5 or S8: the map fits it once its members' positions are known (§9.5 camera). */
@@ -361,17 +365,35 @@ class GroupsModel(
     private fun scheduleForegroundTick() {
         mainHandler.removeCallbacks(foregroundTick)
         tickScheduled = false
-        if (!foreground || !started.isCompleted || hub.nextTickDelay(foreground = true) == null) return
+        if (lockedOut || !foreground || !started.isCompleted || hub.nextTickDelay(foreground = true) == null) return
         tickScheduled = true
         mainHandler.postDelayed(foregroundTick, GroupPolicyTicks.foregroundMillis)
     }
 
     private fun wake() {
+        if (lockedOut) return
         scheduleForegroundTick()
         scope.launch {
             runCatchingHub { hub.becameActive() }
             pro.refresh()
             pro.takeUpdates()
+        }
+    }
+
+    /** The test-build switch turned off (locked) or on again (`AppModel.applyLock`). Locked: stop ticks, uploads and
+     *  the socket now; the memberships and queued data stay. Unlocked while on screen: wake as `didBecomeActive`
+     *  would, so queued data and live positions resume. */
+    fun setLockedOut(locked: Boolean) {
+        if (locked == lockedOut) return
+        lockedOut = locked
+        if (locked) {
+            mainHandler.removeCallbacks(foregroundTick)
+            tickScheduled = false
+            backgroundTimer.cancel()
+            if (started.isCompleted) hub.enteredBackground()
+        } else if (foreground) {
+            if (started.isCompleted) wake()
+            scheduleForegroundTick()
         }
     }
 
@@ -385,6 +407,7 @@ class GroupsModel(
 
     /** Uploads go on in the background at the hub's pace, on an alarm that fires while the CPU sleeps (§8.6). */
     private fun scheduleBackgroundTick() {
+        if (lockedOut) return backgroundTimer.cancel()
         if (foreground || !started.isCompleted) return
         val delay = hub.nextTickDelay(foreground = false) ?: return backgroundTimer.cancel()
         backgroundTimer.schedule(delay.toDouble())
@@ -421,7 +444,7 @@ class GroupsModel(
     /** A fix used by the recorder (`AppModel.locationUpdated`); in the background it also keeps the upload alarm set. */
     fun fix(f: GpsFix) {
         lastFix = f
-        if (!started.isCompleted) return
+        if (lockedOut || !started.isCompleted) return
         sendFix(f)
         if (!foreground && !backgroundTimer.scheduled) scheduleBackgroundTick()
     }

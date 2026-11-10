@@ -210,6 +210,10 @@ fun MapScreen(model: AppModel, offline: OfflineManager, recorder: LocationRecord
         GroupAlerts(model)
         ShareHost()
         KeepScreenOn(offline)
+        // The test-build switch is off: the lock over everything (the sheets are closed when it locks, so nothing is
+        // behind it). Last, so it draws on top of the whole screen.
+        val lock by model.testBuildLock.collectAsStateWithLifecycle()
+        lock?.let { TestBuildLockScreen(it) }
     }
 }
 

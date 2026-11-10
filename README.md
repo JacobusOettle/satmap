@@ -262,6 +262,23 @@ apps installed from the Play Store unless you allow others: in the Android Auto 
 *Version* ten times to unlock developer mode, then in the ⋮ menu → *Developer settings* turn on *Unknown
 sources*. This part hasn't been tried in a car yet.
 
+## Test builds can be switched off
+
+The test builds above — the sideloaded **SatMap.ipa** and the **SatMap.apk** from the GitHub releases — can be
+turned off remotely, so a test build that has been passed around can be retired and people pointed to the real app.
+When it is off, each test build shows a full-screen notice with a button to the App Store (iPhone) or Google Play
+(Android) and stops working; it never deletes anything (offline maps, tracks, KML files and groups are kept), and
+turning it back on lets the app carry on. Only test builds check this — **App Store and Google Play builds are never
+affected**, and neither are local debug builds.
+
+To flip it, run the **Switch test builds** workflow from the repository's **Actions** tab (choose *off* or *on*, and
+optionally a title, message and store/website links), or edit `test-builds.json` on the `app-status` branch directly.
+Online test builds follow within about five to ten minutes (they check at launch, when brought to the foreground and
+every five minutes); one that is offline locks as soon as it next has signal, and a build that has already seen *off*
+stays locked even offline. The check sends **no identifiers** — a plain HTTPS request with a `SatMap/<version>`
+User-Agent, no device or user id. Only `apps.apple.com`, `play.google.com` and `github.com/JacobusOettle/` links are
+ever shown as buttons.
+
 ## Map data and licensing — please read
 
 - **Roads:** [OpenStreetMap](https://www.openstreetmap.org/copyright) via the public Overpass API, © OpenStreetMap

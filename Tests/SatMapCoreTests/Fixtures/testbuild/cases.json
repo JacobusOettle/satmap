@@ -1,0 +1,286 @@
+{
+  "_comment": "Shared examples for TestBuildSwitch, read by both SatMapCoreTests (Swift) and android :core (Kotlin). parse[] feeds `input` (the exact bytes a build would fetch) to TestBuildSwitch.parse and checks the result; a null `expect` means the file carried no information (keep the last known state). decide[] checks channel + saved + fetched -> lock (null = not locked). Texts here are ASCII so both languages cut to the same length. See android/docs/spec/test-builds.md.",
+  "maxTitleLength": 120,
+  "maxMessageLength": 500,
+  "defaultTitle": "This test version of SatMap has been switched off",
+  "defaultMessage": "Get SatMap from the App Store or Google Play to keep using it.",
+  "parse": [
+    {
+      "name": "valid on",
+      "input": "{\"schema\":1,\"testBuilds\":\"on\",\"title\":\"\",\"message\":\"\",\"appStoreURL\":null,\"playStoreURL\":null,\"websiteURL\":null,\"updated\":\"2026-11-10T00:00:00Z\"}",
+      "expect": {
+        "locked": false,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "valid off with links",
+      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"title\":\"Switched off\",\"message\":\"Please use the store build.\",\"appStoreURL\":\"https://apps.apple.com/app/id1\",\"playStoreURL\":\"https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap\",\"websiteURL\":\"https://github.com/JacobusOettle/satmap\",\"updated\":\"2026-11-10T00:00:00Z\"}",
+      "expect": {
+        "locked": true,
+        "title": "Switched off",
+        "message": "Please use the store build.",
+        "appStoreURL": "https://apps.apple.com/app/id1",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      }
+    },
+    {
+      "name": "off with no texts or links uses empty (defaults filled in at decide)",
+      "input": "{\"schema\":1,\"testBuilds\":\"off\"}",
+      "expect": {
+        "locked": true,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "unknown fields are ignored",
+      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"title\":\"Hi\",\"somethingNew\":{\"a\":[1,2,3]},\"count\":7}",
+      "expect": {
+        "locked": true,
+        "title": "Hi",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "bad schema (2) is no information",
+      "input": "{\"schema\":2,\"testBuilds\":\"off\"}",
+      "expect": null
+    },
+    {
+      "name": "missing schema is no information",
+      "input": "{\"testBuilds\":\"off\"}",
+      "expect": null
+    },
+    {
+      "name": "bad testBuilds value is no information",
+      "input": "{\"schema\":1,\"testBuilds\":\"paused\"}",
+      "expect": null
+    },
+    {
+      "name": "missing testBuilds is no information",
+      "input": "{\"schema\":1,\"title\":\"Hi\"}",
+      "expect": null
+    },
+    {
+      "name": "not an object is no information",
+      "input": "[1,2,3]",
+      "expect": null
+    },
+    {
+      "name": "not JSON is no information",
+      "input": "not json at all",
+      "expect": null
+    },
+    {
+      "name": "empty string is no information",
+      "input": "",
+      "expect": null
+    },
+    {
+      "name": "long title and message are cut",
+      "input": "{\"schema\": 1, \"testBuilds\": \"off\", \"title\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\", \"message\": \"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\"}",
+      "expect": {
+        "locked": true,
+        "title": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "message": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "disallowed host link is ignored, allowed one kept",
+      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"appStoreURL\":\"https://evil.example.com/app\",\"playStoreURL\":\"https://play.google.com/store/apps/details?id=x\",\"websiteURL\":\"https://example.com\"}",
+      "expect": {
+        "locked": true,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": "https://play.google.com/store/apps/details?id=x",
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "http (not https) links are ignored",
+      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"appStoreURL\":\"http://apps.apple.com/app/id1\",\"playStoreURL\":\"http://play.google.com/store\",\"websiteURL\":\"http://github.com/JacobusOettle/satmap\"}",
+      "expect": {
+        "locked": true,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "github.com only under /JacobusOettle/",
+      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"appStoreURL\":\"https://github.com/someoneelse/satmap\",\"websiteURL\":\"https://github.com/JacobusOettle/satmap/releases\"}",
+      "expect": {
+        "locked": true,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": "https://github.com/JacobusOettle/satmap/releases"
+      }
+    }
+  ],
+  "decide": [
+    {
+      "name": "store channel never locks, even with a locked fetch",
+      "channel": "store",
+      "saved": {
+        "locked": false,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": {
+        "locked": true,
+        "title": "Off",
+        "message": "Go to the store",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "lock": null
+    },
+    {
+      "name": "store channel never locks, even when saved is locked and no new fetch",
+      "channel": "store",
+      "saved": {
+        "locked": true,
+        "title": "Off",
+        "message": "Go to the store",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": null,
+      "lock": null
+    },
+    {
+      "name": "test channel: fresh off locks with its texts and links",
+      "channel": "test",
+      "saved": {
+        "locked": false,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": {
+        "locked": true,
+        "title": "Switched off",
+        "message": "Please use the store build.",
+        "appStoreURL": "https://apps.apple.com/app/id1",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=x",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "lock": {
+        "title": "Switched off",
+        "message": "Please use the store build.",
+        "appStoreURL": "https://apps.apple.com/app/id1",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=x",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      }
+    },
+    {
+      "name": "test channel: fresh on unlocks",
+      "channel": "test",
+      "saved": {
+        "locked": true,
+        "title": "Off",
+        "message": "Go to the store",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": {
+        "locked": false,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "lock": null
+    },
+    {
+      "name": "test channel: no new fetch keeps the saved locked state (stays locked offline)",
+      "channel": "test",
+      "saved": {
+        "locked": true,
+        "title": "Off",
+        "message": "Go to the store",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": null,
+      "lock": {
+        "title": "Off",
+        "message": "Go to the store",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "test channel: never fetched (saved unlocked) stays unlocked",
+      "channel": "test",
+      "saved": {
+        "locked": false,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": null,
+      "lock": null
+    },
+    {
+      "name": "test channel: off with no texts falls back to the defaults",
+      "channel": "test",
+      "saved": {
+        "locked": false,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": {
+        "locked": true,
+        "title": "",
+        "message": "",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "lock": {
+        "title": "This test version of SatMap has been switched off",
+        "message": "Get SatMap from the App Store or Google Play to keep using it.",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    }
+  ]
+}

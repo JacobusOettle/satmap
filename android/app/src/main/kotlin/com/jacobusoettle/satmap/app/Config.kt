@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.app
 
 import com.jacobusoettle.satmap.BuildConfig
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import com.jacobusoettle.satmap.core.TileID
 
 /** Map data sources. Change the URL templates here to use a different provider.
@@ -37,6 +38,30 @@ object TileSources {
         .replace("{z}", t.z.toString())
         .replace("{x}", t.x.toString())
         .replace("{y}", t.y.toString())
+}
+
+/** The remote on/off switch for test builds (android/docs/spec/test-builds.md), the counterpart of the iPhone's
+ *  `TestBuildConfig` (Config.swift). The channel is set at build time; the status files are read in order until one is
+ *  readable. The decision itself is the shared `TestBuildSwitch`. */
+object TestBuildConfig {
+    /** This build's channel, or null in debug builds, which never check and never lock. A Release build with no
+     *  explicit `SATMAP_CHANNEL` is `test` (the safer default, `TestBuildSwitch.Channel.from`); a Play Store build
+     *  sets it to "store" (DESIGN.md, the Gradle property `satmapChannel`). */
+    val channel: TestBuildSwitch.Channel? =
+        if (BuildConfig.DEBUG) null else TestBuildSwitch.Channel.from(BuildConfig.SATMAP_CHANNEL)
+
+    /** Where `test-builds.json` is read, tried in order until one answers with a readable file. The GitHub raw URL on
+     *  the `app-status` branch is first; a Cloudflare mirror (set up later) will be added before it. Each is fetched
+     *  with `?t=<unix seconds>` appended to defeat caches (`TestBuildGate`). */
+    val statusURLs: List<String> = listOf(
+        "https://raw.githubusercontent.com/JacobusOettle/satmap/app-status/test-builds.json",
+    )
+
+    /** How long to wait for one status file before moving on (seconds). */
+    const val timeoutSeconds = 10L
+
+    /** How often a foreground test build re-checks (seconds): also at launch and on each return to the foreground. */
+    const val foregroundInterval = 5 * 60.0
 }
 
 /** GPS power policy. Times are seconds. */

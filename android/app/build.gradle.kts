@@ -26,6 +26,12 @@ android {
         val groupsDomain = providers.gradleProperty("groupsDomain").getOrElse("example.invalid")
         manifestPlaceholders["groupsDomain"] = groupsDomain
         buildConfigField("String", "GROUPS_DOMAIN", "\"$groupsDomain\"")
+        // The test-build remote switch (android/docs/spec/test-builds.md): the build channel, "test" or "store".
+        // CI's release APK is a test build and leaves this unset, which counts as "test". A future Play Store build
+        // sets it to "store" (in gradle.properties, or on the command line with -PsatmapChannel=store) and then never
+        // checks or locks. Debug builds never check whatever this says (TestBuildConfig uses BuildConfig.DEBUG).
+        val satmapChannel = providers.gradleProperty("satmapChannel").getOrElse("test")
+        buildConfigField("String", "SATMAP_CHANNEL", "\"$satmapChannel\"")
     }
 
     signingConfigs {
