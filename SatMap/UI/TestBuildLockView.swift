@@ -20,6 +20,8 @@ struct TestBuildLockView: View {
             }
         }
         .foregroundColor(.white)
+        // One container: without it the identifier and trait would go to every element inside, the buttons too.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("testBuildLock")
         .accessibilityAddTraits(.isModal)
     }

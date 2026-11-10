@@ -119,7 +119,8 @@ final class ScreenshotTests: XCTestCase {
         app.launch()
         let website = app.buttons["testBuildLink-website"]
         guard website.waitForExistence(timeout: 20) else { return XCTFail("The test-build lock didn't show with large text") }
-        for _ in 0..<8 where !website.isHittable {
+        for _ in 0..<8 {
+            if website.isHittable { break }
             app.swipeUp()
             sleep(1)
         }
