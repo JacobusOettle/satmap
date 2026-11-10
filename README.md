@@ -134,8 +134,8 @@ server is in `server/`.
   setting for the whole app, saved as soon as you change it) does this by itself, as the Download button would: once
   the new parts of your track add up to 500 m, they are added to the area, with its own detail and mobile data
   setting (for a new area, the detail the screen would choose, and Wi-Fi only). SatMap looks when you open it, when
-  you turn the switch on and as the track grows, at most every 10 minutes; not while the area is downloading, and
-  not with less than 1 GB free. Without mobile data the download waits for Wi-Fi.
+  you turn the switch on and as the track grows, at most every 10 minutes; not while the area is downloading or
+  paused, and not with less than 1 GB free. Without mobile data the download waits for Wi-Fi.
 - **In the background:** a download keeps going when you leave SatMap or lock the phone. From iOS 26 it runs as a
   *continued processing task*: its progress shows on the Lock Screen and in the Dynamic Island (not while SatMap is
   open, where the banner on the map shows it), and you can stop it there. Earlier iOS versions allow about half a

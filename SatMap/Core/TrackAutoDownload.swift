@@ -22,8 +22,9 @@ enum TrackAutoDownload {
         var lines: [[GeoPoint]]
         var maxZoom: Int
         var allowCellular: Bool
-        /// Downloading right now (queued or waiting for the network doesn't count).
-        var isDownloading: Bool
+        /// Downloading right now (that run is left to go on) or paused (with Pause, for an export, or as restored from a
+        /// backup: it stays paused until you resume it). Queued or waiting for the network doesn't count.
+        var leaveAlone: Bool
     }
 
     /// What the Download button would be given (`updateTrackArea`).
@@ -43,15 +44,15 @@ enum TrackAutoDownload {
         return since >= checkInterval || since < 0
     }
 
-    /// The check: the update to start, or nil when there is nothing to do. Not while the track area is downloading
-    /// (that run is left alone), not with less than `minimumFreeBytes` free (or free space unknown), and only once the
-    /// parts of the track away from the area's lines (`Roads.newParts`; with no track area, the whole track) are at
-    /// least `minimumNewMeters` long in total. The settings are the track area's, or for a new one the screen's: its
-    /// name, `newAreaZoom` (the zoom the screen would choose for a track area along these lines; asked only then) and no
-    /// mobile data. Slow for a long track: not on the main thread.
+    /// The check: the update to start, or nil when there is nothing to do. Not while the track area is downloading or
+    /// paused (`Area.leaveAlone`: a run goes on as it is, a pause stays), not with less than `minimumFreeBytes` free (or
+    /// free space unknown), and only once the parts of the track away from the area's lines (`Roads.newParts`; with no
+    /// track area, the whole track) are at least `minimumNewMeters` long in total. The settings are the track area's, or
+    /// for a new one the screen's: its name, `newAreaZoom` (the zoom the screen would choose for a track area along these
+    /// lines; asked only then) and no mobile data. Slow for a long track: not on the main thread.
     static func update(track: [TrackPoint], area: Area?, freeBytes: Int64?,
                        newAreaZoom: ([[GeoPoint]]) -> Int) -> Update? {
-        if area?.isDownloading == true { return nil }
+        if area?.leaveAlone == true { return nil }
         guard let free = freeBytes, free >= minimumFreeBytes else { return nil }
         let latest = Roads.trackLines(track)
         let previous = area?.lines ?? []

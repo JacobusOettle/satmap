@@ -14,8 +14,8 @@ final class TrackAutoDownloadTests: XCTestCase {
         }
     }
 
-    private func area(_ lines: [[GeoPoint]], downloading: Bool = false) -> TrackAutoDownload.Area {
-        TrackAutoDownload.Area(name: "My trips", lines: lines, maxZoom: 19, allowCellular: true, isDownloading: downloading)
+    private func area(_ lines: [[GeoPoint]], leaveAlone: Bool = false) -> TrackAutoDownload.Area {
+        TrackAutoDownload.Area(name: "My trips", lines: lines, maxZoom: 19, allowCellular: true, leaveAlone: leaveAlone)
     }
 
     private func noNewArea(_ lines: [[GeoPoint]]) -> Int {
@@ -67,7 +67,7 @@ final class TrackAutoDownloadTests: XCTestCase {
         XCTAssertNil(TrackAutoDownload.update(track: walk(steps: 60), area: area(saved), freeBytes: 50 * gigabyte, newAreaZoom: noNewArea))
     }
 
-    func testEarlierTripsStayWhenTheTrackWasCleared() throws {
+    func testEarlierTripsStayBesideANewOne() throws {
         let earlier = [[GeoPoint(lat: -25.05, lon: 31.70), GeoPoint(lat: -25.05, lon: 31.71)]]
         let track = walk(steps: 60)
         let update = try XCTUnwrap(TrackAutoDownload.update(track: track, area: area(earlier), freeBytes: 50 * gigabyte,
@@ -76,11 +76,18 @@ final class TrackAutoDownloadTests: XCTestCase {
         XCTAssertEqual(Roads.length(update.lines), Roads.length(earlier + Roads.trackLines(track)), accuracy: 1)
     }
 
-    func testLeavesARunningDownloadAndLowStorageAlone() {
+    func testNothingWithoutATrack() {
+        // Cleared, or no location yet: the track area keeps its lines (nothing to update), and none is made.
+        let earlier = Roads.trackLines(walk(steps: 120))
+        XCTAssertNil(TrackAutoDownload.update(track: [], area: area(earlier), freeBytes: 50 * gigabyte, newAreaZoom: noNewArea))
+        XCTAssertNil(TrackAutoDownload.update(track: [], area: nil, freeBytes: 50 * gigabyte) { _ in 20 })
+    }
+
+    func testLeavesARunningOrPausedDownloadAndLowStorageAlone() {
         let saved = Roads.trackLines(walk(steps: 10))
         let far = walk(steps: 200)
-        // Downloading right now: that run is left alone.
-        XCTAssertNil(TrackAutoDownload.update(track: far, area: area(saved, downloading: true), freeBytes: 50 * gigabyte,
+        // Downloading right now (that run is left alone), or paused (the pause stays): nothing, however far you went.
+        XCTAssertNil(TrackAutoDownload.update(track: far, area: area(saved, leaveAlone: true), freeBytes: 50 * gigabyte,
                                               newAreaZoom: noNewArea))
         // Under 1 GB free, or not known.
         XCTAssertNil(TrackAutoDownload.update(track: far, area: area(saved), freeBytes: gigabyte - 1, newAreaZoom: noNewArea))

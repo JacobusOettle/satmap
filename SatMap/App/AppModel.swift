@@ -755,8 +755,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             }
             DispatchQueue.main.async {
                 self.trackCheckRunning = false
-                // Not if it was turned off meanwhile, or the track area changed (its download started, Download was
-                // tapped, it was deleted …): the next check starts from what there is then.
+                // Not if it was turned off meanwhile, or the track area changed (its download started or was paused,
+                // Download was tapped, it was deleted …): the next check starts from what there is then.
                 guard let update = update, self.trackAutoDownload, self.trackAreaForAutoDownload == area else { return }
                 self.startTrackDownload(name: update.name, lines: update.lines, maxZoom: update.maxZoom,
                                         allowCellular: update.allowCellular)
@@ -768,7 +768,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     private var trackAreaForAutoDownload: TrackAutoDownload.Area? {
         offline.areas.first { $0.isTrack == true }.map {
             TrackAutoDownload.Area(name: $0.name, lines: $0.roads ?? [], maxZoom: $0.maxZoom, allowCellular: $0.allowCellular,
-                                   isDownloading: $0.status == .downloading)
+                                   leaveAlone: $0.status == .downloading || $0.status == .paused)
         }
     }
 

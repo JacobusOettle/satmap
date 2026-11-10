@@ -235,18 +235,22 @@ final class ScreenshotTests: XCTestCase {
         XCTAssertTrue((tappedHeight.value as? String)?.contains(" m ") == true, "Height not back in metres")
 
         // With a spot selected (the one tapped in drone mode), the measure button measures from it: A there at once,
-        // with the distance from you. ✕ ends it, and the spot with it.
+        // with the distance from you (from off with a spot selected, the one tap that lands gives that). ✕ ends it, and
+        // the spot with it.
         let tappedSpot = app.buttons["tappedCoordinates"]
         if tappedSpot.exists {
             let spot = tappedSpot.label
-            tap("Measure")
-            sleep(2)
-            XCTAssertEqual(currentMeasureState(), .placed, "The measure button didn't measure from the tapped spot")
+            setMeasure(.placed)
             XCTAssertEqual(tappedSpot.exists ? tappedSpot.label : nil, spot, "Point A isn't at the tapped spot")
             setMeasure(.off)
             XCTAssertFalse(tappedSpot.exists, "The tapped spot stayed after measuring from it")
         } else {
             XCTFail("No tapped spot to measure from")
+        }
+        // Nothing selected for what follows, or the measure button would place A rather than show the crosshair.
+        for _ in 0..<3 where tappedSpot.exists {
+            tap("Hide coordinates")
+            sleep(1)
         }
 
         // Measuring between two points: a tap anywhere puts a point at the crosshair; the map is moved between them.
