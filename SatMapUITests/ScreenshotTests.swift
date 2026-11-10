@@ -80,8 +80,23 @@ final class ScreenshotTests: XCTestCase {
         guard lock.waitForExistence(timeout: 20) else { return XCTFail("The test-build lock didn't show") }
         XCTAssertTrue(app.buttons["testBuildLink-appStore"].exists, "No App Store button on the lock")
         XCTAssertTrue(app.buttons["testBuildLink-website"].exists, "No Website button on the lock")
+        // A locked build asks for nothing, but an earlier launch's Motion prompt (a SpringBoard alert, which floats over
+        // every app window) can still be up: dismiss it so the lock shows on its own.
+        dismissSystemAlerts()
         sleep(2)
         snap("41-test-build-off")
+    }
+
+    /// Taps away any SpringBoard permission alert left on screen (Allow / OK / Don't Allow), a few times.
+    private func dismissSystemAlerts() {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for _ in 0..<3 {
+            let button = ["Allow While Using App", "Allow Once", "Allow", "OK", "Don't Allow"]
+                .map { springboard.buttons[$0] }.first { $0.exists }
+            guard let button = button else { break }
+            button.tap()
+            sleep(1)
+        }
     }
 
     /// Shots 01–27: the map, measuring, blocks, offline maps and drone mode. A step that can't go on returns early;
