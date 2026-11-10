@@ -1,5 +1,5 @@
-# Throwaway probe (branch claude/cdngi-speedtest only): how the CD:NGI geoportal serves orthophoto downloads,
-# and a few polite throughput measurements from an Azure-hosted runner.
+# Throwaway probe (branch claude/cdngi-speedtest only): load the CD:NGI geoportal in a headless browser as an anonymous
+# visitor and ask it the same read-only question its own search panel asks (may this visitor use Download / Clip-Zip-Ship?).
 name: cdngi-probe
 
 on:
@@ -12,46 +12,56 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      UA: "SatMap download speed test (one-off, a few files)"
-      W: 'code=%{http_code} bytes=%{size_download} ttfb=%{time_starttransfer}s total=%{time_total}s speed=%{speed_download}B/s dns=%{time_namelookup}s connect=%{time_connect}s tls=%{time_appconnect}s ip=%{remote_ip}\n'
+    timeout-minutes: 20
     steps:
-      - name: Runner location
-        run: curl -sS -m 20 https://ipinfo.io/json | grep -E '"(city|region|country|org)"' || true
-
-      - name: Anonymous download permission, with the page's CSRF token (read-only check the page makes for every visitor)
+      - name: Install Playwright
+        run: |
+          pip install -q playwright==1.47.0
+          python -m playwright install --with-deps chromium > /dev/null
+      - name: Load portal anonymously and check download access
         run: |
           mkdir -p out && cd out
-          P=https://ngigeoportal.dlrrd.gov.za/cdngiportal
-          curl -sS -A "$UA" -m 90 -c cj.txt -b cj.txt -o portal.html -w "$W" "$P/" || true
-          TOKEN=$(grep -o 'name="__wc_csrfToken" id="__wc_csrfToken" value="[^"]*"' portal.html | sed 's/.*value="//; s/"$//')
-          echo "token length: ${#TOKEN}"
-          sleep 2
-          echo "== getCZSAccess (anonymous, with CSRF token)"
-          curl -sS -A "$UA" -m 60 -c cj.txt -b cj.txt -H 'X-Requested-With: XMLHttpRequest' \
-            -H 'Content-Type: application/x-www-form-urlencoded; charset=utf-8' -H "Referer: $P/" \
-            --data-urlencode "mapServiceId=3f0cc9ff-234f-4c3a-a184-77dae330a137" --data-urlencode "__wc_csrfToken=$TOKEN" \
-            -w "\n$W" "$P/ApolloSearch.WebClient.ashx?action=getCZSAccess" || true
-          echo; sleep 2
-          echo "== getAccess (anonymous, with CSRF token)"
-          curl -sS -A "$UA" -m 60 -c cj.txt -b cj.txt -H 'X-Requested-With: XMLHttpRequest' \
-            -H 'Content-Type: application/x-www-form-urlencoded; charset=utf-8' -H "Referer: $P/" \
-            --data-urlencode "mapServiceId=3f0cc9ff-234f-4c3a-a184-77dae330a137" --data-urlencode "__wc_csrfToken=$TOKEN" \
-            -w "\n$W" "$P/ApolloSearch.WebClient.ashx?action=getAccess" | head -c 1500 || true
-          echo
-
-      - name: Apollo static file, single stream again (82 MB)
-        run: |
-          curl -sS -A "$UA" -m 600 -H 'Accept-Encoding: identity' -o /dev/null -w "$W" https://bp-cdngiapollo.dlrrd.gov.za/erdas-apollo/studio/main.5f5fe70e0db35047ab51.js || true
-          sleep 10
-
-      - name: Apollo static file, 8 parallel streams (aggregate, one burst)
-        run: |
-          start=$(date +%s.%N)
-          for i in 1 2 3 4 5 6 7 8; do
-            curl -sS -A "$UA" -m 600 -H 'Accept-Encoding: identity' -o /dev/null -w "stream$i $W" https://bp-cdngiapollo.dlrrd.gov.za/erdas-apollo/studio/main.5f5fe70e0db35047ab51.js &
-          done
-          wait
-          end=$(date +%s.%N)
-          python3 -c "s=$start; e=$end; b=8*82286046; print(f'aggregate: {b} bytes in {e-s:.2f}s = {b/(e-s)/1e6:.2f} MB/s = {b*8/(e-s)/1e6:.0f} Mbit/s')"
+          cat > probe.py <<'PY'
+          import json
+          from playwright.sync_api import sync_playwright
+          UA = "SatMap download speed test (one-off, a few files)"
+          JS = """() => new Promise((resolve) => {
+            const out = {};
+            try {
+              out.identity = (typeof $sessionManager !== 'undefined') ? 'sessionManager present' : 'no sessionManager';
+              const r = $webRequest.create({ name: "ApolloSearch", query: { action: "getCZSAccess" },
+                body: { mapServiceId: "3f0cc9ff-234f-4c3a-a184-77dae330a137" },
+                callback: function (ex) { try { out.getCZSAccess = ex.get_object(); } catch (e) { out.getCZSAccess = 'ERR ' + e; } resolve(out); } });
+              r.invoke();
+            } catch (e) { out.exception = '' + e; resolve(out); }
+            setTimeout(() => { out.timeout = true; resolve(out); }, 60000);
+          })"""
+          with sync_playwright() as p:
+              b = p.chromium.launch()
+              pg = b.new_page(user_agent=UA, viewport={"width": 1600, "height": 1000})
+              calls = []
+              pg.on("request", lambda r: calls.append(r.method + " " + r.url[:160]) if ".ashx" in r.url or "erdas" in r.url else None)
+              pg.goto("https://ngigeoportal.dlrrd.gov.za/cdngiportal/", wait_until="load", timeout=180000)
+              pg.wait_for_timeout(25000)
+              pg.screenshot(path="portal.png")
+              print("title:", pg.title())
+              print("result:", json.dumps(pg.evaluate(JS), indent=1))
+              txt = pg.evaluate("() => document.body.innerText")
+              for k in ["Log in", "Login", "Sign in", "Register", "Sign up", "Logout"]:
+                  print(f"text contains {k!r}:", k in txt)
+              print("ashx/erdas requests during load:")
+              seen = set()
+              for c in calls:
+                  key = c.split("?")[0]
+                  if key not in seen:
+                      seen.add(key); print("  ", c)
+              b.close()
+          PY
+          python probe.py
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdngi-portal-shot
+          path: out/portal.png
+          retention-days: 3
