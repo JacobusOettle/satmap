@@ -516,9 +516,11 @@ fun Controls(model: AppModel, offline: OfflineManager, map: MapController?, onCl
         val width = constraints.constrainWidth(grid.size.width)
         val height = constraints.constrainHeight(grid.size.height)
         layout(width, height) {
-            // Anchored at the bottom right: anything too big for the space given spills up and to the left.
+            // Anchored at the bottom right: anything too big for the space given spills up and to the left. Mirrored
+            // in a right-to-left language, as the rest of the overlay (and iOS's Layout), so My location stays at the
+            // screen's edge there too.
             placeables.forEachIndexed { i, p ->
-                p.place(grid.offsets[i].x + width - grid.size.width, grid.offsets[i].y + height - grid.size.height)
+                p.placeRelative(grid.offsets[i].x + width - grid.size.width, grid.offsets[i].y + height - grid.size.height)
             }
         }
     }

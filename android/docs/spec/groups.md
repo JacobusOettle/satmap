@@ -256,7 +256,7 @@ again when it changes. Stop also calls `groups.stopSharingEverywhere()` (an Andr
 | `ui/ScreenRendersGroupsTest` | Renders 28–40 at `IPHONE_SCREEN` (36 and 40: overlays only) |
 | `ui/GroupScreensTest` | S4's name kept and prefilled in S8; S5's "Invite someone" making the invite, then S6, and its failure alert; S5's sharing switch with location off, then allowed; S10's animal checked on the tap |
 | `groups/GroupIconsTest` | The map pins' glyphs about 16 dp as drawn; the solid drop, the house's door and chimney, person.3's proportions |
-| `ui/MapScreenGroupsTest` | The Groups button's place (the top of the column; the grid in a small landscape window), its sheet, the paused banner (S5 alone with Done; "Hide"), the drop-pin capsule |
+| `ui/MapScreenGroupsTest` | The Groups button's place (the top of the column; the grid in a small landscape window, mirrored right to left), its sheet, the paused banner (S5 alone with Done; "Hide"), the drop-pin capsule |
 | `MainActivityTest` | The https and satmap filters resolve to MainActivity; a link opens S8 once (not from Recents) and never joins; the `intent://` form with `groupKey` |
 | `location/LocationServiceTest` | The big-text lines; Stop ends sharing everywhere |
 | `map/MapStyleTest` | The overlay stack with the group's layers |

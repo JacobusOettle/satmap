@@ -2771,9 +2771,11 @@ year).
     the top left (centred in its cell) and Groups under it. The grid sits where the column did, on the lift.
   - So the first 56 pt/dp of shortfall only moves the compass slot (empty unless the map is turned) to a second
     column beside Groups, and no button moves; in landscape the buttons are two or three rows of columns.
-  - iOS: a custom `Layout` for `controls`, offered the height the `VStack` leaves (give the bottom `HStack`
-    `.layoutPriority(1)`, so the `Spacer` doesn't share the height with it). Android: `Controls` is a `Layout`
-    (`mapButtonGrid`), measured with the height `MapOverlay`'s `Column` leaves.
+  - iOS: `controls` is a `Layout` (`MapButtonsLayout`, the grid from core's `MapButtonGrid`), offered the height the
+    `VStack` leaves: the bottom `HStack` takes the room under the panels with `.frame(maxHeight: .infinity,
+    alignment: .bottom)` in place of the `Spacer` above it. (Not `.layoutPriority(1)`: that offers the row the room
+    less the panels' smallest sizes, so a hint that wraps could be cut to one line.) Android: `Controls` is a
+    `Layout` (`mapButtonGrid`), measured with the height `MapOverlay`'s `Column` leaves.
 - **Paused banner:** an existing `Hint` in the top stack, under the location hints, while the shown group is paused
   (id `groupPausedHint`).
 

@@ -125,6 +125,21 @@ class MapScreenGroupsTest {
     }
 
     @Test
+    @Config(qualifiers = "ar-ldrtl-w592dp-h336dp") // Arabic: Robolectric turns the views right to left only for an RTL locale
+    fun inARightToLeftLanguageTheGridIsMirroredWithTheOverlay() {
+        val tags = listOf("groupsButton", "terrainButton", "blocksButton", "offlineButton", "goToButton", "measureButton", "myLocationButton")
+        val buttons = tags.map { compose.onNodeWithTag(it).getUnclippedBoundsInRoot() }
+        // The buttons at the left edge (the legends at the right), My location at the bottom left, Groups at the top
+        // right, as iOS's Layout mirrors.
+        val myLocation = buttons.last()
+        assertEquals(12.dp, myLocation.left)
+        assertEquals(buttons.maxOf { it.bottom }, myLocation.bottom)
+        assertEquals(buttons.maxOf { it.right }, buttons[0].right)
+        assertEquals(buttons.minOf { it.top }, buttons[0].top)
+        assertTrue(buttons[0].left > myLocation.right)
+    }
+
+    @Test
     fun aTapOpensTheGroupsSheet() {
         compose.onNodeWithTag("groupsButton").performClick()
         assertEquals(ActiveSheet.groups, model.sheet.value)

@@ -417,7 +417,9 @@ Every element gets a black shadow with radius 1.5 dp. Draw with `drawIntoCanvas 
   slot) fits that height, it is the column above. Otherwise the buttons form a grid of 50 dp cells, 12 dp apart both
   ways, with as many rows as fit (at least one), filled from My location (bottom right) up each column, right to
   left; the leftmost column holds the first buttons from its top, the compass slot centred in its cell. The block is
-  anchored at its bottom right (on the lift), so a block too big for its space spills up and to the left.
+  anchored at its bottom right (on the lift), so a block too big for its space spills up and to the left. It is placed
+  with `placeRelative`, so in a right-to-left language it mirrors with the rest of the overlay (as iOS's `Layout`
+  does): the column at the left edge, My location at its bottom left.
 - **Blocks long-press menu** (`DropdownMenu` anchored to the button, `containerColor = CellBackground`; it closes after any item):
   - For each file: `DropdownMenuItem(text = f.name, leadingIcon = Icons.Filled.CheckCircle if f.isShown else Icons.Outlined.Circle)`, calling `model.kml.setShown(f.id, !f.isShown)`.
   - Then `HorizontalDivider()` and `Colours from the files` with `Icons.Filled.CheckBox` or `Icons.Outlined.CheckBoxOutlineBlank`, calling `model.kml.useFileColours = !useFileColours`.
