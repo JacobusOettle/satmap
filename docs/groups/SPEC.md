@@ -2766,9 +2766,9 @@ year).
     Shorter still, the screen overflows as before.
     - iOS: `BottomRowLayout` (a `Layout`) holds the row, in place of the `Spacer` above it and its bottom padding.
     - Android: the same, in `MapOverlay`.
-    - An iPhone SE (375 × 667 pt) with your coordinates and the paused banner at the top: the row is about 60 pt
-      above the bottom. On the iPhone of the screenshots it comes down only under the measuring panel's points
-      (shots 16 and 19).
+    - An iPhone SE (375 × 667 pt) with your coordinates at the top: the row is 119 pt above the bottom; with the
+      paused banner too, about 60. On the iPhone of the screenshots it comes down only under the taller measuring
+      panels (shots 02, 08, 16 and 19).
     - Landscape has no layout of its own (as before): a phone's landscape height (about 410 pt at most) can't hold
       the column, with or without the Groups button (it was 416 pt before).
 - **Paused banner:** an existing `Hint` in the top stack, under the location hints, while the shown group is paused
