@@ -14,9 +14,7 @@ struct NewAreaView: View {
 
     @State private var name: String
     /// The deepest zoom level to download; remembered for the next area.
-    @AppStorage("offlineMaxZoom") private var maxZoom = TileSources.imageryMaxZoom
-    /// Zoom levels offered, most detailed first: from about 3 cm to 5 m per pixel.
-    private let zoomChoices = Array((15...TileSources.imageryMaxZoom).reversed())
+    @AppStorage(DownloadSizes.maxZoomKey) private var maxZoom = TileSources.imageryMaxZoom
     /// For your track: the track area's own zoom, kept apart from the one remembered for other areas.
     @State private var trackZoom: Int?
     /// A level was tapped here: it is downloaded as chosen, however big (the remembered one may be lowered).
@@ -29,9 +27,6 @@ struct NewAreaView: View {
     @State private var freeSpace: Int64?
     @Environment(\.dismiss) private var dismiss
 
-    /// Rough average sizes from Esri JPEG and Terrarium PNG tiles.
-    private let imageryTileBytes: Double = 17_000
-    private let terrainTileBytes: Double = 45_000
     private let typicalDepth = 19
 
     private enum RoadsState {
@@ -105,6 +100,15 @@ struct NewAreaView: View {
                 }
             }
 
+            if track != nil {
+                // For the whole app, saved at once (`AppModel.trackAutoDownload`).
+                Section {
+                    Toggle("Auto download", isOn: $model.trackAutoDownload)
+                } footer: {
+                    Text("Saves imagery along the new parts of your track by itself, as the Download button below does, once you've been somewhere new. Without mobile data it waits for Wi-Fi.")
+                }
+            }
+
             Section {
                 Toggle("Allow mobile data", isOn: $allowCellular)
             } footer: {
@@ -173,7 +177,7 @@ struct NewAreaView: View {
     /// Every zoom level with its detail and download size; tap one to choose it.
     private var detailSection: some View {
         Section {
-            ForEach(zoomChoices, id: \.self) { z in
+            ForEach(DownloadSizes.zoomChoices, id: \.self) { z in
                 Button {
                     picked = true
                     if track != nil { trackZoom = z } else { maxZoom = z }
@@ -250,16 +254,14 @@ struct NewAreaView: View {
     }
 
     private var rememberedZoom: Int {
-        min(max(trackZoom ?? maxZoom, zoomChoices.last!), zoomChoices.first!)
+        DownloadSizes.offered(trackZoom ?? maxZoom)
     }
 
     /// Once the sizes are known, the most detailed level taking at most half the free space (above what downloads
     /// stop at); the least detailed when none does. None below that space: nothing fits, as the warning says.
     private var deepestFitting: Int? {
-        guard let counts = counts, let imagery = imageryCounts, let free = freeSpace,
-              free > OfflineManager.minimumFreeSpace else { return nil }
-        let room = (free - OfflineManager.minimumFreeSpace) / 2
-        return zoomChoices.first { estimate(imagery: imagery, terrain: counts, depth: $0).bytes <= room } ?? zoomChoices.last
+        guard let counts = counts, let imagery = imageryCounts, let free = freeSpace else { return nil }
+        return DownloadSizes.deepestFitting(imagery: imagery, terrain: counts, free: free)
     }
 
     private func kilometres(_ km: Double) -> String {
@@ -294,7 +296,7 @@ struct NewAreaView: View {
             if alongRoads, case .failed = roads { return "–" }
             return "…"
         }
-        let e = estimate(imagery: imagery, terrain: counts, depth: z)
+        let e = DownloadSizes.estimate(imagery: imagery, terrain: counts, depth: z)
         if e.tiles == 0 { return "Nothing new" } // your track, already saved to this level
         let bytes = Format.bytes(e.bytes)
         return z <= typicalDepth ? "≈ \(bytes)" : "up to \(bytes)"
@@ -302,7 +304,7 @@ struct NewAreaView: View {
 
     private var chosenEstimate: (tiles: Int, bytes: Int64)? {
         guard let counts = counts, let imagery = imageryCounts else { return nil }
-        return estimate(imagery: imagery, terrain: counts, depth: chosenZoom)
+        return DownloadSizes.estimate(imagery: imagery, terrain: counts, depth: chosenZoom)
     }
 
     private var roadLines: [[GeoPoint]]? {
@@ -374,13 +376,6 @@ struct NewAreaView: View {
         return a > 0 ? a : nil
     }
 
-    private func estimate(imagery imageryCounts: [Int: Int], terrain terrainCounts: [Int: Int], depth: Int) -> (tiles: Int, bytes: Int64) {
-        let imagery = (0...depth).reduce(0) { $0 + (imageryCounts[$1] ?? 0) }
-        let terrain = (0...Terrarium.maxZoom).reduce(0) { $0 + (terrainCounts[$1] ?? 0) }
-        let bytes = Double(imagery) * imageryTileBytes + Double(terrain) * terrainTileBytes
-        return (imagery + terrain, Int64(bytes))
-    }
-
     private func row(_ title: String, _ value: String) -> some View {
         HStack {
             Text(title)
@@ -403,4 +398,52 @@ struct TrackDownload {
     var allowCellular: Bool?
     /// The zoom the track area is completely downloaded to, or nil (no area yet, or its download didn't finish).
     var completeTo: Int?
+}
+
+/// The download screen's sizes and the level it chooses, also used by auto download for a new track area
+/// (`AppModel.checkTrackAutoDownload`).
+enum DownloadSizes {
+    /// Where the level last chosen is remembered (`@AppStorage`), for the next area.
+    static let maxZoomKey = "offlineMaxZoom"
+    /// Zoom levels offered, most detailed first: from about 3 cm to 5 m per pixel.
+    static let zoomChoices = Array((15...TileSources.imageryMaxZoom).reversed())
+    /// Rough average sizes from Esri JPEG and Terrarium PNG tiles.
+    private static let imageryTileBytes: Double = 17_000
+    private static let terrainTileBytes: Double = 45_000
+
+    /// The level, kept to those offered.
+    static func offered(_ zoom: Int) -> Int {
+        min(max(zoom, zoomChoices.last!), zoomChoices.first!)
+    }
+
+    static func estimate(imagery imageryCounts: [Int: Int], terrain terrainCounts: [Int: Int], depth: Int) -> (tiles: Int, bytes: Int64) {
+        let imagery = (0...depth).reduce(0) { $0 + (imageryCounts[$1] ?? 0) }
+        let terrain = (0...Terrarium.maxZoom).reduce(0) { $0 + (terrainCounts[$1] ?? 0) }
+        let bytes = Double(imagery) * imageryTileBytes + Double(terrain) * terrainTileBytes
+        return (imagery + terrain, Int64(bytes))
+    }
+
+    /// The most detailed level taking at most half the free space (above what downloads stop at); the least detailed
+    /// when none does. None below that space: nothing fits.
+    static func deepestFitting(imagery: [Int: Int], terrain: [Int: Int], free: Int64) -> Int? {
+        guard free > OfflineManager.minimumFreeSpace else { return nil }
+        let room = (free - OfflineManager.minimumFreeSpace) / 2
+        return zoomChoices.first { estimate(imagery: imagery, terrain: terrain, depth: $0).bytes <= room } ?? zoomChoices.last
+    }
+
+    /// The level the Where I've been screen chooses for a new track area along `lines` when none is tapped
+    /// (`NewAreaView.chosenZoom`): the one remembered from the last area, lowered until the download takes at most half
+    /// the free space. Slow for a long track: not on the main thread.
+    static func zoomForNewTrackArea(_ lines: [[GeoPoint]], freeSpace: Int64?) -> Int {
+        let remembered = offered(UserDefaults.standard.object(forKey: maxZoomKey) as? Int ?? TileSources.imageryMaxZoom)
+        guard let free = freeSpace else { return remembered }
+        // Imagery and elevation (to its own deepest level) along the same corridor, as the screen counts them.
+        let corridor = Roads.corridor(lines)
+        var counts: [Int: Int] = [:]
+        for z in 0...TileSources.imageryMaxZoom {
+            counts[z] = TileCoverage(shape: corridor, zoom: z).tileCount
+        }
+        guard let fits = deepestFitting(imagery: counts, terrain: counts, free: free) else { return remembered }
+        return min(remembered, fits)
+    }
 }
