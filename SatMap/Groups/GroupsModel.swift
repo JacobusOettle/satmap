@@ -43,6 +43,9 @@ final class GroupsModel: ObservableObject {
     private var minuteTimer: Timer?
     private var nextBackgroundTick: Date?
     private var ticking = false
+    /// While test builds are switched off (`TestBuildGate`): no ticks, no socket, no uploads. The recorder is stopped
+    /// too, so no new positions are produced; what is queued waits until it unlocks.
+    private var locked = false
     /// A group just shown from S5 or S8 whose live positions haven't arrived yet: the camera fits it when they do.
     private var pendingFit: (groupId: String, until: Date)?
     /// When `closeScreensOfGoneGroups` last closed a screen: SwiftUI takes it away a moment later.
@@ -114,7 +117,8 @@ final class GroupsModel: ObservableObject {
             .filter { $0 }
             .sink { [weak self] _ in
                 DispatchQueue.main.async {
-                    guard let self = self else { return }
+                    // Locked (test builds switched off): nothing is uploaded; unlocking flushes everything.
+                    guard let self = self, !self.locked else { return }
                     self.afterStart { await $0.connectivityChanged(online: true) }
                 }
             }
@@ -144,9 +148,26 @@ final class GroupsModel: ObservableObject {
         }
     }
 
+    /// Stops or restarts the groups' network while test builds are switched off (`TestBuildGate`).
+    func setLocked(_ locked: Bool) {
+        guard locked != self.locked else { return }
+        self.locked = locked
+        if locked {
+            foregroundTimer?.invalidate(); foregroundTimer = nil
+            backgroundTimer?.invalidate(); backgroundTimer = nil
+            nextBackgroundTick = nil
+            hub.enteredBackground() // closes the socket and stops live sharing
+        } else if isForeground {
+            becameActive()
+        } else {
+            scheduleBackgroundTick()
+        }
+    }
+
     /// The hub work queued behind `start()` reads the app's state when it runs, not when it was queued: the app may
     /// have gone to the background meanwhile, and the hub must not open the socket there (§8.7).
     private func becameActive() {
+        guard !locked else { return }
         afterStart { [weak self] hub in
             guard self?.isForeground == true else { return }
             await hub.becameActive()
@@ -171,7 +192,7 @@ final class GroupsModel: ObservableObject {
         backgroundTimer?.invalidate()
         backgroundTimer = nil
         nextBackgroundTick = nil
-        guard foregroundTimer == nil else { return }
+        guard !locked, foregroundTimer == nil else { return }
         let t = Timer(timeInterval: TimeInterval(GroupPolicy.liveWatchedForeground), repeats: true) { [weak self] _ in self?.tick() }
         t.tolerance = 0.5
         RunLoop.main.add(t, forMode: .common)
@@ -182,7 +203,7 @@ final class GroupsModel: ObservableObject {
     private func scheduleBackgroundTick() {
         backgroundTimer?.invalidate()
         backgroundTimer = nil
-        guard !isForeground, let delay = hub.nextTickDelay(foreground: false) else {
+        guard !locked, !isForeground, let delay = hub.nextTickDelay(foreground: false) else {
             nextBackgroundTick = nil
             return
         }
@@ -195,7 +216,7 @@ final class GroupsModel: ObservableObject {
     }
 
     private func tick() {
-        guard !ticking else { return }
+        guard !ticking, !locked else { return }
         ticking = true
         afterStart { [weak self] hub in
             guard let self = self else { return }
@@ -376,6 +397,8 @@ final class GroupsModel: ObservableObject {
     /// An invite link arrived (`onOpenURL`, the paste field or the scanner): S8 over anything, never a join by itself
     /// (§5.6). A group you're already in opens its screen and says so instead.
     func openInvite(_ parsed: InviteLink.Parsed) {
+        // Nothing while test builds are switched off: the lock covers everything, links too.
+        guard !locked else { return }
         if case .invite(let link) = parsed, let d = hub.detail(link.groupIdText) {
             // Over S5 once its sheet is up: timed from the sheet's opening (another sheet may close first), and the
             // alert waits while the sheet is still sliding in.
@@ -552,8 +575,7 @@ final class GroupsModel: ObservableObject {
 /// Alerts and toasts over whatever is on screen (a sheet, another sheet over it), for what the hub says on its own.
 enum TopPresenter {
     static var top: UIViewController? {
-        let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
-        guard var top = window?.rootViewController else { return nil }
+        guard var top = UIApplication.shared.screensWindow?.rootViewController else { return nil }
         while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
         return top
     }
@@ -591,9 +613,9 @@ enum TopPresenter {
         vc.isBeingPresented || vc.isBeingDismissed || vc.presentedViewController != nil || vc.transitionCoordinator != nil
     }
 
-    /// A capsule near the bottom of the key window for two seconds.
+    /// A capsule near the bottom of the app's window for two seconds.
     static func toast(_ text: String) {
-        guard let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else { return }
+        guard let window = UIApplication.shared.screensWindow else { return }
         let label = PaddedLabel()
         label.text = text
         label.font = .preferredFont(forTextStyle: .subheadline).withWeight(.semibold)

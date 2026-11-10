@@ -3,6 +3,10 @@ name: iPhone app
 # Builds an unsigned SatMap.ipa for installing with a sideloading tool (Impactor, Sideloadly, AltStore),
 # which signs it with your Apple ID. Published as the "test-build" pre-release, always at
 # https://github.com/JacobusOettle/satmap/releases/download/test-build/SatMap.ipa
+#
+# This is a test build: it reads the test-build switch and can be switched off remotely (README,
+# "Test builds can be switched off"). The project's SATMAP_CHANNEL build setting is "test", so the switch
+# applies without anything extra here; a store build (App Store) would archive with SATMAP_CHANNEL=store.
 on:
   workflow_dispatch:
   push:

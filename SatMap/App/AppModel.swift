@@ -202,6 +202,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     let offline = OfflineManager()
     /// Groups: made at launch, because sharing your position runs with no screen (§8.1).
     let groups = GroupsModel()
+    /// Test builds can be switched off remotely (`TestBuildGate`): nothing in store or debug builds.
+    let testBuild = TestBuildGate()
     private let trackLog = TrackLog(url: AppPaths.track)
 
     /// The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the array).
@@ -371,6 +373,9 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                           recorder.objectWillChange.eraseToAnyPublisher()] {
             publisher.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         }
+        // Applies the kept lock before the recorder starts, so a build that has seen "off" never asks for location or
+        // records while locked.
+        testBuild.start(app: self)
         recorder.start()
     }
 

@@ -213,6 +213,23 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Stops or lets downloads go on while test builds are switched off (`TestBuildGate`). A running download stops
+    /// (keeping what is saved) and is queued again, as when the background time ends, so it carries on by itself when
+    /// it unlocks, even after SatMap was closed meanwhile; nothing starts while locked (`startNextIfIdle`).
+    func setLocked(_ locked: Bool) {
+        guard locked != lockedDown else { return }
+        lockedDown = locked
+        if locked {
+            if let id = activeID {
+                // The run ends as cancelled; `finished` keeps a queued area queued.
+                update(id) { if $0.status == .downloading { $0.status = .queued } }
+                task?.cancel()
+            }
+        } else {
+            startNextIfIdle()
+        }
+    }
+
     func refreshSizes() {
         let snapshot = areas
         DispatchQueue.global(qos: .utility).async {
@@ -244,6 +261,9 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
     /// From an export starting until its share sheet closes no download starts: an exported area's files must not
     /// change while they are prepared or copied.
     private var holdDownloads = false
+    /// While test builds are switched off (`TestBuildGate`): no download starts, and the one running is queued again
+    /// and continues when it unlocks. What is saved is kept.
+    private var lockedDown = false
     /// The download paused for an export, resumed by `finishExport`.
     private var pausedForExport: UUID?
 
@@ -591,6 +611,13 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
 
     private func startNextIfIdle() {
         guard task == nil, startingArea == nil else { return }
+        guard !lockedDown else {
+            // Locked (test builds switched off) with nothing running: the screen may sleep, and the system's progress
+            // bar and background time end, as after a pause.
+            updateIdleTimer()
+            background.end(success: false)
+            return
+        }
         guard inForeground || background.allowsBackgroundWork, !holdDownloads else {
             background.end(success: lastRunComplete)
             return

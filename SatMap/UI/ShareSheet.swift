@@ -6,8 +6,7 @@ import UniformTypeIdentifiers
 enum SharePresenter {
     /// `completion` runs when the share sheet closes, after the chosen action has finished with the items.
     static func present(_ items: [Any], completion: @escaping () -> Void) {
-        let window = UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
-        guard var top = window?.rootViewController else { return completion() }
+        guard var top = UIApplication.shared.screensWindow?.rootViewController else { return completion() }
         while let next = top.presentedViewController, !next.isBeingDismissed { top = next }
         let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
         vc.completionWithItemsHandler = { _, _, _, _ in completion() }

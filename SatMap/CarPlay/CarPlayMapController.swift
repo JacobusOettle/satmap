@@ -24,6 +24,8 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
     }
     /// Where the map was when a drag on a touch screen began.
     private var dragStart: CLLocationCoordinate2D?
+    /// Over the car's map while test builds are switched off (`TestBuildGate`): a short line, nothing else.
+    private let lockView = CarPlayLockView()
 
     init(model: AppModel) {
         self.model = model
@@ -71,7 +73,23 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
             ?? CLLocationCoordinate2D(latitude: -24.99, longitude: 31.59)
         mapView.setRegion(MKCoordinateRegion(center: start, latitudinalMeters: 1500, longitudinalMeters: 1500), animated: false)
         if let loc = model.recorder.location { locationUpdated(loc) }
+        lockView.translatesAutoresizingMaskIntoConstraints = false
+        lockView.isHidden = true
+        view.addSubview(lockView)
+        NSLayoutConstraint.activate([
+            lockView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            lockView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            lockView.topAnchor.constraint(equalTo: view.topAnchor),
+            lockView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        setLocked(model.testBuild.lock)
         bind()
+    }
+
+    /// The car's empty state while test builds are switched off: a short line over the map (`TestBuildGate`).
+    func setLocked(_ lock: TestBuildSwitch.Lock?) {
+        lockView.show(lock)
+        view.bringSubviewToFront(lockView)
     }
 
     private func bind() {
@@ -225,5 +243,39 @@ final class CarPlayMapController: UIViewController, MKMapViewDelegate {
         default:
             return nil
         }
+    }
+}
+
+/// The car's simplest empty state while test builds are switched off: a dark panel with a short line.
+final class CarPlayLockView: UIView {
+    private let label = UILabel()
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .black
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        label.textColor = .white
+        label.font = .preferredFont(forTextStyle: .title3)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 24),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -24),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    /// Shows the lock's title (or the default) with a short follow-up; hidden when there is no lock.
+    func show(_ lock: TestBuildSwitch.Lock?) {
+        guard let lock = lock else {
+            isHidden = true
+            return
+        }
+        label.text = lock.title + "\n\nGet SatMap from the App Store on your phone to keep using it."
+        isHidden = false
     }
 }

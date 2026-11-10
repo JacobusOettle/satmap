@@ -41,8 +41,8 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/34-join-group.jpg" width="250"> | <img src="docs/screenshots/35-share-consent.jpg" width="250"> | <img src="docs/screenshots/36-group-map.jpg" width="250"> |
 | **Dropping a pin** | **A pin** | **A member** |
 | <img src="docs/screenshots/37-drop-pin.jpg" width="250"> | <img src="docs/screenshots/38-pin-detail.jpg" width="250"> | <img src="docs/screenshots/39-member-detail.jpg" width="250"> |
-| **A paused group** | | |
-| <img src="docs/screenshots/40-group-paused.jpg" width="250"> | | |
+| **A paused group** | **Test build switched off** | |
+| <img src="docs/screenshots/40-group-paused.jpg" width="250"> | <img src="docs/screenshots/41-test-build-off.jpg" width="250"> | |
 
 The groups screenshots run in demo mode (`-groupsDemo YES`): the app talks to a fake server built into the core,
 with a fixed set of groups, members, trails and pins near the walk, and a fake store for SatMap Pro.
@@ -261,6 +261,25 @@ drone mode (the button at the top cycles them, like the mountain button on the p
 apps installed from the Play Store unless you allow others: in the Android Auto settings on the phone, tap
 *Version* ten times to unlock developer mode, then in the ⋮ menu → *Developer settings* turn on *Unknown
 sources*. This part hasn't been tried in a car yet.
+
+## Test builds can be switched off
+
+The test builds above (the sideloaded `SatMap.ipa` and the `SatMap.apk`, never App Store or Google Play builds)
+can be switched off remotely, so an old build that was passed around stops working and sends people to the store.
+
+Every test build, on both phones, reads one small file,
+[`test-builds.json`](https://github.com/JacobusOettle/satmap/blob/app-status/test-builds.json) on the `app-status`
+branch, at launch, when it comes back to the foreground and every five minutes while open (never in the background).
+To switch the builds off, flip it: run the **Switch test builds** workflow in the repository's **Actions** tab, or
+edit `test-builds.json` on the `app-status` branch and set `"testBuilds": "off"`. Within a few minutes every test
+build that is online shows a full-screen notice with the title and message from the file and buttons to the App Store
+or Google Play, and stops working: downloads pause (what is already saved is kept), and track recording and group
+location sharing stop. No user data is deleted. Set `"testBuilds": "on"` again and the builds unlock and carry on.
+A build that has already seen "off" starts locked even with no signal.
+
+Store builds (App Store and Google Play, later) are never affected, and neither are local debug builds. The check is a
+plain anonymous request for the file: no device or user identifier is sent, only a `SatMap/<version>` User-Agent. The
+rule itself lives in `SatMap/Core/TestBuildSwitch.swift` and its Kotlin twin, with shared tests.
 
 ## Map data and licensing — please read
 

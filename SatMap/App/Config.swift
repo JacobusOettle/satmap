@@ -71,6 +71,54 @@ enum LocationPolicy {
     static let segmentBreakMeters: Double = 200
 }
 
+/// Test builds can be switched off (README; the rule is `TestBuildSwitch`, the app's side `TestBuildGate`).
+enum TestBuildConfig {
+    /// The build's channel: the build setting `SATMAP_CHANNEL`, through the Info.plist key `SatMapChannel` and, at
+    /// compile time, the Swift condition `SATMAP_CHANNEL_<value>` (the target's SWIFT_ACTIVE_COMPILATION_CONDITIONS).
+    /// The project sets `test`, which the IPA CI publishes on GitHub (`.github/workflows/ipa.yml`) keeps. A store build
+    /// sets `store`: `xcodebuild archive … SATMAP_CHANNEL=store`, or in Xcode the SatMap target › Build Settings ›
+    /// User-Defined › SATMAP_CHANNEL for the configuration that is archived; that one setting sets both. Anything but
+    /// exactly `store` (also an empty or missing setting) is `test`.
+    ///
+    /// A store build needs both to say so: the IPA is unsigned and every tester re-signs it, so the Info.plist key
+    /// alone could be edited in a copy that is passed on. The compiled condition can't be without patching the binary.
+    #if SATMAP_CHANNEL_store
+    static let channel = TestBuildSwitch.Channel(setting: Bundle.main.object(forInfoDictionaryKey: "SatMapChannel") as? String)
+    #else
+    static let channel = TestBuildSwitch.Channel.test
+    #endif
+
+    /// Debug builds (Xcode's Debug configuration) never check and never lock.
+    #if DEBUG
+    static let isDebugBuild = true
+    #else
+    static let isDebugBuild = false
+    #endif
+
+    /// The status file, tried in order until one gives information (`TestBuildSwitch.parse`).
+    static let statusURLs = [
+        "https://raw.githubusercontent.com/JacobusOettle/satmap/app-status/test-builds.json",
+    ]
+
+    /// For the walkthroughs only: the UI tests' launch argument `-testBuildSwitch skip` (no check, never locked) or
+    /// `-testBuildSwitch sampleOff` (locked with `TestBuildSwitch.sample`, nothing fetched or saved). Read only in
+    /// simulator and debug builds, so the IPA people install has no way around the switch.
+    enum TestOverride: String {
+        case skip
+        case sampleOff
+    }
+
+    static let testOverride: TestOverride? = {
+        #if DEBUG || targetEnvironment(simulator)
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let i = arguments.firstIndex(of: "-testBuildSwitch"), i + 1 < arguments.count else { return nil }
+        return TestOverride(rawValue: arguments[i + 1])
+        #else
+        return nil
+        #endif
+    }()
+}
+
 /// Groups (docs/groups/SPEC.md §5.1): the invite domain and the other fixed values of the groups feature.
 enum GroupConfig {
     /// The configured domain: the build setting `GROUPS_DOMAIN`, through the Info.plist key `SatMapGroupsDomain`. The

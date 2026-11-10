@@ -62,8 +62,69 @@ final class ScreenshotTests: XCTestCase {
         // Auto download stays on (shot 20 shows it) but doesn't act on the simulated walk, so the offline lists show
         // only the areas downloaded here.
         app.launchArguments += ["-skipTrackAutoDownload", "YES"]
+        // The real test-build switch never locks the walkthrough: the check is turned off through this launch argument
+        // (read only in the simulator and debug builds, `TestBuildConfig`). Shot 41 forces the lock instead.
+        app.launchArguments += ["-testBuildSwitch", "skip"]
         mapScreenshots()
         groupScreenshots()
+        testBuildOffScreenshot()
+    }
+
+    /// Shot 41: the full-screen lock test builds show when the switch is off, forced with sample texts and links
+    /// (`-testBuildSwitch sampleOff`, the simulator / debug only), from a fresh start. Then the checks that nothing
+    /// opens over it and that it scrolls.
+    private func testBuildOffScreenshot() {
+        app.terminate()
+        app.launchArguments = ["-groupsDemo", "YES", "-testBuildSwitch", "sampleOff"]
+        app.launch()
+        let lock = app.descendants(matching: .any)["testBuildLock"].firstMatch
+        guard lock.waitForExistence(timeout: 20) else { return XCTFail("The test-build lock didn't show") }
+        XCTAssertTrue(app.buttons["testBuildLink-appStore"].exists, "No App Store button on the lock")
+        XCTAssertTrue(app.buttons["testBuildLink-website"].exists, "No Website button on the lock")
+        // A locked build asks for nothing, but a permission prompt left over from the earlier (unlocked) launches is a
+        // SpringBoard alert that floats over every app window and can re-appear a moment after launch. Tap any such
+        // alert away for a few seconds until the screen is clear, then snap.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        var clear = 0
+        for _ in 0..<15 where clear < 3 {
+            let button = ["Allow While Using App", "Allow Once", "Allow", "OK", "Don't Allow"]
+                .map { springboard.buttons[$0] }.first { $0.exists && $0.isHittable }
+            if let button = button {
+                button.tap()
+                clear = 0
+            } else {
+                clear += 1
+            }
+            sleep(1)
+        }
+        snap("41-test-build-off")
+
+        // Nothing opens over the lock: the landing page's satmap:// invite link does nothing while locked.
+        XCUIDevice.shared.system.open(URL(string: braaiClubSchemeLink)!)
+        let open = springboard.buttons["Open"]
+        if open.waitForExistence(timeout: 5) { open.tap() }
+        sleep(4)
+        XCTAssertFalse(app.buttons["joinGroup"].exists, "An invite link opened the join sheet while locked")
+        XCTAssertTrue(app.buttons["testBuildLink-appStore"].isHittable, "Something covers the lock after an invite link")
+
+        testBuildLockScrolls()
+    }
+
+    /// The lock scrolls when its texts don't fit (here the largest accessibility text size), so its buttons can always
+    /// be reached.
+    private func testBuildLockScrolls() {
+        app.terminate()
+        app.launchArguments = ["-groupsDemo", "YES", "-testBuildSwitch", "sampleOff",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let website = app.buttons["testBuildLink-website"]
+        guard website.waitForExistence(timeout: 20) else { return XCTFail("The test-build lock didn't show with large text") }
+        for _ in 0..<8 {
+            if website.isHittable { break }
+            app.swipeUp()
+            sleep(1)
+        }
+        XCTAssertTrue(website.isHittable, "The lock's Website button can't be reached with large text")
     }
 
     /// Shots 01–27: the map, measuring, blocks, offline maps and drone mode. A step that can't go on returns early;
