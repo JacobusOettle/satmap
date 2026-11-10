@@ -209,6 +209,28 @@ class AppModelTrackAutoDownloadTest {
     }
 
     @Test
+    fun aPausedTrackAreaIsLeftPausedAndUpdatedOnceResumed() {
+        record(points(0.0, 1_000.0))
+        val first = expectedLines(emptyList())
+        model.startTrackDownload("Where I've been", first, maxZoom = 20, allowCellular = false)
+        val id = trackArea!!.id
+        model.offline.pause(id)
+        val paused = trackArea!!
+        assertEquals(OfflineArea.Status.paused, paused.status)
+        // 600 m of new track: the pause stays.
+        record(points(1_010.0, 1_590.0))
+        minutesLater(10.0)
+        record(points(1_600.0, 1_600.0))
+        assertEquals(paused, trackArea)
+        // Resumed (queued again): the next check adds the new parts.
+        model.offline.resume(id)
+        minutesLater(10.0)
+        record(points(1_610.0, 1_610.0))
+        assertEquals(expectedLines(first), trackArea!!.roads)
+        assertEquals(OfflineArea.Status.queued, trackArea!!.status)
+    }
+
+    @Test
     fun notWithLessThan1GBFree() {
         free = (1L shl 30) - 1
         record(points(0.0, 800.0))

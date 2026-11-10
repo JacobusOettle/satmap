@@ -964,8 +964,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
             } finally {
                 trackCheckRunning = false
             }
-            // Not if it was turned off meanwhile, or the track area changed (its download started, Download was tapped,
-            // it was deleted …): the next check starts from what there is then.
+            // Not if it was turned off meanwhile, or the track area changed (its download started or was paused,
+            // Download was tapped, it was deleted …): the next check starts from what there is then.
             if (update == null || !_trackAutoDownload.value || trackAutoDownloadSuspended || trackAreaForAutoDownload() != area) {
                 return@launch
             }
@@ -981,7 +981,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
                 lines = it.roads ?: emptyList(),
                 maxZoom = it.maxZoom,
                 allowCellular = it.allowCellular,
-                isDownloading = it.status == OfflineArea.Status.downloading,
+                leaveAlone = it.status == OfflineArea.Status.downloading || it.status == OfflineArea.Status.paused,
             )
         }
 

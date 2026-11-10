@@ -19,8 +19,8 @@ class TrackAutoDownloadTests {
                        startsSegment = newSegment && i == 0)
         }
 
-    private fun area(lines: List<List<GeoPoint>>, downloading: Boolean = false) =
-        TrackAutoDownload.Area(name = "My trips", lines = lines, maxZoom = 19, allowCellular = true, isDownloading = downloading)
+    private fun area(lines: List<List<GeoPoint>>, leaveAlone: Boolean = false) =
+        TrackAutoDownload.Area(name = "My trips", lines = lines, maxZoom = 19, allowCellular = true, leaveAlone = leaveAlone)
 
     private val noNewArea: (List<List<GeoPoint>>) -> Int = {
         fail("A track area has its own zoom")
@@ -81,7 +81,7 @@ class TrackAutoDownloadTests {
     }
 
     @Test
-    fun testEarlierTripsStayWhenTheTrackWasCleared() {
+    fun testEarlierTripsStayBesideANewOne() {
         val earlier = listOf(listOf(GeoPoint(lat = -25.05, lon = 31.70), GeoPoint(lat = -25.05, lon = 31.71)))
         val track = walk(steps = 60)
         val update = TrackAutoDownload.update(track = track, area = area(earlier), freeBytes = 50 * gigabyte, newAreaZoom = noNewArea)
@@ -91,11 +91,19 @@ class TrackAutoDownloadTests {
     }
 
     @Test
-    fun testLeavesARunningDownloadAndLowStorageAlone() {
+    fun testNothingWithoutATrack() {
+        // Cleared, or no location yet: the track area keeps its lines (nothing to update), and none is made.
+        val earlier = Roads.trackLines(walk(steps = 120))
+        assertNull(TrackAutoDownload.update(track = emptyList(), area = area(earlier), freeBytes = 50 * gigabyte, newAreaZoom = noNewArea))
+        assertNull(TrackAutoDownload.update(track = emptyList(), area = null, freeBytes = 50 * gigabyte) { 20 })
+    }
+
+    @Test
+    fun testLeavesARunningOrPausedDownloadAndLowStorageAlone() {
         val saved = Roads.trackLines(walk(steps = 10))
         val far = walk(steps = 200)
-        // Downloading right now: that run is left alone.
-        assertNull(TrackAutoDownload.update(track = far, area = area(saved, downloading = true), freeBytes = 50 * gigabyte, newAreaZoom = noNewArea))
+        // Downloading right now (that run is left alone), or paused (the pause stays): nothing, however far you went.
+        assertNull(TrackAutoDownload.update(track = far, area = area(saved, leaveAlone = true), freeBytes = 50 * gigabyte, newAreaZoom = noNewArea))
         // Under 1 GB free, or not known.
         assertNull(TrackAutoDownload.update(track = far, area = area(saved), freeBytes = gigabyte - 1, newAreaZoom = noNewArea))
         assertNull(TrackAutoDownload.update(track = far, area = null, freeBytes = gigabyte - 1) { 20 })
