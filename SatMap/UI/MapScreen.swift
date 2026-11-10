@@ -71,30 +71,24 @@ struct MapScreen: View {
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("groupPausedHint")
                 }
-                Spacer()
                 // Map credits are in the Offline maps sheet.
-                if !model.isDrawingArea {
-                    HStack(alignment: .bottom) {
-                        // The contour interval above the scale bar, the elevation colours' heights under it.
-                        VStack(alignment: .leading, spacing: 8) {
-                            ContourKeyView(legend: model.legend)
-                            ScaleBarView(scale: model.scale, onTap: model.nextDistanceUnit)
-                            ColourKeyView(legend: model.legend)
-                        }
-                        Spacer()
-                        controls
-                    }
-                    // Groups at the left edge, level with the top of the controls (the compass): an overlay, so the
-                    // row keeps its height and the right-hand column doesn't grow (SD21). (Tests find it by its
-                    // label, as the other map buttons; the id `groupsButton` is Android's test tag, §9.6.)
-                    .overlay(alignment: .topLeading) {
-                        MapButton(systemImage: "person.3.fill", label: "Groups", active: groups.shownGroupId != nil) {
-                            groups.openFromButton()
-                        }
-                    }
+                if model.isDrawingArea {
+                    Spacer()
+                } else {
                     // Two buttons higher than at the very bottom (My location where Offline maps was), leaving the
-                    // bottom of the screen to a tapped spot's coordinates.
-                    .padding(.bottom, Self.controlsLift)
+                    // bottom of the screen to a tapped spot's coordinates; lower on a short screen (groups §9.1).
+                    BottomRowLayout(lift: Self.minControlsLift...Self.controlsLift) {
+                        HStack(alignment: .bottom) {
+                            // The contour interval above the scale bar, the elevation colours' heights under it.
+                            VStack(alignment: .leading, spacing: 8) {
+                                ContourKeyView(legend: model.legend)
+                                ScaleBarView(scale: model.scale, onTap: model.nextDistanceUnit)
+                                ColourKeyView(legend: model.legend)
+                            }
+                            Spacer()
+                            controls
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 12)
@@ -169,6 +163,8 @@ struct MapScreen: View {
 
     /// Two side buttons and the gap between them.
     private static let controlsLift: CGFloat = 2 * (50 + 12)
+    /// The least the buttons stay above the bottom on a short screen: a tapped spot's coordinate row (34) and a gap.
+    private static let minControlsLift: CGFloat = 34 + 8
 
     /// A selected KML point's name, over its coordinates.
     private func nameCapsule(_ name: String) -> some View {
@@ -188,6 +184,11 @@ struct MapScreen: View {
             if let map = model.map?.mapView {
                 CompassButton(mapView: map)
                     .frame(width: 44, height: 44)
+            }
+            // Groups, the first button, above the terrain button (groups §9.1, SD21). (Tests find it by its label, as
+            // the other map buttons; the id `groupsButton` is Android's test tag, §9.6.)
+            MapButton(systemImage: "person.3.fill", label: "Groups", active: groups.shownGroupId != nil) {
+                groups.openFromButton()
             }
             MapButton(systemImage: terrainIcon, label: "Contour lines", dimmed: model.terrainMode == .off,
                       heightColours: model.terrainMode.showsColours) { nextTerrainMode() }
@@ -283,6 +284,31 @@ struct MapScreen: View {
         case .aiming, .placed, .path: return true
         case .off, .closed: return false
         }
+    }
+}
+
+/// The row of legends and map buttons, in the room under the panels at the top: `lift.upperBound` above the bottom,
+/// or lower where that room is short (a small phone, tall panels), as far as `lift.lowerBound` (groups §9.1). Shorter
+/// than that, the room overflows, as a stack does.
+struct BottomRowLayout: Layout {
+    let lift: ClosedRange<CGFloat>
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let row = rowSize(width: proposal.width, subviews)
+        return CGSize(width: proposal.width ?? row.width,
+                      height: max(row.height + lift.lowerBound, proposal.height ?? row.height + lift.upperBound))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let row = subviews.first else { return }
+        let size = rowSize(width: bounds.width, subviews)
+        let raised = min(lift.upperBound, max(lift.lowerBound, bounds.height - size.height))
+        row.place(at: CGPoint(x: bounds.minX, y: bounds.maxY - raised), anchor: .bottomLeading,
+                  proposal: ProposedViewSize(width: bounds.width, height: size.height))
+    }
+
+    private func rowSize(width: CGFloat?, _ subviews: Subviews) -> CGSize {
+        subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: nil)) ?? .zero
     }
 }
 

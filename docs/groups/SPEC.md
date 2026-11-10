@@ -102,7 +102,7 @@ blocking also work while the group is paused.
 | SD18 | Invites still work while a group is paused, so a friend with Pro can be invited and take over. |
 | SD19 | Coordinates travel as integer micro-degrees (1e-6°, about 11 cm). |
 | SD20 | While `ALLOW_TEST_PURCHASES` is true (the default), the server accepts App Store Sandbox purchases (App Review and TestFlight use them) and Google test purchases, and treats each as ending 14 days after its original purchase date (Apple `originalPurchaseDate`; Google subscription `startTime`, one-time `purchaseCompletionTime`), so a tester's sandbox Lifetime is not free Pro for good. The "Xcode" environment is accepted only when a test variable is set. |
-| SD21 | The Groups button sits at the left edge of the map, level with the top of the right-hand button column, so that column does not grow (§9.1). |
+| SD21 | The Groups button is the first button of the right-hand column, directly above the terrain button. Where the taller column doesn't fit two buttons above the bottom, the buttons come down into the room kept for a tapped spot's coordinates, but not onto them (§9.1). |
 | SD22 | For 30 days after removal, a removed member's requests get "removed" (so the app can say so); a deleted group answers "deleted". After that both get the generic answers. |
 | SD23 | An invite dies with its maker's admin role: removing an admin, demoting an admin to member, or an admin leaving cancels every pending invite they made (R4: a removed admin's links must not let anyone back in). |
 | SD24 | Deleted ids are never reused. A `pinId` or `memberId` that appears in `removals` is refused (§6.5 E10, E23), so a retry can't bring back a pin a moderator deleted. |
@@ -2753,18 +2753,24 @@ year).
 
 - **Groups button** (SD21): a `MapButton` with SF Symbol `person.3.fill` (Android: a matching `SatIcons.Person3`
   vector) and label "Groups" (the VoiceOver label; Android `contentDescription` "Groups", testTag `groupsButton`).
-  - Placed at the left edge, level with the top of the right-hand `controls` column (the compass).
-  - The bottom row stays exactly as it is; the button is an overlay on it, so it adds no height and no flexible
-    space (a `Spacer` inside the left column would make the row grow and push the button up).
-    - iOS: `HStack(alignment: .bottom) { legends; Spacer(); controls }.overlay(alignment: .topLeading) {
-      GroupsButton }`.
-    - Android: wrap the `Row` of `MapOverlay` in a `Box`, and put the button in that `Box` with
-      `Modifier.align(Alignment.TopStart)`.
-    - The row's height is the controls column's, so the button's top is level with the compass.
-  - It is shown whenever the bottom row is (not while drawing an area).
+  - The first button of the right-hand `controls` column: under the compass's place, directly above the terrain
+    button (the mountain; the plane in drone mode), with the column's 12 pt/dp gap.
+  - It is shown whenever the column is (not while drawing an area).
   - It is `active` (yellow) while a group is shown on the map.
   - Tap: `model.sheet = .groups` (new `ActiveSheet` case `groups`).
-  - The right-hand column does not change.
+  - The column is one button (62 pt/dp) taller: 478 pt/dp with the compass's place. The row of legends and buttons
+    still sits two buttons (`controlsLift`, 124 pt/dp) above the bottom wherever that fits. Where the room under
+    the panels at the top is shorter (a small phone, or tall panels such as measuring), the row comes down into the
+    room kept for a tapped spot's coordinates, staying the stack's 8 pt/dp under the panels, but never lower than
+    42 pt/dp above the bottom (that coordinate row, 34, and a gap of 8). The buttons keep their size and gaps.
+    Shorter still, the screen overflows as before.
+    - iOS: `BottomRowLayout` (a `Layout`) holds the row, in place of the `Spacer` above it and its bottom padding.
+    - Android: the same, in `MapOverlay`.
+    - An iPhone SE (375 × 667 pt) with your coordinates and the paused banner at the top: the row is about 60 pt
+      above the bottom. On the iPhone of the screenshots it comes down only under the measuring panel's points
+      (shots 16 and 19).
+    - Landscape has no layout of its own (as before): a phone's landscape height (about 410 pt at most) can't hold
+      the column, with or without the Groups button (it was 416 pt before).
 - **Paused banner:** an existing `Hint` in the top stack, under the location hints, while the shown group is paused
   (id `groupPausedHint`).
 

@@ -656,7 +656,7 @@ final class ScreenshotTests: XCTestCase {
         var avoid = frames
         let launch = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Launch 1")).firstMatch
         if launch.exists { avoid.append(launch.frame) }
-        // The coordinates and hints at the top, the controls on the right, Groups and the legends on the left, the
+        // The coordinates and hints at the top, the controls (Groups first) on the right, the legends on the left, the
         // tapped spot's coordinates at the bottom.
         let clear = CGRect(x: window.minX + 90, y: window.minY + 200, width: window.width - 190, height: window.height - 460)
         let centre = CGPoint(x: window.midX, y: window.midY)
