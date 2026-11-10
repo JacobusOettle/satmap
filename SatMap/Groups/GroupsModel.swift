@@ -43,6 +43,9 @@ final class GroupsModel: ObservableObject {
     private var minuteTimer: Timer?
     private var nextBackgroundTick: Date?
     private var ticking = false
+    /// While test builds are switched off (`TestBuildGate`): no ticks, no socket, no uploads. The recorder is stopped
+    /// too, so no new positions are produced; what is queued waits until it unlocks.
+    private var locked = false
     /// A group just shown from S5 or S8 whose live positions haven't arrived yet: the camera fits it when they do.
     private var pendingFit: (groupId: String, until: Date)?
     /// When `closeScreensOfGoneGroups` last closed a screen: SwiftUI takes it away a moment later.
@@ -144,9 +147,26 @@ final class GroupsModel: ObservableObject {
         }
     }
 
+    /// Stops or restarts the groups' network while test builds are switched off (`TestBuildGate`).
+    func setLocked(_ locked: Bool) {
+        guard locked != self.locked else { return }
+        self.locked = locked
+        if locked {
+            foregroundTimer?.invalidate(); foregroundTimer = nil
+            backgroundTimer?.invalidate(); backgroundTimer = nil
+            nextBackgroundTick = nil
+            hub.enteredBackground() // closes the socket and stops live sharing
+        } else if isForeground {
+            becameActive()
+        } else {
+            scheduleBackgroundTick()
+        }
+    }
+
     /// The hub work queued behind `start()` reads the app's state when it runs, not when it was queued: the app may
     /// have gone to the background meanwhile, and the hub must not open the socket there (§8.7).
     private func becameActive() {
+        guard !locked else { return }
         afterStart { [weak self] hub in
             guard self?.isForeground == true else { return }
             await hub.becameActive()
@@ -171,7 +191,7 @@ final class GroupsModel: ObservableObject {
         backgroundTimer?.invalidate()
         backgroundTimer = nil
         nextBackgroundTick = nil
-        guard foregroundTimer == nil else { return }
+        guard !locked, foregroundTimer == nil else { return }
         let t = Timer(timeInterval: TimeInterval(GroupPolicy.liveWatchedForeground), repeats: true) { [weak self] _ in self?.tick() }
         t.tolerance = 0.5
         RunLoop.main.add(t, forMode: .common)
@@ -182,7 +202,7 @@ final class GroupsModel: ObservableObject {
     private func scheduleBackgroundTick() {
         backgroundTimer?.invalidate()
         backgroundTimer = nil
-        guard !isForeground, let delay = hub.nextTickDelay(foreground: false) else {
+        guard !locked, !isForeground, let delay = hub.nextTickDelay(foreground: false) else {
             nextBackgroundTick = nil
             return
         }
@@ -195,7 +215,7 @@ final class GroupsModel: ObservableObject {
     }
 
     private func tick() {
-        guard !ticking else { return }
+        guard !ticking, !locked else { return }
         ticking = true
         afterStart { [weak self] hub in
             guard let self = self else { return }

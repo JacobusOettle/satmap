@@ -62,8 +62,26 @@ final class ScreenshotTests: XCTestCase {
         // Auto download stays on (shot 20 shows it) but doesn't act on the simulated walk, so the offline lists show
         // only the areas downloaded here.
         app.launchArguments += ["-skipTrackAutoDownload", "YES"]
+        // The real test-build switch never locks the walkthrough: the check is turned off through this launch argument
+        // (read only in the simulator and debug builds, `TestBuildConfig`). Shot 41 forces the lock instead.
+        app.launchArguments += ["-testBuildSwitch", "skip"]
         mapScreenshots()
         groupScreenshots()
+        testBuildOffScreenshot()
+    }
+
+    /// Shot 41: the full-screen lock test builds show when the switch is off, forced with sample texts and links
+    /// (`-testBuildSwitch sampleOff`, the simulator / debug only), from a fresh start.
+    private func testBuildOffScreenshot() {
+        app.terminate()
+        app.launchArguments = ["-groupsDemo", "YES", "-testBuildSwitch", "sampleOff"]
+        app.launch()
+        let lock = app.descendants(matching: .any)["testBuildLock"].firstMatch
+        guard lock.waitForExistence(timeout: 20) else { return XCTFail("The test-build lock didn't show") }
+        XCTAssertTrue(app.buttons["testBuildLink-appStore"].exists, "No App Store button on the lock")
+        XCTAssertTrue(app.buttons["testBuildLink-website"].exists, "No Website button on the lock")
+        sleep(2)
+        snap("41-test-build-off")
     }
 
     /// Shots 01–27: the map, measuring, blocks, offline maps and drone mode. A step that can't go on returns early;

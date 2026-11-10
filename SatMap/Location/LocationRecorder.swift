@@ -63,6 +63,8 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
     }()
 
     private var started = false
+    /// Stopped while test builds are switched off (`TestBuildGate`): no GPS, no recording, no permission asked.
+    private(set) var locked = false
     private var isForeground: Bool
 
     private var lastUsedAt = Date.distantPast
@@ -114,8 +116,31 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
         lastRecorded = p
     }
 
+    /// Stops or restarts everything the recorder does while test builds are switched off (`TestBuildGate`): no GPS,
+    /// no recording, no compass, no motion, and no location permission asked. What is recorded is kept.
+    func setLocked(_ locked: Bool) {
+        guard locked != self.locked else { return }
+        self.locked = locked
+        if locked {
+            manager.stopUpdatingLocation()
+            manager.stopUpdatingHeading()
+            motion.stopActivityUpdates()
+            motionAvailable = false
+            for t in [stationaryTimer, dutyTimer, peekTimer, peekEndTimer] { t?.invalidate() }
+            stationaryTimer = nil; dutyTimer = nil; peekTimer = nil; peekEndTimer = nil
+            pendingMotionWake?.cancel(); pendingMotionWake = nil
+            peeking = false
+            power = .active
+            started = false // so `beginUpdates` runs again when it unlocks
+        } else {
+            start()
+            updateHeading()
+        }
+    }
+
     /// Requests permission if needed and starts recording. Safe to call repeatedly.
     func start() {
+        guard !locked else { return }
         authorization = manager.authorizationStatus
         switch authorization {
         case .notDetermined:
@@ -129,7 +154,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     private func beginUpdates() {
         // Background updates can only be started while the app is in the foreground.
-        guard !started, UIApplication.shared.applicationState != .background else { return }
+        guard !started, !locked, UIApplication.shared.applicationState != .background else { return }
         started = true
         manager.allowsBackgroundLocationUpdates = true
         manager.showsBackgroundLocationIndicator = true
@@ -511,6 +536,7 @@ final class LocationRecorder: NSObject, ObservableObject, CLLocationManagerDeleg
 
     @objc private func didBecomeActive() {
         isForeground = true
+        guard !locked else { return }
         if !started { start() }
         // Motion permission may have been answered while the app was inactive behind the prompt.
         if started { startMotion() }

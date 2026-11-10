@@ -8,6 +8,8 @@
 	<string>SatMap uses the camera to scan a group's invite QR code.</string>
 	<key>SatMapGroupsDomain</key>
 	<string>$(GROUPS_DOMAIN)</string>
+	<key>SatMapChannel</key>
+	<string>$(SATMAP_CHANNEL)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

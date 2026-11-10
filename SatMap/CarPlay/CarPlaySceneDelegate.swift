@@ -12,6 +12,8 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private let template = CPMapTemplate()
     /// The terrain button's title follows the mode, also when it is changed on the phone.
     private var terrainChanges: AnyCancellable?
+    /// The buttons and the car's empty state follow the test-build switch.
+    private var lockChanges: AnyCancellable?
 
     func templateApplicationScene(_ templateApplicationScene: CPTemplateApplicationScene,
                                   didConnect interfaceController: CPInterfaceController, to window: CPWindow) {
@@ -32,6 +34,12 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             .removeDuplicates()
             .dropFirst()
             .sink { [weak self] _ in DispatchQueue.main.async { self?.updateButtons() } }
+        // The switch locks and unlocks the car's screen too (`TestBuildGate`).
+        lockChanges = model.testBuild.$lock
+            .sink { [weak self] lock in DispatchQueue.main.async {
+                self?.map?.setLocked(lock)
+                self?.updateButtons()
+            } }
         interfaceController.setRootTemplate(template, animated: false, completion: nil)
     }
 
@@ -41,6 +49,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         if AppModel.shared.carPlayMap === map { AppModel.shared.carPlayMap = nil }
         window.rootViewController = nil
         terrainChanges = nil
+        lockChanges = nil
         map = nil
         self.window = nil
         self.interfaceController = nil
@@ -60,6 +69,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// both, neither: each tap the next, the title says what is shown) in the bar along the top.
     private func updateButtons() {
         let model = AppModel.shared
+        // Switched off: nothing to do on the car's screen but read the line.
+        guard model.testBuild.lock == nil else {
+            template.mapButtons = []
+            template.leadingNavigationBarButtons = []
+            template.trailingNavigationBarButtons = []
+            if template.isPanningInterfaceVisible { template.dismissPanningInterface(animated: false) }
+            return
+        }
         let zoomIn = CPMapButton { [weak self] _ in self?.map?.zoom(by: 0.5) }
         zoomIn.image = UIImage(systemName: "plus")
         let zoomOut = CPMapButton { [weak self] _ in self?.map?.zoom(by: 2) }

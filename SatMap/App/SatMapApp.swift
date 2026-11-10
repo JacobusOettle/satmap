@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import UIKit
 
@@ -10,6 +11,9 @@ struct SatMapApp: App {
             let model = AppModel.shared
             MapScreen(model: model, offline: model.offline, recorder: model.recorder, groups: model.groups)
                 .preferredColorScheme(.dark)
+                // The full-screen lock while test builds are switched off, in its own window over every sheet
+                // (`TestBuildLockHost`). Shown from the gate, which also starts locked from the kept state.
+                .onReceive(model.testBuild.$lock) { TestBuildLockHost.shared.update($0) }
                 .onOpenURL { url in
                     // A group invite (https://{domain}/j/… as a universal link, or the landing page's satmap://join/…):
                     // the join sheet, never a join by itself (docs/groups/SPEC.md §5.6). A link without its key shows
