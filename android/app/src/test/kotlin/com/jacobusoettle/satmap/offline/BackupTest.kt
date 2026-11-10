@@ -1018,6 +1018,65 @@ class BackupTest {
     }
 
     @Test
+    fun aTestBuildSwitchedOffHoldsTheDownloadAndSwitchedOnResumesIt() {
+        val m = makeManager()
+        val gate = CompletableDeferred<Unit>()
+        answer = {
+            gate.await()
+            TileFetchResult.Data(byteArrayOf(1))
+        }
+        val a = m.add(name = "A", shape = farm, roads = null, preset = null, maxZoom = 16, allowCellular = false).id
+        idle()
+        assertEquals(a, m.activeID.value)
+
+        // Switched off: the run stops, queued (not paused) so it goes on by itself; nothing starts meanwhile.
+        m.setLockedOut(true)
+        idle()
+        assertNull(m.activeID.value)
+        assertEquals(Status.queued, area(a).status)
+        answer = { TileFetchResult.Data(byteArrayOf(1)) }
+        m.resume(a)
+        idle()
+        assertNull(m.activeID.value)
+
+        // Switched on: it finishes.
+        m.setLockedOut(false)
+        idle()
+        assertEquals(Status.complete, area(a).status)
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun anAreaPausedForAnExportGoesOnWhenATestBuildIsSwitchedOnAgain() {
+        val m = makeManager()
+        val gate = CompletableDeferred<Unit>()
+        answer = {
+            gate.await()
+            TileFetchResult.Data(byteArrayOf(1))
+        }
+        val a = m.add(name = "A", shape = farm, roads = null, preset = null, maxZoom = 16, allowCellular = false).id
+        idle()
+        m.export(listOf(a))
+        idle()
+        shared()
+        assertEquals(Status.paused, area(a).status)
+
+        // Switched off while the share sheet is open; the sheet closes while it is off: the area stays held.
+        m.setLockedOut(true)
+        answer = { TileFetchResult.Data(byteArrayOf(1)) }
+        SharePresenter.finished()
+        idle()
+        assertEquals(Status.paused, area(a).status)
+        assertNull(m.activeID.value)
+
+        // Switched on: the area paused for the export goes on, as when its share sheet closes.
+        m.setLockedOut(false)
+        idle()
+        assertEquals(Status.complete, area(a).status)
+        gate.complete(Unit)
+    }
+
+    @Test
     fun anExportWhileAnotherAppReadsTheFilesDoesntWriteIntoThem() {
         saveArea(Fixture.area)
         saveList(listOf(Fixture.area))

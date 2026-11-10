@@ -59,8 +59,8 @@ are in [docs/screenshots/android](docs/screenshots/android):
 | <img src="docs/screenshots/android/32-group-detail.jpg" width="180"> | <img src="docs/screenshots/android/33-invite-qr.jpg" width="180"> | <img src="docs/screenshots/android/34-join-group.jpg" width="180"> | <img src="docs/screenshots/android/35-share-consent.jpg" width="180"> |
 | **A group on the map** | **Dropping a pin** | **A pin** | **A member** |
 | <img src="docs/screenshots/android/36-group-map.jpg" width="180"> | <img src="docs/screenshots/android/37-drop-pin.jpg" width="180"> | <img src="docs/screenshots/android/38-pin-detail.jpg" width="180"> | <img src="docs/screenshots/android/39-member-detail.jpg" width="180"> |
-| **A paused group** | | | |
-| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | | | |
+| **A paused group** | **Test build switched off** | | |
+| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | <img src="docs/screenshots/android/41-test-build-off.jpg" width="180"> | | |
 
 ## Features
 
@@ -280,6 +280,9 @@ A build that has already seen "off" starts locked even with no signal.
 Store builds (App Store and Google Play, later) are never affected, and neither are local debug builds. The check is a
 plain anonymous request for the file: no device or user identifier is sent, only a `SatMap/<version>` User-Agent. The
 rule itself lives in `SatMap/Core/TestBuildSwitch.swift` and its Kotlin twin, with shared tests.
+
+While the switch is off, the Android CI's launch check (the release APK is a test build, so it shows the lock too)
+treats the lock screen as a good launch, so pushes stay green and the `android-test-build` release is still updated.
 
 ## Map data and licensing — please read
 

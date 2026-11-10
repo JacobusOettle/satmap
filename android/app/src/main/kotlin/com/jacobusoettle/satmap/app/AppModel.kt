@@ -17,6 +17,7 @@ import com.jacobusoettle.satmap.core.MeasureButtonAction
 import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import com.jacobusoettle.satmap.core.TrackAutoDownload
 import com.jacobusoettle.satmap.core.TrackLog
 import com.jacobusoettle.satmap.core.TrackPoint
@@ -315,6 +316,18 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
     /** Groups (docs/groups/SPEC.md §8.1): made here because recording runs with no screen. It is told of the app's
      *  lifecycle by this model (it registers no observer of its own), and gets the track points and fixes. */
     val groups = GroupsModel(app)
+
+    /** Test builds can be switched off remotely (android/docs/spec/test-builds.md): nothing in store or debug builds.
+     *  This model acts on its lock (`applyLock`); the map screen shows it. Told of the foreground by this model, like
+     *  groups. */
+    val testBuild = TestBuildGate()
+
+    /** The lock to show over everything while a test build is switched off (null when not locked). */
+    val testBuildLock: StateFlow<TestBuildSwitch.Lock?> get() = testBuild.lock
+
+    /** Whether a test build is switched off right now (`applyLock`). Declared before `init`, which may lock at once. */
+    private var lockedOut = false
+
     private val trackLog = TrackLog(AppPaths.track)
 
     /** The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the list). Read on
@@ -569,7 +582,36 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         // Only in the foreground (iOS also starts it when launched into the background, where it runs until the
         // next didEnterBackground): it starts with each willEnterForeground.
         if (AppLifecycle.isForeground) startRetryTimer()
+
+        // The test-build switch: the lock the kept state implies at once (on the main thread, Main.immediate), then
+        // every change (downloads, recording and sharing pause while locked and resume when unlocked). Before the
+        // recorder starts, as on the iPhone, so a build that has seen "off" never starts recording. A debug or store
+        // build never locks.
+        testBuild.start()
+        testBuild.lock
+            .onEach { applyLock(it != null) }
+            .launchIn(scope)
         recorder.start()
+        if (AppLifecycle.isForeground) testBuild.foregrounded()
+    }
+
+    /** The test-build switch turned off (locked) or on again. While locked the app stops what runs but keeps every
+     *  user file (offline maps, the track, KML, groups): downloads pause (keeping what is saved), recording, the
+     *  compass and the location service stop, and the groups' live sharing and uploads pause. On unlock everything
+     *  resumes as before: a paused download continues, recording restarts (if on screen) and groups wake. The map
+     *  screen shows only the lock meanwhile; what was open over the map (a sheet, an area drawn but not saved yet, a
+     *  pin's or an invite's sheet) is kept, not composed behind the lock, and is there again after it, as on the
+     *  iPhone. */
+    private fun applyLock(locked: Boolean) {
+        if (locked == lockedOut) return
+        lockedOut = locked
+        offline.setLockedOut(locked)
+        groups.setLockedOut(locked)
+        if (locked) {
+            recorder.stopForLock()
+        } else {
+            recorder.resumeAfterLock()
+        }
     }
 
     // Reloading tiles
@@ -1008,6 +1050,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         TileRepository.shared.restoreAfterBackground()
         startRetryTimer()
         if (reloadPending) requestReload()
+        // Check the switch on return to the foreground (and keep checking every five minutes); nothing in background.
+        testBuild.foregrounded()
     }
 
     /** Elevations aren't looked up in the background; catch up when the app is opened. */
@@ -1028,5 +1072,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         TileRepository.shared.trimForBackground()
         ImageryMemory.enteredBackground()
         ContourRenderer.shared.clearCaches()
+        // The switch isn't checked in the background.
+        testBuild.backgrounded()
     }
 }

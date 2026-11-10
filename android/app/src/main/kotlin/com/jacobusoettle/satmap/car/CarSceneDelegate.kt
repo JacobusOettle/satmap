@@ -12,6 +12,7 @@ import androidx.car.app.Session
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarIcon
+import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.validation.HostValidator
@@ -23,6 +24,7 @@ import com.jacobusoettle.satmap.R
 import com.jacobusoettle.satmap.app.AppLifecycle
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -87,11 +89,21 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
         lifecycleScope.launch(Dispatchers.Main) {
             model.terrainMode.drop(1).collect { invalidate() }
         }
+        // The test-build switch going off (or on) swaps the car screen for the "switched off" message (and back).
+        lifecycleScope.launch(Dispatchers.Main) {
+            model.testBuildLock.drop(1).collect { invalidate() }
+        }
     }
 
     /** Zoom in, zoom out and follow you on the map, and the host's pan mode to move it; the terrain in the bar along
-     *  the top. */
+     *  the top. While a test build is switched off, the car shows the short "switched off" message instead of the
+     *  map (android/docs/spec/test-builds.md). */
     override fun onGetTemplate(): Template {
+        model.testBuildLock.value?.let { lock ->
+            return MessageTemplate.Builder(switchedOffMessage(lock))
+                .setTitle("SatMap")
+                .build()
+        }
         val terrain = Action.Builder()
             .setTitle(shortTitle(model.terrainMode.value))
             .setOnClickListener { model.setTerrainMode(model.terrainMode.value.next) }
@@ -116,6 +128,11 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
         .build()
 
     companion object {
+        /** The car's text while a test build is switched off: the lock's title and a short line (the phone's lock has
+         *  the message and the links), as CarPlay's `CarPlayLockView`. */
+        fun switchedOffMessage(lock: TestBuildSwitch.Lock): String =
+            lock.title + "\n\nGet SatMap from Google Play on your phone to keep using it."
+
         /** What the map shows of the terrain, short enough for the car's bar. */
         fun shortTitle(mode: TerrainMode): String = when (mode) {
             TerrainMode.contours -> "Contours"

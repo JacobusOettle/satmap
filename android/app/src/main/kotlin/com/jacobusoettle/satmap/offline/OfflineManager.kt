@@ -288,7 +288,11 @@ class OfflineManager(
     /** A "Save to a folder" copy runs, which holds downloads too (Android only: it comes after the chooser closed). */
     private var copyHold = false
 
-    private val holdDownloads: Boolean get() = exportHold != null || copyHold
+    /** The test-build switch is off (`AppModel.applyLock`): downloads pause and nothing new starts until it is on
+     *  again. The files already saved are kept; a run cut off here is re-queued so it continues on unlock. */
+    private var lockedOut = false
+
+    private val holdDownloads: Boolean get() = exportHold != null || copyHold || lockedOut
 
     /** The download paused for an export (or a copy into a folder), resumed when the hold ends (`releaseHold`). */
     private var pausedForExport: UUID? = null
@@ -497,6 +501,28 @@ class OfflineManager(
             } finally {
                 db.close()
             }
+        }
+    }
+
+    /** The test-build switch turned off (locked) or on again. Locked: the running download stops and is re-queued so
+     *  it continues on unlock, and nothing new starts (`holdDownloads`); the files already saved are kept, and a
+     *  user-paused area stays paused. Unlocked: downloads run again, the re-queued one first, and one paused for an
+     *  export whose share sheet closed while locked resumes (`releaseHold`, which waits while an export or a copy
+     *  still holds them). An area paused for another app's reading was queued again when it closed (`readersClosed`). */
+    fun setLockedOut(locked: Boolean) {
+        if (locked == lockedOut) return
+        lockedOut = locked
+        if (locked) {
+            val id = _activeID.value
+            if (id != null) {
+                // Keep it queued (not paused), so it resumes by itself when the switch is on again.
+                update(id) { if (it.status == OfflineArea.Status.downloading) it.status = OfflineArea.Status.queued }
+                task?.cancel()
+            }
+            // (`finished` ends the run and calls `startNextIfIdle`, which stops the service while `holdDownloads`.)
+        } else {
+            measureFreeSpace()
+            releaseHold()
         }
     }
 

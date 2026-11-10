@@ -39,6 +39,7 @@ import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.GroupDemo
 import com.jacobusoettle.satmap.core.OfflineArea
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import com.jacobusoettle.satmap.map.GroupLayers
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.MapIds
@@ -168,6 +169,9 @@ class ScreenshotTest {
         // don't have, and downloads beside the walk's own): held off for the walk, in the app's own process, with the
         // setting left on as a user has it (screenshot 20 shows the switch on).
         instrumentation.runOnMainSync { AppModel.shared.trackAutoDownloadSuspended = true }
+        // The real test-build switch must never lock the walkthrough: turned off in the app's own process (never an
+        // intent extra, which any app or web page could send). Screenshot 41 forces the lock through the same object.
+        instrumentation.runOnMainSync { AppModel.shared.testBuild.disableForTests() }
         try {
             setLocation(arrival[0])
             val scenario = launch()
@@ -175,6 +179,7 @@ class ScreenshotTest {
                 allowPermissionPrompts()
                 walkthrough()
                 groupsWalkthrough()
+                testBuildWalkthrough()
             } catch (e: Throwable) {
                 Log.e(TAG, "The walk stopped", e)
                 fail("The walk stopped: ${short(e)}")
@@ -560,7 +565,8 @@ class ScreenshotTest {
     }
 
     /** Groups in demo mode (docs/groups/SPEC.md §9.7, steps 28-40), after the steps above, whichever way they ended.
-     *  The link check (step 41) is `InviteIntentTest`. */
+     *  The invite-link check is `InviteIntentTest` (no screenshot); the test-build lock is step 41
+     *  (`testBuildWalkthrough`). */
     private fun groupsWalkthrough() {
         step = "groups"
         leaveSheets()
@@ -753,6 +759,41 @@ class ScreenshotTest {
         } else {
             fail("No paused banner on the map")
         }
+    }
+
+    /** 41: the full-screen lock a test build shows when the owner switches test builds off
+     *  (android/docs/spec/test-builds.md). The real switch is off for the walk (`disableForTests` in `screenshots`);
+     *  here the locked state is forced with sample texts and links, in the app's own process (never an intent extra),
+     *  as the iPhone forces it with a launch argument. */
+    private fun testBuildWalkthrough() {
+        step = "test build off"
+        leaveSheets()
+        // The iPhone's sample (`TestBuildSwitch.sample`), as its walkthrough's launch argument shows it.
+        val sample = TestBuildSwitch.lock(
+            TestBuildSwitch.Channel.test, isDebugBuild = false, status = TestBuildSwitch.sample,
+            platform = TestBuildSwitch.Platform.android,
+        )
+        instrumentation.runOnMainSync { AppModel.shared.testBuild.forceLockedForTests(sample) }
+        try {
+            if (waitForExistence(id("testBuildLock"), 10)) {
+                sleep(2)
+                snap("41-test-build-off")
+                check(exists(id("testBuildLink-googlePlay")), "No Google Play button on the lock screen")
+                check(exists(id("testBuildLink-website")), "No Website button on the lock screen")
+                check(!exists(id("terrainButton")), "The map's buttons are still there behind the lock")
+                // How android.yml's launch check knows a shown lock when the live switch is off: its resource id in
+                // the accessibility tree (`MapScreen` sets testTagsAsResourceId), as `uiautomator dump` reads it.
+                check(device.hasObject(By.res("testBuildLock")), "The lock has no resource id testBuildLock for UiAutomator")
+            } else {
+                fail("The test-build lock didn't show")
+            }
+        } finally {
+            // Switched on again whatever happened above: a locked app ignores links, and `InviteIntentTest` runs next
+            // in the same process.
+            instrumentation.runOnMainSync { AppModel.shared.testBuild.forceLockedForTests(null) }
+        }
+        // The map and its buttons come back (the walk is over, but leave nothing paused).
+        check(waitForExistence(id("terrainButton"), 10), "The map didn't come back after the lock")
     }
 
     /** Closes what is over the map: the system share sheet, then every sheet (back pops a sheet's screens, then

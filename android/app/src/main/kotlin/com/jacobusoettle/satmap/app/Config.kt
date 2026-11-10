@@ -1,6 +1,7 @@
 package com.jacobusoettle.satmap.app
 
 import com.jacobusoettle.satmap.BuildConfig
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import com.jacobusoettle.satmap.core.TileID
 
 /** Map data sources. Change the URL templates here to use a different provider.
@@ -37,6 +38,25 @@ object TileSources {
         .replace("{z}", t.z.toString())
         .replace("{x}", t.x.toString())
         .replace("{y}", t.y.toString())
+}
+
+/** Test builds can be switched off (README, android/docs/spec/test-builds.md; the rule is the shared `TestBuildSwitch`,
+ *  the app's side `TestBuildGate`), as the iPhone's `TestBuildConfig` (Config.swift). */
+object TestBuildConfig {
+    /** The build's channel: the Gradle property `satmapChannel`, through `BuildConfig.SATMAP_CHANNEL`
+     *  (app/build.gradle.kts). CI's release APK leaves it at `test`. A Play Store build sets `store`
+     *  (`./gradlew :app:bundleRelease -PsatmapChannel=store`, or `satmapChannel=store` in gradle.properties). Anything
+     *  but exactly `store` is `test` (`TestBuildSwitch.Channel.from`). */
+    val channel: TestBuildSwitch.Channel = TestBuildSwitch.Channel.from(BuildConfig.SATMAP_CHANNEL)
+
+    /** Debug builds (the debug build type, as the walkthrough and Android Studio run) never check and never lock. */
+    val isDebugBuild: Boolean = BuildConfig.DEBUG
+
+    /** The status file, tried in order until one gives information (`TestBuildSwitch.parse`). A Cloudflare mirror
+     *  (set up later) goes here too. Each is fetched with `?t=<unix seconds>` (`TestBuildSwitch.requestURL`). */
+    val statusURLs: List<String> = listOf(
+        "https://raw.githubusercontent.com/JacobusOettle/satmap/app-status/test-builds.json",
+    )
 }
 
 /** GPS power policy. Times are seconds. */

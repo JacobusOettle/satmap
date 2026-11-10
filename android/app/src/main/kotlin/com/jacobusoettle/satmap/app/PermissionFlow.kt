@@ -31,9 +31,10 @@ class PermissionFlow(private val activity: ComponentActivity, private val record
         next()
     }
 
-    /** Called from `MainActivity.onResume` (iOS didBecomeActive) and after each answer. */
+    /** Called from `MainActivity.onResume` (iOS didBecomeActive), after each answer, and when a test build is switched
+     *  on again. Nothing is asked while it is switched off (`LocationRecorder.lockedOut`), as on the iPhone. */
     fun next() {
-        if (asking) return
+        if (asking || recorder.lockedOut) return
         when {
             recorder.authorization.value == LocationRecorder.Authorization.notDetermined -> {
                 Defaults.putBoolean("locationPermissionAsked", true)

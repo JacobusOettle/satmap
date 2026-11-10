@@ -1721,11 +1721,14 @@ class AimLineView(context: Context) : View(context) {
 }
 
 /** The map in the Compose screen (iOS `MapViewRepresentable`): the controller's container, detached from an old
- *  parent first. */
+ *  parent first. Hidden (`GONE`) while a test build is switched off (`visible` false, `MapScreen`): its surface is
+ *  released as in the background, so it draws and loads nothing, and nothing in it can be touched or focused; shown
+ *  again, it draws where it was. */
 @Composable
-fun MapViewRepresentable(controller: MapController) {
+fun MapViewRepresentable(controller: MapController, visible: Boolean = true) {
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { controller.container.also { (it.parent as? ViewGroup)?.removeView(it) } },
+        update = { it.visibility = if (visible) View.VISIBLE else View.GONE },
     )
 }

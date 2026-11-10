@@ -307,6 +307,28 @@ class GroupsModelTest {
         assertNotNull("your live position reached the server", fresh.demoServer!!.liveAt(kruger, me))
     }
 
+    @Test
+    fun aTestBuildSwitchedOffSendsNothingWhenTheNetworkComesBackAndSwitchedOnSendsAgain() {
+        val fresh = GroupsModel(app)
+        fresh.setLocationAccess(authorised = true, precise = true)
+        fresh.useDemo()
+        waitFor { fresh.groups.value.size == 2 }
+        val kruger = fresh.groups.value.first { it.name == "Kruger trip" }.groupId
+        val me = fresh.hub.detail(kruger)!!.members.first { it.isYou }.memberId
+        val now = System.currentTimeMillis() / 1000.0
+        // A position waits to be sent; then test builds are switched off.
+        fresh.fix(GpsFix(-33.9217, 18.9237, 5.0, null, null, now, 0.0))
+        fresh.setLockedOut(true)
+        // The network comes back (in the background too): nothing is sent while switched off.
+        fresh.connectivityChanged(online = true)
+        repeat(20) { shadowOf(Looper.getMainLooper()).idle(); Thread.sleep(2) }
+        assertNull("nothing reached the server while switched off", fresh.demoServer!!.liveAt(kruger, me))
+        // Switched on: the network coming back sends what waited.
+        fresh.setLockedOut(false)
+        fresh.connectivityChanged(online = true)
+        waitFor { fresh.demoServer!!.liveAt(kruger, me) != null }
+    }
+
     /** Deletes a group on the demo's fake server, as its owner would. */
     private fun groupsServerDelete(groupId: String) {
         groups.demoServer!!.deleteGroup(groupId)
