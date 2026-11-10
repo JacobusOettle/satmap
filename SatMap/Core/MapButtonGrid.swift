@@ -6,7 +6,7 @@ import Foundation
 /// fit (at least one): filled from the last button (My location stays at the bottom right) up each column, right to
 /// left; the leftmost column holds the first buttons from its top, and a smaller button (the compass) is centred in its
 /// cell.
-struct MapButtonGrid: Equatable {
+struct MapButtonGrid {
     /// The whole block.
     let size: CGSize
     /// Each button's top left, from the block's top left.

@@ -1,3 +1,6 @@
+#if canImport(CoreGraphics)
+import CoreGraphics // CGPoint's and CGSize's Equatable, which Foundation alone doesn't bring on Apple platforms
+#endif
 import Foundation
 import XCTest
 @testable import SatMapCore
