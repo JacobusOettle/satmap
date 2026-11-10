@@ -3,58 +3,6 @@ import CoreLocation
 import Foundation
 import UIKit
 
-/// The measuring tool. A point is placed at the crosshair, with the measure button or a tap anywhere on the map.
-/// off → aiming → placed (distance from you to A) → path (A → B → C …, total distance) → closed (back to A: area).
-enum MeasureMode: Equatable {
-    case off
-    /// Crosshair shown, waiting for the first point.
-    case aiming
-    /// One point: the live distance and height from you to it.
-    case placed(GeoPoint)
-    /// Two or more points: the line through them, its total length and the height from first to last.
-    case path([GeoPoint])
-    /// Three or more points joined back to the first: the shape's area and perimeter.
-    case closed([GeoPoint])
-
-    var points: [GeoPoint] {
-        switch self {
-        case .off, .aiming: return []
-        case .placed(let a): return [a]
-        case .path(let pts), .closed(let pts): return pts
-        }
-    }
-
-    /// The same with point `i` moved (`PointAdjuster`).
-    func moving(_ i: Int, to p: GeoPoint) -> MeasureMode {
-        switch self {
-        case .placed:
-            return i == 0 ? .placed(p) : self
-        case .path(var pts):
-            guard pts.indices.contains(i) else { return self }
-            pts[i] = p
-            return .path(pts)
-        case .closed(var pts):
-            guard pts.indices.contains(i) else { return self }
-            pts[i] = p
-            return .closed(pts)
-        case .off, .aiming:
-            return self
-        }
-    }
-
-    /// "A", "B", … "Z", "AA", "AB", … "ZZ", "AAA", …
-    static func label(_ i: Int) -> String {
-        let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        var n = i + 1, s = ""
-        while n > 0 {
-            n -= 1
-            s = String(letters[n % 26]) + s
-            n /= 26
-        }
-        return s
-    }
-}
-
 /// While aiming the measuring tool: the spot under the crosshair and its height, which change as the map moves. Kept
 /// out of `AppModel` so a pan redraws only the measuring panel, not the whole screen.
 final class CrosshairAim: ObservableObject, @unchecked Sendable {
@@ -259,6 +207,18 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     /// The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the array).
     private(set) var track: [TrackPoint] = []
     @Published private(set) var trackRevision = 0
+    /// "Auto download" on the Where I've been screen, for the whole app (on unless turned off): the track area is
+    /// updated by itself, as that screen's Download button would, once you've been somewhere new (`TrackAutoDownload`).
+    @Published var trackAutoDownload = UserDefaults.standard.object(forKey: TrackAutoDownload.settingKey) == nil
+        ? TrackAutoDownload.enabledByDefault : UserDefaults.standard.bool(forKey: TrackAutoDownload.settingKey) {
+        didSet {
+            UserDefaults.standard.set(trackAutoDownload, forKey: TrackAutoDownload.settingKey)
+            if trackAutoDownload && !oldValue { checkTrackAutoDownload() }
+        }
+    }
+    /// When the last auto download check began (whatever it found), and whether one is under way.
+    private var lastTrackCheck: Date?
+    private var trackCheckRunning = false
 
     @Published var following = true
     /// What the terrain button shows over the imagery: contour lines, elevation colours, both or neither (each tap the
@@ -368,6 +328,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             if self.markerElevation == nil || self.lastElevation == nil { self.refreshPointElevations() }
             if let loc = self.recorder.location { self.refreshUserElevation(loc) }
             if self.selectedElevation == nil { self.selectedLookup.retry() }
+            self.checkTrackAutoDownload()
         }
 
         // For the whole app, whichever maps there are (the phone's, the car's, or both): memory trimmed in the background,
@@ -494,6 +455,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         trackRevision += 1
         // The trail of every group you share with (§8.5).
         groups.trackPoint(p)
+        checkTrackAutoDownload()
     }
 
     func clearTrack() {
@@ -529,14 +491,16 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     // MARK: - Measuring
 
     /// The measure button: shows the crosshair, then places a point at it each time (A, B, C …); after a shape is
-    /// closed it clears.
+    /// closed it clears. With a spot selected (tapped, or a KML point) it starts with A there: the live distance and
+    /// height from you to it, the map staying put (`MeasureMode.buttonAction`).
     func measureButtonTapped() {
-        switch measure {
-        case .off:
-            setMeasure(.aiming)
-        case .aiming, .placed, .path:
+        switch measure.buttonAction(selected: selectedPoint) {
+        case .start(let m):
+            // A at the selected spot: it stays selected, so its height and a KML point's name stay shown for A.
+            setMeasure(m)
+        case .addPointAtCrosshair:
             addPointAtCrosshair()
-        case .closed:
+        case .clear:
             clearMeasure()
         }
     }
@@ -770,6 +734,42 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     /// "Where I've been": imagery along the recorded track, added to (or creating) the track area.
     func startTrackDownload(name: String, lines: [[GeoPoint]], maxZoom: Int, allowCellular: Bool) {
         offline.updateTrackArea(name: name, lines: lines, maxZoom: maxZoom, allowCellular: allowCellular)
+    }
+
+    /// Auto download (`trackAutoDownload`): whether the track area should be updated, and if so, the update the
+    /// Download button on the Where I've been screen would make (`TrackAutoDownload`). Looked at when SatMap becomes
+    /// active, when the setting is turned on and when track points arrive, at most every 10 minutes; the track is worked
+    /// out off the main thread. A download it starts waits for Wi-Fi, or runs in the background, like any other.
+    private func checkTrackAutoDownload() {
+        // The walkthroughs simulate a walk and leave the offline areas as they are (a launch argument, never saved).
+        guard !UserDefaults.standard.bool(forKey: "skipTrackAutoDownload"), !trackCheckRunning,
+              TrackAutoDownload.isDue(enabled: trackAutoDownload, lastCheck: lastTrackCheck, now: Date()) else { return }
+        lastTrackCheck = Date()
+        let area = trackAreaForAutoDownload
+        let track = self.track
+        trackCheckRunning = true
+        Task.detached(priority: .utility) {
+            let free = AppPaths.freeDiskSpace()
+            let update = TrackAutoDownload.update(track: track, area: area, freeBytes: free) { lines in
+                DownloadSizes.zoomForNewTrackArea(lines, freeSpace: free)
+            }
+            DispatchQueue.main.async {
+                self.trackCheckRunning = false
+                // Not if it was turned off meanwhile, or the track area changed (its download started, Download was
+                // tapped, it was deleted …): the next check starts from what there is then.
+                guard let update = update, self.trackAutoDownload, self.trackAreaForAutoDownload == area else { return }
+                self.startTrackDownload(name: update.name, lines: update.lines, maxZoom: update.maxZoom,
+                                        allowCellular: update.allowCellular)
+            }
+        }
+    }
+
+    /// The track area as auto download sees it (nil without one).
+    private var trackAreaForAutoDownload: TrackAutoDownload.Area? {
+        offline.areas.first { $0.isTrack == true }.map {
+            TrackAutoDownload.Area(name: $0.name, lines: $0.roads ?? [], maxZoom: $0.maxZoom, allowCellular: $0.allowCellular,
+                                   isDownloading: $0.status == .downloading)
+        }
     }
 
     func discardPendingArea() {

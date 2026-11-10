@@ -59,6 +59,9 @@ final class ScreenshotTests: XCTestCase {
         // Groups run in demo mode (docs/groups/SPEC.md §8.15): the core's fake server with a fixed seed and a fake Pro
         // store. "Kruger trip" starts hidden, so shots 01–27 show only the (inactive) Groups button.
         app.launchArguments += ["-groupsDemo", "YES"]
+        // Auto download stays on (shot 20 shows it) but doesn't act on the simulated walk, so the offline lists show
+        // only the areas downloaded here.
+        app.launchArguments += ["-skipTrackAutoDownload", "YES"]
         mapScreenshots()
         groupScreenshots()
     }
@@ -231,6 +234,21 @@ final class ScreenshotTests: XCTestCase {
         sleep(1)
         XCTAssertTrue((tappedHeight.value as? String)?.contains(" m ") == true, "Height not back in metres")
 
+        // With a spot selected (the one tapped in drone mode), the measure button measures from it: A there at once,
+        // with the distance from you. ✕ ends it, and the spot with it.
+        let tappedSpot = app.buttons["tappedCoordinates"]
+        if tappedSpot.exists {
+            let spot = tappedSpot.label
+            tap("Measure")
+            sleep(2)
+            XCTAssertEqual(currentMeasureState(), .placed, "The measure button didn't measure from the tapped spot")
+            XCTAssertEqual(tappedSpot.exists ? tappedSpot.label : nil, spot, "Point A isn't at the tapped spot")
+            setMeasure(.off)
+            XCTAssertFalse(tappedSpot.exists, "The tapped spot stayed after measuring from it")
+        } else {
+            XCTFail("No tapped spot to measure from")
+        }
+
         // Measuring between two points: a tap anywhere puts a point at the crosshair; the map is moved between them.
         setMeasure(.aiming)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.3, dy: 0.4)).tap() // A, in the middle
@@ -324,6 +342,10 @@ final class ScreenshotTests: XCTestCase {
         if app.staticTexts["Your track"].waitForExistence(timeout: 30) {
             sleep(3) // size estimate
             scrollTo(app.buttons["Download"].firstMatch)
+            let auto = app.switches["Auto download"].firstMatch
+            XCTAssertTrue(auto.exists, "No Auto download switch")
+            XCTAssertTrue([auto, auto.switches.firstMatch].contains { $0.exists && $0.value as? String == "1" },
+                          "Auto download isn't on by default")
             snap("20-where-ive-been")
         } else {
             XCTFail("The track didn't load")
