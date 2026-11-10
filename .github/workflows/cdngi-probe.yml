@@ -12,7 +12,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Install Playwright
         run: |
@@ -41,8 +41,17 @@ jobs:
               pg = b.new_page(user_agent=UA, viewport={"width": 1600, "height": 1000})
               calls = []
               pg.on("request", lambda r: calls.append(r.method + " " + r.url[:160]) if ".ashx" in r.url or "erdas" in r.url else None)
+              cons = []
+              pg.on("console", lambda m: cons.append(m.type + ": " + m.text[:200]))
+              pg.on("pageerror", lambda e: cons.append("pageerror: " + str(e)[:200]))
               pg.goto("https://ngigeoportal.dlrrd.gov.za/cdngiportal/", wait_until="load", timeout=180000)
-              pg.wait_for_timeout(25000)
+              try:
+                  pg.wait_for_function("() => typeof theForm !== 'undefined' && !!document.forms[0]", timeout=240000)
+                  print("theForm ready")
+              except Exception as e:
+                  print("theForm never appeared:", str(e)[:200])
+              pg.wait_for_timeout(15000)
+              print("console:"); [print("  ", c) for c in cons[:40]]
               pg.screenshot(path="portal.png")
               print("title:", pg.title())
               print("result:", json.dumps(pg.evaluate(JS), indent=1))
