@@ -1,41 +1,80 @@
 {
-  "_comment": "Shared examples for TestBuildSwitch, read by both SatMapCoreTests (Swift) and android :core (Kotlin). parse[] feeds `input` (the exact bytes a build would fetch) to TestBuildSwitch.parse and checks the result; a null `expect` means the file carried no information (keep the last known state). decide[] checks channel + saved + fetched -> lock (null = not locked). Texts here are ASCII so both languages cut to the same length. See android/docs/spec/test-builds.md.",
-  "maxTitleLength": 120,
-  "maxMessageLength": 500,
-  "defaultTitle": "This test version of SatMap has been switched off",
-  "defaultMessage": "Get SatMap from the App Store or Google Play to keep using it.",
-  "parse": [
+  "about": "Shared examples for TestBuildSwitch (SatMap/Core/TestBuildSwitch.swift and android/core/.../TestBuildSwitch.kt); both cores' tests read this file. files: a status file ('file' as JSON, written out compactly, or 'text' as it is) and what parse gives (null: no information). links: allowedLink. decisions: known(saved, fetched) and lock(...) on each platform, for statuses already checked. channels: Channel(setting), and checks(channel) for a build that isn't a debug build. requestUrls: requestURL(base, now).",
+  "defaults": {
+    "title": "This test version of SatMap has been switched off",
+    "message": "Get SatMap from the App Store or Google Play to keep using it.",
+    "maxTitleLength": 120,
+    "maxMessageLength": 500,
+    "maxFileBytes": 65536,
+    "checkIntervalSeconds": 300,
+    "timeoutSeconds": 10,
+    "savedKey": "testBuildStatus",
+    "userAgent": {
+      "version": "1.0",
+      "value": "SatMap/1.0"
+    }
+  },
+  "sample": {
+    "testBuilds": "off",
+    "title": "This test version of SatMap has been switched off",
+    "message": "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+    "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+    "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+    "websiteURL": "https://github.com/JacobusOettle/satmap"
+  },
+  "files": [
     {
-      "name": "valid on",
-      "input": "{\"schema\":1,\"testBuilds\":\"on\",\"title\":\"\",\"message\":\"\",\"appStoreURL\":null,\"playStoreURL\":null,\"websiteURL\":null,\"updated\":\"2026-11-10T00:00:00Z\"}",
+      "name": "on, as the app-status branch has it",
+      "file": {
+        "schema": 1,
+        "testBuilds": "on",
+        "title": "This test version of SatMap has been switched off",
+        "message": "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null,
+        "updated": "2026-11-10T00:00:00Z"
+      },
       "expect": {
-        "locked": false,
-        "title": "",
-        "message": "",
+        "testBuilds": "on",
+        "title": "This test version of SatMap has been switched off",
+        "message": "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
         "appStoreURL": null,
         "playStoreURL": null,
         "websiteURL": null
       }
     },
     {
-      "name": "valid off with links",
-      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"title\":\"Switched off\",\"message\":\"Please use the store build.\",\"appStoreURL\":\"https://apps.apple.com/app/id1\",\"playStoreURL\":\"https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap\",\"websiteURL\":\"https://github.com/JacobusOettle/satmap\",\"updated\":\"2026-11-10T00:00:00Z\"}",
+      "name": "off with every link",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.\nSatMap is now on the App Store and Google Play.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap",
+        "updated": "2026-12-01T08:00:00Z"
+      },
       "expect": {
-        "locked": true,
-        "title": "Switched off",
-        "message": "Please use the store build.",
-        "appStoreURL": "https://apps.apple.com/app/id1",
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.\nSatMap is now on the App Store and Google Play.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       }
     },
     {
-      "name": "off with no texts or links uses empty (defaults filled in at decide)",
-      "input": "{\"schema\":1,\"testBuilds\":\"off\"}",
+      "name": "off with only the required fields",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off"
+      },
       "expect": {
-        "locked": true,
-        "title": "",
-        "message": "",
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
         "appStoreURL": null,
         "playStoreURL": null,
         "websiteURL": null
@@ -43,244 +82,940 @@
     },
     {
       "name": "unknown fields are ignored",
-      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"title\":\"Hi\",\"somethingNew\":{\"a\":[1,2,3]},\"count\":7}",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": "Switched off",
+        "extra": {
+          "nested": [
+            1,
+            2,
+            3
+          ]
+        },
+        "colour": "red",
+        "updated": 7
+      },
       "expect": {
-        "locked": true,
-        "title": "Hi",
-        "message": "",
+        "testBuilds": "off",
+        "title": "Switched off",
+        "message": null,
         "appStoreURL": null,
         "playStoreURL": null,
         "websiteURL": null
       }
     },
     {
-      "name": "bad schema (2) is no information",
-      "input": "{\"schema\":2,\"testBuilds\":\"off\"}",
-      "expect": null
-    },
-    {
-      "name": "missing schema is no information",
-      "input": "{\"testBuilds\":\"off\"}",
-      "expect": null
-    },
-    {
-      "name": "bad testBuilds value is no information",
-      "input": "{\"schema\":1,\"testBuilds\":\"paused\"}",
-      "expect": null
-    },
-    {
-      "name": "missing testBuilds is no information",
-      "input": "{\"schema\":1,\"title\":\"Hi\"}",
-      "expect": null
-    },
-    {
-      "name": "not an object is no information",
-      "input": "[1,2,3]",
-      "expect": null
-    },
-    {
-      "name": "not JSON is no information",
-      "input": "not json at all",
-      "expect": null
-    },
-    {
-      "name": "empty string is no information",
-      "input": "",
-      "expect": null
-    },
-    {
-      "name": "long title and message are cut",
-      "input": "{\"schema\": 1, \"testBuilds\": \"off\", \"title\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\", \"message\": \"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB\"}",
+      "name": "texts and links of the wrong type count as not given",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": 42,
+        "message": [
+          "a",
+          "b"
+        ],
+        "appStoreURL": true,
+        "playStoreURL": {
+          "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+        },
+        "websiteURL": 3.5
+      },
       "expect": {
-        "locked": true,
-        "title": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-        "message": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
         "appStoreURL": null,
         "playStoreURL": null,
         "websiteURL": null
       }
     },
     {
-      "name": "disallowed host link is ignored, allowed one kept",
-      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"appStoreURL\":\"https://evil.example.com/app\",\"playStoreURL\":\"https://play.google.com/store/apps/details?id=x\",\"websiteURL\":\"https://example.com\"}",
+      "name": "null texts and links",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
       "expect": {
-        "locked": true,
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "empty and blank texts count as not given",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
         "title": "",
-        "message": "",
-        "appStoreURL": null,
-        "playStoreURL": "https://play.google.com/store/apps/details?id=x",
-        "websiteURL": null
-      }
-    },
-    {
-      "name": "http (not https) links are ignored",
-      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"appStoreURL\":\"http://apps.apple.com/app/id1\",\"playStoreURL\":\"http://play.google.com/store\",\"websiteURL\":\"http://github.com/JacobusOettle/satmap\"}",
+        "message": " \n\t "
+      },
       "expect": {
-        "locked": true,
-        "title": "",
-        "message": "",
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
         "appStoreURL": null,
         "playStoreURL": null,
         "websiteURL": null
       }
     },
     {
-      "name": "github.com only under /JacobusOettle/",
-      "input": "{\"schema\":1,\"testBuilds\":\"off\",\"appStoreURL\":\"https://github.com/someoneelse/satmap\",\"websiteURL\":\"https://github.com/JacobusOettle/satmap/releases\"}",
+      "name": "a long title and message are cut",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": "Test builds are switched off Test builds are switched off Test builds are switched off Test builds are switched off Test builds are switched off Test builds are switched off ",
+        "message": "Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. "
+      },
       "expect": {
-        "locked": true,
-        "title": "",
-        "message": "",
+        "testBuilds": "off",
+        "title": "Test builds are switched off Test builds are switched off Test builds are switched off Test builds are switched off Test",
+        "message": "Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for testing SatMap. Thanks for tes",
         "appStoreURL": null,
         "playStoreURL": null,
-        "websiteURL": "https://github.com/JacobusOettle/satmap/releases"
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "lengths are counted in code points (an emoji is one)",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83d\ude00bbb"
+      },
+      "expect": {
+        "testBuilds": "off",
+        "title": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83d\ude00",
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "plain text: control characters removed, line breaks only in the message, ends trimmed",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": "  Line one\nLine two\r\nthree\tend\u0007  ",
+        "message": "\n First\r\nSecond\rThird\u0000\u001b[1m bold\u007f \n"
+      },
+      "expect": {
+        "testBuilds": "off",
+        "title": "Line one Line two three end",
+        "message": "First\nSecond\nThird[1m bold",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "markup is shown as it is, not interpreted",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": "<b>Off</b> **now**",
+        "message": "[App Store](https://example.com)"
+      },
+      "expect": {
+        "testBuilds": "off",
+        "title": "<b>Off</b> **now**",
+        "message": "[App Store](https://example.com)",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "disallowed links are ignored, the rest is kept",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "title": "Off",
+        "appStoreURL": "https://apps.apple.com.example.com/app/satmap",
+        "playStoreURL": "https://example.com/satmap.apk",
+        "websiteURL": "https://github.com/SomeoneElse/satmap"
+      },
+      "expect": {
+        "testBuilds": "off",
+        "title": "Off",
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "http links are ignored",
+      "file": {
+        "schema": 1,
+        "testBuilds": "off",
+        "appStoreURL": "http://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "http://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "http://github.com/JacobusOettle/satmap"
+      },
+      "expect": {
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      }
+    },
+    {
+      "name": "on with links (kept for when it is off again)",
+      "file": {
+        "schema": 1,
+        "testBuilds": "on",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "expect": {
+        "testBuilds": "on",
+        "title": null,
+        "message": null,
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": null,
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      }
+    },
+    {
+      "name": "schema 2",
+      "file": {
+        "schema": 2,
+        "testBuilds": "off"
+      },
+      "expect": null
+    },
+    {
+      "name": "schema 0",
+      "file": {
+        "schema": 0,
+        "testBuilds": "off"
+      },
+      "expect": null
+    },
+    {
+      "name": "schema as a string",
+      "file": {
+        "schema": "1",
+        "testBuilds": "off"
+      },
+      "expect": null
+    },
+    {
+      "name": "schema as a boolean",
+      "file": {
+        "schema": true,
+        "testBuilds": "off"
+      },
+      "expect": null
+    },
+    {
+      "name": "no schema",
+      "file": {
+        "testBuilds": "off"
+      },
+      "expect": null
+    },
+    {
+      "name": "testBuilds in capitals",
+      "file": {
+        "schema": 1,
+        "testBuilds": "OFF"
+      },
+      "expect": null
+    },
+    {
+      "name": "testBuilds neither on nor off",
+      "file": {
+        "schema": 1,
+        "testBuilds": "paused"
+      },
+      "expect": null
+    },
+    {
+      "name": "testBuilds as a boolean",
+      "file": {
+        "schema": 1,
+        "testBuilds": false
+      },
+      "expect": null
+    },
+    {
+      "name": "testBuilds null",
+      "file": {
+        "schema": 1,
+        "testBuilds": null
+      },
+      "expect": null
+    },
+    {
+      "name": "no testBuilds",
+      "file": {
+        "schema": 1,
+        "title": "Off"
+      },
+      "expect": null
+    },
+    {
+      "name": "an array, not an object",
+      "file": [
+        {
+          "schema": 1,
+          "testBuilds": "off"
+        }
+      ],
+      "expect": null
+    },
+    {
+      "name": "a string, not an object",
+      "file": "off",
+      "expect": null
+    },
+    {
+      "name": "not JSON (an error page)",
+      "text": "<html><body>404: Not Found</body></html>",
+      "expect": null
+    },
+    {
+      "name": "cut short",
+      "text": "{\"schema\": 1, \"testBuilds\": \"off\", \"title\": \"Sw",
+      "expect": null
+    },
+    {
+      "name": "empty",
+      "text": "",
+      "expect": null
+    }
+  ],
+  "links": [
+    {
+      "url": "https://apps.apple.com/app/satmap/id0000000000",
+      "allowed": true
+    },
+    {
+      "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+      "allowed": true
+    },
+    {
+      "url": "https://github.com/JacobusOettle/satmap",
+      "allowed": true
+    },
+    {
+      "url": "https://github.com/JacobusOettle/satmap/releases/tag/test-build",
+      "allowed": true
+    },
+    {
+      "url": "https://apps.apple.com/za/app/satmap/id0000000000?mt=8#top",
+      "allowed": true
+    },
+    {
+      "url": "HTTPS://APPS.APPLE.COM/app/satmap/id0000000000",
+      "allowed": true
+    },
+    {
+      "url": "https://GitHub.com/JacobusOettle/satmap",
+      "allowed": true
+    },
+    {
+      "url": "http://apps.apple.com/app/satmap/id0000000000",
+      "allowed": false
+    },
+    {
+      "url": "ftp://github.com/JacobusOettle/satmap",
+      "allowed": false
+    },
+    {
+      "url": "javascript:alert(1)",
+      "allowed": false
+    },
+    {
+      "url": "https://example.com/",
+      "allowed": false
+    },
+    {
+      "url": "https://www.apple.com/app-store/",
+      "allowed": false
+    },
+    {
+      "url": "https://apps.apple.com.example.com/app/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://evilapps.apple.com/app/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://apps.apple.com./app/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://user@apps.apple.com/app/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://user:secret@play.google.com/store",
+      "allowed": false
+    },
+    {
+      "url": "https://apps.apple.com@example.com/",
+      "allowed": false
+    },
+    {
+      "url": "https://apps.apple.com:8443/app/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/SomeoneElse/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/jacobusoettle/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/JacobusOettle",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/JacobusOettle/../SomeoneElse/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/JacobusOettle/./satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/JacobusOettle/%2e%2e/SomeoneElse/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://github.com/JacobusOettle%2F..%2FSomeoneElse/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://raw.githubusercontent.com/JacobusOettle/satmap/main/README.md",
+      "allowed": false
+    },
+    {
+      "url": "https:apps.apple.com/app/satmap",
+      "allowed": false
+    },
+    {
+      "url": "apps.apple.com/app/satmap",
+      "allowed": false
+    },
+    {
+      "url": " https://apps.apple.com/app/satmap",
+      "allowed": false
+    },
+    {
+      "url": "https://apps.apple.com/app/sat map",
+      "allowed": false
+    },
+    {
+      "url": "",
+      "allowed": false
+    }
+  ],
+  "decisions": [
+    {
+      "name": "never fetched: on",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": null,
+      "fetched": null,
+      "expect": {
+        "known": null,
+        "iPhone": null,
+        "android": null
+      }
+    },
+    {
+      "name": "fetched off: locks, with the file's texts and this platform's buttons",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": null,
+      "fetched": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "websiteURL": "https://github.com/JacobusOettle/satmap"
+        },
+        "iPhone": {
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "buttons": [
+            {
+              "kind": "appStore",
+              "title": "Get it on the App Store",
+              "url": "https://apps.apple.com/app/satmap/id0000000000"
+            },
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        },
+        "android": {
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "buttons": [
+            {
+              "kind": "googlePlay",
+              "title": "Get it on Google Play",
+              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+            },
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "fetched off with no texts or links: the defaults, no buttons",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": {
+        "testBuilds": "on",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": {
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": null,
+          "message": null,
+          "appStoreURL": null,
+          "playStoreURL": null,
+          "websiteURL": null
+        },
+        "iPhone": {
+          "title": "This test version of SatMap has been switched off",
+          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "buttons": []
+        },
+        "android": {
+          "title": "This test version of SatMap has been switched off",
+          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "buttons": []
+        }
+      }
+    },
+    {
+      "name": "seen off, no answer now (offline, unreadable): stays locked",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "fetched": null,
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "websiteURL": "https://github.com/JacobusOettle/satmap"
+        },
+        "iPhone": {
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "buttons": [
+            {
+              "kind": "appStore",
+              "title": "Get it on the App Store",
+              "url": "https://apps.apple.com/app/satmap/id0000000000"
+            },
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        },
+        "android": {
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "buttons": [
+            {
+              "kind": "googlePlay",
+              "title": "Get it on Google Play",
+              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+            },
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "seen off, now on: unlocks",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "fetched": {
+        "testBuilds": "on",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "expect": {
+        "known": {
+          "testBuilds": "on",
+          "title": null,
+          "message": null,
+          "appStoreURL": null,
+          "playStoreURL": null,
+          "websiteURL": null
+        },
+        "iPhone": null,
+        "android": null
+      }
+    },
+    {
+      "name": "off again with new texts: the new ones",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": {
+        "testBuilds": "off",
+        "title": "Old title",
+        "message": "Old message",
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "fetched": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "websiteURL": "https://github.com/JacobusOettle/satmap"
+        },
+        "iPhone": {
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "buttons": [
+            {
+              "kind": "appStore",
+              "title": "Get it on the App Store",
+              "url": "https://apps.apple.com/app/satmap/id0000000000"
+            },
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        },
+        "android": {
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "buttons": [
+            {
+              "kind": "googlePlay",
+              "title": "Get it on Google Play",
+              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+            },
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "off with only Google Play's link: on the iPhone only the website",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": null,
+      "fetched": {
+        "testBuilds": "off",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": null,
+          "message": null,
+          "appStoreURL": null,
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "websiteURL": "https://github.com/JacobusOettle/satmap"
+        },
+        "iPhone": {
+          "title": "This test version of SatMap has been switched off",
+          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "buttons": [
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        },
+        "android": {
+          "title": "This test version of SatMap has been switched off",
+          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "buttons": [
+            {
+              "kind": "googlePlay",
+              "title": "Get it on Google Play",
+              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+            },
+            {
+              "kind": "website",
+              "title": "Website",
+              "url": "https://github.com/JacobusOettle/satmap"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "on stays on",
+      "channel": "test",
+      "debugBuild": false,
+      "saved": {
+        "testBuilds": "on",
+        "title": null,
+        "message": null,
+        "appStoreURL": null,
+        "playStoreURL": null,
+        "websiteURL": null
+      },
+      "fetched": null,
+      "expect": {
+        "known": {
+          "testBuilds": "on",
+          "title": null,
+          "message": null,
+          "appStoreURL": null,
+          "playStoreURL": null,
+          "websiteURL": null
+        },
+        "iPhone": null,
+        "android": null
+      }
+    },
+    {
+      "name": "a store build never locks",
+      "channel": "store",
+      "debugBuild": false,
+      "saved": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "fetched": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "websiteURL": "https://github.com/JacobusOettle/satmap"
+        },
+        "iPhone": null,
+        "android": null
+      }
+    },
+    {
+      "name": "a debug build never locks",
+      "channel": "test",
+      "debugBuild": true,
+      "saved": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "fetched": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "websiteURL": "https://github.com/JacobusOettle/satmap"
+        },
+        "iPhone": null,
+        "android": null
+      }
+    },
+    {
+      "name": "a store debug build never locks",
+      "channel": "store",
+      "debugBuild": true,
+      "saved": {
+        "testBuilds": "off",
+        "title": "SatMap test builds have ended",
+        "message": "Thank you for testing.",
+        "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "websiteURL": "https://github.com/JacobusOettle/satmap"
+      },
+      "fetched": null,
+      "expect": {
+        "known": {
+          "testBuilds": "off",
+          "title": "SatMap test builds have ended",
+          "message": "Thank you for testing.",
+          "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "websiteURL": "https://github.com/JacobusOettle/satmap"
+        },
+        "iPhone": null,
+        "android": null
       }
     }
   ],
-  "decide": [
+  "channels": [
     {
-      "name": "store channel never locks, even with a locked fetch",
+      "setting": "test",
+      "channel": "test",
+      "checks": true
+    },
+    {
+      "setting": "store",
       "channel": "store",
-      "saved": {
-        "locked": false,
-        "title": "",
-        "message": "",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "fetched": {
-        "locked": true,
-        "title": "Off",
-        "message": "Go to the store",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "lock": null
+      "checks": false
     },
     {
-      "name": "store channel never locks, even when saved is locked and no new fetch",
-      "channel": "store",
-      "saved": {
-        "locked": true,
-        "title": "Off",
-        "message": "Go to the store",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "fetched": null,
-      "lock": null
-    },
-    {
-      "name": "test channel: fresh off locks with its texts and links",
+      "setting": "",
       "channel": "test",
-      "saved": {
-        "locked": false,
-        "title": "",
-        "message": "",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "fetched": {
-        "locked": true,
-        "title": "Switched off",
-        "message": "Please use the store build.",
-        "appStoreURL": "https://apps.apple.com/app/id1",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=x",
-        "websiteURL": "https://github.com/JacobusOettle/satmap"
-      },
-      "lock": {
-        "title": "Switched off",
-        "message": "Please use the store build.",
-        "appStoreURL": "https://apps.apple.com/app/id1",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=x",
-        "websiteURL": "https://github.com/JacobusOettle/satmap"
-      }
+      "checks": true
     },
     {
-      "name": "test channel: fresh on unlocks",
+      "setting": null,
       "channel": "test",
-      "saved": {
-        "locked": true,
-        "title": "Off",
-        "message": "Go to the store",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "fetched": {
-        "locked": false,
-        "title": "",
-        "message": "",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "lock": null
+      "checks": true
     },
     {
-      "name": "test channel: no new fetch keeps the saved locked state (stays locked offline)",
+      "setting": "$(SATMAP_CHANNEL)",
       "channel": "test",
-      "saved": {
-        "locked": true,
-        "title": "Off",
-        "message": "Go to the store",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "fetched": null,
-      "lock": {
-        "title": "Off",
-        "message": "Go to the store",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      }
+      "checks": true
     },
     {
-      "name": "test channel: never fetched (saved unlocked) stays unlocked",
+      "setting": "Store",
       "channel": "test",
-      "saved": {
-        "locked": false,
-        "title": "",
-        "message": "",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "fetched": null,
-      "lock": null
+      "checks": true
     },
     {
-      "name": "test channel: off with no texts falls back to the defaults",
+      "setting": " store",
       "channel": "test",
-      "saved": {
-        "locked": false,
-        "title": "",
-        "message": "",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "fetched": {
-        "locked": true,
-        "title": "",
-        "message": "",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      },
-      "lock": {
-        "title": "This test version of SatMap has been switched off",
-        "message": "Get SatMap from the App Store or Google Play to keep using it.",
-        "appStoreURL": null,
-        "playStoreURL": null,
-        "websiteURL": null
-      }
+      "checks": true
+    },
+    {
+      "setting": "release",
+      "channel": "test",
+      "checks": true
+    }
+  ],
+  "requestUrls": [
+    {
+      "base": "https://raw.githubusercontent.com/JacobusOettle/satmap/app-status/test-builds.json",
+      "now": 1800000000.75,
+      "url": "https://raw.githubusercontent.com/JacobusOettle/satmap/app-status/test-builds.json?t=1800000000"
+    },
+    {
+      "base": "https://status.example.com/test-builds.json?app=satmap",
+      "now": 1800000123,
+      "url": "https://status.example.com/test-builds.json?app=satmap&t=1800000123"
     }
   ]
 }

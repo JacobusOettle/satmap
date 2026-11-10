@@ -754,23 +754,24 @@ class ScreenshotTest {
     private fun testBuildWalkthrough() {
         step = "test build off"
         leaveSheets()
-        val sample = TestBuildSwitch.Lock(
-            title = "This test version of SatMap has been switched off",
-            message = "Get SatMap from Google Play to keep using it.",
-            appStoreURL = "https://apps.apple.com/app/satmap/id0000000000",
-            playStoreURL = "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
-            websiteURL = "https://github.com/JacobusOettle/satmap",
+        // The iPhone's sample (`TestBuildSwitch.sample`), as its walkthrough's launch argument shows it.
+        val sample = TestBuildSwitch.lock(
+            TestBuildSwitch.Channel.test, isDebugBuild = false, status = TestBuildSwitch.sample,
+            platform = TestBuildSwitch.Platform.android,
         )
         instrumentation.runOnMainSync { AppModel.shared.testBuild.forceLockedForTests(sample) }
         if (waitForExistence(id("testBuildLock"), 10)) {
             sleep(2)
             snap("41-test-build-off")
-            check(exists(id("playStoreButton")), "No Google Play button on the lock screen")
+            check(exists(id("testBuildLink-googlePlay")), "No Google Play button on the lock screen")
+            check(exists(id("testBuildLink-website")), "No Website button on the lock screen")
+            check(!exists(id("terrainButton")), "The map's buttons are still there behind the lock")
         } else {
             fail("The test-build lock didn't show")
         }
-        // Back to normal: the walk is over, but leave nothing paused.
+        // Switched on again: the map and its buttons come back (the walk is over, but leave nothing paused).
         instrumentation.runOnMainSync { AppModel.shared.testBuild.forceLockedForTests(null) }
+        check(waitForExistence(id("terrainButton"), 10), "The map didn't come back after the lock")
     }
 
     /** Closes what is over the map: the system share sheet, then every sheet (back pops a sheet's screens, then

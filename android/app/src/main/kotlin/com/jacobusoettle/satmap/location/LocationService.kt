@@ -48,6 +48,12 @@ class LocationService : Service() {
                 // No location permission for a service of this type.
             }
         }
+
+        /** From `LocationRecorder.stopForLock` (a test build switched off): the service and its notification go, in
+         *  the foreground or the background; nothing happens when it isn't running. */
+        fun stop(context: Context) {
+            context.stopService(Intent(context, LocationService::class.java))
+        }
     }
 
     /** The groups the notification names, and their collector while the service runs. */

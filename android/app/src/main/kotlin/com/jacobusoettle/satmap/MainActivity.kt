@@ -7,6 +7,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.jacobusoettle.satmap.app.ActiveSheet
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.app.Defaults
@@ -19,6 +22,9 @@ import com.jacobusoettle.satmap.offline.BackupSharing
 import com.jacobusoettle.satmap.ui.MapScreen
 import com.jacobusoettle.satmap.ui.SatMapTheme
 import com.jacobusoettle.satmap.ui.SharePresenter
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.launch
 
 /** iOS's `WindowGroup` (`SatMapApp.swift`): the map screen, edge to edge and always dark, with white status bar icons
  *  over the imagery. It creates the map and the permission flow, handles the files and actions other apps send, and
@@ -43,6 +49,13 @@ class MainActivity : ComponentActivity() {
         permissions = PermissionFlow(this, model.recorder)
         setContent {
             SatMapTheme { MapScreen(model, model.offline, model.recorder, mapController) }
+        }
+        // A test build switched on again while SatMap is in front asks for what it skipped while switched off
+        // (`PermissionFlow.next` asks nothing then), as `onResume` would.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                model.testBuildLock.drop(1).filter { it == null }.collect { permissions.next() }
+            }
         }
         if (savedInstanceState == null) handleIncoming(intent)
     }

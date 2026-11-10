@@ -17,6 +17,7 @@ import com.jacobusoettle.satmap.core.MeasureButtonAction
 import com.jacobusoettle.satmap.core.MeasureMode
 import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import com.jacobusoettle.satmap.core.TrackAutoDownload
 import com.jacobusoettle.satmap.core.TrackLog
 import com.jacobusoettle.satmap.core.TrackPoint
@@ -316,13 +317,16 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
      *  lifecycle by this model (it registers no observer of its own), and gets the track points and fixes. */
     val groups = GroupsModel(app)
 
-    /** The test-build remote switch (android/docs/spec/test-builds.md): checks the status file and, for a test build
-     *  switched off, publishes a lock. This model acts on it (`applyLock`); the map screen shows it. Told of the
-     *  foreground by this model, like groups. */
+    /** Test builds can be switched off remotely (android/docs/spec/test-builds.md): nothing in store or debug builds.
+     *  This model acts on its lock (`applyLock`); the map screen shows it. Told of the foreground by this model, like
+     *  groups. */
     val testBuild = TestBuildGate()
 
     /** The lock to show over everything while a test build is switched off (null when not locked). */
-    val testBuildLock: StateFlow<com.jacobusoettle.satmap.core.TestBuildSwitch.Lock?> get() = testBuild.lock
+    val testBuildLock: StateFlow<TestBuildSwitch.Lock?> get() = testBuild.lock
+
+    /** Whether a test build is switched off right now (`applyLock`). Declared before `init`, which may lock at once. */
+    private var lockedOut = false
 
     private val trackLog = TrackLog(AppPaths.track)
 
@@ -578,25 +582,24 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         // Only in the foreground (iOS also starts it when launched into the background, where it runs until the
         // next didEnterBackground): it starts with each willEnterForeground.
         if (AppLifecycle.isForeground) startRetryTimer()
-        recorder.start()
 
-        // The test-build switch: show the lock the saved state implies at once, then act on every change (downloads,
-        // recording and sharing pause while locked and resume when unlocked). A debug or store build never locks.
+        // The test-build switch: the lock the kept state implies at once (on the main thread, Main.immediate), then
+        // every change (downloads, recording and sharing pause while locked and resume when unlocked). Before the
+        // recorder starts, as on the iPhone, so a build that has seen "off" never starts recording. A debug or store
+        // build never locks.
         testBuild.start()
         testBuild.lock
             .onEach { applyLock(it != null) }
             .launchIn(scope)
+        recorder.start()
         if (AppLifecycle.isForeground) testBuild.foregrounded()
     }
 
-    /** Whether a test build is switched off right now (`applyLock`). */
-    private var lockedOut = false
-
     /** The test-build switch turned off (locked) or on again. While locked the app stops what runs but keeps every
-     *  user file (offline maps, the track, KML, groups): downloads pause (keeping what is saved), recording and the
-     *  background location work stop, and the groups' live sharing and uploads pause. On unlock everything resumes as
-     *  before: a paused download continues, recording restarts (if on screen) and groups wake. The sheets over the map
-     *  are closed so nothing shows behind the lock. */
+     *  user file (offline maps, the track, KML, groups): downloads pause (keeping what is saved), recording, the
+     *  compass and the location service stop, and the groups' live sharing and uploads pause. On unlock everything
+     *  resumes as before: a paused download continues, recording restarts (if on screen) and groups wake. The map
+     *  screen shows only the lock meanwhile; the sheets over the map are closed so they don't come back with it. */
     private fun applyLock(locked: Boolean) {
         if (locked == lockedOut) return
         lockedOut = locked

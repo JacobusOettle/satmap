@@ -146,9 +146,11 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
     /** Stop was pressed while SatMap was on screen: everything stops when it goes to the background. */
     private var stopInBackground = false
 
-    /** The test-build switch is off (`AppModel.applyLock`): recording stops whatever the lifecycle says and does not
-     *  start again until the switch is on (`resumeAfterLock`). The recorded track and last position stay. */
-    private var lockedOut = false
+    /** The test-build switch is off (`AppModel.applyLock`): recording and the compass stop whatever the lifecycle says
+     *  and don't start again, and no location permission is asked (`PermissionFlow`), until the switch is on
+     *  (`resumeAfterLock`). The recorded track and last position stay. */
+    var lockedOut = false
+        private set
 
     private var lastUsedAt = Double.NEGATIVE_INFINITY
     private var lastRecorded: TrackPoint? = null
@@ -337,17 +339,22 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         _power.value = Power.active
     }
 
-    /** The test-build switch is off: stop GPS, the track and the foreground service now, whatever the lifecycle, and
-     *  don't start again until the switch is on (`resumeAfterLock`). The recorded track and last position stay. */
+    /** The test-build switch is off: stop GPS, the track, motion, the compass and the foreground service (with its
+     *  "Recording your track" notification) now, whatever the lifecycle, and don't start again until the switch is on
+     *  (`resumeAfterLock`). The recorded track and last position stay. */
     fun stopForLock() {
         lockedOut = true
         stopInBackground = false
         tearDown()
+        updateHeading()
+        LocationService.stop(context)
     }
 
-    /** The test-build switch is on again: record again when on screen (as `start`/`willEnterForeground` would). */
+    /** The test-build switch is on again: the compass if the map is shown, and recording when on screen (as
+     *  `start`/`willEnterForeground` would; `beginUpdates` starts the foreground service again). */
     fun resumeAfterLock() {
         lockedOut = false
+        updateHeading()
         readAuthorization()
         if (AppLifecycle.isForeground && _authorization.value == Authorization.authorized) beginUpdates()
     }
@@ -900,7 +907,8 @@ class LocationRecorder(private val context: Context) : AppLifecycle.Observer {
         val s = sensors ?: return
         val sensor = s.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
             ?: s.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR) ?: return
-        if (headingWanted) {
+        // Not while a test build is switched off (`stopForLock`): the map isn't shown then.
+        if (headingWanted && !lockedOut) {
             s.registerListener(headingListener, sensor, SensorManager.SENSOR_DELAY_UI, mainHandler)
         } else {
             s.unregisterListener(headingListener)

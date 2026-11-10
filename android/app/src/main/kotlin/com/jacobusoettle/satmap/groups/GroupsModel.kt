@@ -256,7 +256,7 @@ class GroupsModel(
                 Log.w(TAG, "groups couldn't start: ${e.javaClass.simpleName}")
             }
             ready.complete(Unit)
-            lastFix?.let(::sendFix)
+            if (!lockedOut) lastFix?.let(::sendFix)
             if (foreground) wake()
             pro.refresh()
         }
@@ -354,7 +354,7 @@ class GroupsModel(
      *  `wake` and every hub change set it going again. */
     private val foregroundTick = Runnable {
         tickScheduled = false
-        if (!foreground) return@Runnable
+        if (!foreground || lockedOut) return@Runnable
         scope.launch {
             if (started.isCompleted) runCatchingHub { hub.tick(foreground = true) }
             scheduleForegroundTick()
@@ -382,7 +382,7 @@ class GroupsModel(
 
     /** The test-build switch turned off (locked) or on again (`AppModel.applyLock`). Locked: stop ticks, uploads and
      *  the socket now; the memberships and queued data stay. Unlocked while on screen: wake as `didBecomeActive`
-     *  would, so queued data and live positions resume. */
+     *  would, so queued data and live positions resume; in the background, the upload alarm as before. */
     fun setLockedOut(locked: Boolean) {
         if (locked == lockedOut) return
         lockedOut = locked
@@ -394,6 +394,8 @@ class GroupsModel(
         } else if (foreground) {
             if (started.isCompleted) wake()
             scheduleForegroundTick()
+        } else {
+            scheduleBackgroundTick()
         }
     }
 
@@ -414,15 +416,17 @@ class GroupsModel(
     }
 
     private fun backgroundTick() {
-        if (foreground) return
+        if (foreground || lockedOut) return
         scope.launch {
             runCatchingHub { hub.tick(foreground = false) }
             scheduleBackgroundTick()
         }
     }
 
+    /** Back online: what waited is sent (§8.4). Not while a test build is switched off, in the foreground or the
+     *  background: switched on again, `setLockedOut(false)` wakes the hub, which sends it then. */
     fun connectivityChanged(online: Boolean) {
-        if (!online || !started.isCompleted) return
+        if (lockedOut || !online || !started.isCompleted) return
         scope.launch { runCatchingHub { hub.connectivityChanged(online = true) } }
     }
 

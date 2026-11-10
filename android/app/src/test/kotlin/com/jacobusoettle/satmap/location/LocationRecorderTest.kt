@@ -939,6 +939,46 @@ class LocationRecorderTest {
         assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
     }
 
+    // A test build switched off (android/docs/spec/test-builds.md)
+
+    @Test
+    fun aTestBuildSwitchedOffStopsEverythingAndTheServiceUntilSwitchedOn() {
+        val sm = app.getSystemService(SensorManager::class.java)
+        shadowOf(sm).addSensor(SensorBuilder.newBuilder().setType(Sensor.TYPE_ROTATION_VECTOR).build())
+        val r = onScreen()
+        r.headingWanted = true
+        gps(home)
+        assertEquals(1, shadowOf(sm).listeners.size)
+        assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
+
+        // Switched off: no GPS, no timers, no compass, and the service (with its notification) stopped.
+        r.stopForLock()
+        assertTrue(r.lockedOut)
+        assertNone(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+        assertEquals(emptyList<Any>(), alarms.scheduledAlarms)
+        assertEquals(0, shadowOf(sm).listeners.size)
+        assertEquals(LocationService::class.java.name, shadowOf(app).nextStoppedService.component!!.className)
+        assertNotNull("the last position stays", r.location.value)
+
+        // Nothing the lifecycle or a permission answer does starts it again meanwhile.
+        shadowOf(app).clearStartedServices()
+        background()
+        foreground()
+        r.authorizationChanged()
+        r.didBecomeActive()
+        r.start()
+        assertNone(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+        assertNull(shadowOf(app).nextStartedService)
+        assertEquals(0, shadowOf(sm).listeners.size)
+
+        // Switched on, on screen: recording with its service, and the compass.
+        r.resumeAfterLock()
+        assertFalse(r.lockedOut)
+        assertRequest(LocationManager.GPS_PROVIDER, 2000, LocationRequestCompat.QUALITY_HIGH_ACCURACY)
+        assertEquals(LocationService::class.java.name, shadowOf(app).nextStartedService.component!!.className)
+        assertEquals(1, shadowOf(sm).listeners.size)
+    }
+
     // Compass
 
     @Test

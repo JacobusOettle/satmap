@@ -506,7 +506,9 @@ class OfflineManager(
 
     /** The test-build switch turned off (locked) or on again. Locked: the running download stops and is re-queued so
      *  it continues on unlock, and nothing new starts (`holdDownloads`); the files already saved are kept, and a
-     *  user-paused area stays paused. Unlocked: downloads run again, the re-queued one first. */
+     *  user-paused area stays paused. Unlocked: downloads run again, the re-queued one first, and one paused for an
+     *  export whose share sheet closed while locked resumes (`releaseHold`, which waits while an export or a copy
+     *  still holds them). An area paused for another app's reading was queued again when it closed (`readersClosed`). */
     fun setLockedOut(locked: Boolean) {
         if (locked == lockedOut) return
         lockedOut = locked
@@ -520,7 +522,7 @@ class OfflineManager(
             // (`finished` ends the run and calls `startNextIfIdle`, which stops the service while `holdDownloads`.)
         } else {
             measureFreeSpace()
-            startNextIfIdle()
+            releaseHold()
         }
     }
 

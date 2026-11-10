@@ -180,40 +180,47 @@ import androidx.compose.ui.graphics.shadow.Shadow as DropShadow
 @Composable
 fun MapScreen(model: AppModel, offline: OfflineManager, recorder: LocationRecorder, map: MapController?) {
     var confirmClearTrack by remember { mutableStateOf(false) }
+    // A test build switched off (android/docs/spec/test-builds.md) shows the lock alone: nothing else is composed, so
+    // no sheet, dialog or menu (each a window of its own) can show over it, nothing behind it can be focused or pressed
+    // with a keyboard or TalkBack, and the map is hidden. What was asked for meanwhile (an invite, a sheet) shows when
+    // it is switched on again; an open "Clear track" question doesn't come back.
+    val lock by model.testBuildLock.collectAsStateWithLifecycle()
+    LaunchedEffect(lock != null) { if (lock != null) confirmClearTrack = false }
     Box(Modifier.fillMaxSize().semantics { testTagsAsResourceId = true }) {
-        if (map != null) MapViewRepresentable(map)
-        MeasureCrosshair(model, Modifier.align(Alignment.Center))
-        CompositionLocalProvider(LocalContentColor provides Color.White) {
-            MapOverlay(model, offline, recorder, map, onClearTrack = { confirmClearTrack = true })
-        }
-        val sheet by model.sheet.collectAsStateWithLifecycle()
-        SheetHost(sheet, onDismiss = { model.setSheet(null) }) { s ->
-            when (s) {
-                ActiveSheet.blocks -> BlocksSheet(model, model.kml, close)
-                ActiveSheet.offline -> OfflineSheet(model, offline, model.kml, close)
-                ActiveSheet.coordinates -> CoordinateEntryView(model, close, sheetState)
-                ActiveSheet.groups -> GroupsSheet(model, close)
+        if (map != null) MapViewRepresentable(map, visible = lock == null)
+        val locked = lock
+        if (locked != null) {
+            TestBuildLockScreen(locked)
+        } else {
+            MeasureCrosshair(model, Modifier.align(Alignment.Center))
+            CompositionLocalProvider(LocalContentColor provides Color.White) {
+                MapOverlay(model, offline, recorder, map, onClearTrack = { confirmClearTrack = true })
             }
+            val sheet by model.sheet.collectAsStateWithLifecycle()
+            SheetHost(sheet, onDismiss = { model.setSheet(null) }) { s ->
+                when (s) {
+                    ActiveSheet.blocks -> BlocksSheet(model, model.kml, close)
+                    ActiveSheet.offline -> OfflineSheet(model, offline, model.kml, close)
+                    ActiveSheet.coordinates -> CoordinateEntryView(model, close, sheetState)
+                    ActiveSheet.groups -> GroupsSheet(model, close)
+                }
+            }
+            // Groups (docs/groups/SPEC.md §9.2): a pin or member tapped on the map (or a pin dropped there) in a sheet
+            // of its own, and an invite link's confirmation over anything.
+            val groupItem by model.groups.groupItem.collectAsStateWithLifecycle()
+            SheetHost(groupItem, onDismiss = { model.groups.openItem(null) }) { root -> GroupItemSheet(model, root, close) }
+            val invite by model.groups.pendingInvite.collectAsStateWithLifecycle()
+            SheetHost(invite, onDismiss = model.groups::closeInvite) { j -> key(j.id) { JoinSheet(model, GroupsRoute.Join(j.link), close) } }
+            val pending by model.pendingArea.collectAsStateWithLifecycle()
+            // Swift's onDismiss: the drawn loop goes with the sheet.
+            SheetHost(pending, onDismiss = { model.setPendingArea(null); model.setDraftArea(null) }) { area ->
+                NewAreaView(model, remember(area.id) { NewAreaState(area) }, showsCancel = true, close = close)
+            }
+            if (confirmClearTrack) ClearTrackDialog(onClear = model::clearTrack, onDismiss = { confirmClearTrack = false })
+            GroupAlerts(model)
+            ShareHost()
+            KeepScreenOn(offline)
         }
-        // Groups (docs/groups/SPEC.md §9.2): a pin or member tapped on the map (or a pin dropped there) in a sheet of
-        // its own, and an invite link's confirmation over anything.
-        val groupItem by model.groups.groupItem.collectAsStateWithLifecycle()
-        SheetHost(groupItem, onDismiss = { model.groups.openItem(null) }) { root -> GroupItemSheet(model, root, close) }
-        val invite by model.groups.pendingInvite.collectAsStateWithLifecycle()
-        SheetHost(invite, onDismiss = model.groups::closeInvite) { j -> key(j.id) { JoinSheet(model, GroupsRoute.Join(j.link), close) } }
-        val pending by model.pendingArea.collectAsStateWithLifecycle()
-        // Swift's onDismiss: the drawn loop goes with the sheet.
-        SheetHost(pending, onDismiss = { model.setPendingArea(null); model.setDraftArea(null) }) { area ->
-            NewAreaView(model, remember(area.id) { NewAreaState(area) }, showsCancel = true, close = close)
-        }
-        if (confirmClearTrack) ClearTrackDialog(onClear = model::clearTrack, onDismiss = { confirmClearTrack = false })
-        GroupAlerts(model)
-        ShareHost()
-        KeepScreenOn(offline)
-        // The test-build switch is off: the lock over everything (the sheets are closed when it locks, so nothing is
-        // behind it). Last, so it draws on top of the whole screen.
-        val lock by model.testBuildLock.collectAsStateWithLifecycle()
-        lock?.let { TestBuildLockScreen(it) }
     }
 }
 

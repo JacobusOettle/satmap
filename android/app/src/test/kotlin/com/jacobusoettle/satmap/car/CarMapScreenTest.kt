@@ -6,6 +6,7 @@ import android.graphics.PointF
 import android.os.Looper
 import androidx.car.app.OnDoneCallback
 import androidx.car.app.model.Action
+import androidx.car.app.model.MessageTemplate
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.testing.ScreenController
 import androidx.car.app.testing.SessionController
@@ -22,6 +23,7 @@ import com.jacobusoettle.satmap.app.Defaults
 import com.jacobusoettle.satmap.app.ElevationSource
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import com.jacobusoettle.satmap.map.MapController
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -123,6 +125,23 @@ class CarMapScreenTest {
         idle()
         assertEquals(2, controller.templatesReturned.size)
         assertEquals("Colours", controller.lastTemplate().terrainTitle())
+    }
+
+    @Test
+    fun aTestBuildSwitchedOffShowsOnlyAShortLineAndSwitchedOnTheMapAgain() {
+        val (_, controller) = shown()
+        val lock = TestBuildSwitch.lock(TestBuildSwitch.Channel.test, false, TestBuildSwitch.sample, TestBuildSwitch.Platform.android)!!
+        model.testBuild.forceLockedForTests(lock)
+        idle()
+        val message = controller.templatesReturned.last() as MessageTemplate
+        assertEquals(
+            "This test version of SatMap has been switched off\n\nGet SatMap from Google Play on your phone to keep using it.",
+            message.message.toString(),
+        )
+        assertTrue("no buttons on the car's screen", message.actions.isEmpty())
+        model.testBuild.forceLockedForTests(null)
+        idle()
+        assertEquals("Contours", controller.lastTemplate().terrainTitle())
     }
 
     @Test

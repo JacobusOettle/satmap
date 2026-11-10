@@ -59,8 +59,8 @@ are in [docs/screenshots/android](docs/screenshots/android):
 | <img src="docs/screenshots/android/32-group-detail.jpg" width="180"> | <img src="docs/screenshots/android/33-invite-qr.jpg" width="180"> | <img src="docs/screenshots/android/34-join-group.jpg" width="180"> | <img src="docs/screenshots/android/35-share-consent.jpg" width="180"> |
 | **A group on the map** | **Dropping a pin** | **A pin** | **A member** |
 | <img src="docs/screenshots/android/36-group-map.jpg" width="180"> | <img src="docs/screenshots/android/37-drop-pin.jpg" width="180"> | <img src="docs/screenshots/android/38-pin-detail.jpg" width="180"> | <img src="docs/screenshots/android/39-member-detail.jpg" width="180"> |
-| **A paused group** | | | |
-| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | | | |
+| **A paused group** | **Test build switched off** | | |
+| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | <img src="docs/screenshots/android/41-test-build-off.jpg" width="180"> | | |
 
 ## Features
 
@@ -264,20 +264,22 @@ sources*. This part hasn't been tried in a car yet.
 
 ## Test builds can be switched off
 
-The test builds above — the sideloaded **SatMap.ipa** and the **SatMap.apk** from the GitHub releases — can be
-turned off remotely, so a test build that has been passed around can be retired and people pointed to the real app.
-When it is off, each test build shows a full-screen notice with a button to the App Store (iPhone) or Google Play
-(Android) and stops working; it never deletes anything (offline maps, tracks, KML files and groups are kept), and
-turning it back on lets the app carry on. Only test builds check this — **App Store and Google Play builds are never
-affected**, and neither are local debug builds.
+The test builds above (the sideloaded `SatMap.ipa` and the `SatMap.apk`, never App Store or Google Play builds)
+can be switched off remotely, so an old build that was passed around stops working and sends people to the store.
 
-To flip it, run the **Switch test builds** workflow from the repository's **Actions** tab (choose *off* or *on*, and
-optionally a title, message and store/website links), or edit `test-builds.json` on the `app-status` branch directly.
-Online test builds follow within about five to ten minutes (they check at launch, when brought to the foreground and
-every five minutes); one that is offline locks as soon as it next has signal, and a build that has already seen *off*
-stays locked even offline. The check sends **no identifiers** — a plain HTTPS request with a `SatMap/<version>`
-User-Agent, no device or user id. Only `apps.apple.com`, `play.google.com` and `github.com/JacobusOettle/` links are
-ever shown as buttons.
+Every test build, on both phones, reads one small file,
+[`test-builds.json`](https://github.com/JacobusOettle/satmap/blob/app-status/test-builds.json) on the `app-status`
+branch, at launch, when it comes back to the foreground and every five minutes while open (never in the background).
+To switch the builds off, flip it: run the **Switch test builds** workflow in the repository's **Actions** tab, or
+edit `test-builds.json` on the `app-status` branch and set `"testBuilds": "off"`. Within a few minutes every test
+build that is online shows a full-screen notice with the title and message from the file and buttons to the App Store
+or Google Play, and stops working: downloads pause (what is already saved is kept), and track recording and group
+location sharing stop. No user data is deleted. Set `"testBuilds": "on"` again and the builds unlock and carry on.
+A build that has already seen "off" starts locked even with no signal.
+
+Store builds (App Store and Google Play, later) are never affected, and neither are local debug builds. The check is a
+plain anonymous request for the file: no device or user identifier is sent, only a `SatMap/<version>` User-Agent. The
+rule itself lives in `SatMap/Core/TestBuildSwitch.swift` and its Kotlin twin, with shared tests.
 
 ## Map data and licensing — please read
 

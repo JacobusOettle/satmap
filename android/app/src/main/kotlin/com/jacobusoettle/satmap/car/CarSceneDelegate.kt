@@ -24,6 +24,7 @@ import com.jacobusoettle.satmap.R
 import com.jacobusoettle.satmap.app.AppLifecycle
 import com.jacobusoettle.satmap.app.AppModel
 import com.jacobusoettle.satmap.core.TerrainMode
+import com.jacobusoettle.satmap.core.TestBuildSwitch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -98,8 +99,8 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
      *  the top. While a test build is switched off, the car shows the short "switched off" message instead of the
      *  map (android/docs/spec/test-builds.md). */
     override fun onGetTemplate(): Template {
-        if (model.testBuildLock.value != null) {
-            return MessageTemplate.Builder(SWITCHED_OFF_MESSAGE)
+        model.testBuildLock.value?.let { lock ->
+            return MessageTemplate.Builder(switchedOffMessage(lock))
                 .setTitle("SatMap")
                 .build()
         }
@@ -127,8 +128,10 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
         .build()
 
     companion object {
-        /** The car's line while a test build is switched off (the phone's lock has the full message and links). */
-        const val SWITCHED_OFF_MESSAGE = "This test version of SatMap has been switched off. Get SatMap from the Play Store to keep using it."
+        /** The car's text while a test build is switched off: the lock's title and a short line (the phone's lock has
+         *  the message and the links), as CarPlay's `CarPlayLockView`. */
+        fun switchedOffMessage(lock: TestBuildSwitch.Lock): String =
+            lock.title + "\n\nGet SatMap from Google Play on your phone to keep using it."
 
         /** What the map shows of the terrain, short enough for the car's bar. */
         fun shortTitle(mode: TerrainMode): String = when (mode) {

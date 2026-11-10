@@ -40,28 +40,23 @@ object TileSources {
         .replace("{y}", t.y.toString())
 }
 
-/** The remote on/off switch for test builds (android/docs/spec/test-builds.md), the counterpart of the iPhone's
- *  `TestBuildConfig` (Config.swift). The channel is set at build time; the status files are read in order until one is
- *  readable. The decision itself is the shared `TestBuildSwitch`. */
+/** Test builds can be switched off (README, android/docs/spec/test-builds.md; the rule is the shared `TestBuildSwitch`,
+ *  the app's side `TestBuildGate`), as the iPhone's `TestBuildConfig` (Config.swift). */
 object TestBuildConfig {
-    /** This build's channel, or null in debug builds, which never check and never lock. A Release build with no
-     *  explicit `SATMAP_CHANNEL` is `test` (the safer default, `TestBuildSwitch.Channel.from`); a Play Store build
-     *  sets it to "store" (DESIGN.md, the Gradle property `satmapChannel`). */
-    val channel: TestBuildSwitch.Channel? =
-        if (BuildConfig.DEBUG) null else TestBuildSwitch.Channel.from(BuildConfig.SATMAP_CHANNEL)
+    /** The build's channel: the Gradle property `satmapChannel`, through `BuildConfig.SATMAP_CHANNEL`
+     *  (app/build.gradle.kts). CI's release APK leaves it at `test`. A Play Store build sets `store`
+     *  (`./gradlew :app:bundleRelease -PsatmapChannel=store`, or `satmapChannel=store` in gradle.properties). Anything
+     *  but exactly `store` is `test` (`TestBuildSwitch.Channel.from`). */
+    val channel: TestBuildSwitch.Channel = TestBuildSwitch.Channel.from(BuildConfig.SATMAP_CHANNEL)
 
-    /** Where `test-builds.json` is read, tried in order until one answers with a readable file. The GitHub raw URL on
-     *  the `app-status` branch is first; a Cloudflare mirror (set up later) will be added before it. Each is fetched
-     *  with `?t=<unix seconds>` appended to defeat caches (`TestBuildGate`). */
+    /** Debug builds (the debug build type, as the walkthrough and Android Studio run) never check and never lock. */
+    val isDebugBuild: Boolean = BuildConfig.DEBUG
+
+    /** The status file, tried in order until one gives information (`TestBuildSwitch.parse`). A Cloudflare mirror
+     *  (set up later) goes here too. Each is fetched with `?t=<unix seconds>` (`TestBuildSwitch.requestURL`). */
     val statusURLs: List<String> = listOf(
         "https://raw.githubusercontent.com/JacobusOettle/satmap/app-status/test-builds.json",
     )
-
-    /** How long to wait for one status file before moving on (seconds). */
-    const val timeoutSeconds = 10L
-
-    /** How often a foreground test build re-checks (seconds): also at launch and on each return to the foreground. */
-    const val foregroundInterval = 5 * 60.0
 }
 
 /** GPS power policy. Times are seconds. */
