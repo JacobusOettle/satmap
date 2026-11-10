@@ -156,7 +156,7 @@ Built on the Kotlin core's `GroupHub` (docs/groups/SPEC.md; the Android mapping 
 - `app/src/test/kotlin/…`: Robolectric and JVM tests, mirroring the main packages (§8.1).
   - Plus `TestApplication.kt`: a bare `Application` that initialises nothing (not even `MBTiles.driver`, §2.2).
   - Plus `src/test/resources/robolectric.properties` with `application=com.jacobusoettle.satmap.TestApplication` and `sdk=35`, so MapLibre's native code is never loaded under Robolectric.
-- `app/src/androidTest/kotlin/com/jacobusoettle/satmap/`: `ScreenshotTest.kt`, `ZoomTest.kt`, `TestLocations.kt`, `Gestures.kt` (§8.2).
+- `app/src/androidTest/kotlin/com/jacobusoettle/satmap/`: `ScreenshotTest.kt`, `ZoomTest.kt`, `TestLocations.kt`, `TestNetwork.kt`, `Gestures.kt` (§8.2).
 - `app/src/sharedTest/kotlin/com/jacobusoettle/satmap/`: `Touches.kt`, where and when the walk touches the screen. It is
   compiled into both the instrumented tests and the unit tests (`TouchesTest`), which give its drags to MapLibre's own
   gesture detector.
@@ -1448,14 +1448,22 @@ classes that don't touch `MapLibreMap`. `org.maplibre.geojson` types are plain J
   1. `adb pull /sdcard/Android/data/com.jacobusoettle.satmap/files/screenshots`.
   2. Resize to 600 px wide (Pillow).
   3. Upload the artifact.
-  4. Commit to `docs/screenshots/android/NN-name.jpg` on the branch, with the same retry loop as the iOS workflow.
+  4. Fail the job unless the walk finished with every check passed (`OK (` in the test's output), naming the checks
+     that failed.
+  5. Only then (a passed walk) commit to `docs/screenshots/android/NN-name.jpg` on the branch, with the same retry loop
+     as the iOS workflow. A walk with failed checks or cut short leaves its screenshots in the artifact only.
 
 The walkthrough runs in groups' demo mode (`groupsDemo YES` in the launch intent) and ends with the groups steps 28–40
 (groups §9.7); `InviteIntentTest` (the link check, §5.6) runs in the same instrumentation call.
 
 **`ScreenshotTest.kt`** mirrors `SatMapUITests/ScreenshotTests.swift` step for step, with the same snapshot names
 (01-map … 27-place-area), the same waits, the same asserts and continue-after-failure (soft asserts collected and
-reported at the end).
+reported at the end). For the emulator it first makes sure the downloads have a network (`TestNetwork`: now and then
+its Wi-Fi is down for the whole walk while mobile data works, and the Wi-Fi-only downloads waited for good; mobile data
+then counts as unmetered for the walk, `Connectivity.meteredAsUnmetered`, set by the instrumentation in the app's own
+process), and while a download runs its queries don't wait for Compose to be idle (`whileDownloading`: with the progress changing four times a second, it
+never is on the emulator). Before it scrolls a form it closes a keyboard left up (`hideKeyboard`: the keyboard's slow
+opening animation can drop the return key's close, and the swipes then went to the keyboard).
 
 | iOS | Android |
 | --- | --- |
@@ -1466,7 +1474,7 @@ reported at the end).
 | `navigationBars["Blocks"]` | `onNodeWithTag("screenTitle")` with text `Blocks` |
 | `.value` (`above sea level`, `ft`, the terrain button) | `SemanticsProperties.StateDescription` |
 | `.label` (`Copied`, `measuredDistance` units) | `ContentDescription` / `Text` |
-| map taps at normalised offsets (`app.coordinate(withNormalizedOffset:)` on the 402 × 874 pt window) | `UiDevice.click` at the same distance from the map's centre (the crosshair) in dp as the iPhone's point is from its window's middle in points (`Touches.iphonePoint`), not at shares of the taller screen |
+| map taps at normalised offsets (`app.coordinate(withNormalizedOffset:)` on the 402 × 874 pt window) | `Gestures.tap` at the same distance from the map's centre (the crosshair) in dp as the iPhone's point is from its window's middle in points (`Touches.iphonePoint`), not at shares of the taller screen. The down and up are given together: `UiDevice.click` gives the up only once the app has handled the down, and a down handled late (the emulator stalls) is then a long press, which the map ignores (`TouchesTest`). Each tap waits for the map to stand still; a tap that selects or opens something is tried again until it has (`tapMap`). |
 | `press(forDuration:thenDragTo:)` (the pin, form scrolls) | `Gestures.pressAndDrag(from, to, holdMs)`, built from `MotionEvent`s through `UiAutomation.injectInputEvent` (down, hold, 20 moves 16 ms apart, up) |
 | `dragMap`: `press(forDuration: 0.2, thenDragTo:, withVelocity: .slow, thenHoldForDuration: 0.5)`, held still before lifting so MapKit doesn't glide on | `Gestures.dragMap`: the same, plus a first move of 5 dp along the drag and as much further at the end, since MapLibre doesn't apply the move that passes its 4 dp threshold (`Touches.mapDrag`). Neither map glides on, so both walks come out the same each time. |
 | "Save to Files" in the share sheet | `UiDevice.wait(Until.hasObject(By.text("Save to a folder")), 30 s)` |
