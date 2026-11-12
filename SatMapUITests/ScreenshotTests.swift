@@ -859,18 +859,24 @@ final class ScreenshotTests: XCTestCase {
         if panel.exists {
             let panelBottom = panel.frame.maxY
             let clear = panelBottom + (screen.height - panelBottom) / 3
-            for _ in 0..<3 {
-                let dy = clear - drone.frame.midY
+            // Drag on the open map below the panel. A drag that starts on a label (an aircraft's, an airfield's)
+            // doesn't move the map, so a drag that didn't is tried again further along; long moves take several.
+            let xs: [CGFloat] = [0.1, 0.35, 0.6, 0.2]
+            var attempt = 0
+            for _ in 0..<6 {
+                let before = drone.frame.midY
+                let dy = clear - before
                 if abs(dy) < 24 { break }
-                // Drag on the open map below the panel, left of the buttons; long moves take more than one drag.
-                let startY = dy > 0 ? panelBottom + 16 : screen.height * 0.8
+                let x = screen.width * xs[attempt % xs.count]
+                let startY = dy > 0 ? panelBottom + 40 : screen.height * 0.8
                 let endY = min(screen.height - 40, max(panelBottom + 16, startY + dy))
-                let x = screen.width * 0.35
                 let origin = app.coordinate(withNormalizedOffset: .zero)
                 origin.withOffset(CGVector(dx: x, dy: startY))
-                    .press(forDuration: 0.2, thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
+                    .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
                            withVelocity: .slow, thenHoldForDuration: 0.5)
                 sleep(2)
+                print("Shot 43: drag at x \(Int(x)) from y \(Int(startY)) to \(Int(endY)) moved the drone from y \(Int(before)) to \(Int(drone.frame.midY)) (panel bottom \(Int(panelBottom)), wanted \(Int(clear)))")
+                if abs(drone.frame.midY - before) < 8 { attempt += 1 }
             }
         }
         XCTAssertTrue(panel.exists, "The drone's panel closed when the map moved")
