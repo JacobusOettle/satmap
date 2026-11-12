@@ -1,0 +1,1695 @@
+{
+ "description": "Shared MAVLink decoder fixture for SatMap's Drone link (iPhone SatMap/Core and android/core). Each case is ONE UDP datagram (hex). 'expect' lists the messages the decoder must emit, in order; [] means nothing is emitted. 'raw' holds MAVLink field values as on the wire (names as in common.xml); 'decoded' holds the SI-friendly values the apps use (degrees, metres, m/s, volts, amperes, percent; null = not available).",
+ "generator": "docs/mavlink/make_fixtures.py (pymavlink 2.4.50, common dialect)",
+ "tolerance": 1e-06,
+ "rules": [
+  "Start bytes: 0xFE = MAVLink 1 (6-byte header), 0xFD = MAVLink 2 (10-byte header).",
+  "CRC is X.25 (CRC-16/MCRF4XX, init 0xFFFF) over the header without the start byte, the payload as received, then the message's CRC_EXTRA byte; stored little-endian.",
+  "MAVLink 2 incompat flag 0x01 = signed: 13 signature bytes follow the CRC; skip them, do not verify. Any other incompat bit: reject the frame.",
+  "MAVLink 2 payloads may be shorter than the full length (trailing zeros trimmed): zero-extend before reading fields. MAVLink 1 payloads have no extension fields.",
+  "Payload fields are little-endian, in wire order (sorted by type size, extensions last).",
+  "Unknown message id or CRC mismatch: drop the start byte and resync one byte on.",
+  "A frame that runs past the end of the datagram is dropped.",
+  "HEARTBEAT with type 6 (GCS) or autopilot 8 (INVALID) never creates a drone (tracksDrone = false).",
+  "Sentinels -> null: GLOBAL_POSITION_INT.hdg 65535; SYS_STATUS voltage 65535, current -1, remaining -1; BATTERY_STATUS remaining -1; GPS_RAW_INT satellites 255.",
+  "ADSB_VEHICLE callsign: up to the first NUL, trailing spaces trimmed; empty -> null. icaoHex is 6 upper-case hex digits. altitude_type 0 = pressure (QNH), 1 = geometric. Use heading/velocity/callsign only when the matching 'valid' flag is set."
+ ],
+ "messages": {
+  "0": {
+   "name": "HEARTBEAT",
+   "crcExtra": 50,
+   "v1Length": 9,
+   "v2Length": 9
+  },
+  "1": {
+   "name": "SYS_STATUS",
+   "crcExtra": 124,
+   "v1Length": 31,
+   "v2Length": 43
+  },
+  "24": {
+   "name": "GPS_RAW_INT",
+   "crcExtra": 24,
+   "v1Length": 30,
+   "v2Length": 52
+  },
+  "33": {
+   "name": "GLOBAL_POSITION_INT",
+   "crcExtra": 104,
+   "v1Length": 28,
+   "v2Length": 28
+  },
+  "74": {
+   "name": "VFR_HUD",
+   "crcExtra": 20,
+   "v1Length": 20,
+   "v2Length": 20
+  },
+  "147": {
+   "name": "BATTERY_STATUS",
+   "crcExtra": 154,
+   "v1Length": 36,
+   "v2Length": 54
+  },
+  "242": {
+   "name": "HOME_POSITION",
+   "crcExtra": 104,
+   "v1Length": 52,
+   "v2Length": 60
+  },
+  "246": {
+   "name": "ADSB_VEHICLE",
+   "crcExtra": 184,
+   "v1Length": 38,
+   "v2Length": 38
+  }
+ },
+ "cases": [
+  {
+   "name": "v2-heartbeat-armed",
+   "description": "ArduCopter quad heartbeat, armed",
+   "hex": "fd0900000a0101000000050000000203d904031f0e",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-heartbeat-disarmed",
+   "description": "ArduCopter quad heartbeat, disarmed",
+   "hex": "fd0900000b0101000000000000000203590303dfbd",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 89,
+      "custom_mode": 0,
+      "system_status": 3,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 89,
+      "customMode": 0,
+      "systemStatus": 3,
+      "armed": false,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-sys-status",
+   "description": "Battery 16.08 V, 12.5 A, 87 %",
+   "hex": "fd1f00000c01010100002ffc20002ffc20002ffc20003801d03ee204000000000000000000000000575f76",
+   "expect": [
+    {
+     "msgId": 1,
+     "name": "SYS_STATUS",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "onboard_control_sensors_present": 2161711,
+      "onboard_control_sensors_enabled": 2161711,
+      "onboard_control_sensors_health": 2161711,
+      "load": 312,
+      "voltage_battery": 16080,
+      "current_battery": 1250,
+      "battery_remaining": 87,
+      "drop_rate_comm": 0,
+      "errors_comm": 0,
+      "errors_count1": 0,
+      "errors_count2": 0,
+      "errors_count3": 0,
+      "errors_count4": 0,
+      "onboard_control_sensors_present_extended": 0,
+      "onboard_control_sensors_enabled_extended": 0,
+      "onboard_control_sensors_health_extended": 0
+     },
+     "decoded": {
+      "batteryVoltageV": 16.08,
+      "batteryCurrentA": 12.5,
+      "batteryRemainingPct": 87
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-gps-raw-int",
+   "description": "3D fix, 17 satellites",
+   "hex": "fd2b00000d0101180000a8666b30000000006488c8eb9077470b2cef020048006e005203282303110c6903008a0200004c040000b4e2ca",
+   "expect": [
+    {
+     "msgId": 24,
+     "name": "GPS_RAW_INT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_usec": 812345000,
+      "fix_type": 3,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 192300,
+      "eph": 72,
+      "epv": 110,
+      "vel": 850,
+      "cog": 9000,
+      "satellites_visible": 17,
+      "alt_ellipsoid": 223500,
+      "h_acc": 650,
+      "v_acc": 1100,
+      "vel_acc": 180,
+      "hdg_acc": 0,
+      "yaw": 0
+     },
+     "decoded": {
+      "fixType": 3,
+      "satellitesVisible": 17,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 192.3
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-global-position-int",
+   "description": "50.3 m above take-off, flying north-east",
+   "hex": "fd1c00000e010121000040e201006488c8eb9077470b2cef02007cc400007102ee02ceff9c1302cc",
+   "expect": [
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 123456,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 192300,
+      "relative_alt": 50300,
+      "vx": 625,
+      "vy": 750,
+      "vz": -50,
+      "hdg": 5020
+     },
+     "decoded": {
+      "timeBootMs": 123456,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 192.3,
+      "relativeAltM": 50.3,
+      "vxMs": 6.25,
+      "vyMs": 7.5,
+      "vzMs": -0.5,
+      "headingDeg": 50.2
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-vfr-hud",
+   "description": "Groundspeed 9.75 m/s, climb 0.5 m/s (float32-exact values)",
+   "hex": "fd1300000f01014a00000000284100001c41004040430000003f32002ee2e9",
+   "expect": [
+    {
+     "msgId": 74,
+     "name": "VFR_HUD",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "airspeed": 10.5,
+      "groundspeed": 9.75,
+      "heading": 50,
+      "throttle": 46,
+      "alt": 192.25,
+      "climb": 0.5
+     },
+     "decoded": {
+      "airspeedMs": 10.5,
+      "groundspeedMs": 9.75,
+      "headingDeg": 50,
+      "throttlePct": 46,
+      "altM": 192.25,
+      "climbMs": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-battery-status",
+   "description": "Battery 86 %",
+   "hex": "fd290000100101930000e6020000ffffffff4e0cb40fb40faf0fb90fffffffffffffffffffffffffe20400010356ec040000013743",
+   "expect": [
+    {
+     "msgId": 147,
+     "name": "BATTERY_STATUS",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "id": 0,
+      "battery_function": 1,
+      "type": 3,
+      "temperature": 3150,
+      "voltages": [
+       4020,
+       4020,
+       4015,
+       4025,
+       65535,
+       65535,
+       65535,
+       65535,
+       65535,
+       65535
+      ],
+      "current_battery": 1250,
+      "current_consumed": 742,
+      "energy_consumed": -1,
+      "battery_remaining": 86,
+      "time_remaining": 1260,
+      "charge_state": 1,
+      "voltages_ext": [
+       0,
+       0,
+       0,
+       0
+      ],
+      "mode": 0,
+      "fault_bitmask": 0
+     },
+     "decoded": {
+      "id": 0,
+      "batteryRemainingPct": 86
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-home-position",
+   "description": "Home at the demo farm",
+   "hex": "fd380000110101f20000b87ac8eb8825470bb02a02000000000000000000000000000000803f000000000000000000000000000000000000000000000000002366308ef0",
+   "expect": [
+    {
+     "msgId": 242,
+     "name": "HOME_POSITION",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "latitude": -339182920,
+      "longitude": 189212040,
+      "altitude": 142000,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "q": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "approach_x": 0.0,
+      "approach_y": 0.0,
+      "approach_z": 0.0,
+      "time_usec": 812000000
+     },
+     "decoded": {
+      "latDeg": -33.918292,
+      "lonDeg": 18.921204,
+      "altMslM": 142.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-adsb-vehicle",
+   "description": "Airliner from a drone-borne ADS-B receiver",
+   "hex": "fd260000120101f60000b2a100005030d5eb50095a0ba0db2900b45f3d329efdbf00a9110053414133313200000003016058",
+   "expect": [
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 41394,
+      "lat": -338350000,
+      "lon": 190450000,
+      "altitude_type": 0,
+      "altitude": 2743200,
+      "heading": 24500,
+      "hor_velocity": 12861,
+      "ver_velocity": -610,
+      "callsign": "SAA312",
+      "emitter_type": 3,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 4521
+     },
+     "decoded": {
+      "icaoAddress": 41394,
+      "icaoHex": "00A1B2",
+      "latDeg": -33.835,
+      "lonDeg": 19.045,
+      "altitudeType": 0,
+      "altitudeM": 2743.2,
+      "headingDeg": 245.0,
+      "horVelocityMs": 128.61,
+      "verVelocityMs": -6.1,
+      "callsign": "SAA312",
+      "emitterType": 3,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 4521,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-heartbeat-armed",
+   "description": "ArduCopter quad heartbeat, armed",
+   "hex": "fe096e010100050000000203d90403ae8e",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-heartbeat-disarmed",
+   "description": "ArduCopter quad heartbeat, disarmed",
+   "hex": "fe096f01010000000000020359030394cd",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 89,
+      "custom_mode": 0,
+      "system_status": 3,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 89,
+      "customMode": 0,
+      "systemStatus": 3,
+      "armed": false,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-sys-status",
+   "description": "Battery 16.08 V, 12.5 A, 87 %",
+   "hex": "fe1f700101012ffc20002ffc20002ffc20003801d03ee204000000000000000000000000572deb",
+   "expect": [
+    {
+     "msgId": 1,
+     "name": "SYS_STATUS",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "onboard_control_sensors_present": 2161711,
+      "onboard_control_sensors_enabled": 2161711,
+      "onboard_control_sensors_health": 2161711,
+      "load": 312,
+      "voltage_battery": 16080,
+      "current_battery": 1250,
+      "battery_remaining": 87,
+      "drop_rate_comm": 0,
+      "errors_comm": 0,
+      "errors_count1": 0,
+      "errors_count2": 0,
+      "errors_count3": 0,
+      "errors_count4": 0,
+      "onboard_control_sensors_present_extended": 0,
+      "onboard_control_sensors_enabled_extended": 0,
+      "onboard_control_sensors_health_extended": 0
+     },
+     "decoded": {
+      "batteryVoltageV": 16.08,
+      "batteryCurrentA": 12.5,
+      "batteryRemainingPct": 87
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-gps-raw-int",
+   "description": "3D fix, 17 satellites",
+   "hex": "fe1e71010118a8666b30000000006488c8eb9077470b2cef020048006e00520328230311058a",
+   "expect": [
+    {
+     "msgId": 24,
+     "name": "GPS_RAW_INT",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_usec": 812345000,
+      "fix_type": 3,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 192300,
+      "eph": 72,
+      "epv": 110,
+      "vel": 850,
+      "cog": 9000,
+      "satellites_visible": 17,
+      "alt_ellipsoid": 0,
+      "h_acc": 0,
+      "v_acc": 0,
+      "vel_acc": 0,
+      "hdg_acc": 0,
+      "yaw": 0
+     },
+     "decoded": {
+      "fixType": 3,
+      "satellitesVisible": 17,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 192.3
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-global-position-int",
+   "description": "50.3 m above take-off, flying north-east",
+   "hex": "fe1c7201012140e201006488c8eb9077470b2cef02007cc400007102ee02ceff9c13d594",
+   "expect": [
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 123456,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 192300,
+      "relative_alt": 50300,
+      "vx": 625,
+      "vy": 750,
+      "vz": -50,
+      "hdg": 5020
+     },
+     "decoded": {
+      "timeBootMs": 123456,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 192.3,
+      "relativeAltM": 50.3,
+      "vxMs": 6.25,
+      "vyMs": 7.5,
+      "vzMs": -0.5,
+      "headingDeg": 50.2
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-vfr-hud",
+   "description": "Groundspeed 9.75 m/s, climb 0.5 m/s (float32-exact values)",
+   "hex": "fe147301014a0000284100001c41004040430000003f32002e00d183",
+   "expect": [
+    {
+     "msgId": 74,
+     "name": "VFR_HUD",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "airspeed": 10.5,
+      "groundspeed": 9.75,
+      "heading": 50,
+      "throttle": 46,
+      "alt": 192.25,
+      "climb": 0.5
+     },
+     "decoded": {
+      "airspeedMs": 10.5,
+      "groundspeedMs": 9.75,
+      "headingDeg": 50,
+      "throttlePct": 46,
+      "altM": 192.25,
+      "climbMs": 0.5
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-battery-status",
+   "description": "Battery 86 %",
+   "hex": "fe2474010193e6020000ffffffff4e0cb40fb40faf0fb90fffffffffffffffffffffffffe204000103566435",
+   "expect": [
+    {
+     "msgId": 147,
+     "name": "BATTERY_STATUS",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "id": 0,
+      "battery_function": 1,
+      "type": 3,
+      "temperature": 3150,
+      "voltages": [
+       4020,
+       4020,
+       4015,
+       4025,
+       65535,
+       65535,
+       65535,
+       65535,
+       65535,
+       65535
+      ],
+      "current_battery": 1250,
+      "current_consumed": 742,
+      "energy_consumed": -1,
+      "battery_remaining": 86,
+      "time_remaining": 0,
+      "charge_state": 0,
+      "voltages_ext": [
+       0,
+       0,
+       0,
+       0
+      ],
+      "mode": 0,
+      "fault_bitmask": 0
+     },
+     "decoded": {
+      "id": 0,
+      "batteryRemainingPct": 86
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-home-position",
+   "description": "Home at the demo farm",
+   "hex": "fe34750101f2b87ac8eb8825470bb02a02000000000000000000000000000000803f000000000000000000000000000000000000000000000000e507",
+   "expect": [
+    {
+     "msgId": 242,
+     "name": "HOME_POSITION",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "latitude": -339182920,
+      "longitude": 189212040,
+      "altitude": 142000,
+      "x": 0.0,
+      "y": 0.0,
+      "z": 0.0,
+      "q": [
+       1.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "approach_x": 0.0,
+      "approach_y": 0.0,
+      "approach_z": 0.0,
+      "time_usec": 0
+     },
+     "decoded": {
+      "latDeg": -33.918292,
+      "lonDeg": 18.921204,
+      "altMslM": 142.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-adsb-vehicle",
+   "description": "Airliner from a drone-borne ADS-B receiver",
+   "hex": "fe26760101f6b2a100005030d5eb50095a0ba0db2900b45f3d329efdbf00a911005341413331320000000301053f",
+   "expect": [
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 41394,
+      "lat": -338350000,
+      "lon": 190450000,
+      "altitude_type": 0,
+      "altitude": 2743200,
+      "heading": 24500,
+      "hor_velocity": 12861,
+      "ver_velocity": -610,
+      "callsign": "SAA312",
+      "emitter_type": 3,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 4521
+     },
+     "decoded": {
+      "icaoAddress": 41394,
+      "icaoHex": "00A1B2",
+      "latDeg": -33.835,
+      "lonDeg": 19.045,
+      "altitudeType": 0,
+      "altitudeM": 2743.2,
+      "headingDeg": 245.0,
+      "horVelocityMs": 128.61,
+      "verVelocityMs": -6.1,
+      "callsign": "SAA312",
+      "emitterType": 3,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 4521,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-global-position-int-no-heading",
+   "description": "Heading unknown (hdg = 65535 -> null), on the ground",
+   "hex": "fd1c0000280101210000d0070000b87ac8eb8825470bb02a020000000000000000000000ffff65bf",
+   "expect": [
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 2000,
+      "lat": -339182920,
+      "lon": 189212040,
+      "alt": 142000,
+      "relative_alt": 0,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "hdg": 65535
+     },
+     "decoded": {
+      "timeBootMs": 2000,
+      "latDeg": -33.918292,
+      "lonDeg": 18.921204,
+      "altMslM": 142.0,
+      "relativeAltM": 0.0,
+      "vxMs": 0.0,
+      "vyMs": 0.0,
+      "vzMs": 0.0,
+      "headingDeg": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-sys-status-unknown-battery",
+   "description": "Voltage 65535, current -1, remaining -1 -> null",
+   "hex": "fd1f00002901010100002ffc20002ffc20002ffc20003801ffffffff000000000000000000000000ff73f7",
+   "expect": [
+    {
+     "msgId": 1,
+     "name": "SYS_STATUS",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "onboard_control_sensors_present": 2161711,
+      "onboard_control_sensors_enabled": 2161711,
+      "onboard_control_sensors_health": 2161711,
+      "load": 312,
+      "voltage_battery": 65535,
+      "current_battery": -1,
+      "battery_remaining": -1,
+      "drop_rate_comm": 0,
+      "errors_comm": 0,
+      "errors_count1": 0,
+      "errors_count2": 0,
+      "errors_count3": 0,
+      "errors_count4": 0,
+      "onboard_control_sensors_present_extended": 0,
+      "onboard_control_sensors_enabled_extended": 0,
+      "onboard_control_sensors_health_extended": 0
+     },
+     "decoded": {
+      "batteryVoltageV": null,
+      "batteryCurrentA": null,
+      "batteryRemainingPct": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-truncated-payload",
+   "description": "GLOBAL_POSITION_INT with vz = 0 and hdg = 0: the sender trims trailing zero bytes (payload 24 of 28 bytes); the decoder must zero-extend",
+   "hex": "fd1800002a0101210000400d03006488c8eb9077470be09f0200307500002c0170fecae7",
+   "expect": [
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 200000,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 172000,
+      "relative_alt": 30000,
+      "vx": 300,
+      "vy": -400,
+      "vz": 0,
+      "hdg": 0
+     },
+     "decoded": {
+      "timeBootMs": 200000,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 172.0,
+      "relativeAltM": 30.0,
+      "vxMs": 3.0,
+      "vyMs": -4.0,
+      "vzMs": 0.0,
+      "headingDeg": 0.0
+     }
+    }
+   ],
+   "payloadLength": 24
+  },
+  {
+   "name": "v2-signed-heartbeat",
+   "description": "Signed MAVLink 2 frame (incompat flag 0x01, 13-byte signature). Accept without verifying.",
+   "hex": "fd0901004d0101000000050000000203d90403b9d2009a78563412009025dd3c4b29",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": true,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "v2-signed-global-position-int",
+   "description": "Signed position frame",
+   "hex": "fd1c01004e0101210000e09304006488c8eb9077470bc0ce020010a400006400c8000000c418f7c0009b78563412006f222b8c0fed",
+   "expect": [
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 2,
+     "signed": true,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 300000,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 184000,
+      "relative_alt": 42000,
+      "vx": 100,
+      "vy": 200,
+      "vz": 0,
+      "hdg": 6340
+     },
+     "decoded": {
+      "timeBootMs": 300000,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 184.0,
+      "relativeAltM": 42.0,
+      "vxMs": 1.0,
+      "vyMs": 2.0,
+      "vzMs": 0.0,
+      "headingDeg": 63.4
+     }
+    }
+   ]
+  },
+  {
+   "name": "two-frames-one-datagram",
+   "description": "HEARTBEAT then GLOBAL_POSITION_INT in one UDP datagram",
+   "hex": "fd090000320101000000050000000203d9040352b4fd1c0000330101210000801a06006488c8eb9077470b00ee020050c30000000020030000282339f9",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    },
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 400000,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 192000,
+      "relative_alt": 50000,
+      "vx": 0,
+      "vy": 800,
+      "vz": 0,
+      "hdg": 9000
+     },
+     "decoded": {
+      "timeBootMs": 400000,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 192.0,
+      "relativeAltM": 50.0,
+      "vxMs": 0.0,
+      "vyMs": 8.0,
+      "vzMs": 0.0,
+      "headingDeg": 90.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "v1-and-v2-one-datagram",
+   "description": "A v1 HEARTBEAT followed by a v2 VFR_HUD",
+   "hex": "fe0900010100050000000203d904037089fd1300003401014a0000000000410000004100004043000080be5a002e67df",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 1,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    },
+    {
+     "msgId": 74,
+     "name": "VFR_HUD",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "airspeed": 8.0,
+      "groundspeed": 8.0,
+      "heading": 90,
+      "throttle": 46,
+      "alt": 192.0,
+      "climb": -0.25
+     },
+     "decoded": {
+      "airspeedMs": 8.0,
+      "groundspeedMs": 8.0,
+      "headingDeg": 90,
+      "throttlePct": 46,
+      "altM": 192.0,
+      "climbMs": -0.25
+     }
+    }
+   ]
+  },
+  {
+   "name": "garbage-before-frame",
+   "description": "Non-MAVLink bytes before a valid frame are skipped",
+   "hex": "0011223344556677fd090000350101000000050000000203d904031106",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "garbage-false-magic",
+   "description": "Garbage with a fake v1 start byte (0xFE, length 3) whose frame would overlap the real one; its CRC fails, so the decoder must resync one byte on and still find the frame",
+   "hex": "55fe03000101fd1c000036010121000020a107006488c8eb9077470b00ee020050c30000000000000000504681a0",
+   "expect": [
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 500000,
+      "lat": -339179420,
+      "lon": 189233040,
+      "alt": 192000,
+      "relative_alt": 50000,
+      "vx": 0,
+      "vy": 0,
+      "vz": 0,
+      "hdg": 18000
+     },
+     "decoded": {
+      "timeBootMs": 500000,
+      "latDeg": -33.917942,
+      "lonDeg": 18.923304,
+      "altMslM": 192.0,
+      "relativeAltM": 50.0,
+      "vxMs": 0.0,
+      "vyMs": 0.0,
+      "vzMs": 0.0,
+      "headingDeg": 180.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "bad-crc",
+   "description": "HEARTBEAT with a corrupted CRC byte: must be rejected",
+   "hex": "fd090000370101000000050000000203d904032048",
+   "expect": []
+  },
+  {
+   "name": "bad-crc-then-good",
+   "description": "Corrupted payload (rejected), then a valid HEARTBEAT",
+   "hex": "fd1c0000380101210000c02709006588c8eb9077470b00ee020050c30000000000000000e8034f66fd090000390101000000050000000203d90403b77e",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "unknown-message",
+   "description": "Unknown message id 42000 is ignored",
+   "hex": "fd0600003c010110a40010203040506045a3",
+   "expect": []
+  },
+  {
+   "name": "unknown-then-known",
+   "description": "Unknown message id 42000 ignored, then a valid HEARTBEAT decoded",
+   "hex": "fd0600003c010110a40010203040506045a3fd0900003a0101000000050000000203d9040396e4",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "gcs-heartbeat",
+   "description": "QGroundControl's own heartbeat (type 6 GCS, autopilot 8 INVALID): decoded, but must not create a drone",
+   "hex": "fd09000000ffbe0000000000000006080004033d48",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 255,
+     "compid": 190,
+     "raw": {
+      "type": 6,
+      "autopilot": 8,
+      "base_mode": 0,
+      "custom_mode": 0,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 6,
+      "autopilot": 8,
+      "baseMode": 0,
+      "customMode": 0,
+      "systemStatus": 4,
+      "armed": false,
+      "isGcs": true
+     }
+    }
+   ],
+   "tracksDrone": false
+  },
+  {
+   "name": "incomplete-frame-at-end",
+   "description": "Valid HEARTBEAT, then the first 8 bytes of another frame: the partial frame is dropped",
+   "hex": "fd0900003b0101000000050000000203d90403866afd0900003b010100",
+   "expect": [
+    {
+     "msgId": 0,
+     "name": "HEARTBEAT",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "type": 2,
+      "autopilot": 3,
+      "base_mode": 217,
+      "custom_mode": 5,
+      "system_status": 4,
+      "mavlink_version": 3
+     },
+     "decoded": {
+      "type": 2,
+      "autopilot": 3,
+      "baseMode": 217,
+      "customMode": 5,
+      "systemStatus": 4,
+      "armed": true,
+      "isGcs": false
+     }
+    }
+   ]
+  },
+  {
+   "name": "second-drone",
+   "description": "Position from a second drone (system id 2), tracked separately",
+   "hex": "fd1c000000020121000050c30000d84bc8ebb048470b588c0200a86100006aff0000000050465b14",
+   "expect": [
+    {
+     "msgId": 33,
+     "name": "GLOBAL_POSITION_INT",
+     "version": 2,
+     "signed": false,
+     "sysid": 2,
+     "compid": 1,
+     "raw": {
+      "time_boot_ms": 50000,
+      "lat": -339194920,
+      "lon": 189221040,
+      "alt": 167000,
+      "relative_alt": 25000,
+      "vx": -150,
+      "vy": 0,
+      "vz": 0,
+      "hdg": 18000
+     },
+     "decoded": {
+      "timeBootMs": 50000,
+      "latDeg": -33.919492,
+      "lonDeg": 18.922104,
+      "altMslM": 167.0,
+      "relativeAltM": 25.0,
+      "vxMs": -1.5,
+      "vyMs": 0.0,
+      "vzMs": 0.0,
+      "headingDeg": 180.0
+     }
+    }
+   ]
+  },
+  {
+   "name": "adsb-saa312",
+   "description": "ADS-B airliner SAA312",
+   "hex": "fd2600005a0101f60000b2a100005030d5eb50095a0ba0db2900b45f3d329efdbf00a911005341413331320000000301b407",
+   "expect": [
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 41394,
+      "lat": -338350000,
+      "lon": 190450000,
+      "altitude_type": 0,
+      "altitude": 2743200,
+      "heading": 24500,
+      "hor_velocity": 12861,
+      "ver_velocity": -610,
+      "callsign": "SAA312",
+      "emitter_type": 3,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 4521
+     },
+     "decoded": {
+      "icaoAddress": 41394,
+      "icaoHex": "00A1B2",
+      "latDeg": -33.835,
+      "lonDeg": 19.045,
+      "altitudeType": 0,
+      "altitudeM": 2743.2,
+      "headingDeg": 245.0,
+      "horVelocityMs": 128.61,
+      "verVelocityMs": -6.1,
+      "callsign": "SAA312",
+      "emitterType": 3,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 4521,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "adsb-zsrvk",
+   "description": "ADS-B light aircraft ZSRVK",
+   "hex": "fd2600005b0101f60000c4b30000305ac1ebc0ce3d0bf0f90600941117130000bf00581b005a5352564b00000000010125a3",
+   "expect": [
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 46020,
+      "lat": -339650000,
+      "lon": 188600000,
+      "altitude_type": 0,
+      "altitude": 457200,
+      "heading": 4500,
+      "hor_velocity": 4887,
+      "ver_velocity": 0,
+      "callsign": "ZSRVK",
+      "emitter_type": 1,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 7000
+     },
+     "decoded": {
+      "icaoAddress": 46020,
+      "icaoHex": "00B3C4",
+      "latDeg": -33.965,
+      "lonDeg": 18.86,
+      "altitudeType": 0,
+      "altitudeM": 457.2,
+      "headingDeg": 45.0,
+      "horVelocityMs": 48.87,
+      "verVelocityMs": 0.0,
+      "callsign": "ZSRVK",
+      "emitterType": 1,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 7000,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "adsb-zshmb",
+   "description": "ADS-B helicopter ZSHMB",
+   "hex": "fd2600005c0101f60000d6c5000020d9cfeb7040490b80b80300384a110ecdffbf00581b005a53484d42000000000701ee49",
+   "expect": [
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 50646,
+      "lat": -338700000,
+      "lon": 189350000,
+      "altitude_type": 0,
+      "altitude": 243840,
+      "heading": 19000,
+      "hor_velocity": 3601,
+      "ver_velocity": -51,
+      "callsign": "ZSHMB",
+      "emitter_type": 7,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 7000
+     },
+     "decoded": {
+      "icaoAddress": 50646,
+      "icaoHex": "00C5D6",
+      "latDeg": -33.87,
+      "lonDeg": 18.935,
+      "altitudeType": 0,
+      "altitudeM": 243.84,
+      "headingDeg": 190.0,
+      "horVelocityMs": 36.01,
+      "verVelocityMs": -0.51,
+      "callsign": "ZSHMB",
+      "emitterType": 7,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 7000,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "adsb-three-in-one-datagram",
+   "description": "All three aircraft in one datagram (t = 1 s)",
+   "hex": "fd2600005d0101f60000b2a100003d1dd5eb12d8590bd0c32900b45f3d329efdbf00a91100534141333132000000030109fafd2600005e0101f60000c4b300005066c1eb5fdd3d0bf0f90600941117130000bf00581b005a5352564b00000000010102b0fd2600005f0101f60000d6c50000aecccfebcb3d490b84b60300384a110ecdffbf00581b005a53484d420000000007019518",
+   "expect": [
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 41394,
+      "lat": -338354883,
+      "lon": 190437394,
+      "altitude_type": 0,
+      "altitude": 2737104,
+      "heading": 24500,
+      "hor_velocity": 12861,
+      "ver_velocity": -610,
+      "callsign": "SAA312",
+      "emitter_type": 3,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 4521
+     },
+     "decoded": {
+      "icaoAddress": 41394,
+      "icaoHex": "00A1B2",
+      "latDeg": -33.8354883,
+      "lonDeg": 19.0437394,
+      "altitudeType": 0,
+      "altitudeM": 2737.104,
+      "headingDeg": 245.0,
+      "horVelocityMs": 128.61,
+      "verVelocityMs": -6.1,
+      "callsign": "SAA312",
+      "emitterType": 3,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 4521,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    },
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 46020,
+      "lat": -339646896,
+      "lon": 188603743,
+      "altitude_type": 0,
+      "altitude": 457200,
+      "heading": 4500,
+      "hor_velocity": 4887,
+      "ver_velocity": 0,
+      "callsign": "ZSRVK",
+      "emitter_type": 1,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 7000
+     },
+     "decoded": {
+      "icaoAddress": 46020,
+      "icaoHex": "00B3C4",
+      "latDeg": -33.9646896,
+      "lonDeg": 18.8603743,
+      "altitudeType": 0,
+      "altitudeM": 457.2,
+      "headingDeg": 45.0,
+      "horVelocityMs": 48.87,
+      "verVelocityMs": 0.0,
+      "callsign": "ZSRVK",
+      "emitterType": 1,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 7000,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    },
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 50646,
+      "lat": -338703186,
+      "lon": 189349323,
+      "altitude_type": 0,
+      "altitude": 243332,
+      "heading": 19000,
+      "hor_velocity": 3601,
+      "ver_velocity": -51,
+      "callsign": "ZSHMB",
+      "emitter_type": 7,
+      "tslc": 1,
+      "flags": 191,
+      "squawk": 7000
+     },
+     "decoded": {
+      "icaoAddress": 50646,
+      "icaoHex": "00C5D6",
+      "latDeg": -33.8703186,
+      "lonDeg": 18.9349323,
+      "altitudeType": 0,
+      "altitudeM": 243.332,
+      "headingDeg": 190.0,
+      "horVelocityMs": 36.01,
+      "verVelocityMs": -0.51,
+      "callsign": "ZSHMB",
+      "emitterType": 7,
+      "tslcS": 1,
+      "flags": 191,
+      "squawk": 7000,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": true,
+       "velocity": true,
+       "callsign": true,
+       "squawk": true,
+       "verticalVelocity": true
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "adsb-no-callsign-no-heading",
+   "description": "Aircraft without callsign or heading (flags = coords|altitude|velocity): label by ICAO hex",
+   "hex": "fd260000600101f60000e8d700004045cbeb608a4b0b3047100000001b1600000b000000000000000000000000000203fdb9",
+   "expect": [
+    {
+     "msgId": 246,
+     "name": "ADSB_VEHICLE",
+     "version": 2,
+     "signed": false,
+     "sysid": 1,
+     "compid": 1,
+     "raw": {
+      "ICAO_address": 55272,
+      "lat": -339000000,
+      "lon": 189500000,
+      "altitude_type": 0,
+      "altitude": 1066800,
+      "heading": 0,
+      "hor_velocity": 5659,
+      "ver_velocity": 0,
+      "callsign": "",
+      "emitter_type": 2,
+      "tslc": 3,
+      "flags": 11,
+      "squawk": 0
+     },
+     "decoded": {
+      "icaoAddress": 55272,
+      "icaoHex": "00D7E8",
+      "latDeg": -33.9,
+      "lonDeg": 18.95,
+      "altitudeType": 0,
+      "altitudeM": 1066.8,
+      "headingDeg": 0.0,
+      "horVelocityMs": 56.59,
+      "verVelocityMs": 0.0,
+      "callsign": null,
+      "emitterType": 2,
+      "tslcS": 3,
+      "flags": 11,
+      "squawk": 0,
+      "valid": {
+       "coords": true,
+       "altitude": true,
+       "heading": false,
+       "velocity": true,
+       "callsign": false,
+       "squawk": false,
+       "verticalVelocity": false
+      }
+     }
+    }
+   ]
+  }
+ ]
+}
