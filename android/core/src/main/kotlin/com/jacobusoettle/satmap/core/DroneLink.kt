@@ -282,6 +282,18 @@ object DroneLink {
         return (if (v < 0) "-" else "") + out
     }
 
+    /** The "≈ above ground" estimate: height above sea level less the elevation data's ground under it. A little
+     *  below ground (GPS and elevation data disagree by up to `groundSlackM`) reads as 0; further below, the two
+     *  clearly disagree (a wrong altitude datum, coarse elevation data) and nothing is shown. Null without ground. */
+    fun aboveGroundM(altMslM: Double, groundM: Double?): Double? {
+        val g = groundM ?: return null
+        val h = altMslM - g
+        if (!h.isFinite() || h < -groundSlackM) return null
+        return max(0.0, h)
+    }
+
+    const val groundSlackM = 20.0
+
     // Drones
 
     data class Drone(
@@ -361,9 +373,12 @@ object DroneLink {
         private var nextColour = 0
 
         /** Every frame in a datagram. */
-        fun receive(datagram: ByteArray, now: Double): Received {
+        fun receive(datagram: ByteArray, now: Double): Received = receive(MAVLink.decode(datagram), now)
+
+        /** The frames of one datagram, already decoded (`MAVLink.decode`, which may run on another thread). */
+        fun receive(frames: List<MAVLink.Frame>, now: Double): Received {
             var r = Received()
-            for (f in MAVLink.decode(datagram)) {
+            for (f in frames) {
                 r = r.copy(frames = r.frames + 1)
                 when (apply(f, now)) {
                     Applied.drone -> r = r.copy(droneMessages = r.droneMessages + 1)
@@ -380,8 +395,11 @@ object DroneLink {
         /** One frame. */
         fun apply(f: MAVLink.Frame, now: Double): Applied {
             val message = f.message ?: return Applied.ignored
-            if (message is MAVLink.Heartbeat && message.isGcs) {
-                if (_drones[f.sysid] == null) _groundStations.add(f.sysid)
+            if (message is MAVLink.Heartbeat && !message.isAutopilot) {
+                // A ground station's own heartbeat keeps its system id out; any other component's (a camera, gimbal,
+                // ADS-B receiver or companion computer, often on the drone's own system id) is ignored: it neither
+                // makes a drone nor changes one's armed state.
+                if (isGroundStation(f, message) && _drones[f.sysid] == null) _groundStations.add(f.sysid)
                 return Applied.ignored
             }
             if (message is MAVLink.AdsbVehicle) {
@@ -406,6 +424,11 @@ object DroneLink {
             _drones[f.sysid] = d
             return Applied.drone
         }
+
+        /** A ground station's heartbeat (MAV_TYPE_GCS, or MAV_AUTOPILOT_INVALID from Mission Planner's component
+         *  190 or the usual GCS system id 255), as opposed to a peripheral's on the drone. */
+        private fun isGroundStation(f: MAVLink.Frame, h: MAVLink.Heartbeat): Boolean =
+            h.type == 6 || (h.autopilot == 8 && (f.compid == 190 || f.sysid == 255))
 
         private fun applyAircraft(m: MAVLink.AdsbVehicle, sysid: Int, now: Double): Boolean {
             val v = m.valid

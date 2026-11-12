@@ -215,7 +215,7 @@ private fun DroneRows(
     }
     d.position?.let { p ->
         PanelRow("Height", "${Format.height(p.relativeAltM, hu)} above take-off · ${Format.height(p.altMslM, hu)} above sea level")
-        groundM?.let { PanelRow("≈ above ground", Format.height(p.altMslM - it, hu)) }
+        DroneLink.aboveGroundM(p.altMslM, groundM)?.let { PanelRow("≈ above ground", Format.height(it, hu)) }
     }
     val motion = listOfNotNull(d.groundSpeedMs?.let { DroneLink.speed(it, du) }, d.climbMs?.let { "climb " + DroneLink.climb(it, hu) })
     if (motion.isNotEmpty()) PanelRow("Speed", motion.joinToString(" · "))

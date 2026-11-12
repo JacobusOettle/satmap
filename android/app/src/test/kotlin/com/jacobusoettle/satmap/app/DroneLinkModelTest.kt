@@ -134,6 +134,37 @@ class DroneLinkModelTest {
         assertTrue(canBind(port))
     }
 
+    @Test
+    fun oversizedDatagramsAreDroppedAndAFailedSocketSaysSo() {
+        val received = Collections.synchronizedList(ArrayList<ByteArray>())
+        var stopped = 0
+        val receiver = UdpReceiver(0, onStopped = { synchronized(received) { stopped++ } }) { received.add(it) }
+        receiver.start()
+        val port = receiver.port
+        send(ByteArray(UdpReceiver.maxDatagram + 1) { 0xFD.toByte() }, port)
+        send(datagram("v2-heartbeat-armed"), port)
+        val until = System.currentTimeMillis() + 5_000
+        while (received.isEmpty() && System.currentTimeMillis() < until) Thread.sleep(20)
+        Thread.sleep(200)
+        assertEquals("only the real datagram", listOf(datagram("v2-heartbeat-armed").toList()), received.map { it.toList() })
+        // The socket fails under it: it says so once, and no longer counts as running.
+        receiver.breakForTests()
+        val until2 = System.currentTimeMillis() + 5_000
+        while (receiver.isRunning && System.currentTimeMillis() < until2) Thread.sleep(20)
+        Thread.sleep(100)
+        assertFalse(receiver.isRunning)
+        assertEquals(1, synchronized(received) { stopped })
+        receiver.stop() // (harmless)
+        assertEquals(1, synchronized(received) { stopped })
+        // Stopped on purpose: no call.
+        var stopped2 = 0
+        val other = UdpReceiver(0, onStopped = { stopped2++ }) {}
+        other.start()
+        other.stop()
+        Thread.sleep(100)
+        assertEquals(0, stopped2)
+    }
+
     // The model
 
     @Test
@@ -267,6 +298,52 @@ class DroneLinkModelTest {
         assertTrue(waitFor { canBind(first) })
         assertEquals(DroneLink.Status.Receiving(1, 0), model.status.value) // (what was heard stays)
         assertTrue(waitFor { send(datagram("second-drone"), second); model.traffic.drones.size == 2 })
+    }
+
+    @Test
+    fun aNewPortAfterAFailedOneIsListenedOnAtOnce() {
+        val taken = DatagramSocket(null).apply { bind(InetSocketAddress(0)) }
+        sockets += taken
+        switchOn(taken.localPort)
+        assertEquals(DroneLink.Status.Failed(taken.localPort), model.status.value)
+        assertFalse(model.isListening)
+        val free = freePort()
+        model.setPort(free)
+        assertTrue("bound to the new port straight away", model.isListening)
+        assertEquals(DroneLink.Status.Waiting(free), model.status.value)
+        assertFalse(canBind(free))
+        assertTrue(waitFor { send(datagram("v2-heartbeat-armed"), free); model.traffic.drones.isNotEmpty() })
+    }
+
+    @Test
+    fun aSocketThatDiesIsReportedAndOpenedAgain() {
+        val port = freePort()
+        switchOn(port)
+        assertTrue(model.isListening)
+        model.receiverForTests!!.breakForTests()
+        assertTrue(waitFor { model.status.value == DroneLink.Status.Failed(port) })
+        assertFalse(model.isListening)
+        // The 3 s retry opens it again.
+        run(4.0)
+        assertTrue(model.isListening)
+        assertEquals(DroneLink.Status.Waiting(port), model.status.value)
+        assertTrue(waitFor { send(datagram("v2-heartbeat-armed"), port); model.traffic.drones.isNotEmpty() })
+    }
+
+    @Test
+    fun aFloodIsCappedByBytesAndDecodedOffTheMainThread() {
+        val port = freePort()
+        switchOn(port)
+        // Garbage with a plausible MAVLink 2 header every few bytes, 8 KB a datagram: at most 1 MB waits.
+        val garbage = ByteArray(UdpReceiver.maxDatagram) { k -> if (k % 10 == 0) 0xFD.toByte() else 0xFF.toByte() }
+        repeat(200) { model.enqueue(garbage) }
+        model.enqueue(datagram("v2-heartbeat-armed"))
+        run(0.3)
+        assertTrue("dropped while the inbox was full", model.traffic.drones.isEmpty())
+        // The next quarter second has room again.
+        model.enqueue(datagram("v2-heartbeat-armed"))
+        run(0.3)
+        assertEquals(setOf(1), model.traffic.drones.keys)
     }
 
     @Test

@@ -412,6 +412,18 @@ class MapController(
         return layer.shown.map { item -> item to layer.screenPoint(item).let { PointF(it.x + at[0], it.y + at[1]) } }
     }
 
+    /** Test-only (the walkthrough, drone-link.md §5): moves what the map shows by `dy` screen pixels (positive: down),
+     *  and stops following you, so a shot can have the drone in the clear below its panel. */
+    fun scrollForTests(dy: Float) {
+        val m = map ?: return
+        if (!started) return
+        model.setFollowing(false)
+        if (mapView.width <= 0 || mapView.height <= 0) return
+        // The new centre is what is now `dy` above the centre (so everything shown moves down by `dy`).
+        val c = m.projection.fromScreenLocation(PointF(mapView.width / 2f, mapView.height / 2f - dy)).wrap()
+        m.moveCamera(CameraUpdateFactory.newLatLng(c))
+    }
+
     /** Test-only (the walkthrough, groups §9.6): each member dot's and group pin's point on the screen, in pixels, with
      *  its kind ("member" or "pin"), id and accessibility label. */
     fun groupItemScreenPoints(): List<GroupLayers.ItemPoint> {

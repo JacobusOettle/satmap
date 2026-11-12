@@ -204,6 +204,19 @@ object MAVLink {
 
         /** A ground station's own heartbeat (MAV_TYPE_GCS, or MAV_AUTOPILOT_INVALID): never a drone. */
         val isGcs: Boolean get() = type == 6 || autopilot == 8
+
+        /** The vehicle's own flight controller: an autopilot (not MAV_AUTOPILOT_INVALID) on a vehicle type, not a
+         *  peripheral (camera, gimbal, ADS-B receiver, onboard computer …) that shares the drone's system id. Only
+         *  its heartbeat is the drone's (armed state, type). */
+        val isAutopilot: Boolean get() = autopilot != 8 && type !in peripheralTypes
+
+        companion object {
+            /** MAV_TYPEs that are never a vehicle's flight controller: antenna tracker (5), GCS (6), onboard
+             *  controller (18), gimbal (26), ADS-B (27), camera (30), charging station (31), FLARM (32), servo (33),
+             *  Open Drone ID (34), battery (36), parachute (37), log (38), OSD (39), IMU (40), GPS (41), winch (42),
+             *  illuminator (44). */
+            val peripheralTypes: Set<Int> = setOf(5, 6, 18, 26, 27, 30, 31, 32, 33, 34, 36, 37, 38, 39, 40, 41, 42, 44)
+        }
     }
 
     data class SysStatus(val batteryVoltageV: Double?, val batteryCurrentA: Double?, val batteryRemainingPct: Int?) : Message

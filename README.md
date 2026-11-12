@@ -41,18 +41,16 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/34-join-group.jpg" width="250"> | <img src="docs/screenshots/35-share-consent.jpg" width="250"> | <img src="docs/screenshots/36-group-map.jpg" width="250"> |
 | **Dropping a pin** | **A pin** | **A member** |
 | <img src="docs/screenshots/37-drop-pin.jpg" width="250"> | <img src="docs/screenshots/38-pin-detail.jpg" width="250"> | <img src="docs/screenshots/39-member-detail.jpg" width="250"> |
-| **A paused group** | **Test build switched off** | **Drone link: settings** |
-| <img src="docs/screenshots/40-group-paused.jpg" width="250"> | <img src="docs/screenshots/41-test-build-off.jpg" width="250"> | <img src="docs/screenshots/42-drone-link-settings.jpg" width="250"> |
-| **Drone link: your drone and the traffic** | | |
-| <img src="docs/screenshots/43-drone-on-map.jpg" width="250"> | | |
+| **A paused group** | **Test build switched off** | |
+| <img src="docs/screenshots/40-group-paused.jpg" width="250"> | <img src="docs/screenshots/41-test-build-off.jpg" width="250"> | |
 
 The groups screenshots run in demo mode (`-groupsDemo YES`): the app talks to a fake server built into the core,
-with a fixed set of groups, members, trails and pins near the walk, and a fake store for SatMap Pro. The Drone link
-shots replay a recorded flight over the farm with three ADS-B aircraft (`docs/mavlink/demo_flight.json`) through the
-same decoder, instead of listening on the network (`-droneLinkDemo YES`, simulator and debug builds only).
+with a fixed set of groups, members, trails and pins near the walk, and a fake store for SatMap Pro.
 
 The Android app's screenshots, taken the same way on an Android emulator (`.github/workflows/android-screenshots.yml`),
-are in [docs/screenshots/android](docs/screenshots/android):
+are in [docs/screenshots/android](docs/screenshots/android). Its Drone link shots replay a recorded flight over the
+farm with three ADS-B aircraft (`docs/mavlink/demo_flight.json`) through the same decoder, instead of listening on the
+network (set by the walkthrough's instrumentation in the app's own process; no intent can switch it on):
 
 | Map | Measuring | Offline maps | Drone mode |
 | --- | --- | --- | --- |
@@ -111,7 +109,7 @@ is from you, and the nearest airfields in nautical miles. Tap an aircraft for it
 from you and from the drone. A drone with no new position for 10 s turns grey and goes after 60 s; an aircraft fades
 after 15 s and goes after 120 s (as in QGroundControl). Heights and speeds follow your units.
 
-**Set it up.** Put the phone and the ground station on the same Wi-Fi (or turn on Personal Hotspot on the phone and
+**Set it up.** Put the phone and the ground station on the same Wi-Fi (or turn on the phone's hotspot and
 join it from the laptop or tablet running the ground station). In drone mode tap **Drone link**, switch it on, and
 note the phone's address and port shown there (port 14445 by default). Then, in **QGroundControl**:
 
@@ -127,15 +125,14 @@ screen says *Waiting for MAVLink on port 14445…*, *Receiving from 1 drone*, or
 
 SatMap only listens: it never sends anything to the drone or the ground station, and the port is open only while the
 switch is on and SatMap is on screen (it closes in the background and opens again when you come back). It is off by
-default. On iPhone, receiving a ground station's datagrams needs no Local Network permission; the app declares one
-for later. On Android no extra permission is needed today (Android 17 will add `ACCESS_LOCAL_NETWORK`).
+default. On Android no extra permission is needed today (Android 17 will add `ACCESS_LOCAL_NETWORK`).
 
 > **Traffic awareness only. Not for navigation, separation or collision avoidance. Many aircraft don't broadcast.
 > Under SACAA Part 101 the remote pilot must give way to manned aircraft.** SatMap shows this when you first switch
 > Drone link on, and in every drone and aircraft panel.
 
 The decoder (MAVLink 1 and 2, CRCs, signed frames, several frames to a datagram) and the rules are in the shared core
-(`SatMap/Core/MAVLink.swift`, `DroneLink.swift` and their Kotlin twins), tested against the same fixture
+(`android/core`: `MAVLink.kt`, `DroneLink.kt`), tested against the shared fixture
 (`Tests/SatMapCoreTests/Fixtures/mavlink/cases.json`, made with pymavlink by `docs/mavlink/make_fixtures.py`). Online
 ADS-B (adsb.lol and the like) may be added later for aircraft when the drone has no receiver.
 
@@ -368,7 +365,7 @@ SatMap/
   UI/         SwiftUI screens (UI/Groups: the groups screens)
   Core/       platform-independent logic: tile maths, area → tile coverage, PNG/Terrarium decoding,
               marching-squares contours, KML/KMZ and GPX parsing, MBTiles (SQLite, tiles encrypted), track log,
-              download engine, the MAVLink decoder and Drone link rules (with a receive-only UDP socket)
+              download engine
 Tests/        unit tests for Core (run with `swift test`, also on Linux)
 android/      the Android app (Gradle): a file-for-file port of the above
   core/       SatMap/Core in Kotlin, with the same tests ported

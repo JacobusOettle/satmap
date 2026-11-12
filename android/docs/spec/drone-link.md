@@ -35,14 +35,19 @@ the sheet opens, every 5 s while it shows, and on each return to the foreground.
 
 `UdpReceiver` (iPhone `UDPReceiver`) binds a `DatagramSocket` to `0.0.0.0:<port>` without SO_REUSEADDR (on Linux it
 would let a second socket share the port) and hands every datagram to the model from its own thread, which waits a
-second at a time so a closed socket's thread ends promptly. **Nothing is ever sent.**
+second at a time so a closed socket's thread ends promptly. Datagrams over 8 KB (`UdpReceiver.maxDatagram`; real
+MAVLink datagrams are a few hundred bytes) are dropped. If the socket fails under it (not stopped), it closes it,
+stops counting as running and calls `onStopped`. **Nothing is ever sent.**
 
 `DroneLinkModel` (in `AppModel.droneLink`; iPhone `DroneLinkModel`) opens it only while the switch is on, SatMap is in
 the foreground (`AppModel.willEnterForeground` / `didEnterBackground`) and no test-build lock is up (`setLocked`);
-otherwise it is closed. Four times a second while listening it takes what arrived (at most 2,000 waiting datagrams)
-through `DroneLink.Traffic`, prunes what is too old, bumps `revision` when something changed (and at least once a
+otherwise it is closed. Each datagram is decoded on the socket's thread (`MAVLink.decode`), and only its frames wait
+for the main thread, at most 2,000 datagrams and 1 MB between two ticks (more is dropped: a flood can't run the app out
+of memory or stall the main thread). Four times a second while listening it hands what arrived to
+`DroneLink.Traffic`, prunes what is too old, bumps `revision` when something changed (and at least once a
 second, for the grey and fading), closes a selection whose drone or aircraft went, and updates `status`. A port that
-can't be had shows `Status.Failed` and is tried again every 3 s. Switching off forgets everything heard.
+can't be had, or a socket that failed (`onStopped`), shows `Status.Failed` and is tried again every 3 s. A new port is
+bound at once whenever the link should listen, also after the old one failed. Switching off forgets everything heard.
 
 Permissions: receiving unicast UDP needs only INTERNET at targetSdk 36. Android 17 (API 37) will need
 `ACCESS_LOCAL_NETWORK` for local-network traffic once SatMap targets it: add it then, asked when the switch is turned
@@ -72,9 +77,12 @@ Messages (`MAVLink.Heartbeat`, `SysStatus`, `GpsRawInt`, `GlobalPositionInt`, `V
 
 ### 2.2 Traffic (core `DroneLink.Traffic`)
 
-- A `DroneLink.Drone` per MAVLink system id, with a colour slot in the order drones were first heard. A ground
-  station's heartbeat (type 6 or autopilot 8) never makes a drone, and its system id stays out unless it was already
-  a drone; ADSB_VEHICLE makes none either. Heading: GLOBAL_POSITION_INT's, else VFR_HUD's; ground speed and climb:
+- A `DroneLink.Drone` per MAVLink system id, with a colour slot in the order drones were first heard. Only the
+  flight controller's heartbeat (`MAVLink.Heartbeat.isAutopilot`: autopilot not 8, type not a peripheral such as a
+  camera, gimbal, ADS-B receiver or onboard computer) makes a drone or sets its armed state; any other heartbeat
+  (type 6 or autopilot 8 included) never makes a drone. A ground station's (type 6, or autopilot 8 from component 190
+  or system id 255) also keeps its system id out unless it was already a drone; a peripheral's on the drone's system
+  id (a camera at component 100 with autopilot 8) doesn't. ADSB_VEHICLE makes no drone either. Heading: GLOBAL_POSITION_INT's, else VFR_HUD's; ground speed and climb:
   VFR_HUD's, else from GLOBAL_POSITION_INT; the take-off ground: height above sea level less height above take-off,
   else the home's.
 - A drone is **stale** (grey) without a position for 10 s, and removed 60 s after its last position (one that never
@@ -110,8 +118,9 @@ A tap within 26 dp of a drone (first) or an aircraft selects it (`DroneLinkModel
 panel. The panel (`DroneLinkPanel`, `droneLinkPanel`) shows under the button, with ✕ (`droneLinkPanelClose`):
 
 - Drone: header "Drone 1" with Armed/Disarmed; Position "No position for 12 s" (orange) when stale; Height "50 m above
-  take-off · 192 m above sea level"; "≈ above ground" (above sea level less SatMap's elevation under it, looked up
-  again once it has moved 20 m); Speed "35 km/h · climb +0.5 m/s"; Battery "86 % · 16.1 V"; GPS "3D fix · 17
+  take-off · 192 m above sea level"; "≈ above ground" (`DroneLink.aboveGroundM`: above sea level less SatMap's
+  elevation under it, looked up again once it has moved 20 m; up to 20 m below that ground reads 0 m, further below
+  the row is left out); Speed "35 km/h · climb +0.5 m/s"; Battery "86 % · 16.1 V"; GPS "3D fix · 17
   satellites"; From you "0.1 NM 078° ENE" (cyan); Airfields: the nearest as drone mode reports it, then the next two
   with their distance (`DroneLink.nearestAerodromes`: within 30 NM, helipads only when nothing else is near).
 - Aircraft: header callsign with kind and ICAO; Warning "Below 2,000 ft within 5 NM" (red) when low and close;
@@ -142,11 +151,14 @@ is the iPhone's `DroneLinkTests.swift` test for test, against the shared fixture
   only (`androidTest` assets from `docs/mavlink`).
 - **Walkthrough** (`ScreenshotTest.droneLinkScreenshots`, right after step 25 in drone mode, as on the iPhone): the
   button, the switch with its disclaimer, "Receiving from 1 drone" and QGroundControl's steps → `42-drone-link-settings`;
-  then the drone, its home and the aircraft on the map, the drone tapped and its panel with the disclaimer →
-  `43-drone-on-map`. A failed check fails the job.
+  then the drone, its home and the aircraft on the map, the drone tapped and its panel with the disclaimer, the map
+  moved (`MapController.scrollForTests`) so the drone is in the clear a third of the way down below the panel →
+  `43-drone-on-map`. The recorded flight takes off at 380 m above sea level (the farm's ground in the elevation data)
+  so its "≈ above ground" reads sensibly; the decoder cases keep 142 m. A failed check fails the job.
 - **Unit tests**: `DroneLinkTests` (core); `DroneLinkModelTest` (a UDP loopback of every fixture datagram to
   `UdpReceiver`, a second listener refused, the disclaimer flow, saved settings, foreground and switch-off close the
-  socket, silence and removal, a port in use tried again, a changed port, the lock, the replay); `MapScreenDroneLinkTest`
+  socket, silence and removal, a port in use tried again, a changed port, a new port after a failed one, a socket that
+dies, oversized datagrams, a flood capped by bytes, the lock, the replay); `MapScreenDroneLinkTest`
   (button, disclaimer, addresses, port, steps, panels); `DroneLinkLayerTest` (shapes, colours, images).
 
 ## 6. Later

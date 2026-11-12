@@ -186,6 +186,64 @@ class DroneLinkTests {
         assertEquals(true, traffic.drones[1]?.heartbeat?.armed)
     }
 
+    /** A MAVLink 2 HEARTBEAT frame from `sysid`/`compid` (built here, so the shared fixture stays as it is). */
+    private fun heartbeat(sysid: Int, compid: Int, type: Int, autopilot: Int, baseMode: Int = 0): ByteArray {
+        val payload = byteArrayOf(0, 0, 0, 0, type.toByte(), autopilot.toByte(), baseMode.toByte(), 4, 3)
+        val header = byteArrayOf(0xFD.toByte(), payload.size.toByte(), 0, 0, 0, sysid.toByte(), compid.toByte(), 0, 0, 0)
+        val body = header + payload
+        val c = MAVLink.crc(byteArrayOf(MAVLink.messages.getValue(MAVLink.heartbeat).crcExtra.toByte()), start = MAVLink.crc(body, 1))
+        return body + byteArrayOf((c and 0xFF).toByte(), (c shr 8).toByte())
+    }
+
+    @Test
+    fun peripheralHeartbeatsOnTheDronesSystemIdNeitherBlockItNorChangeIt() {
+        val traffic = DroneLink.Traffic()
+        // A camera manager (compid 100, MAV_TYPE_CAMERA, MAV_AUTOPILOT_INVALID) heard before the autopilot.
+        val camera = heartbeat(sysid = 1, compid = 100, type = 30, autopilot = 8)
+        assertEquals(1, traffic.receive(camera, t0).frames)
+        // MAVROS on a companion computer (compid 191, onboard controller, autopilot 8).
+        traffic.receive(heartbeat(sysid = 1, compid = 191, type = 18, autopilot = 8), t0)
+        assertTrue("a peripheral makes no drone", traffic.drones.isEmpty())
+        assertTrue("nor is the drone's system id taken for a ground station", traffic.groundStations.isEmpty())
+        traffic.receive(datagram("v2-global-position-int"), t0)
+        traffic.receive(datagram("v2-heartbeat-armed"), t0)
+        assertNotNull("the autopilot's frames still count", traffic.drones[1]?.position)
+        assertEquals(true, traffic.drones[1]?.heartbeat?.armed)
+        // An ADS-B receiver's heartbeat (type 27, a real autopilot enum) doesn't flip it to disarmed.
+        traffic.receive(heartbeat(sysid = 1, compid = 156, type = 27, autopilot = 3, baseMode = 0), t0 + 1)
+        traffic.receive(camera, t0 + 1)
+        assertEquals(true, traffic.drones[1]?.heartbeat?.armed)
+        assertEquals(2, traffic.drones[1]?.heartbeat?.type)
+        // On a system id of its own, a peripheral is no phantom drone.
+        traffic.receive(heartbeat(sysid = 7, compid = 156, type = 27, autopilot = 0), t0 + 1)
+        assertEquals(setOf(1), traffic.drones.keys)
+        assertEquals(DroneLink.Status.Receiving(drones = 1, aircraft = 0), traffic.status(14445, t0 + 1))
+    }
+
+    @Test
+    fun groundStationsAreKnownByTypeOrByMissionPlannersIds() {
+        val traffic = DroneLink.Traffic()
+        // QGroundControl / MAVProxy: MAV_TYPE_GCS on any system id.
+        traffic.receive(heartbeat(sysid = 250, compid = 1, type = 6, autopilot = 8), t0)
+        // Mission Planner-style autopilot-INVALID heartbeats from component 190, or from system id 255.
+        traffic.receive(heartbeat(sysid = 251, compid = 190, type = 0, autopilot = 8), t0)
+        traffic.receive(heartbeat(sysid = 255, compid = 0, type = 0, autopilot = 8), t0)
+        assertEquals(setOf(250, 251, 255), traffic.groundStations)
+        assertTrue(traffic.drones.isEmpty())
+        assertTrue(MAVLink.Heartbeat(2, 3, 0x80, 0, 4).isAutopilot)
+        assertFalse(MAVLink.Heartbeat(30, 3, 0, 0, 4).isAutopilot)
+        assertFalse(MAVLink.Heartbeat(2, 8, 0, 0, 4).isAutopilot)
+    }
+
+    @Test
+    fun aboveGroundEstimate() {
+        assertEquals(48.0, DroneLink.aboveGroundM(430.0, 382.0)!!, 1e-9)
+        assertEquals("a little under the data's ground reads as on it", 0.0, DroneLink.aboveGroundM(370.0, 382.0)!!, 0.0)
+        assertEquals(0.0, DroneLink.aboveGroundM(362.0, 382.0)!!, 0.0)
+        assertNull("clearly wrong: not shown", DroneLink.aboveGroundM(191.0, 382.0))
+        assertNull(DroneLink.aboveGroundM(191.0, null))
+    }
+
     @Test
     fun dronesAreTrackedPerSystemId() {
         val traffic = DroneLink.Traffic()

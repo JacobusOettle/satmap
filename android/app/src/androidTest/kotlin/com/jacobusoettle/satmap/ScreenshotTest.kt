@@ -862,6 +862,20 @@ class ScreenshotTest {
         val panel = id("droneLinkPanel")
         check(tapMap("the drone", drone) { exists(panel) }, "Tapping the drone didn't open its panel")
         check(exists(id("droneLinkPanelDisclaimer")), "No disclaimer in the panel")
+        // The panel covers the top of the map: the map moves so the drone (and the traffic round it) is in the clear
+        // below it, a third of the way down what is left.
+        val panelBottom = node(panel)?.boundsInWindow?.bottom
+        val at = drone()
+        if (panelBottom != null && at != null) {
+            val clear = panelBottom + (device.displayHeight - panelBottom) / 3f
+            if (at.y < clear) {
+                val dy = clear - at.y
+                instrumentation.runOnMainSync { (AppModel.shared.map as? MapController)?.scrollForTests(dy) }
+                waitForStillMap()
+            }
+        }
+        check(exists(panel), "The drone's panel closed when the map moved")
+        check(drone()?.let { panelBottom == null || it.y > panelBottom } == true, "The drone is under its panel")
         sleep(2)
         snap("43-drone-on-map")
         if (exists(id("droneLinkPanelClose"))) click(id("droneLinkPanelClose"))

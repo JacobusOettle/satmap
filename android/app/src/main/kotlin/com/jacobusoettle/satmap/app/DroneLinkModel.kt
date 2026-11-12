@@ -8,6 +8,7 @@ import androidx.annotation.VisibleForTesting
 import com.jacobusoettle.satmap.core.DroneLink
 import com.jacobusoettle.satmap.core.Geo
 import com.jacobusoettle.satmap.core.GeoPoint
+import com.jacobusoettle.satmap.core.MAVLink
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,14 +19,21 @@ import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicReference
 
 /** A receive-only UDP socket on 0.0.0.0:`port` (android/docs/spec/drone-link.md §2): every datagram that arrives is
- *  handed on, from the socket's own thread, and nothing is ever sent. No SO_REUSEADDR: on Linux it would let a second
- *  socket share the port, and UDP has no TIME_WAIT to wait out after a close. The iPhone's `UDPReceiver`. Receiving
- *  unicast UDP needs no permission at targetSdk 36 (INTERNET only). */
-class UdpReceiver(private val requestedPort: Int, private val onDatagram: (ByteArray) -> Unit) {
-    @Volatile
-    private var socket: DatagramSocket? = null
+ *  handed on, from the socket's own thread, and nothing is ever sent. Datagrams over `maxDatagram` bytes are dropped
+ *  (a MAVLink datagram is a few hundred bytes). No SO_REUSEADDR: on Linux it would let a second socket share the port,
+ *  and UDP has no TIME_WAIT to wait out after a close. If the socket fails while running (not stopped), it is closed,
+ *  `isRunning` turns false and `onStopped` is called from its thread. The iPhone's `UDPReceiver`. Receiving unicast UDP
+ *  needs no permission at targetSdk 36 (INTERNET only). */
+class UdpReceiver(
+    private val requestedPort: Int,
+    private val onStopped: () -> Unit = {},
+    private val onDatagram: (ByteArray) -> Unit,
+) {
+    private val current = AtomicReference<DatagramSocket?>(null)
+    private val socket: DatagramSocket? get() = current.get()
 
     /** The port it listens on while started (0 asks for any free one, for tests). */
     @Volatile
@@ -47,7 +55,7 @@ class UdpReceiver(private val requestedPort: Int, private val onDatagram: (ByteA
             s.close()
             throw e
         }
-        socket = s
+        current.set(s)
         port = s.localPort
         thread = Thread({ drain(s) }, "DroneLink-UDP-$port").apply {
             isDaemon = true
@@ -57,11 +65,16 @@ class UdpReceiver(private val requestedPort: Int, private val onDatagram: (ByteA
 
     private var thread: Thread? = null
 
+    /** Test-only: the socket fails under its thread (as when the network goes away). */
+    @VisibleForTesting
+    internal fun breakForTests() {
+        socket?.close()
+    }
+
     /** Closes the socket and waits (briefly) for its thread to end, so the port is free once this returns: a JVM
      *  closes a socket another thread is receiving on only when that thread has woken (Android closes it at once). */
     fun stop() {
-        val s = socket ?: return
-        socket = null
+        val s = current.getAndSet(null) ?: return
         port = 0
         s.close()
         val t = thread
@@ -76,13 +89,14 @@ class UdpReceiver(private val requestedPort: Int, private val onDatagram: (ByteA
     }
 
     private fun drain(s: DatagramSocket) {
-        val buffer = ByteArray(65_536)
+        // One byte more than allowed: a datagram that fills it was bigger (the rest is cut off) and is dropped.
+        val buffer = ByteArray(maxDatagram + 1)
         val packet = DatagramPacket(buffer, buffer.size)
         while (socket === s) {
             try {
                 packet.setLength(buffer.size)
                 s.receive(packet)
-                if (socket === s) onDatagram(buffer.copyOf(packet.length))
+                if (socket === s && packet.length <= maxDatagram) onDatagram(buffer.copyOf(packet.length))
             } catch (e: SocketTimeoutException) {
                 // (a chance to see whether it was stopped)
             } catch (e: Exception) {
@@ -91,9 +105,18 @@ class UdpReceiver(private val requestedPort: Int, private val onDatagram: (ByteA
             }
         }
         s.close()
+        // It died rather than being stopped: say so, so the owner can open another.
+        if (current.compareAndSet(s, null)) {
+            port = 0
+            onStopped()
+        }
     }
 
     companion object {
+        /** The largest datagram handed on: real MAVLink datagrams are under about 2 KB (one frame is at most 280
+         *  bytes); anything bigger is garbage or a flood. */
+        const val maxDatagram = 8 * 1024
+
         /** The IPv4 addresses of the interfaces that are up (name and dotted address), loopback included; which of
          *  them to show is `DroneLink.addresses`. */
         fun interfaceAddresses(): List<Pair<String, String>> {
@@ -188,9 +211,11 @@ class DroneLinkModel(private val elevation: ElevationSource) {
     /** The port that couldn't be had, until the next try. */
     private var failedPort: Int? = null
 
-    /** Datagrams from the socket's thread, taken on the main thread four times a second; at most 2,000 waiting (a
-     *  flood is dropped). */
-    private val inbox = ArrayList<ByteArray>()
+    /** Datagrams already decoded (on the socket's thread, so a flood never costs the main thread the decoding),
+     *  taken on the main thread four times a second. At most `inboxMaxDatagrams` datagrams and `inboxMaxBytes` bytes
+     *  wait; more is dropped (a flood). Guarded by itself. */
+    private val inbox = ArrayList<List<MAVLink.Frame>>()
+    private var inboxBytes = 0
 
     /** The replay and its clock: seconds since it began (uptime), and up to when it was fed. */
     private var replay: DroneLink.Replay? = null
@@ -241,7 +266,8 @@ class DroneLinkModel(private val elevation: ElevationSource) {
         _port.value = p
         failedPort = null
         if (!isDemo) Defaults.putInt(DroneLink.portKey, p)
-        if (receiver != null) {
+        if (shouldListen && !isDemo) {
+            // Bound to the new port straight away (also after the old one couldn't be had).
             stopListening()
             update()
         } else {
@@ -316,22 +342,47 @@ class DroneLinkModel(private val elevation: ElevationSource) {
 
     private fun startListening() {
         if (receiver != null) return
-        val r = UdpReceiver(_port.value) { d ->
-            synchronized(inbox) { if (inbox.size < 2000) inbox.add(d) }
-        }
+        val port = _port.value
+        lateinit var r: UdpReceiver
+        r = UdpReceiver(port, onStopped = {
+            // Its socket failed: treat the port as lost, and the tick tries it again every few seconds.
+            handler.post {
+                if (receiver === r) {
+                    receiver = null
+                    failedPort = port
+                    refreshStatus()
+                }
+            }
+        }) { d -> enqueue(d) }
         try {
             r.start()
             receiver = r
             failedPort = null
         } catch (e: SocketException) {
-            failedPort = _port.value
+            failedPort = port
         }
     }
 
     private fun stopListening() {
         receiver?.stop()
         receiver = null
-        synchronized(inbox) { inbox.clear() }
+        synchronized(inbox) {
+            inbox.clear()
+            inboxBytes = 0
+        }
+    }
+
+    /** One datagram (any thread): decoded here, and only its frames go to the main thread, while there is room. */
+    @VisibleForTesting
+    internal fun enqueue(d: ByteArray) {
+        synchronized(inbox) { if (inbox.size >= inboxMaxDatagrams || inboxBytes + d.size > inboxMaxBytes) return }
+        val frames = MAVLink.decode(d)
+        frames.forEach { it.message } // (parsed here too)
+        synchronized(inbox) {
+            if (inbox.size >= inboxMaxDatagrams || inboxBytes + d.size > inboxMaxBytes) return
+            inbox.add(frames)
+            inboxBytes += d.size
+        }
     }
 
     private fun startReplay() {
@@ -349,8 +400,7 @@ class DroneLinkModel(private val elevation: ElevationSource) {
         val r = replay ?: return
         val start = replayStarted ?: return
         val now = (SystemClock.uptimeMillis() - start) / 1000.0
-        val due = r.frames(replayFed, now)
-        synchronized(inbox) { inbox.addAll(due) }
+        r.frames(replayFed, now).forEach(::enqueue)
         replayFed = now
     }
 
@@ -373,9 +423,14 @@ class DroneLinkModel(private val elevation: ElevationSource) {
         if (receiver == null && !isDemo && shouldListen && failedPort != null && ticks % 12 == 0) startListening()
         feedReplay()
         val now = clock()
-        val datagrams = synchronized(inbox) { inbox.toList().also { inbox.clear() } }
+        val datagrams = synchronized(inbox) {
+            inbox.toList().also {
+                inbox.clear()
+                inboxBytes = 0
+            }
+        }
         var changed = false
-        for (d in datagrams) if (traffic.receive(d, now).frames > 0) changed = true
+        for (frames in datagrams) if (traffic.receive(frames, now).frames > 0) changed = true
         if (traffic.prune(now)) changed = true
         if (changed || now - lastRedraw >= 1) {
             lastRedraw = now
@@ -436,4 +491,14 @@ class DroneLinkModel(private val elevation: ElevationSource) {
 
     /** The time on `clock` now, for the screens' "N s ago" and grey/fade rules. */
     fun now(): Double = clock()
+
+    @VisibleForTesting
+    internal val receiverForTests: UdpReceiver? get() = receiver
+
+    companion object {
+        /** The inbox's limits between two ticks (a quarter second): far above any real link (a few hundred datagrams
+         *  a second of a few hundred bytes), small enough that a flood can't run the app out of memory. */
+        const val inboxMaxDatagrams = 2000
+        const val inboxMaxBytes = 1024 * 1024
+    }
 }

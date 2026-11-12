@@ -161,7 +161,7 @@ class MapScreenDroneLinkTest {
         compose.onNodeWithText("≈ above ground", useUnmergedTree = true).assertExists()
         compose.onNodeWithText("3D fix · 17 satellites", useUnmergedTree = true).assertExists()
         compose.onNodeWithTag("droneLinkPanelDisclaimer").assertExists()
-        // The helicopter: low (800 ft) and close (2.9 NM) to the drone.
+        // The helicopter: low (2,050 ft over the drone's 380 m take-off ground) and close (2.9 NM) to it.
         link.select(DroneLinkModel.Selection.Aircraft(0x00C5D6))
         run(0.5)
         compose.onNodeWithText("ZSHMB", useUnmergedTree = true).assertExists()
