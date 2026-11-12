@@ -83,7 +83,7 @@ struct DroneLinkSheet: View {
                 } footer: {
                     Text("QGroundControl forwards MAVLink 2 only. Mission Planner and MAVProxy can forward too: in MAVProxy, "
                          + "--out=udp:\(link.addresses.first?.address ?? "<phone IP>"):\(String(link.port)). Nothing is sent "
-                         + "back: SatMap only listens, and only while it is open.")
+                         + "back: Spoor only listens, and only while it is open.")
                 }
 
                 Section {

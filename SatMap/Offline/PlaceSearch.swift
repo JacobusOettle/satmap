@@ -20,7 +20,7 @@ enum PlaceSearch {
     }
 
     /// Identifies the app to the OpenStreetMap services, as their usage policies ask.
-    private static let userAgent = "SatMap/1.0 (iPhone offline map; https://github.com/JacobusOettle/satmap)"
+    private static let userAgent = "Spoor/1.0 (iPhone offline map; https://github.com/JacobusOettle/satmap)"
 
     private static let session: URLSession = {
         let c = URLSessionConfiguration.default

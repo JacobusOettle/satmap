@@ -1,8 +1,8 @@
 {
   "about": "Shared examples for TestBuildSwitch (SatMap/Core/TestBuildSwitch.swift and android/core/.../TestBuildSwitch.kt); both cores' tests read this file. files: a status file ('file' as JSON, written out compactly, or 'text' as it is) and what parse gives (null: no information). links: allowedLink. decisions: known(saved, fetched) and lock(...) on each platform, for statuses already checked. channels: Channel(setting), and checks(channel) for a build that isn't a debug build. requestUrls: requestURL(base, now).",
   "defaults": {
-    "title": "This test version of SatMap has been switched off",
-    "message": "Get SatMap from the App Store or Google Play to keep using it.",
+    "title": "This test version of Spoor has been switched off",
+    "message": "Get Spoor from the App Store or Google Play to keep using it.",
     "maxTitleLength": 120,
     "maxMessageLength": 500,
     "maxFileBytes": 65536,
@@ -11,13 +11,13 @@
     "savedKey": "testBuildStatus",
     "userAgent": {
       "version": "1.0",
-      "value": "SatMap/1.0"
+      "value": "Spoor/1.0"
     }
   },
   "sample": {
     "testBuilds": "off",
-    "title": "This test version of SatMap has been switched off",
-    "message": "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+    "title": "This test version of Spoor has been switched off",
+    "message": "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
     "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
     "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
     "websiteURL": "https://github.com/JacobusOettle/satmap"
@@ -28,8 +28,8 @@
       "file": {
         "schema": 1,
         "testBuilds": "on",
-        "title": "This test version of SatMap has been switched off",
-        "message": "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+        "title": "This test version of Spoor has been switched off",
+        "message": "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
         "appStoreURL": null,
         "playStoreURL": null,
         "websiteURL": null,
@@ -37,8 +37,8 @@
       },
       "expect": {
         "testBuilds": "on",
-        "title": "This test version of SatMap has been switched off",
-        "message": "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+        "title": "This test version of Spoor has been switched off",
+        "message": "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
         "appStoreURL": null,
         "playStoreURL": null,
         "websiteURL": null
@@ -49,8 +49,8 @@
       "file": {
         "schema": 1,
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
-        "message": "Thank you for testing.\nSatMap is now on the App Store and Google Play.",
+        "title": "Spoor test builds have ended",
+        "message": "Thank you for testing.\nSpoor is now on the App Store and Google Play.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
         "websiteURL": "https://github.com/JacobusOettle/satmap",
@@ -58,8 +58,8 @@
       },
       "expect": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
-        "message": "Thank you for testing.\nSatMap is now on the App Store and Google Play.",
+        "title": "Spoor test builds have ended",
+        "message": "Thank you for testing.\nSpoor is now on the App Store and Google Play.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
@@ -552,7 +552,7 @@
       "saved": null,
       "fetched": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -561,14 +561,14 @@
       "expect": {
         "known": {
           "testBuilds": "off",
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
           "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "buttons": [
             {
@@ -584,7 +584,7 @@
           ]
         },
         "android": {
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "buttons": [
             {
@@ -631,13 +631,13 @@
           "websiteURL": null
         },
         "iPhone": {
-          "title": "This test version of SatMap has been switched off",
-          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "title": "This test version of Spoor has been switched off",
+          "message": "Get Spoor from the App Store or Google Play to keep using it.",
           "buttons": []
         },
         "android": {
-          "title": "This test version of SatMap has been switched off",
-          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "title": "This test version of Spoor has been switched off",
+          "message": "Get Spoor from the App Store or Google Play to keep using it.",
           "buttons": []
         }
       }
@@ -648,7 +648,7 @@
       "debugBuild": false,
       "saved": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -658,14 +658,14 @@
       "expect": {
         "known": {
           "testBuilds": "off",
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
           "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "buttons": [
             {
@@ -681,7 +681,7 @@
           ]
         },
         "android": {
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "buttons": [
             {
@@ -704,7 +704,7 @@
       "debugBuild": false,
       "saved": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -745,7 +745,7 @@
       },
       "fetched": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -754,14 +754,14 @@
       "expect": {
         "known": {
           "testBuilds": "off",
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
           "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "buttons": [
             {
@@ -777,7 +777,7 @@
           ]
         },
         "android": {
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "buttons": [
             {
@@ -817,8 +817,8 @@
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
-          "title": "This test version of SatMap has been switched off",
-          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "title": "This test version of Spoor has been switched off",
+          "message": "Get Spoor from the App Store or Google Play to keep using it.",
           "buttons": [
             {
               "kind": "website",
@@ -828,8 +828,8 @@
           ]
         },
         "android": {
-          "title": "This test version of SatMap has been switched off",
-          "message": "Get SatMap from the App Store or Google Play to keep using it.",
+          "title": "This test version of Spoor has been switched off",
+          "message": "Get Spoor from the App Store or Google Play to keep using it.",
           "buttons": [
             {
               "kind": "googlePlay",
@@ -877,7 +877,7 @@
       "debugBuild": false,
       "saved": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -885,7 +885,7 @@
       },
       "fetched": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -894,7 +894,7 @@
       "expect": {
         "known": {
           "testBuilds": "off",
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
           "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -910,7 +910,7 @@
       "debugBuild": true,
       "saved": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -918,7 +918,7 @@
       },
       "fetched": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -927,7 +927,7 @@
       "expect": {
         "known": {
           "testBuilds": "off",
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
           "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -943,7 +943,7 @@
       "debugBuild": true,
       "saved": {
         "testBuilds": "off",
-        "title": "SatMap test builds have ended",
+        "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
         "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
@@ -953,7 +953,7 @@
       "expect": {
         "known": {
           "testBuilds": "off",
-          "title": "SatMap test builds have ended",
+          "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
           "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",

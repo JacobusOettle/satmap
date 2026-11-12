@@ -1,4 +1,6 @@
-# SatMap
+# Spoor
+
+Spoor (formerly SatMap) is made by Koonap (Pty) Ltd.
 
 A map for flying drones, for iPhone and Android: satellite imagery, contour lines and elevation colours, your
 position (with a compass arrow), height and dotted track, your KML and GPX files, a measuring tool with live
@@ -33,7 +35,7 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/22-contours-and-colours.jpg" width="250"> | <img src="docs/screenshots/23-elevation-colours.jpg" width="250"> | <img src="docs/screenshots/24-kml-point.jpg" width="250"> |
 | **Drone mode** | **Finding a place to save offline** | **Saving a reserve within its boundary** |
 | <img src="docs/screenshots/25-drone-mode.jpg" width="250"> | <img src="docs/screenshots/26-find-place.jpg" width="250"> | <img src="docs/screenshots/27-place-area.jpg" width="250"> |
-| **Groups: the terms** | **Your groups** | **SatMap Pro** |
+| **Groups: the terms** | **Your groups** | **Spoor Pro** |
 | <img src="docs/screenshots/28-groups-terms.jpg" width="250"> | <img src="docs/screenshots/29-groups-list.jpg" width="250"> | <img src="docs/screenshots/30-paywall.jpg" width="250"> |
 | **A new group** | **A group** | **Inviting with a QR code** |
 | <img src="docs/screenshots/31-create-group.jpg" width="250"> | <img src="docs/screenshots/32-group-detail.jpg" width="250"> | <img src="docs/screenshots/33-invite-qr.jpg" width="250"> |
@@ -47,7 +49,7 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/43-drone-on-map.jpg" width="250"> | | |
 
 The groups screenshots run in demo mode (`-groupsDemo YES`): the app talks to a fake server built into the core,
-with a fixed set of groups, members, trails and pins near the walk, and a fake store for SatMap Pro. The Drone link
+with a fixed set of groups, members, trails and pins near the walk, and a fake store for Spoor Pro. The Drone link
 shots replay a recorded flight over the farm with three ADS-B aircraft (`docs/mavlink/demo_flight.json`) through the
 same decoder, instead of listening on the network (`-droneLinkDemo YES`, simulator and debug builds only).
 
@@ -59,7 +61,7 @@ network (set by the walkthrough's instrumentation in the app's own process; no i
 | Map | Measuring | Offline maps | Drone mode |
 | --- | --- | --- | --- |
 | <img src="docs/screenshots/android/01-map.jpg" width="180"> | <img src="docs/screenshots/android/03-measure-live.jpg" width="180"> | <img src="docs/screenshots/android/09-offline-areas.jpg" width="180"> | <img src="docs/screenshots/android/25-drone-mode.jpg" width="180"> |
-| **Groups: terms** | **Your groups** | **SatMap Pro** | **A new group** |
+| **Groups: terms** | **Your groups** | **Spoor Pro** | **A new group** |
 | <img src="docs/screenshots/android/28-groups-terms.jpg" width="180"> | <img src="docs/screenshots/android/29-groups-list.jpg" width="180"> | <img src="docs/screenshots/android/30-paywall.jpg" width="180"> | <img src="docs/screenshots/android/31-create-group.jpg" width="180"> |
 | **A group** | **An invite's QR code** | **Joining with a link** | **Sharing your location** |
 | <img src="docs/screenshots/android/32-group-detail.jpg" width="180"> | <img src="docs/screenshots/android/33-invite-qr.jpg" width="180"> | <img src="docs/screenshots/android/34-join-group.jpg" width="180"> | <img src="docs/screenshots/android/35-share-consent.jpg" width="180"> |
@@ -72,10 +74,10 @@ network (set by the walkthrough's instrumentation in the app's own process; no i
 
 | What you asked for | How it works |
 | --- | --- |
-| Satellite view | Esri World Imagery tiles drawn over MapKit (Apple's own map is switched off). SatMap draws the imagery itself: every spot at once with the best imagery already in memory (the coarser tile enlarged when zooming in, the sharper ones shrunk when zooming out), with the contour lines on top, and swaps in a freshly drawn layer under the old one as better tiles arrive, so the map doesn't go grey while tiles load. In a new place it asks for a tile three levels up first (one request covers 64 tiles), and when the map stops it keeps coarse tiles around the screen ready for the next zoom or pan. |
+| Satellite view | Esri World Imagery tiles drawn over MapKit (Apple's own map is switched off). Spoor draws the imagery itself: every spot at once with the best imagery already in memory (the coarser tile enlarged when zooming in, the sharper ones shrunk when zooming out), with the contour lines on top, and swaps in a freshly drawn layer under the old one as better tiles arrive, so the map doesn't go grey while tiles load. In a new place it asks for a tile three levels up first (one request covers 64 tiles), and when the map stops it keeps coarse tiles around the screen ready for the next zoom or pan. |
 | Contour lines and elevation colours | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Contour spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. The elevation colours tint the map by height, blue for the lowest ground on screen to red for the highest, so high spots stand out; the range is chosen from the heights on screen (round numbers, at least 10 m) and kept while you pan around, so the colours stay put. The mountain button, under **Groups** at the top of the side buttons, cycles through contour lines → contour lines with colours → colours only → neither (remembered; a label says which). On the left, the contour interval shows above the scale bar and the colours' heights below it. Works offline for downloaded areas; with neither shown, no elevation is downloaded for the map. The same button's next mode is **drone mode** (the plane): the airports, airstrips, helipads and radio beacons (VOR, NDB) around, from [OurAirports](https://ourairports.com) (public domain, shipped with the app, so it works offline), more of them as you zoom in. Each shows its code and name, how far it is from you in nautical miles (cyan) and, once you tap a spot, from that spot (amber). A card at the top says where you are as a pilot reports it ("3.2 NM NE of FASZ Skukuza"), and where the tapped spot is. Tap an airfield to select it: the distances to the others are then from it. Visual reporting points and airspace aren't in the open data, so they aren't shown. With **Drone link** on (the button under the card), your drone and the aircraft around it show too: see [Drone link](#drone-link). |
 | My location + dotted track | Blue dot (grey while the GPS sleeps) with a small arrow pointing where the phone points (the compass; it turns with the map) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
-| KML and GPX files | **Blocks** button → **+** to import `.kml`/`.kmz`/`.gpx` from Files, or share a KML or GPX file from WhatsApp/Mail/Files to SatMap. Blocks are drawn in the file's own colours and line widths (what a file leaves unset is white), with their names. A GPX file's tracks and routes are drawn as white lines and its waypoints as points (GPX has no colours). Each file has a switch to take its blocks off the map and put them back; untick **Use the colours in the files** to draw every block in white. Long-press the **Blocks** button to switch files (and the colours) without opening the list. Points in a file (launch points …) show as a dot with their name; tap one to select it at its exact position, with its name, coordinates and height at the bottom. Tap a file to zoom to it. Swipe to remove. |
+| KML and GPX files | **Blocks** button → **+** to import `.kml`/`.kmz`/`.gpx` from Files, or share a KML or GPX file from WhatsApp/Mail/Files to Spoor. Blocks are drawn in the file's own colours and line widths (what a file leaves unset is white), with their names. A GPX file's tracks and routes are drawn as white lines and its waypoints as points (GPX has no colours). Each file has a switch to take its blocks off the map and put them back; untick **Use the colours in the files** to draw every block in white. Long-press the **Blocks** button to switch files (and the colours) without opening the list. Points in a file (launch points …) show as a dot with their name; tap one to select it at its exact position, with its name, coordinates and height at the bottom. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Move the map to put the crosshair on the spot, then tap anywhere on the map (or the ruler again) to drop a marker under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). With a spot selected (tapped on the map, or a point in a KML file), the ruler makes it the marker straight away, without moving the map, so you see how far it is from you and how much higher or lower. Add more points the same way (B, C, D …): the panel shows the total distance along the line, the last leg, and how much higher or lower the last point is than A. Tap A, or put the crosshair on A and tap (or **Close shape**), to close the shape: its area (hectares and m²) and perimeter. **Undo** removes the last point; ✕ clears it all. Tap the distance (or the scale bar) to show distances in kilometres, miles or nautical miles; the scale bar follows. |
 | Go to coordinates | The button with the magnifying glass: paste or type a position in any common format (decimal degrees signed or with N/S/E/W; degrees and minutes; degrees, minutes and seconds with any symbols; decimal commas; GPS/NMEA; Google, Apple, OpenStreetMap and geo: links; UTM; MGRS; plus codes). It shows how it was read and how far it is from you; **Show and measure from here** puts it on the map as measuring point A, with the live distance from you, as if you had tapped it. |
 | Coordinates | Your own coordinates (latitude, longitude in decimal degrees) show at the top and follow you, with your height above sea level beside them (from the elevation model; from the GPS, marked, where there is no elevation data). Tap a spot on the map: a pin marks it and its coordinates show at the bottom, within easy reach, with its height beside them. Tap either to copy it to the clipboard.  To move the pin or a measuring point precisely, press and hold it: a glass square above your finger shows 15 m × 15 m of ground around it, magnified. Keep your finger down and drag: the point follows at the square's scale, and beyond 5 m from the square's middle (the dashed ring) the map scrolls that way, faster the further you drag. Lift your finger to leave it there. Tap a height to show heights in feet, and again for metres. |
@@ -86,7 +88,7 @@ network (set by the walkthrough's instrumentation in the app's own process; no i
 A group is a small set of people (a drone team, friends on a Kruger trip) who see each other on the map: each
 member's live position, the trail each member leaves, and pins they drop (an animal sighting, shelter, water,
 danger, a pothole, police), each with a short note. Tap **Groups** (the top button on the right of the map) to
-create a group (it needs SatMap Pro: monthly, yearly or once; members join free) or to join one with an invite link
+create a group (it needs Spoor Pro: monthly, yearly or once; members join free) or to join one with an invite link
 or QR code, which works once, for 7 days. Everything a group shares is encrypted on the phones (AES-256-GCM, with a key
 that travels only inside the invite link), so the server stores and forwards only what it can't read. In a group's
 screen you choose whether it shows on the map and whether you share your location with it (asked once, with what
@@ -98,7 +100,7 @@ server is in `server/`.
 
 ### Drone link
 
-In drone mode, SatMap can show your drone and the aircraft around it, live, from the MAVLink your ground station
+In drone mode, Spoor can show your drone and the aircraft around it, live, from the MAVLink your ground station
 forwards to the phone over Wi-Fi. It works with ArduPilot and PX4 drones flown with QGroundControl, Mission Planner
 or MAVProxy. **DJI drones don't use MAVLink**, so they can't be shown.
 
@@ -108,13 +110,13 @@ with its height above take-off, and its home point is marked H. Aircraft come fr
 aircraft, helicopter, glider, balloon, drone), turned to its heading, with its callsign (or ICAO address), altitude in
 feet, speed in knots and an arrow when it climbs or descends. Aircraft below 2,000 ft within 5 NM of you or the drone
 are drawn red. Tap the drone for its height above take-off and above sea level, an estimate of its height above the
-ground (from SatMap's elevation data), ground speed, climb, battery, armed or not, GPS fix and satellites, how far it
+ground (from Spoor's elevation data), ground speed, climb, battery, armed or not, GPS fix and satellites, how far it
 is from you, and the nearest airfields in nautical miles. Tap an aircraft for its details and its distance and bearing
 from you and from the drone. A drone with no new position for 10 s turns grey and goes after 60 s; an aircraft fades
 after 15 s and goes after 120 s (as in QGroundControl). Heights and speeds follow your units. Until the drone has a
 GPS position (autopilots report 0°, 0° before then) it stays off the map. Heartbeats from a companion computer,
 camera or gimbal on the drone are ignored, so armed or not is always the flight controller's. When the drone's height
-above sea level is well below SatMap's ground there (a wrong altitude datum, coarse elevation data), the estimate
+above sea level is well below Spoor's ground there (a wrong altitude datum, coarse elevation data), the estimate
 is left out.
 
 **Set it up.** Put the phone and the ground station on the same Wi-Fi (or turn on the phone's hotspot, Personal
@@ -131,13 +133,13 @@ signatures). In **Mission Planner** use its MAVLink mirror (Ctrl+F, **Mavlink**,
 **MAVProxy** add `--out=udp:<phone-ip>:14445`. Both can forward MAVLink 1 or 2. The status line in the Drone link
 screen says *Waiting for MAVLink on port 14445…*, *Receiving from 1 drone*, or *No data for 10 s*.
 
-SatMap only listens: it never sends anything to the drone or the ground station, and the port is open only while the
-switch is on and SatMap is on screen (it closes in the background and opens again when you come back). It is off by
+Spoor only listens: it never sends anything to the drone or the ground station, and the port is open only while the
+switch is on and Spoor is on screen (it closes in the background and opens again when you come back). It is off by
 default. On iPhone, receiving a ground station's datagrams needs no Local Network permission; the app declares one
 for later. On Android no extra permission is needed today (Android 17 will add `ACCESS_LOCAL_NETWORK`).
 
 > **Traffic awareness only. Not for navigation, separation or collision avoidance. Many aircraft don't broadcast.
-> Under SACAA Part 101 the remote pilot must give way to manned aircraft.** SatMap shows this when you first switch
+> Under SACAA Part 101 the remote pilot must give way to manned aircraft.** Spoor shows this when you first switch
 > Drone link on, and in every drone and aircraft panel.
 
 The decoder (MAVLink 1 and 2, CRCs, signed frames, several frames to a datagram) and the rules are in the shared core
@@ -189,14 +191,14 @@ ADS-B (adsb.lol and the like) may be added later for aircraft when the drone has
   in the area even after you clear the track. **Auto download** on the same screen (on unless you turn it off; one
   setting for the whole app, saved as soon as you change it) does this by itself, as the Download button would: once
   the new parts of your track add up to 500 m, they are added to the area, with its own detail and mobile data
-  setting (for a new area, the detail the screen would choose, and Wi-Fi only). SatMap looks when you open it, when
+  setting (for a new area, the detail the screen would choose, and Wi-Fi only). Spoor looks when you open it, when
   you turn the switch on and as the track grows, at most every 10 minutes; not while the area is downloading or
   paused, and not with less than 1 GB free. Without mobile data the download waits for Wi-Fi.
-- **In the background:** a download keeps going when you leave SatMap or lock the phone. From iOS 26 it runs as a
-  *continued processing task*: its progress shows on the Lock Screen and in the Dynamic Island (not while SatMap is
+- **In the background:** a download keeps going when you leave Spoor or lock the phone. From iOS 26 it runs as a
+  *continued processing task*: its progress shows on the Lock Screen and in the Dynamic Island (not while Spoor is
   open, where the banner on the map shows it), and you can stop it there. Earlier iOS versions allow about half a
   minute. If iOS ends it (low battery, other apps need the phone, or no progress for a while without signal), or
-  you swipe SatMap away, it continues from where it stopped when you open SatMap again. While SatMap is open the
+  you swipe Spoor away, it continues from where it stopped when you open Spoor again. While Spoor is open the
   screen stays on. The IPA is built with Xcode 26 for this; it keeps the iOS 18 look on iOS 26
   (`UIDesignRequiresCompatibility`).
 - **Going deeper later:** tap a downloaded area to open it: *Show on the map*, how deep the imagery it found goes,
@@ -210,16 +212,16 @@ ADS-B (adsb.lol and the like) may be added later for aircraft when the drone has
   from iCloud backup. Swipe an area to delete it and free the space.
 - **Encrypted:** the map pictures in those files are encrypted (AES-256-GCM, with a key built into the app), so
   files copied off the phone can't be shown in QGIS or another map app. It keeps the files from being taken and used
-  elsewhere; it doesn't stop someone who takes the app itself apart. Areas saved by an earlier version of SatMap are
-  encrypted after the update while SatMap is open, area by area; the map and downloads work as usual meanwhile.
+  elsewhere; it doesn't stop someone who takes the app itself apart. Areas saved by an earlier version of Spoor are
+  encrypted after the update while Spoor is open, area by area; the map and downloads work as usual meanwhile.
 - **Backup:** *Export all offline maps* (or long-press one area → *Export*) opens the share sheet with each
   area's two files, "*name* - satellite.mbtiles" and "*name* - elevation.mbtiles": save them to Files,
   iCloud Drive or a USB drive, or AirDrop them to a computer. Exporting is instant and takes almost no extra space
   (the iPhone's file system shares the data between the area and its export); an area saved by an earlier version
   that isn't encrypted yet is encrypted first, with a progress bar. Downloads wait until the share sheet closes.
   *Restore from a backup* adds the areas
-  back from those files (choose both files of each area), also after reinstalling SatMap. The files carry the
-  area's settings inside. Offline maps are stored encrypted, so only SatMap can show them: other map apps (QGIS,
+  back from those files (choose both files of each area), also after reinstalling Spoor. The files carry the
+  area's settings inside. Offline maps are stored encrypted, so only Spoor can show them: other map apps (QGIS,
   for example) can't show a backup's pictures, and backups move between your own phones, iPhone or Android (the
   Android app writes and reads the same files, see below). Backups made before offline maps were encrypted still
   restore, and are encrypted once restored.
@@ -265,7 +267,7 @@ Limits imposed by iOS:
   saving comes from drawing and recording less often.
 - With "While Using" location permission, recording stops if you force-quit the app (swipe it away),
   and starts again when you open it.
-- With **Precise Location** turned off for SatMap, iOS only gives positions to within kilometres, so no
+- With **Precise Location** turned off for Spoor, iOS only gives positions to within kilometres, so no
   track can be recorded. The app shows a warning when that happens.
 
 On Android the policy and every number are the same. The GPS is driven through Android's own location service
@@ -303,7 +305,7 @@ A paid Apple Developer account ($99/year) extends this to a year, and also allow
 Download **[SatMap.apk](https://github.com/JacobusOettle/satmap/releases/download/android-test-build/SatMap.apk)**
 on the phone (rebuilt automatically after every change to the app, `.github/workflows/android.yml`) and open it.
 Android asks to allow installing apps from the browser (or Files) the first time: allow it, then tap **Install**.
-It needs Android 8.0 or newer. Later builds install over it and keep your data. When SatMap starts, allow
+It needs Android 8.0 or newer. Later builds install over it and keep your data. When Spoor starts, allow
 **location** and **physical activity** (the step sensor, for waking the GPS when you walk); the first download asks
 for **notifications**, where its progress shows.
 
@@ -312,7 +314,7 @@ over it. That is fine for trying it out; to sign with your own key, add it as re
 `android/signing/README.md`) and the next build uses it. Installing a build signed with a different key needs
 the old one removed first, which deletes its offline maps, so export them before.
 
-**Android Auto:** SatMap shows on the car's screen with the satellite map, contours, your track, blocks and
+**Android Auto:** Spoor shows on the car's screen with the satellite map, contours, your track, blocks and
 drone mode (the button at the top cycles them, like the mountain button on the phone). Android Auto only lists
 apps installed from the Play Store unless you allow others: in the Android Auto settings on the phone, tap
 *Version* ten times to unlock developer mode, then in the ⋮ menu → *Developer settings* turn on *Unknown
@@ -334,7 +336,7 @@ location sharing stop. No user data is deleted. Set `"testBuilds": "on"` again a
 A build that has already seen "off" starts locked even with no signal.
 
 Store builds (App Store and Google Play, later) are never affected, and neither are local debug builds. The check is a
-plain anonymous request for the file: no device or user identifier is sent, only a `SatMap/<version>` User-Agent. The
+plain anonymous request for the file: no device or user identifier is sent, only a `Spoor/<version>` User-Agent. The
 rule itself lives in `SatMap/Core/TestBuildSwitch.swift` and its Kotlin twin, with shared tests.
 
 While the switch is off, the Android CI's launch check (the release APK is a test build, so it shows the lock too)
@@ -371,7 +373,7 @@ SatMap/
   Map/        MapController (MKMapView), tile overlays, contour renderer, tile repository, overlays
   Offline/    OfflineManager – offline areas, download queue
   KML/        imported KML and GPX files
-  Groups/     groups in the app: the hub's HTTP and WebSocket transport, Keychain, SatMap Pro (StoreKit 2), QR codes
+  Groups/     groups in the app: the hub's HTTP and WebSocket transport, Keychain, Spoor Pro (StoreKit 2), QR codes
   UI/         SwiftUI screens (UI/Groups: the groups screens)
   Core/       platform-independent logic: tile maths, area → tile coverage, PNG/Terrarium decoding,
               marching-squares contours, KML/KMZ and GPX parsing, MBTiles (SQLite, tiles encrypted), track log,

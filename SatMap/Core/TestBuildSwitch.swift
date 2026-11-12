@@ -43,8 +43,8 @@ enum TestBuildSwitch {
     static let maxFileBytes = 64 * 1024
 
     /// The lock's texts when the file gives none.
-    static let defaultTitle = "This test version of SatMap has been switched off"
-    static let defaultMessage = "Get SatMap from the App Store or Google Play to keep using it."
+    static let defaultTitle = "This test version of Spoor has been switched off"
+    static let defaultMessage = "Get Spoor from the App Store or Google Play to keep using it."
 
     /// The buttons' titles.
     static let appStoreButtonTitle = "Get it on the App Store"
@@ -101,7 +101,7 @@ enum TestBuildSwitch {
     static let sample = Status(
         on: false,
         title: defaultTitle,
-        message: "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+        message: "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
         appStoreURL: "https://apps.apple.com/app/satmap/id0000000000",
         playStoreURL: "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
         websiteURL: "https://github.com/JacobusOettle/satmap")
@@ -124,7 +124,7 @@ enum TestBuildSwitch {
 
     /// The requests' User-Agent: the app and its version, nothing else (no device or user identifier is ever sent).
     static func userAgent(version: String) -> String {
-        "SatMap/" + version
+        "Spoor/" + version
     }
 
     // MARK: - Reading the file

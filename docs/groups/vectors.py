@@ -381,7 +381,7 @@ def main():
     link = f"https://example.invalid/j/{tok}#{key}"
     invite_texts = [
         link,
-        f'Join "Kruger trip" on SatMap: {link}',
+        f'Join "Kruger trip" on Spoor: {link}',
         f"https://EXAMPLE.Invalid/j/{tok}#{key}",
         f"https://example.invalid/j/{tok}/#{key}",
         f"satmap://join/{tok}#{key}",

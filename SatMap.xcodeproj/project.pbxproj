@@ -345,7 +345,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GROUPS_DOMAIN = example.invalid;
 				INFOPLIST_FILE = SatMap/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SatMap;
+				INFOPLIST_KEY_CFBundleDisplayName = Spoor;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -378,7 +378,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				GROUPS_DOMAIN = example.invalid;
 				INFOPLIST_FILE = SatMap/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = SatMap;
+				INFOPLIST_KEY_CFBundleDisplayName = Spoor;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.navigation";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

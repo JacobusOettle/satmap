@@ -17,7 +17,7 @@ struct ConsentView: View {
         let name = groups.hub.detail(groupId)?.name ?? GroupHub.unnamedGroup
         Form {
             Section {
-                Text("SatMap collects location data to share your position and trail with \(name), even when the app is in the background.")
+                Text("Spoor collects location data to share your position and trail with \(name), even when the app is in the background.")
                     .font(.body.weight(.semibold))
                     .fixedSize(horizontal: false, vertical: true)
                 IconRow(systemImage: "location.fill", text: "Members see where you are while sharing is on.")
@@ -48,7 +48,7 @@ struct ConsentView: View {
         .navigationBarTitleDisplayMode(.inline)
         .groupsLeading(nil) {}
         .interactiveDismissDisabled()
-        .alert("Location is off for SatMap. Turn it on in Settings › Privacy › Location Services to share.", isPresented: $refused) {
+        .alert("Location is off for Spoor. Turn it on in Settings › Privacy › Location Services to share.", isPresented: $refused) {
             Button("OK", role: .cancel) { finish() }
         }
     }

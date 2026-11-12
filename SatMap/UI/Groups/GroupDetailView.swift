@@ -52,7 +52,7 @@ struct GroupDetailView: View {
                                                   deleteDate: d.deleteAt.map { groupDates.day($0, now: groupNow) }))
                         .fixedSize(horizontal: false, vertical: true)
                     if d.yourRole == .owner {
-                        Button("Renew SatMap Pro") { groups.renew(groupId, nav: nav) }
+                        Button("Renew Spoor Pro") { groups.renew(groupId, nav: nav) }
                         Button("Hand over ownership") { nav.push(.handover(groupId)) }
                     }
                 }
@@ -61,7 +61,7 @@ struct GroupDetailView: View {
 
             if let owner = d.offerToYouFrom {
                 Section {
-                    Text("\(owner) wants to make you the owner of this group. You need SatMap Pro.")
+                    Text("\(owner) wants to make you the owner of this group. You need Spoor Pro.")
                     Button("Accept") { groups.acceptOwnership(groupId, nav: nav) }
                         .accessibilityIdentifier("acceptOwner")
                     Button("Decline") { run { try await $0.cancelOwnershipOffer(groupId: groupId) } }
@@ -273,7 +273,7 @@ struct GroupDetailView: View {
         case .leave(let g): return "Leave \(g)?"
         case .delete(let g): return "Delete \(g)?"
         case .cancelInvite: return "Cancel this invite?"
-        case .locationOff: return "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services to share."
+        case .locationOff: return "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services to share."
         case .error(let text): return text
         case nil: return ""
         }

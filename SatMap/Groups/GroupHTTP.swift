@@ -17,7 +17,7 @@ final class GroupHTTP: GroupTransport {
         config.timeoutIntervalForRequest = 30
         config.timeoutIntervalForResource = 60
         config.waitsForConnectivity = false
-        config.httpAdditionalHeaders = ["User-Agent": "SatMap-iOS"]
+        config.httpAdditionalHeaders = ["User-Agent": "Spoor-iOS"]
         session = URLSession(configuration: config)
     }
 

@@ -31,7 +31,7 @@ struct JoinLinkView: View {
                     Text("This invite link is incomplete. Copy the whole link from the message, or scan the QR code.")
                         .foregroundColor(.orange)
                 case .notInvite where !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-                    Text("That isn't a SatMap invite link.").foregroundColor(.orange)
+                    Text("That isn't a Spoor invite link.").foregroundColor(.orange)
                 default:
                     EmptyView()
                 }
@@ -119,7 +119,7 @@ struct ScanView: View {
                 }
             case false?:
                 VStack(spacing: 16) {
-                    Text("Camera access is off for SatMap. Turn it on in Settings to scan a code.")
+                    Text("Camera access is off for Spoor. Turn it on in Settings to scan a code.")
                         .multilineTextAlignment(.center)
                         .foregroundColor(.secondary)
                     Button("Open Settings") {
@@ -152,7 +152,7 @@ struct ScanView: View {
         case .missingKey:
             hint = "This invite link is incomplete. Copy the whole link from the message, or scan the QR code."
         case .notInvite:
-            hint = "That isn't a SatMap invite link."
+            hint = "That isn't a Spoor invite link."
         }
     }
 }

@@ -100,8 +100,8 @@ jobs:
           sleep 40
           xcrun simctl io "$UDID" screenshot --display=internal carplay/phone.png || true
           xcrun simctl io "$UDID" screenshot --display=external carplay/car-home.png || true
-          # Open SatMap on the car's screen. First through the window's accessibility elements (Simulator passes on
-          # the screen's): press the one named SatMap, if there is one.
+          # Open Spoor on the car's screen. First through the window's accessibility elements (Simulator passes on
+          # the screen's): press the one named Spoor, if there is one.
           osascript <<'EOF' 2>&1 | tee -a carplay/menu.txt || true
           tell application "Simulator" to activate
           delay 1
@@ -126,7 +126,7 @@ jobs:
                   set d to d & " | " & (name of e as text)
                 end try
                 set out to out & d & linefeed
-                if (not pressed) and d contains "SatMap" then
+                if (not pressed) and d contains "Spoor" then
                   try
                     perform action "AXPress" of e
                     set pressed to true
@@ -166,7 +166,7 @@ jobs:
           if [ -n "$GEOMETRY" ]; then
             read -r X Y W H CX CY <<< "$(echo "$GEOMETRY" | awk '{k = $3 / 800; top = $2 + $4 - 480 * k; print $1, $2, $3, $4, int($1 + 205 * k), int(top + 300 * k)}')"
             # A click on a window that isn't the key one may only bring it forward: each way twice, a screenshot after
-            # each (once SatMap is open, a click there lands on its map, which ignores it).
+            # each (once Spoor is open, a click there lands on its map, which ignores it).
             for way in swift jxa; do
               osascript -e 'tell application "Simulator" to activate' || true
               sleep 1
@@ -184,7 +184,7 @@ jobs:
                 fi
                 sleep 1.5
               done
-              echo "clicked SatMap at $CX, $CY ($way)" | tee -a carplay/menu.txt
+              echo "clicked Spoor at $CX, $CY ($way)" | tee -a carplay/menu.txt
               sleep 12
               xcrun simctl io "$UDID" screenshot --display=external "carplay/car-$way.png" || true
             done

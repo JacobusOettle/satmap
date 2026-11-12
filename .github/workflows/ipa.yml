@@ -106,10 +106,10 @@ jobs:
           # nothing there when creating the new one was refused); a new release only when there is none.
           if gh release view test-build > /dev/null 2>&1; then
             gh release upload test-build SatMap.ipa --clobber
-            gh release edit test-build --prerelease --notes "$notes"
+            gh release edit test-build --prerelease --title "Spoor test build" --notes "$notes"
             # The tag follows to this commit (the link goes by the tag's name, so it works either way).
             gh api -X PATCH "repos/$GH_REPO/git/refs/tags/test-build" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
               || echo "The tag stays at the earlier commit."
           else
-            gh release create test-build SatMap.ipa --prerelease --target "$GITHUB_SHA" --title "SatMap test build" --notes "$notes"
+            gh release create test-build SatMap.ipa --prerelease --target "$GITHUB_SHA" --title "Spoor test build" --notes "$notes"
           fi

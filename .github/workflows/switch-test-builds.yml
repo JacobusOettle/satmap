@@ -1,6 +1,6 @@
 name: Switch test builds
 
-# Turns SatMap's test builds (the IPA and APK on GitHub releases; never App Store or Google Play builds) on or off.
+# Turns Spoor's test builds (the IPA and APK on GitHub releases; never App Store or Google Play builds) on or off.
 # It rewrites test-builds.json on the app-status branch, which test builds read at launch, when they come to the
 # foreground and every 5 minutes while open: "off" locks every test build that is online within minutes (a copy that is
 # offline locks as soon as it next gets signal); "on" unlocks them. Run it from the Actions tab (or the GitHub app):
@@ -81,9 +81,9 @@ jobs:
           doc = {
               "schema": 1,
               "testBuilds": state,
-              "title": os.environ.get("TITLE", "").strip()[:120] or "This test version of SatMap has been switched off",
+              "title": os.environ.get("TITLE", "").strip()[:120] or "This test version of Spoor has been switched off",
               "message": os.environ.get("MESSAGE", "").strip()[:500]
-                  or "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+                  or "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
               "appStoreURL": link("APP_STORE_URL", {"apps.apple.com"}),
               "playStoreURL": link("PLAY_STORE_URL", {"play.google.com"}),
               "websiteURL": link("WEBSITE_URL", set()),

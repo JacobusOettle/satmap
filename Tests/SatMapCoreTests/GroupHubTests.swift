@@ -282,7 +282,7 @@ final class GroupHubTests: XCTestCase {
         detail = try XCTUnwrap(owner.hub.detail(gid))
         XCTAssertEqual(detail.invites?.map(\.link), [made.link])
         XCTAssertEqual(detail.invites?.first?.createdByName, "Sam")
-        guard case .invite(let link) = InviteLink.parse("Join \"Kruger trip\" on SatMap: \(made.link)", domain: "example.invalid") else {
+        guard case .invite(let link) = InviteLink.parse("Join \"Kruger trip\" on Spoor: \(made.link)", domain: "example.invalid") else {
             return XCTFail("link doesn't parse")
         }
         XCTAssertEqual(link.groupIdText, gid)
@@ -356,7 +356,7 @@ final class GroupHubTests: XCTestCase {
             XCTFail("created without Pro")
         } catch let e as GroupActionError {
             XCTAssertEqual(e.kind, .proNotConfirmed)
-            XCTAssertEqual(e.message, "SatMap Pro couldn't be confirmed. Tap Restore purchases, then try again.")
+            XCTAssertEqual(e.message, "Spoor Pro couldn't be confirmed. Tap Restore purchases, then try again.")
         }
         // A definite refusal forgets the membership saved before the request.
         XCTAssertTrue(p.secrets.loadAll().isEmpty)
@@ -1735,7 +1735,7 @@ final class GroupHubTests: XCTestCase {
             XCTFail("created with old terms")
         } catch let e as GroupActionError {
             XCTAssertEqual(e.kind, .termsOutdated)
-            XCTAssertEqual(e.message, "Please update SatMap to create or join groups.")
+            XCTAssertEqual(e.message, "Please update Spoor to create or join groups.")
         }
         XCTAssertTrue(p.secrets.loadAll().isEmpty)
         // The app had newer terms: S1 again, then the retry with the new version works.

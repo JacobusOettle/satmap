@@ -275,7 +275,7 @@ final class CarPlayLockView: UIView {
             isHidden = true
             return
         }
-        label.text = lock.title + "\n\nGet SatMap from the App Store on your phone to keep using it."
+        label.text = lock.title + "\n\nGet Spoor from the App Store on your phone to keep using it."
         isHidden = false
     }
 }

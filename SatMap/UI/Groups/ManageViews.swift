@@ -301,7 +301,7 @@ struct HandoverPickerView: View {
             Button("Send request") { send(to: m.memberId) }
             Button("Cancel", role: .cancel) {}
         } message: { m in
-            Text("\(m.name) needs SatMap Pro to accept. You'll become an admin. If they don't accept within 7 days, the request ends.")
+            Text("\(m.name) needs Spoor Pro to accept. You'll become an admin. If they don't accept within 7 days, the request ends.")
         }
         .alert(error ?? "", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
