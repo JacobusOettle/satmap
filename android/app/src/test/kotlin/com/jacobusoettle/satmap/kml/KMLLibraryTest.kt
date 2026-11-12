@@ -293,7 +293,7 @@ class KMLLibraryTest {
         // Nothing else.
         assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent(Intent.ACTION_SEND)))
         assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent(Intent.ACTION_MAIN)))
-        assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent("com.jacobusoettle.satmap.SAVE_TO_FOLDER")))
+        assertEquals(emptyList<Uri>(), KMLLibrary.incomingUris(Intent("com.koonap.spoor.SAVE_TO_FOLDER")))
 
         // Shared and imported as the picker's files are, with the zoom or the error.
         Provider.file = File(incoming, "attachment-2").apply { writeBytes(fixture("blocks.kmz")) }

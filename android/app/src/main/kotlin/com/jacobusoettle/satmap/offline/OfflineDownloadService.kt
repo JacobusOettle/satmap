@@ -17,8 +17,8 @@ import androidx.core.app.ServiceCompat
  *  iOS. */
 class OfflineDownloadService : Service() {
     companion object {
-        const val ACTION_START = "com.jacobusoettle.satmap.START_DOWNLOADS"
-        const val ACTION_STOP = "com.jacobusoettle.satmap.STOP_DOWNLOADS"
+        const val ACTION_START = "com.koonap.spoor.START_DOWNLOADS"
+        const val ACTION_STOP = "com.koonap.spoor.STOP_DOWNLOADS"
 
         /** Whether a service runs in the foreground. */
         @Volatile

@@ -48,25 +48,16 @@ class TestBuildSwitchTests {
                 url = assertNotNull(text(o["url"])),
             )
         }
-        // The defaults, as the fixture writes them, are the app's own texts (see `shownName`).
-        val defaults = cases.getValue("defaults").jsonObject
-        val title = assertNotNull(text(d["title"])).let { if (it == text(defaults["title"])) shownName(it)!! else it }
-        val message = assertNotNull(text(d["message"])).let { if (it == text(defaults["message"])) shownName(it)!! else it }
-        return TestBuildSwitch.Lock(title, message, buttons)
+        return TestBuildSwitch.Lock(assertNotNull(text(d["title"])), assertNotNull(text(d["message"])), buttons)
     }
 
     private fun list(key: String): List<JsonObject> = cases.getValue(key).jsonArray.map { it.jsonObject }
 
-    /** The app's shown name is Spoor (it was SatMap). The shared fixture's texts may still say SatMap until it is
-     *  updated with the iPhone core; once it says Spoor this changes nothing. Shown names only: the product name in
-     *  sentences and the User-Agent's product token, never a URL. */
-    private fun shownName(s: String?): String? = s?.replace("SatMap", "Spoor")
-
     @Test
     fun defaults() {
         val d = cases.getValue("defaults").jsonObject
-        assertEquals(shownName(text(d["title"])), TestBuildSwitch.defaultTitle)
-        assertEquals(shownName(text(d["message"])), TestBuildSwitch.defaultMessage)
+        assertEquals(text(d["title"]), TestBuildSwitch.defaultTitle)
+        assertEquals(text(d["message"]), TestBuildSwitch.defaultMessage)
         assertEquals(d.getValue("maxTitleLength").jsonPrimitive.intOrNull, TestBuildSwitch.maxTitleLength)
         assertEquals(d.getValue("maxMessageLength").jsonPrimitive.intOrNull, TestBuildSwitch.maxMessageLength)
         assertEquals(d.getValue("maxFileBytes").jsonPrimitive.intOrNull, TestBuildSwitch.maxFileBytes)
@@ -74,9 +65,9 @@ class TestBuildSwitchTests {
         assertEquals(d.getValue("timeoutSeconds").jsonPrimitive.doubleOrNull, TestBuildSwitch.timeout)
         assertEquals(text(d["savedKey"]), TestBuildSwitch.savedKey)
         val ua = d.getValue("userAgent").jsonObject
-        assertEquals(shownName(text(ua["value"])), TestBuildSwitch.userAgent(assertNotNull(text(ua["version"]))))
+        assertEquals(text(ua["value"]), TestBuildSwitch.userAgent(assertNotNull(text(ua["version"]))))
         val sample = assertNotNull(status(cases["sample"]))
-        assertEquals(sample.copy(title = shownName(sample.title), message = shownName(sample.message)), TestBuildSwitch.sample)
+        assertEquals(sample, TestBuildSwitch.sample)
     }
 
     @Test

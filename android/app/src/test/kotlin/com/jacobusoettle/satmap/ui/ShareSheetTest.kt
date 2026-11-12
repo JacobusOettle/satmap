@@ -36,8 +36,8 @@ class ShareSheetTest {
     val compose = createAndroidComposeRule<ComponentActivity>()
 
     private val files = listOf(
-        Uri.parse("content://com.jacobusoettle.satmap.backup/offline/A/imagery.mbtiles?displayName=Farm%20-%20satellite.mbtiles"),
-        Uri.parse("content://com.jacobusoettle.satmap.backup/offline/A/terrain.mbtiles?displayName=Farm%20-%20elevation.mbtiles"),
+        Uri.parse("content://com.koonap.spoor.backup/offline/A/imagery.mbtiles?displayName=Farm%20-%20satellite.mbtiles"),
+        Uri.parse("content://com.koonap.spoor.backup/offline/A/terrain.mbtiles?displayName=Farm%20-%20elevation.mbtiles"),
     )
 
     @Before

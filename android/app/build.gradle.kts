@@ -12,7 +12,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.jacobusoettle.satmap"
+        applicationId = "com.koonap.spoor"
         minSdk = 26
         targetSdk = 36
         // Each CI build a higher number, so it installs over the one before.

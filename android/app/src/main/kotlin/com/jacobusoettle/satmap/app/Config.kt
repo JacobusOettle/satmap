@@ -116,7 +116,7 @@ object GroupConfig {
     const val contactEmail = "groups@example.invalid"
 
     const val appStoreURL = ""
-    const val playStoreURL = "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+    const val playStoreURL = "https://play.google.com/store/apps/details?id=com.koonap.spoor"
 
     /** The terms the app shows (S1); a later version re-shows S1 (§8.13). */
     const val termsVersion = 1

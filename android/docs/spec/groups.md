@@ -177,7 +177,9 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
   S6 only shows an invite it is given (the one just made, or a pending one this phone made).
 - S5 "Share my location" with consent recorded checks location as S9 does: allowed, sharing goes on; never asked,
   the permission is asked (fine and coarse) and sharing goes on only if it is given; refused, denied before or
-  location off, the alert "Location is off for Spoor. …" (`LOCATION_OFF`) and sharing stays off (§8.13).
+  location off, the alert "Location is off for Spoor. …" (`LOCATION_OFF`), or with location off for the whole
+  phone "Location is off. Turn it on in Settings › Location to share." (`LOCATION_SERVICES_OFF`), and sharing stays
+  off (§8.13).
 - S13: "Thanks for reporting" offers Block only for someone who can still be blocked (`blockable`: a pin whose
   dropper can be, a member who can be and isn't yet); otherwise it has OK only.
 - S10: "Drop pin" is enabled once a type is chosen and, for Animal, something is typed; a name that is too long is
@@ -187,7 +189,10 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
   extras (§9.9).
 - S9 asks for location (fine and coarse together, as `PermissionFlow`, marking `locationPermissionAsked`) when it was
   never asked; refused (or denied before, or location off), the alert "Location is off for Spoor. Turn it on in
-  Settings › Privacy › Location Services to share." and sharing stays off.
+  Settings › Apps › Spoor › Permissions › Location to share." (the Android settings path, like the map's location
+  hint; the iPhone says Settings › Privacy › Location Services) and sharing stays off. With location off for the
+  whole phone (`servicesOff`) the alert is "Location is off. Turn it on in Settings › Location to share."
+  (`LOCATION_SERVICES_OFF`, like the map's services-off hint).
 - S17 asks for `CAMERA` when it opens; without it, "Camera access is off for Spoor. Turn it on in Settings to scan a
   code." with "Open Settings" (the app's details page). `QRScannerView`: CameraX preview and an `ImageAnalysis`
   (latest frame only) decoding the Y plane with ZXing (`PlanarYUVLuminanceSource`); the first invite found replaces

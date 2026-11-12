@@ -20,7 +20,7 @@ import java.io.OutputStream
  *  on the phone). */
 object BackupSharing {
     /** "Save to a folder" in the chooser arrives at `MainActivity` with this action (from `SaveToFolderActivity`). */
-    const val ACTION_SAVE_TO_FOLDER = "com.jacobusoettle.satmap.SAVE_TO_FOLDER"
+    const val ACTION_SAVE_TO_FOLDER = "com.koonap.spoor.SAVE_TO_FOLDER"
 
     /** The chooser for the shared files: Drive, Gmail, Quick Share (the AirDrop of Android), Files … and SatMap's own
      *  "Save to a folder" (a custom action from API 34, an extra target below; both open `SaveToFolderActivity`). */

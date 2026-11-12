@@ -296,7 +296,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
                     AlertButton("Keep") {},
                 ),
             ) { alert = null }
-            DetailAlert.LocationOff -> MessageAlert(LOCATION_OFF) { alert = null }
+            is DetailAlert.LocationOff -> MessageAlert(a.text) { alert = null }
             null -> {}
         }
     }
@@ -311,12 +311,16 @@ sealed interface DetailAlert {
     data object Delete : DetailAlert
     data class CancelInvite(val inviteId: String) : DetailAlert
 
-    /** Sharing switched on with location refused, denied before or off: sharing stays off (§8.13). */
-    data object LocationOff : DetailAlert
+    /** Sharing switched on with location refused, denied before or off: sharing stays off (§8.13). [text] is
+     *  [LOCATION_OFF] or, with location off for the whole phone, [LOCATION_SERVICES_OFF]. */
+    data class LocationOff(val text: String) : DetailAlert
 }
 
 /** The alert when location can't be used for sharing (S9, and S5's switch). */
-const val LOCATION_OFF = "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services to share."
+const val LOCATION_OFF = "Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location to share."
+
+/** The same alert when location is off for the whole phone (the map's services-off hint, for sharing). */
+const val LOCATION_SERVICES_OFF = "Location is off. Turn it on in Settings › Location to share."
 
 /** "On the map": show it, share your location (S9 first without consent; with consent, location asked first if it
  *  was never asked, as S9 does, and refused or off, the alert and sharing stays off; off asks whether to clear the
@@ -328,10 +332,10 @@ private fun OnTheMap(model: AppModel, d: GroupDetail, first: Boolean, pushConsen
     val groupId = d.groupId
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         recorder.authorizationChanged()
-        if (recorder.authorization.value == LocationRecorder.Authorization.authorized) {
-            groups.hub.setSharing(true, groupId)
-        } else {
-            showAlert(DetailAlert.LocationOff)
+        when (recorder.authorization.value) {
+            LocationRecorder.Authorization.authorized -> groups.hub.setSharing(true, groupId)
+            LocationRecorder.Authorization.servicesOff -> showAlert(DetailAlert.LocationOff(LOCATION_SERVICES_OFF))
+            else -> showAlert(DetailAlert.LocationOff(LOCATION_OFF))
         }
     }
     val footer = when {
@@ -352,7 +356,8 @@ private fun OnTheMap(model: AppModel, d: GroupDetail, first: Boolean, pushConsen
                             Defaults.putBoolean("locationPermissionAsked", true)
                             ask.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                         }
-                        LocationRecorder.Authorization.denied, LocationRecorder.Authorization.servicesOff -> showAlert(DetailAlert.LocationOff)
+                        LocationRecorder.Authorization.denied -> showAlert(DetailAlert.LocationOff(LOCATION_OFF))
+                        LocationRecorder.Authorization.servicesOff -> showAlert(DetailAlert.LocationOff(LOCATION_SERVICES_OFF))
                     }
                 }
             } else {

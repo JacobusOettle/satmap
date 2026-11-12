@@ -38,6 +38,7 @@ import com.jacobusoettle.satmap.location.LocationRecorder
 import com.jacobusoettle.satmap.ui.groups.GroupItemSheet
 import com.jacobusoettle.satmap.ui.groups.GroupsSheet
 import com.jacobusoettle.satmap.ui.groups.LOCATION_OFF
+import com.jacobusoettle.satmap.ui.groups.LOCATION_SERVICES_OFF
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -166,6 +167,14 @@ class GroupScreensTest {
         assertFalse(groups.hub.detail(kruger)!!.isSharing)
         val on = compose.onNodeWithTag("shareLocation").fetchSemanticsNode().config.getOrNull(SemanticsProperties.ToggleableState)
         assertEquals(ToggleableState.Off, on)
+        compose.onNodeWithText("OK").performClick()
+        settle()
+        // Location off for the whole phone: the phone's Location setting, not the app's permission.
+        model.recorder.setForTests(null, authorization = LocationRecorder.Authorization.servicesOff)
+        compose.onNodeWithTag("shareLocation").performClick()
+        waitFor { shows(LOCATION_SERVICES_OFF) }
+        assertFalse(shows(LOCATION_OFF))
+        assertFalse(groups.hub.detail(kruger)!!.isSharing)
         compose.onNodeWithText("OK").performClick()
         settle()
         // Allowed: it switches on.
