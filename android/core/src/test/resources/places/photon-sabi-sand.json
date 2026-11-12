@@ -1,0 +1,12 @@
+{"type":"FeatureCollection","features":[
+ {"type":"Feature","geometry":{"type":"Point","coordinates":[31.4411616,-24.821303]},
+  "properties":{"osm_type":"R","osm_id":1751334,"osm_key":"leisure","osm_value":"nature_reserve","name":"Sabi Sand Nature Reserve",
+                "extent":[31.32745,-24.6654308,31.6223272,-24.97716],"county":"Ehlanzeni District Municipality","state":"Mpumalanga",
+                "country":"South Africa","countrycode":"ZA","type":"other"}},
+ {"type":"Feature","geometry":{"type":"Point","coordinates":[28.4628447,-26.1031327]},
+  "properties":{"osm_type":"W","osm_id":338821179,"osm_key":"highway","osm_value":"residential","name":"Sabi Sand Street",
+                "extent":[28.4621523,-26.1026591,28.4635357,-26.1036063],"state":"Gauteng","country":"South Africa","type":"street"}},
+ {"type":"Feature","geometry":{"type":"Point","coordinates":[31.5373671,-24.9477746]},
+  "properties":{"osm_type":"W","osm_id":309175735,"osm_key":"building","osm_value":"yes","name":"Sabi Sand ViewPoint",
+                "extent":[31.53730820,-24.9477248,31.537426,-24.9478244],"state":"Mpumalanga","country":"South Africa","type":"house"}}
+]}

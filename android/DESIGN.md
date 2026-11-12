@@ -111,7 +111,7 @@ package owns the file (§7). Only the owner edits a file.
 | `offline/OfflineDownloadService.kt` | `BGContinuedProcessingTask` | Foreground service of type `dataSync`, with a wake lock, Stop and `onTimeout`. | E |
 | `offline/DownloadHttp.kt` | `OfflineManager.makeSession` | The OkHttp clients for downloads (any network or Wi-Fi only) and for roads and places. | E |
 | `offline/RoadFetcher.kt` | `RoadFetcher.swift` | `RoadPresets`, `RoadFetcher` (Overpass with staggered servers). | E |
-| `offline/PlaceSearch.kt` | `PlaceSearch.swift` | `PlaceSearch` (Photon, Nominatim). | E |
+| `offline/PlaceSearch.kt` | `PlaceSearch.swift` | `PlaceSearch` (Photon, Nominatim; Nominatim's search while Photon is down, core `PlaceSources`). | E |
 | `offline/BackupFileProvider.kt` | `exportFolder` | `BackupFileProvider` (a `FileProvider` subclass, read-only, display names) and `ExportShares` (open-reader registry). | E |
 | `offline/BackupSharing.kt` | share items | The `ACTION_SEND_MULTIPLE` chooser intent, the "Save to a folder" action and its copy into a SAF tree. | E |
 | `offline/SaveToFolderActivity.kt` | — | Chooser entry for API 26–33. It forwards to `MainActivity` with `ACTION_SAVE_TO_FOLDER`. | E |
