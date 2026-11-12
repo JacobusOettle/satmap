@@ -49,7 +49,7 @@ data class FoundPlace(
         }
 }
 
-/** Reading place searches (Photon) and boundaries (Nominatim, GeoJSON). */
+/** Reading place searches (Photon, or Nominatim while Photon is down) and boundaries (Nominatim, GeoJSON). */
 object Places {
     /** Results that are areas or settlements, not streets, buildings, shops … */
     private val skippedKeys: Set<String> = setOf(
@@ -71,18 +71,18 @@ object Places {
     val reserveKinds: Set<String> = setOf("nature_reserve", "national_park", "protected_area", "park", "game_reserve")
 
     /** The places in a Photon search answer (a GeoJSON FeatureCollection), areas and settlements only, each once. */
-    fun photonResults(data: ByteArray): List<FoundPlace> {
-        val root = jsonObject(data) ?: return emptyList()
-        val features = objects(root["features"]) ?: return emptyList()
-        val out = mutableListOf<FoundPlace>()
-        val seen = HashSet<String>()
+    fun photonResults(data: ByteArray): List<FoundPlace> = photonAnswer(data) ?: emptyList()
+
+    /** The places in a Photon answer, or null when it isn't one (not JSON, or no `features` list): Photon failed. */
+    fun photonAnswer(data: ByteArray): List<FoundPlace>? {
+        val root = jsonObject(data) ?: return null
+        val features = objects(root["features"]) ?: return null
+        val found = Found()
         for (f in features) {
             val p = f["properties"] as? JsonObject ?: continue
             val name = string(p["name"]) ?: continue
-            if (name.isEmpty()) continue
             val key = string(p["osm_key"]) ?: continue
             val value = string(p["osm_value"]) ?: continue
-            if (key in skippedKeys || value in skippedValues) continue
             val type = string(p["osm_type"]) ?: continue
             val osmID = number(p["osm_id"])?.toLong() ?: continue
             val geometry = f["geometry"] as? JsonObject ?: continue
@@ -93,31 +93,92 @@ object Places {
             if (e != null && e.size == 4) {
                 extent = GeoBounds(minLat = min(e[1], e[3]), minLon = min(e[0], e[2]), maxLat = max(e[1], e[3]), maxLon = max(e[0], e[2]))
             }
+            found.add(name, key, value, type, osmID, GeoPoint(lat = c[1], lon = c[0]), extent, listOf(p["county"], p["state"], p["country"]))
+        }
+        return found.places
+    }
+
+    /** The places in a Nominatim search answer (`/search?format=jsonv2&addressdetails=1`, a JSON array), read into the
+     *  same places as Photon's: the same kinds kept, the same ids ("R...", "W...", "N..." for a spot), the same region
+     *  (county, state, country). A node is a spot (Photon gives it no extent; Nominatim gives every result a box).
+     *  Null when it isn't a search answer (not a JSON array of results, such as an error object). */
+    fun nominatimResults(data: ByteArray): List<FoundPlace>? {
+        val results = objects(jsonValue(data)) ?: return null
+        val found = Found()
+        for (r in results) {
+            val name = string(r["name"]) ?: continue
+            val key = string(r["category"]) ?: continue
+            val value = string(r["type"]) ?: continue
+            val type = when (string(r["osm_type"])) {
+                "relation" -> "R"
+                "way" -> "W"
+                "node" -> "N"
+                else -> continue
+            }
+            val osmID = number(r["osm_id"])?.toLong() ?: continue
+            val lat = decimal(r["lat"]) ?: continue
+            val lon = decimal(r["lon"]) ?: continue
+            var extent: GeoBounds? = null
+            val b = (r["boundingbox"] as? JsonArray)?.map(::decimal)
+            if (type != "N" && b != null && b.size == 4 && b.all { it != null }) {
+                val (s, n, w, e) = b.map { it!! }
+                extent = GeoBounds(minLat = min(s, n), minLon = min(w, e), maxLat = max(s, n), maxLon = max(w, e))
+            }
+            val address = r["address"] as? JsonObject
+            found.add(
+                name, key, value, type, osmID, GeoPoint(lat = lat, lon = lon), extent,
+                listOf(address?.get("county"), address?.get("state"), address?.get("country")),
+            )
+        }
+        return found.places
+    }
+
+    /** The places of one answer as they're read, areas and settlements only, each once (by id, and by name, kind and
+     *  spot to 0.01 degrees): Photon's and Nominatim's alike. */
+    private class Found {
+        val places = mutableListOf<FoundPlace>()
+        private val seen = HashSet<String>()
+
+        fun add(
+            name: String, key: String, value: String, type: String, osmID: Long, centre: GeoPoint, extent: GeoBounds?,
+            region: List<JsonElement?>,
+        ) {
+            if (name.isEmpty()) return
+            if (key in skippedKeys || value in skippedValues) return
             // A way or relation without an extent is a spot as far as the area goes; spots only for settlements and camps.
-            if (!(extent != null || key == "place" || value in spotKinds)) continue
+            if (!(extent != null || key == "place" || value in spotKinds)) return
             val id = "${if (extent == null) "N" else type}$osmID"
-            val key2 = "$name|$value|${(c[1] * 100).rounded().toLong()}|${(c[0] * 100).rounded().toLong()}"
-            if (id in seen || key2 in seen) continue
+            val key2 = "$name|$value|${(centre.lat * 100).rounded().toLong()}|${(centre.lon * 100).rounded().toLong()}"
+            if (id in seen || key2 in seen) return
             seen.add(id)
             seen.add(key2)
-            val region = listOf(p["county"], p["state"], p["country"]).mapNotNull(::string).filter { it != name }
-            out.add(
+            places.add(
                 FoundPlace(
-                    id = id, name = name, kind = kindName(value), tag = value, region = region.joinToString(", "),
-                    centre = GeoPoint(lat = c[1], lon = c[0]), extent = extent,
+                    id = id, name = name, kind = kindName(value), tag = value,
+                    region = region.mapNotNull(::string).filter { it != name }.joinToString(", "), centre = centre, extent = extent,
                 )
             )
         }
-        return out
+    }
+
+    /** A number written as a JSON string ("-24.8213030", as Nominatim gives coordinates), or a JSON number. */
+    private fun decimal(json: JsonElement?): Double? {
+        val p = json as? JsonPrimitive ?: return null
+        if (p is JsonNull) return null
+        return if (p.isString) p.content.takeIf(jsonNumber::matches)?.toDoubleOrNull()?.takeIf { it.isFinite() } else number(p)
     }
 
     /** The JSON in the data if it is an object (Swift's `JSONSerialization` … `as? [String: Any]`), else null. As strict
      *  as JSONSerialization: UTF-8 only, no NaN, Infinity or other bare words, no control characters or lone surrogates
      *  in strings. */
-    private fun jsonObject(data: ByteArray): JsonObject? = try {
+    private fun jsonObject(data: ByteArray): JsonObject? = jsonValue(data) as? JsonObject
+
+    /** The JSON in the data, an object or an array, as strictly as `jsonObject`; else null. */
+    private fun jsonValue(data: ByteArray): JsonElement? = try {
         val text = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(data)).toString()
-        if (rawControlInString(text)) null else (Json.parseToJsonElement(text) as? JsonObject)?.takeIf(::strictJson)
+        if (rawControlInString(text)) null
+        else Json.parseToJsonElement(text).takeIf { (it is JsonObject || it is JsonArray) && strictJson(it) }
     } catch (e: IllegalArgumentException) {
         null
     } catch (e: CharacterCodingException) {

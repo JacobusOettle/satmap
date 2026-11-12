@@ -69,6 +69,8 @@ android {
         getByName("main").assets.srcDirs("../../SatMap/Resources")
         // Where the screenshot walk touches the screen: made on the emulator, checked by the unit tests.
         getByName("test").kotlin.srcDir("src/sharedTest/kotlin")
+        // Core's recorded answers (places/: Nominatim searches), for PlaceSearch's tests against local servers.
+        getByName("test").resources.srcDir("../core/src/test/resources")
         getByName("androidTest").kotlin.srcDir("src/sharedTest/kotlin")
         // Drone link's recorded demo flight (docs/mavlink/demo_flight.json), for the walkthrough's replay: in the test
         // APK only, never in the app.

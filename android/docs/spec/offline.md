@@ -411,9 +411,31 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
 - An error shows its own text, or `"The search didn't work. Try again."`.
 
 **Search requests.**
-- `GET https://photon.komoot.io/api/?q=<text>&limit=20[&lat=<%.4f>&lon=<%.4f>]`, near the phone map's centre.
+- `GET https://photon.komoot.io/api/?q=<text>&limit=20[&lat=<%.4f>&lon=<%.4f>]`, near the phone map's centre, parsed with `Places.photonAnswer` (`Places.photonResults` gives `[]` for an answer that isn't one).
 - If `Places.singular(text)` gives a singular form, it is also searched; errors in that second search are ignored.
-- The result is `Places.merged([first, second])`, parsed with `Places.photonResults`.
+- The result is `Places.merged([first, second])`.
+
+**When Photon is down** (core `PlaceSources`; the iPhone app uses the same times).
+- Each search (the first and the singular one) asks Photon, with a `PlaceSources.photonTimeoutMillis` = 5 s call timeout.
+- Photon fails when the request errors (not 200, a broken connection, the 5 s passing) or its answer isn't a FeatureCollection (`Places.photonAnswer` is null). Then the same search goes to Nominatim.
+- An empty answer from a working Photon is "nothing found": no Nominatim search.
+- A failure is remembered for `PlaceSources.photonRestMillis` = 10 minutes: searches in that time go straight to Nominatim; after it, Photon is asked again.
+- A failure caused by no network at all (Photon and Nominatim both `Offline`) isn't remembered. If Nominatim then fails too, its error is shown, with the same texts.
+- `GET https://nominatim.openstreetmap.org/search?q=<text>&format=jsonv2&addressdetails=1&limit=20[&viewbox=<lon-1>,<lat+1>,<lon+1>,<lat-1>][&countrycodes=za,ls,sz,na,bw,zw,mz]` (`PlaceSources.nominatimQuery`, `%.4f`). These are the same requests as the iPhone app's (`Places.nominatimURL`).
+  - The viewbox (a preferred box, not a limit) stands in for Photon's nearness to the map's centre.
+  - When the map's centre is in southern Africa (lat −35.5…−10.3, lon 11.5…41.0, `PlaceSources.nominatimCountries`), the search runs within those countries first. If that finds nothing to keep, it runs again over the whole world (`nominatimCountryPasses`).
+  - The reason: Nominatim isn't forgiving of spelling and doesn't rank by nearness, so a whole-world "Sabi Sand" gives a restaurant in Norway.
+  - No language is asked for, as with Photon, so names come as the map writes them.
+  - The lookup User-Agent is sent.
+- Parsed with `Places.nominatimResults` into the same `FoundPlace`s as Photon's:
+  - the same kinds kept or skipped (`category` / `type` for Photon's `osm_key` / `osm_value`);
+  - ids `R…`/`W…` from `osm_type` relation/way, `N…` for a node or a place without a box;
+  - `boundingbox` [s, n, w, e] as the extent, except for nodes (Photon gives them none);
+  - region from `address` county, state, country;
+  - null for an answer that isn't a JSON array: `Unavailable`.
+- Nominatim gets at most one request a second (`PlaceSources.nominatimTurn`, waited with `delay`), searches and boundary lookups alike. Searches only run when Search is tapped, never as the text is typed.
+- After a failure, Photon answering again clears it (`photonWorked`).
+- The recorded answers used by the tests are in `android/core/src/test/resources/places/`. They are byte-for-byte copies of the iPhone tests' `Tests/SatMapCoreTests/Fixtures/places/`, with `expected.json` listing the places each answer must give in both apps. `app`'s unit tests read them as test resources too.
 
 **Boundary.**
 - For a place with a boundary (its id doesn't start with `N`): `GET https://nominatim.openstreetmap.org/lookup?osm_ids=<id>&format=geojson&polygon_geojson=1&polygon_threshold=<%.5f of Places.simplification(place)>`.
@@ -966,7 +988,7 @@ suspend fun roads(area: CoverageShape): List<List<GeoPoint>> = coroutineScope {
 
 - Failures are Kotlin exception classes with Swift's message texts.
 - In `attempt`, an `IOException` is offline when `!Connectivity.isOnlineNow || e is UnknownHostException`.
-- `PlaceSearch.get`:
+- `PlaceSearch.get` (Photon's searches, Nominatim's searches and boundaries):
   - non-200: `Unavailable`;
   - an `IOException` with `!isOnlineNow` or an `UnknownHostException`: `Offline`;
   - `CancellationException` is rethrown;
@@ -1177,6 +1199,7 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
 - the first answer wins;
 - offline and busy messages;
 - the percent-encoding of the query;
-- the Photon URL has `lat`/`lon` with a decimal point in a German locale.
+- the Photon URL has `lat`/`lon` with a decimal point in a German locale;
+- Photon's error, timeout or nonsense answer: the Nominatim search (southern Africa, then the whole world), the 10-minute rest, then Photon again; Photon's empty answer: no Nominatim; Nominatim once a second; no network isn't remembered as Photon's failure.
 
 **Car**: the `app-testing` template assertions from §2.12.
