@@ -49,18 +49,30 @@ class UdpReceiver(private val requestedPort: Int, private val onDatagram: (ByteA
         }
         socket = s
         port = s.localPort
-        Thread({ drain(s) }, "DroneLink-UDP-$port").apply {
+        thread = Thread({ drain(s) }, "DroneLink-UDP-$port").apply {
             isDaemon = true
             start()
         }
     }
 
-    /** Closes the socket; its thread ends. */
+    private var thread: Thread? = null
+
+    /** Closes the socket and waits (briefly) for its thread to end, so the port is free once this returns: a JVM
+     *  closes a socket another thread is receiving on only when that thread has woken (Android closes it at once). */
     fun stop() {
         val s = socket ?: return
         socket = null
         port = 0
         s.close()
+        val t = thread
+        thread = null
+        if (t != null && t !== Thread.currentThread()) {
+            try {
+                t.join(1500)
+            } catch (e: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
     }
 
     private fun drain(s: DatagramSocket) {

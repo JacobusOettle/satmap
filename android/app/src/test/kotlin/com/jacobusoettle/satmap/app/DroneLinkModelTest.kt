@@ -206,14 +206,14 @@ class DroneLinkModelTest {
         assertEquals("Receiving from 1 drone · 3 aircraft", model.status.value.text)
         model.backgrounded()
         assertFalse(model.isListening)
-        assertTrue("the socket was closed", canBind(port))
+        assertTrue("the socket was closed", waitFor { canBind(port) })
         model.foregrounded()
         assertTrue(model.isListening)
         model.setEnabled(false)
         assertFalse(model.isListening)
         assertEquals(DroneLink.Status.Off, model.status.value)
         assertTrue("switched off, what was heard goes", model.traffic.drones.isEmpty())
-        assertTrue(canBind(port))
+        assertTrue(waitFor { canBind(port) })
     }
 
     @Test
@@ -264,7 +264,7 @@ class DroneLinkModelTest {
         assertTrue(waitFor { send(datagram("v2-heartbeat-armed"), first); model.traffic.drones.isNotEmpty() })
         val second = freePort()
         model.setPort(second)
-        assertTrue(canBind(first))
+        assertTrue(waitFor { canBind(first) })
         assertEquals(DroneLink.Status.Receiving(1, 0), model.status.value) // (what was heard stays)
         assertTrue(waitFor { send(datagram("second-drone"), second); model.traffic.drones.size == 2 })
     }
