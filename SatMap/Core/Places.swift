@@ -272,12 +272,13 @@ extension Places {
         return c.url!
     }
 
-    /// The countries Nominatim searches first for a map in southern Africa (South Africa and its neighbours, as far as
-    /// Mozambique's north): Nominatim, unlike Photon, doesn't rank by nearness, and misses "Sabi Sand" among the whole
-    /// world's names. Nil elsewhere, or with no map.
+    /// The countries Nominatim searches first for a map in southern Africa (lat -35.5 to -10.3, lon 11.5 to 41):
+    /// South Africa and its neighbours, and every other country that box reaches (Zambia, Malawi, Angola, the DRC's and
+    /// Tanzania's south), so a map's own country is always in the list. Nominatim, unlike Photon, doesn't rank by
+    /// nearness, and misses "Sabi Sand" among the whole world's names. Nil elsewhere, or with no map.
     static func nominatimCountries(near: GeoPoint?) -> [String]? {
         guard let p = near, (-35.5 ... -10.3).contains(p.lat), (11.5 ... 41.0).contains(p.lon) else { return nil }
-        return ["za", "ls", "sz", "na", "bw", "zw", "mz"]
+        return ["za", "ls", "sz", "na", "bw", "zw", "mz", "zm", "mw", "ao", "cd", "tz"]
     }
 
     /// The Nominatim searches for one text, each only if the one before found no place: within the countries around
@@ -289,17 +290,26 @@ extension Places {
 }
 
 /// How a request to a search service ended.
-enum PlaceRequestOutcome {
+enum PlaceRequestOutcome: Equatable {
     /// An HTTP answer, any status.
     case answer(status: Int, body: Data)
     /// The phone has no connection: no service would answer.
     case offline
-    /// Timed out (`PlaceSearchFallback.photonTimeout` for Photon), refused, or any other network error.
+    /// Timed out (`PlaceSearchFallback.photonTimeout` for Photon), refused, cut off, or any other network error.
     case failed
+
+    /// A request that ended in a network error (a `URLError` code): offline only when the phone has no connection
+    /// (-1009 not connected, -1020 data not allowed). Anything else, a connection the server dropped (-1005) or
+    /// refused included, is that service failing, so Photon's searches go to Nominatim.
+    static func networkError(code: Int) -> PlaceRequestOutcome {
+        [-1009, -1020].contains(code) ? .offline : .failed
+    }
 }
 
 /// Choosing the service for a place search: Photon until it fails (a network error, no answer within `photonTimeout`,
 /// an HTTP error, an answer that isn't Photon's), then Nominatim for `photonCoolDown` before Photon is tried again.
+/// An HTTP 4xx other than 408 and 429 is Photon refusing that one query, not Photon being down: that search goes to
+/// Nominatim, but the next one tries Photon again.
 /// Nominatim is asked at most once a second (its usage policy), boundaries included, and only per search, never per
 /// keystroke. A working Photon that finds nothing has found nothing: that doesn't go to Nominatim.
 struct PlaceSearchFallback {
@@ -340,6 +350,7 @@ struct PlaceSearchFallback {
             photonFailedAt = now
             return .useNominatim
         case let .answer(status, body):
+            if (400 ... 499).contains(status) && status != 408 && status != 429 { return .useNominatim }
             guard status == 200, let places = Places.photonPlaces(body) else {
                 photonFailedAt = now
                 return .useNominatim

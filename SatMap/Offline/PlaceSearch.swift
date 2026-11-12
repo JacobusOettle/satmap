@@ -109,11 +109,12 @@ enum PlaceSearch {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             if status != 200 { placeLog.error("\(url.host ?? "", privacy: .public): HTTP \(status)") }
             return .answer(status: status, body: data)
-        } catch let e as URLError where [.notConnectedToInternet, .networkConnectionLost, .dataNotAllowed].contains(e.code) {
-            return .offline
         } catch {
-            if Task.isCancelled || error is CancellationError { throw CancellationError() }
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
             placeLog.error("\(url.host ?? "", privacy: .public): \(error.localizedDescription, privacy: .public)")
+            if let e = error as? URLError { return .networkError(code: e.code.rawValue) }
             return .failed
         }
     }

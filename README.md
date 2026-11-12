@@ -172,9 +172,13 @@ ADS-B (adsb.lol and the like) may be added later for aircraft when the drone has
   forgiving of spelling, nearest the map's middle first), once per tap of Search. If Photon fails (a network or HTTP
   error, an answer that isn't Photon's, or no answer within 5 seconds), the search uses
   [Nominatim](https://nominatim.openstreetmap.org)'s own search instead, with the same limit and the same kinds of
-  places kept, within South Africa and its neighbours first when the map is there, then the whole world; the
-  results look the same and download the same. A failure is remembered for 10 minutes, during which searches go
-  straight to Nominatim; then Photon is tried again. A Photon answer with nothing in it is a real "nothing found".
+  places kept, first within the countries around the map when it is in southern Africa (latitude -35.5 to -10.3,
+  longitude 11.5 to 41: South Africa, Lesotho, Eswatini, Namibia, Botswana, Zimbabwe, Mozambique, Zambia, Malawi,
+  Angola, the DRC and Tanzania), then the whole world; the results look the same and download the same. A failure
+  is remembered for 10 minutes, during which searches go straight to Nominatim; then Photon is tried again. Photon
+  refusing one query (an HTTP 4xx other than 408 and 429) sends only that search to Nominatim. A dropped connection
+  counts as Photon failing; only a phone with no connection at all is "offline". A Photon answer with nothing in it
+  is a real "nothing found".
   The chosen place's boundary always comes from Nominatim, which is asked at most once a second (its usage policy).
   The rule is in `SatMap/Core/Places.swift` (`PlaceSearchFallback`), tested against recorded answers in
   `Tests/SatMapCoreTests/Fixtures/places/`, the same in both apps.
