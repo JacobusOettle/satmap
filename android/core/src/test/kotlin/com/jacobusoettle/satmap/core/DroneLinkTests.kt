@@ -14,6 +14,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -189,10 +190,61 @@ class DroneLinkTests {
     /** A MAVLink 2 HEARTBEAT frame from `sysid`/`compid` (built here, so the shared fixture stays as it is). */
     private fun heartbeat(sysid: Int, compid: Int, type: Int, autopilot: Int, baseMode: Int = 0): ByteArray {
         val payload = byteArrayOf(0, 0, 0, 0, type.toByte(), autopilot.toByte(), baseMode.toByte(), 4, 3)
-        val header = byteArrayOf(0xFD.toByte(), payload.size.toByte(), 0, 0, 0, sysid.toByte(), compid.toByte(), 0, 0, 0)
+        return frame(sysid, compid, MAVLink.heartbeat, payload)
+    }
+
+    /** A MAVLink 2 frame of message `msgId` (a short payload is zero-extended by the decoder, per spec). */
+    private fun frame(sysid: Int, compid: Int, msgId: Int, payload: ByteArray): ByteArray {
+        val header = byteArrayOf(0xFD.toByte(), payload.size.toByte(), 0, 0, 0, sysid.toByte(), compid.toByte(),
+            (msgId and 0xFF).toByte(), ((msgId shr 8) and 0xFF).toByte(), (msgId shr 16).toByte())
         val body = header + payload
-        val c = MAVLink.crc(byteArrayOf(MAVLink.messages.getValue(MAVLink.heartbeat).crcExtra.toByte()), start = MAVLink.crc(body, 1))
+        val c = MAVLink.crc(byteArrayOf(MAVLink.messages.getValue(msgId).crcExtra.toByte()), start = MAVLink.crc(body, 1))
         return body + byteArrayOf((c and 0xFF).toByte(), (c shr 8).toByte())
+    }
+
+    @Test
+    fun theFlightControllersHeartbeatWins() {
+        val traffic = DroneLink.Traffic()
+        assertEquals(1, DroneLink.autopilotCompid)
+        // A second autopilot-like component (a companion running its own autopilot stack) heard first is kept …
+        traffic.receive(heartbeat(sysid = 1, compid = 2, type = 2, autopilot = 3, baseMode = 0x80), t0)
+        assertEquals(true, traffic.drones[1]?.heartbeat?.armed)
+        assertEquals(2, traffic.drones[1]?.heartbeatCompid)
+        // … until the flight controller (compid 1) speaks, which then wins.
+        traffic.receive(heartbeat(sysid = 1, compid = 1, type = 2, autopilot = 3, baseMode = 0), t0 + 1)
+        assertEquals(false, traffic.drones[1]?.heartbeat?.armed)
+        assertEquals(1, traffic.drones[1]?.heartbeatCompid)
+        traffic.receive(heartbeat(sysid = 1, compid = 2, type = 2, autopilot = 3, baseMode = 0x80), t0 + 2)
+        assertEquals("another component never overrides the flight controller", false, traffic.drones[1]?.heartbeat?.armed)
+        traffic.receive(heartbeat(sysid = 1, compid = 1, type = 2, autopilot = 3, baseMode = 0x80), t0 + 3)
+        assertEquals(true, traffic.drones[1]?.heartbeat?.armed)
+    }
+
+    @Test
+    fun zeroZeroIsNoPosition() {
+        assertFalse(DroneLink.isPosition(0.0, 0.0))
+        assertFalse(DroneLink.isPosition(91.0, 18.0))
+        assertFalse(DroneLink.isPosition(-33.9, 181.0))
+        assertFalse(DroneLink.isPosition(Double.NaN, 18.0))
+        assertTrue(DroneLink.isPosition(-33.9, 18.8))
+        assertTrue(DroneLink.isPosition(0.0, 18.8))
+        assertTrue(DroneLink.isPosition(-33.9, 0.0))
+        val traffic = DroneLink.Traffic()
+        // Before a GPS fix: GLOBAL_POSITION_INT and HOME_POSITION at 0,0 (all-zero payloads).
+        traffic.receive(frame(1, 1, MAVLink.globalPositionInt, byteArrayOf(0)), t0)
+        traffic.receive(frame(1, 1, MAVLink.homePosition, byteArrayOf(0)), t0)
+        val d = traffic.drones[1]
+        assertNotNull("still heard", d)
+        assertNull("not drawn at 0°, 0°", d?.position)
+        assertNull(d?.positionAt)
+        assertNull(d?.home)
+        assertTrue("and grey until a real position", d!!.isStale(t0))
+        traffic.receive(datagram("v2-global-position-int"), t0 + 1)
+        assertNotNull(traffic.drones[1]?.position)
+        // A later 0,0 doesn't move it to 0°, 0° nor keep it fresh.
+        traffic.receive(frame(1, 1, MAVLink.globalPositionInt, byteArrayOf(0)), t0 + 20)
+        assertNotEquals(0.0, traffic.drones[1]!!.position!!.latDeg)
+        assertTrue(traffic.drones[1]!!.isStale(t0 + 20))
     }
 
     @Test
@@ -238,9 +290,11 @@ class DroneLinkTests {
     @Test
     fun aboveGroundEstimate() {
         assertEquals(48.0, DroneLink.aboveGroundM(430.0, 382.0)!!, 1e-9)
-        assertEquals("a little under the data's ground reads as on it", 0.0, DroneLink.aboveGroundM(370.0, 382.0)!!, 0.0)
-        assertEquals(0.0, DroneLink.aboveGroundM(362.0, 382.0)!!, 0.0)
-        assertNull("clearly wrong: not shown", DroneLink.aboveGroundM(191.0, 382.0))
+        assertEquals(10.0, DroneLink.groundSlackM, 0.0)
+        assertEquals("a little under the data's ground reads as on it", 0.0, DroneLink.aboveGroundM(375.0, 382.0)!!, 0.0)
+        assertEquals(0.0, DroneLink.aboveGroundM(372.0, 382.0)!!, 0.0)
+        assertNull("clearly wrong: the heights don't match", DroneLink.aboveGroundM(370.0, 382.0))
+        assertNull(DroneLink.aboveGroundM(191.0, 382.0))
         assertNull(DroneLink.aboveGroundM(191.0, null))
     }
 

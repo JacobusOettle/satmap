@@ -82,7 +82,11 @@ Messages (`MAVLink.Heartbeat`, `SysStatus`, `GpsRawInt`, `GlobalPositionInt`, `V
   camera, gimbal, ADS-B receiver or onboard computer) makes a drone or sets its armed state; any other heartbeat
   (type 6 or autopilot 8 included) never makes a drone. A ground station's (type 6, or autopilot 8 from component 190
   or system id 255) also keeps its system id out unless it was already a drone; a peripheral's on the drone's system
-  id (a camera at component 100 with autopilot 8) doesn't. ADSB_VEHICLE makes no drone either. Heading: GLOBAL_POSITION_INT's, else VFR_HUD's; ground speed and climb:
+  id (a camera at component 100 with autopilot 8) doesn't. ADSB_VEHICLE makes no drone either. Of several
+  autopilot heartbeats on one system id, the flight controller's (`DroneLink.autopilotCompid`, component 1) wins: a
+  new one is kept only if it comes from component 1 or the kept one (`Drone.heartbeatCompid`) doesn't. Positions
+  (GLOBAL_POSITION_INT, HOME_POSITION) count only when `DroneLink.isPosition` (in range and not exactly 0,0, what
+  autopilots send before a fix): until then the drone is heard but not drawn, and stays grey (as on the iPhone). Heading: GLOBAL_POSITION_INT's, else VFR_HUD's; ground speed and climb:
   VFR_HUD's, else from GLOBAL_POSITION_INT; the take-off ground: height above sea level less height above take-off,
   else the home's.
 - A drone is **stale** (grey) without a position for 10 s, and removed 60 s after its last position (one that never
@@ -119,8 +123,9 @@ panel. The panel (`DroneLinkPanel`, `droneLinkPanel`) shows under the button, wi
 
 - Drone: header "Drone 1" with Armed/Disarmed; Position "No position for 12 s" (orange) when stale; Height "50 m above
   take-off · 192 m above sea level"; "≈ above ground" (`DroneLink.aboveGroundM`: above sea level less SatMap's
-  elevation under it, looked up again once it has moved 20 m; up to 20 m below that ground reads 0 m, further below
-  the row is left out); Speed "35 km/h · climb +0.5 m/s"; Battery "86 % · 16.1 V"; GPS "3D fix · 17
+  elevation under it, looked up again once it has moved 20 m; up to 10 m (`DroneLink.groundSlackM`) below that ground
+  reads 0 m, further below it reads "– (heights don't match the map)", as on the iPhone; without the ground the row is
+  left out); Speed "35 km/h · climb +0.5 m/s"; Battery "86 % · 16.1 V"; GPS "3D fix · 17
   satellites"; From you "0.1 NM 078° ENE" (cyan); Airfields: the nearest as drone mode reports it, then the next two
   with their distance (`DroneLink.nearestAerodromes`: within 30 NM, helipads only when nothing else is near).
 - Aircraft: header callsign with kind and ICAO; Warning "Below 2,000 ft within 5 NM" (red) when low and close;

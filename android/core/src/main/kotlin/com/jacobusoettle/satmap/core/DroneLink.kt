@@ -284,7 +284,8 @@ object DroneLink {
 
     /** The "≈ above ground" estimate: height above sea level less the elevation data's ground under it. A little
      *  below ground (GPS and elevation data disagree by up to `groundSlackM`) reads as 0; further below, the two
-     *  clearly disagree (a wrong altitude datum, coarse elevation data) and nothing is shown. Null without ground. */
+     *  clearly disagree (a wrong altitude datum, coarse elevation data): null, and the panel says the heights don't
+     *  match the map. Null without ground too (no row then). */
     fun aboveGroundM(altMslM: Double, groundM: Double?): Double? {
         val g = groundM ?: return null
         val h = altMslM - g
@@ -292,15 +293,26 @@ object DroneLink {
         return max(0.0, h)
     }
 
-    const val groundSlackM = 20.0
+    const val groundSlackM = 10.0
 
     // Drones
+
+    /** MAV_COMP_ID_AUTOPILOT1: the flight controller. */
+    const val autopilotCompid = 1
+
+    /** A real position: in range and not 0,0 (what autopilots send before they have one). */
+    fun isPosition(lat: Double, lon: Double): Boolean {
+        if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) return false
+        return !(lat == 0.0 && lon == 0.0)
+    }
 
     data class Drone(
         val sysid: Int,
         /** The colour slot, in the order drones were first heard (0, 1, 2 …). */
         val colourIndex: Int,
         val heartbeat: MAVLink.Heartbeat? = null,
+        /** The component the kept heartbeat came from: the flight controller's (MAV_COMP_ID_AUTOPILOT1, 1) wins. */
+        val heartbeatCompid: Int? = null,
         val position: MAVLink.GlobalPositionInt? = null,
         val positionAt: Double? = null,
         val vfr: MAVLink.VfrHud? = null,
@@ -409,8 +421,14 @@ object DroneLink {
             var d = _drones[f.sysid] ?: Drone(sysid = f.sysid, colourIndex = nextColour++, firstSeen = now, lastSeen = now)
             d = d.copy(lastSeen = now)
             d = when (message) {
-                is MAVLink.Heartbeat -> d.copy(heartbeat = message)
-                is MAVLink.GlobalPositionInt -> d.copy(position = message, positionAt = now)
+                // The flight controller's heartbeat; another autopilot-like component never overrides it.
+                is MAVLink.Heartbeat ->
+                    if (f.compid == autopilotCompid || d.heartbeatCompid != autopilotCompid) {
+                        d.copy(heartbeat = message, heartbeatCompid = f.compid)
+                    } else d
+                // lat = lon = 0: no position yet (before GPS or an EKF origin). Still heard, but not drawn.
+                is MAVLink.GlobalPositionInt ->
+                    if (isPosition(message.latDeg, message.lonDeg)) d.copy(position = message, positionAt = now) else d
                 is MAVLink.VfrHud -> d.copy(vfr = message)
                 is MAVLink.SysStatus -> d.copy(
                     batteryVoltageV = message.batteryVoltageV ?: d.batteryVoltageV,
@@ -418,7 +436,7 @@ object DroneLink {
                 )
                 is MAVLink.BatteryStatus -> d.copy(batteryRemainingPct = message.batteryRemainingPct ?: d.batteryRemainingPct)
                 is MAVLink.GpsRawInt -> d.copy(gps = message)
-                is MAVLink.HomePosition -> d.copy(home = message)
+                is MAVLink.HomePosition -> if (isPosition(message.latDeg, message.lonDeg)) d.copy(home = message) else d
                 is MAVLink.AdsbVehicle -> d
             }
             _drones[f.sysid] = d

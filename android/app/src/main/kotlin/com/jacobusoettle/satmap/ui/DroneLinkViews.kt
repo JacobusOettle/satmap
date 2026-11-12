@@ -215,7 +215,11 @@ private fun DroneRows(
     }
     d.position?.let { p ->
         PanelRow("Height", "${Format.height(p.relativeAltM, hu)} above take-off · ${Format.height(p.altMslM, hu)} above sea level")
-        DroneLink.aboveGroundM(p.altMslM, groundM)?.let { PanelRow("≈ above ground", Format.height(it, hu)) }
+        if (groundM != null) {
+            // Known ground: the estimate, or a dash when GPS and the elevation data clearly disagree (as on the iPhone).
+            val agl = DroneLink.aboveGroundM(p.altMslM, groundM)
+            PanelRow("≈ above ground", agl?.let { Format.height(it, hu) } ?: "– (heights don't match the map)")
+        }
     }
     val motion = listOfNotNull(d.groundSpeedMs?.let { DroneLink.speed(it, du) }, d.climbMs?.let { "climb " + DroneLink.climb(it, hu) })
     if (motion.isNotEmpty()) PanelRow("Speed", motion.joinToString(" · "))
