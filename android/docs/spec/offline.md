@@ -692,7 +692,7 @@ class OfflineDownloadService : Service() {
       }
       ACTION_STOP -> AppModel.shared.offline.stopFromNotification()
     }
-    return START_NOT_STICKY            // killed → continues when SatMap is opened (as iOS)
+    return START_NOT_STICKY            // killed → continues when Spoor is opened (as iOS)
   }
   override fun onTimeout(startId: Int, fgsType: Int) {   // API 35: dataSync's 6 h per 24 h are used up
     AppModel.shared.offline.backgroundTimeEnded(); stopSelf()
@@ -864,7 +864,7 @@ These are iOS's kml/kmz/gpx/xml/zip types, plus octet-stream, which many provide
   <data android:pathPattern=".*\\.gpx" /><data android:pathPattern=".*\\..*\\.gpx" />
   <data android:pathPattern=".*\\.GPX" /><data android:pathPattern=".*\\..*\\.GPX" />
 </intent-filter>
-<intent-filter>                                   <!-- Share to SatMap: WhatsApp, Gmail, Files, Drive -->
+<intent-filter>                                   <!-- Share to Spoor: WhatsApp, Gmail, Files, Drive -->
   <action android:name="android.intent.action.SEND" />
   <action android:name="android.intent.action.SEND_MULTIPLE" />
   <category android:name="android.intent.category.DEFAULT" />
