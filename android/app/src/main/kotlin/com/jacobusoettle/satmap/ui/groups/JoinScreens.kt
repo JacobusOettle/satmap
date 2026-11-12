@@ -307,7 +307,7 @@ fun ScanScreen(model: AppModel, nav: GroupsNav) {
         } else if (refused) {
             Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
-                    "Camera access is off for SatMap. Turn it on in Settings to scan a code.",
+                    "Camera access is off for Spoor. Turn it on in Settings to scan a code.",
                     style = Body,
                     color = LabelPrimary,
                     textAlign = TextAlign.Center,

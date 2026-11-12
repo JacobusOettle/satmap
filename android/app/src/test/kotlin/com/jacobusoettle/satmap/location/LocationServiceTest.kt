@@ -57,7 +57,7 @@ class LocationServiceTest {
         val shadow = shadowOf(runningService())
         assertEquals(LocationService.ID, shadow.lastForegroundNotificationId)
         val n = shadow.lastForegroundNotification
-        assertEquals("SatMap", n.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Spoor", n.extras.getString(Notification.EXTRA_TITLE))
         assertEquals("Recording your track", n.extras.getString(Notification.EXTRA_TEXT))
         assertEquals(LocationService.CHANNEL, n.channelId)
         assertTrue(n.flags and Notification.FLAG_ONGOING_EVENT != 0)
@@ -126,7 +126,7 @@ class LocationServiceTest {
         assertEquals("Sharing your location with Kruger trip.", sharingLine(listOf("Kruger trip")))
         assertEquals("Sharing your location with 2 groups.", sharingLine(listOf("Kruger trip", "Drone team")))
         val n = LocationService.notification(app, listOf("Kruger trip"))
-        assertEquals("SatMap", n.extras.getString(Notification.EXTRA_TITLE))
+        assertEquals("Spoor", n.extras.getString(Notification.EXTRA_TITLE))
         assertEquals("Recording your track", n.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
         assertEquals(
             "Recording your track\nSharing your location with Kruger trip.",

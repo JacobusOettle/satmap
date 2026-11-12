@@ -1,4 +1,4 @@
-# SatMap for Android: porting guide
+# Spoor for Android: porting guide
 
 The Android app is the iPhone app (`../SatMap`, Swift) rebuilt for Android, feature for feature: the same screens,
 texts, numbers, colours, behaviour and battery policy. Where the two differ it is only because Android needs it

@@ -224,7 +224,7 @@ object OfflineBackup {
     /** The Swift `Failure` cases; the message is the Swift `errorDescription`. */
     sealed class Failure(val errorDescription: String) : Exception(errorDescription) {
         class Busy(val name: String) : Failure("Couldn't prepare $name for export. Try again in a moment.")
-        class NotABackup(val name: String) : Failure("$name isn't a SatMap backup.")
+        class NotABackup(val name: String) : Failure("$name isn't a Spoor backup.")
     }
 
     /** Writes the area's settings into its tile files, folds their write-ahead logs into them, and copies them into

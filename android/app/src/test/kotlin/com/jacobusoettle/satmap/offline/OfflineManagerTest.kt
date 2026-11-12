@@ -491,7 +491,7 @@ class OfflineManagerTest {
         val a = add(m, "Park roads", preset = "NoSuchRoads")
         val b = add(m, "Farm")
         assertEquals(Status.incomplete, area(a).status)
-        assertEquals("This version of SatMap doesn't have the road list for this area.", area(a).problem)
+        assertEquals("This version of Spoor doesn't have the road list for this area.", area(a).problem)
         idle()
         assertEquals(listOf(b), runs)
         assertEquals(Status.complete, area(b).status)

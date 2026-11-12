@@ -153,7 +153,7 @@ class MapScreenGroupsTest {
         model.groups.setShown(id("Drone team"), true)
         waitFor { model.groups.shown.value != null }
         compose.waitForIdle()
-        compose.onNodeWithText("Drone team is paused: the owner's SatMap Pro has ended.").assertExists()
+        compose.onNodeWithText("Drone team is paused: the owner's Spoor Pro has ended.").assertExists()
         // Its close button reads "Hide" (as VoiceOver's).
         compose.onNodeWithContentDescription("Hide").assertExists()
         compose.onNodeWithTag("groupPausedHint").performClick()

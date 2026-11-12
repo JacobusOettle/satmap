@@ -134,7 +134,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
                             modifier = tint,
                         )
                         if (d.canHandOver) {
-                            ButtonRow("Renew SatMap Pro", modifier = tint) {
+                            ButtonRow("Renew Spoor Pro", modifier = tint) {
                                 if (groups.hasConfirmedPro) run { groups.renewPro() } else nav.push(GroupsRoute.Paywall(AfterPro.Renew(groupId)))
                             }
                             ButtonRow("Hand over ownership", modifier = tint) { nav.push(GroupsRoute.Handover(groupId)) }
@@ -145,7 +145,7 @@ fun GroupDetailScreen(model: AppModel, groupId: String, nav: GroupsNav, below: G
             d.offerToYouFrom?.let { owner ->
                 item {
                     FormSection(first = !d.isPaused) {
-                        TextRow("$owner wants to make you the owner of this group. You need SatMap Pro.")
+                        TextRow("$owner wants to make you the owner of this group. You need Spoor Pro.")
                         ButtonRow("Accept", tag = "acceptOwner") {
                             if (groups.hasConfirmedPro) run { groups.acceptOwnership(groupId) } else nav.push(GroupsRoute.Paywall(AfterPro.Accept(groupId)))
                         }
@@ -316,7 +316,7 @@ sealed interface DetailAlert {
 }
 
 /** The alert when location can't be used for sharing (S9, and S5's switch). */
-const val LOCATION_OFF = "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services to share."
+const val LOCATION_OFF = "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services to share."
 
 /** "On the map": show it, share your location (S9 first without consent; with consent, location asked first if it
  *  was never asked, as S9 does, and refused or off, the alert and sharing stays off; off asks whether to clear the
@@ -336,7 +336,7 @@ private fun OnTheMap(model: AppModel, d: GroupDetail, first: Boolean, pushConsen
     }
     val footer = when {
         d.isPaused -> "Sharing is off while the group is paused."
-        d.isSharing -> "Members see where you are and the trail you leave, also while SatMap is in the background."
+        d.isSharing -> "Members see where you are and the trail you leave, also while Spoor is in the background."
         else -> "Members can't see where you are now. The trail you already shared stays visible until you clear it. You can still see the group and drop pins."
     }
     FormSection(header = "On the map", footer = footer, first = first) {

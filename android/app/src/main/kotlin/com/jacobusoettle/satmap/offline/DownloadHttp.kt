@@ -20,11 +20,11 @@ import kotlin.coroutines.resumeWithException
  *  one bound to the Wi-Fi network a Wi-Fi-only run started on (its sockets fail when Wi-Fi goes instead of moving to
  *  mobile data), and one for the road and place lookups. */
 object DownloadHttp {
-    /** Sent with every tile request (iOS: "SatMap/1.0 (iOS)"). */
-    const val userAgent = "SatMap/1.0 (Android)"
+    /** Sent with every tile request (iOS: "Spoor/1.0 (iOS)"). */
+    const val userAgent = "Spoor/1.0 (Android)"
 
     /** Identifies the app to the OpenStreetMap services, as their usage policies ask (iOS: "iPhone offline map"). */
-    const val lookupUserAgent = "SatMap/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)"
+    const val lookupUserAgent = "Spoor/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)"
 
     /** No cache; as many connections per host as the download job may run at once (only used where the server doesn't
      *  multiplex over HTTP/2); 20 s timeouts, short enough that a slow spot doesn't hold up the progress for long (a

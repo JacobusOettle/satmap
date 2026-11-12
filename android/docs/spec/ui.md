@@ -1,4 +1,4 @@
-# SatMap for Android: the screens (UI)
+# Spoor for Android: the screens (UI)
 
 Sources: `SatMap/UI/*.swift`, the parts of `AppModel`, `OfflineManager`, `KMLLibrary`, `LocationRecorder` and `SatMapApp.swift` that the screens read, `SatMapUITests/ScreenshotTests.swift` (how the screens are driven and what is asserted), and `docs/screenshots/01…27` (600×1304 px captures of a 402×874 pt iPhone, so 1 pt ≈ 1.49 px). **Every pt below is a dp on Android, and every SwiftUI font size is an sp.**
 
@@ -330,8 +330,8 @@ A custom `Layout`:
 - **Text:** Footnote Medium.
 - **Optional close:** `Icons.Filled.Close` 16 dp, labelled `Stop measuring`. It exists in Swift but no caller uses it now; port it anyway.
 - **Conditions and texts:**
-  - Permission denied, or location off on the phone (iOS reports `.denied` for both), and the request has been answered: `Location is off for SatMap. Turn it on in Settings › Location and in Settings › Apps › SatMap › Permissions.` (Android wording; iOS: `Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.`)
-  - Only COARSE location granted (iOS `reducedAccuracy`): `Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › SatMap › Permissions › Location (Use precise location).` (iOS: `Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location.`)
+  - Permission denied, or location off on the phone (iOS reports `.denied` for both), and the request has been answered: `Location is off for Spoor. Turn it on in Settings › Location and in Settings › Apps › Spoor › Permissions.` (Android wording; iOS: `Location is off for Spoor. Turn it on in Settings › Privacy › Location Services.`)
+  - Only COARSE location granted (iOS `reducedAccuracy`): `Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › Spoor › Permissions › Location (Use precise location).` (iOS: `Precise Location is off, so your track can't be recorded. Turn it on in Settings › Spoor › Location.`)
   - The hint is not tappable, as on iOS.
 
 #### 2.3.10 `DroneCard(report)`
@@ -661,7 +661,7 @@ The `Kruger National Park roads` row is gone; its route (`Preset(RoadPresets.kru
 No row opens it now (§3.2); it is kept for the areas saved from it and the shipped road list.
 
 - If `RoadPresets.load(presetID)` succeeds: `NewAreaView(PendingArea(preset.name, CoverageShape(polygons = preset.boundary)), presetID = presetID)`.
-- Otherwise: `The road list is missing from this build of SatMap.` in `LabelSecondary`.
+- Otherwise: `The road list is missing from this build of Spoor.` in `LabelSecondary`.
 
 ### 3.6 Where I've been (`TrackAreaView`)
 
@@ -671,7 +671,7 @@ No row opens it now (§3.2); it is kept for the areas saved from it and the ship
   - Result: `TrackDownload(lines, newLines = if (completeTo == null) lines else Roads.newParts(latest, previous), previousLines = previous, maxZoom = existing?.maxZoom, allowCellular = existing?.allowCellular, completeTo)`, or null when `lines` is empty.
 - **Display:**
   - A result: `NewAreaView(PendingArea(existing?.name ?: "Where I've been", Roads.corridor(lines)), track = download)`.
-  - Worked out but null: `No track recorded yet. Your dotted track is recorded while SatMap knows where you are.` in `LabelSecondary`, padding 16.
+  - Worked out but null: `No track recorded yet. Your dotted track is recorded while Spoor knows where you are.` in `LabelSecondary`, padding 16.
   - Otherwise: a centred spinner.
 
 ### 3.7 Download area (`NewAreaView`)
@@ -713,7 +713,7 @@ No row opens it now (§3.2); it is kept for the areas saved from it and the ship
 
 3a. **Auto download** (your track only: `track != null`), a section of its own. A toggle row `Auto download` bound to `model.trackAutoDownload` (app-wide, not the area's); switching it calls `model.setTrackAutoDownload(on)`, which saves it at once (no Download tap). Footer: `Saves imagery along the new parts of your track by itself, as the Download button below does, once you've been somewhere new. Without mobile data it waits for Wi-Fi.` What it does: offline spec §1.9, item 5.
 
-4. **Mobile data.** A toggle row `Allow mobile data`. Footer (Android wording): `Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, with its progress in a notification. If Android stops it, it continues when you open SatMap again.`
+4. **Mobile data.** A toggle row `Allow mobile data`. Footer (Android wording): `Without mobile data the download waits for Wi-Fi. It keeps going when you leave Spoor, with its progress in a notification. If Android stops it, it continues when you open Spoor again.`
 
 5. **Header `Download size`.**
    - If the area has an area (m² > 0): row `Area` with `Format.hectares(m2)`.
@@ -899,19 +899,19 @@ Every string is given in place in §2–3. This section lists the reworded ones 
 
 | Where | iOS | Android |
 | --- | --- | --- |
-| Location hint | `Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.` | `Location is off for SatMap. Turn it on in Settings › Location and in Settings › Apps › SatMap › Permissions.` |
-| Precise hint | `Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location.` | `Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › SatMap › Permissions › Location (Use precise location).` |
+| Location hint | `Location is off for Spoor. Turn it on in Settings › Privacy › Location Services.` | `Location is off for Spoor. Turn it on in Settings › Location and in Settings › Apps › Spoor › Permissions.` |
+| Precise hint | `Precise Location is off, so your track can't be recorded. Turn it on in Settings › Spoor › Location.` | `Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › Spoor › Permissions › Location (Use precise location).` |
 | Offline: free space | `Free space on this iPhone: %s` | `Free space on this phone: %s` |
 | Offline: backup footer | `Saves each area as two MBTiles files, satellite and elevation, to Files, iCloud Drive or a USB drive, or AirDrop them to a computer. To restore, choose both files of each area. Long-press an area to export only that one.` | `Saves each area as two MBTiles files, satellite and elevation, to Google Drive, your phone's storage or a USB drive, or send them to a computer. To restore, choose both files of each area. Long-press an area to export only that one.` |
-| Download area: mobile data footer | `Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, with its progress on the Lock Screen (iOS 26 or later; earlier iOS allows about half a minute). If iOS stops it, it continues when you open SatMap again.` | `Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, with its progress in a notification. If Android stops it, it continues when you open SatMap again.` |
+| Download area: mobile data footer | `Without mobile data the download waits for Wi-Fi. It keeps going when you leave Spoor, with its progress on the Lock Screen (iOS 26 or later; earlier iOS allows about half a minute). If iOS stops it, it continues when you open Spoor again.` | `Without mobile data the download waits for Wi-Fi. It keeps going when you leave Spoor, with its progress in a notification. If Android stops it, it continues when you open Spoor again.` |
 | New labels (iOS uses system or automatic ones) | (SF auto labels) | `Pause` (banner and row), `Resume` (row ↻), `Compass`, `Point north up`, `Back`, `Show or hide files`, `Delete` (swipe action) |
 
 ### 5.2 Shown here, produced elsewhere (port them with their owners, exactly)
 
 - **`OfflineManager`:**
   - `backupStatus`: `Preparing export…`, `Encrypting <area name>…` (with `backupProgress`, while an export seals an area saved by an earlier version), `Restoring…`, `Copying %s of %s…`.
-  - `backupMessage`: `Nothing has been downloaded yet to export.`, `Couldn't export.`, `Restored <names joined ", ">.`, `Tap ↻ on an area marked Paused to download what its backup didn't include.`, `Couldn't copy <file> (is there enough free space?).`, `<file> isn't a SatMap backup.`, `<name> is already in SatMap.`, `Nothing to restore.`, `Couldn't prepare <name> for export. Try again in a moment.`, all joined with `\n`.
-  - `backgroundStatus` (the Android counterpart of `BackgroundDownload.status`), suggested: `Downloads keep going in the background, with their progress in a notification.`; with notifications denied, `Downloads keep going in the background. Allow notifications for SatMap to see their progress.`
+  - `backupMessage`: `Nothing has been downloaded yet to export.`, `Couldn't export.`, `Restored <names joined ", ">.`, `Tap ↻ on an area marked Paused to download what its backup didn't include.`, `Couldn't copy <file> (is there enough free space?).`, `<file> isn't a Spoor backup.`, `<name> is already in Spoor.`, `Nothing to restore.`, `Couldn't prepare <name> for export. Try again in a moment.`, all joined with `\n`.
+  - `backgroundStatus` (the Android counterpart of `BackgroundDownload.status`), suggested: `Downloads keep going in the background, with their progress in a notification.`; with notifications denied, `Downloads keep going in the background. Allow notifications for Spoor to see their progress.`
 - **`PlaceSearch` errors:** `No internet connection. Places are looked up online; try again when connected.`, `The place search didn't answer. Try again in a moment.`
 - **`RoadFetcher` errors:** `No internet connection. Roads are looked up online; try again when connected.`, `The OpenStreetMap road server is busy or unreachable. Try again in a minute.`
 - **`KMLLibrary.importError`:** `Couldn't read <file>: <reason>`, `<file>: <error>`.

@@ -58,7 +58,7 @@ fun ConsentScreen(model: AppModel, route: GroupsRoute.Consent, nav: GroupsNav) {
             FormSection(first = true) {
                 FormRow(verticalPadding = MultiLineRowPadding) {
                     Text(
-                        "SatMap collects location data to share your position and trail with $name, even when the app is in the background.",
+                        "Spoor collects location data to share your position and trail with $name, even when the app is in the background.",
                         style = Body.copy(fontWeight = FontWeight.SemiBold),
                         color = LabelPrimary,
                         modifier = Modifier.weight(1f),

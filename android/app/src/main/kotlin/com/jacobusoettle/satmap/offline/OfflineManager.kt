@@ -845,7 +845,7 @@ class OfflineManager(
                     found.getOrPut(area.id) { Pair(area, HashMap()) }.second[info.layerKey] = local
                 } catch (e: Exception) {
                     // Named as the user knows the file (Swift's `inspect` names the copy, "0.mbtiles").
-                    problems += (e as? MBTiles.StoreError)?.errorDescription ?: "$name isn't a SatMap backup."
+                    problems += (e as? MBTiles.StoreError)?.errorDescription ?: "$name isn't a Spoor backup."
                 }
             }
 
@@ -853,7 +853,7 @@ class OfflineManager(
             for ((id, item) in found) {
                 val (saved, files) = item
                 if (id in known) {
-                    problems += "${saved.name} is already in SatMap."
+                    problems += "${saved.name} is already in Spoor."
                     continue
                 }
                 val folder = AppPaths.offlineArea(id)
@@ -1190,7 +1190,7 @@ class OfflineManager(
         if (area.preset != null && area.roadLines == null) {
             update(area.id) {
                 it.status = OfflineArea.Status.incomplete
-                it.problem = "This version of SatMap doesn't have the road list for this area."
+                it.problem = "This version of Spoor doesn't have the road list for this area."
             }
             post { startNextIfIdle() }
             return

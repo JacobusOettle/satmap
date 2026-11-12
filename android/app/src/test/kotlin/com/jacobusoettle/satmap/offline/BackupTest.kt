@@ -510,7 +510,7 @@ class BackupTest {
         m.clearBackupMessage()
         m.restore(listOf(Uri.parse("content://com.example.drive/1")))
         idleUntil { m.backupMessage.value != null }
-        assertEquals("Fixture farm is already in SatMap.", m.backupMessage.value)
+        assertEquals("Fixture farm is already in Spoor.", m.backupMessage.value)
         assertEquals(1, m.areas.value.size)
         assertEquals(before + 1, m.completedRevision.value)
     }
@@ -815,7 +815,7 @@ class BackupTest {
         m.restore(listOf(Uri.fromFile(photo), Uri.fromFile(other), gone))
         idle()
         assertEquals(
-            "holiday.jpg isn't a SatMap backup.\nOther app.mbtiles isn't a SatMap backup.\n" +
+            "holiday.jpg isn't a Spoor backup.\nOther app.mbtiles isn't a Spoor backup.\n" +
                 "Couldn't copy gone.mbtiles (is there enough free space?).",
             m.backupMessage.value,
         )

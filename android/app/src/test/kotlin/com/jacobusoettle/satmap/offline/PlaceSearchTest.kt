@@ -83,7 +83,7 @@ class PlaceSearchTest {
         val request = photon.takeRequest()
         assertEquals("GET", request.method)
         assertEquals("/api/?q=Skukuza%20camp&limit=20&lat=-24.9877&lon=31.5921", request.path)
-        assertEquals("SatMap/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)", request.getHeader("User-Agent"))
+        assertEquals("Spoor/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)", request.getHeader("User-Agent"))
 
         // Without a place to search near.
         photon.enqueue(MockResponse().setBody(sabiSand))

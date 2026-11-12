@@ -51,7 +51,7 @@ class HTTPTileFetcherTest {
         assertTrue(r is TileFetchResult.Data)
         assertArrayEquals(jpeg, (r as TileFetchResult.Data).data)
         assertTrue(answer(MockResponse().setBody(Buffer().write(png))) is TileFetchResult.Data)
-        assertEquals("SatMap/1.0 (Android)", server.takeRequest().getHeader("User-Agent"))
+        assertEquals("Spoor/1.0 (Android)", server.takeRequest().getHeader("User-Agent"))
     }
 
     @Test

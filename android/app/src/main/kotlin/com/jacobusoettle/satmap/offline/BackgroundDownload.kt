@@ -44,9 +44,9 @@ class BackgroundDownload(
         /** The texts of `status` (DESIGN.md D12, offline spec §2.5). */
         const val keepsGoing = "Downloads keep going in the background, with their progress in the notification."
         const val keepsGoingWithoutNotifications =
-            "Downloads keep going in the background. Allow notifications for SatMap to see their progress there."
+            "Downloads keep going in the background. Allow notifications for Spoor to see their progress there."
         const val notAllowed =
-            "In the background a download stops, and continues when you open SatMap: Android didn't allow it to keep going in the background."
+            "In the background a download stops, and continues when you open Spoor: Android didn't allow it to keep going in the background."
 
         /** The instance whose service runs (or was asked to start): the service reports to it. Main thread only. */
         internal var current: BackgroundDownload? = null

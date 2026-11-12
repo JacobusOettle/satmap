@@ -363,7 +363,7 @@ private fun LocationHint(recorder: LocationRecorder) {
     when {
         authorization == LocationRecorder.Authorization.denied ->
             Hint(
-                "Location is off for SatMap. Turn it on in Settings › Apps › SatMap › Permissions › Location.",
+                "Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location.",
                 onTap = { openSettings(context, appDetails(context)) },
             )
         authorization == LocationRecorder.Authorization.servicesOff ->
@@ -373,7 +373,7 @@ private fun LocationHint(recorder: LocationRecorder) {
             )
         reducedAccuracy ->
             Hint(
-                "Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › SatMap › " +
+                "Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › Spoor › " +
                     "Permissions › Location (Use precise location).",
                 onTap = { openSettings(context, appDetails(context)) },
             )

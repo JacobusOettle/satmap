@@ -62,7 +62,7 @@ The same JSON is used for the backup format; PORTING.md gives its encoding.
 | `changeMaxZoom(id, z)`, when z differs | `maxZoom = z`, `queued`, failed 0, problem nil. If the area is active its run is cancelled and it runs again; otherwise `startNextIfIdle`. |
 | `setAllowCellular(id, b)`, when b differs | `waitingForNetwork → queued`. If the area is active: `downloading → queued` and the run is cancelled, because its connection was chosen for the old setting. Otherwise `startNextIfIdle`. |
 | network change, or the app comes to the foreground | each `waitingForNetwork` area that `canDownloadNow` becomes `queued`, then `startNextIfIdle` |
-| background time ends, or Stop in the notification while SatMap is in the background (§1.6) | `downloading → queued` and the run is cancelled. It continues when SatMap is opened. |
+| background time ends, or Stop in the notification while Spoor is in the background (§1.6) | `downloading → queued` and the run is cancelled. It continues when Spoor is opened. |
 | export (§1.13) | an exported area that is downloading is paused, then resumed when the export ends |
 
 Rules in `finished(id, outcome, size)`, applied in this order:
@@ -112,11 +112,11 @@ startNextIfIdle():
       else background.end(lastRunComplete)
 ```
 
-`waitForSignalInBackground` gives a gap in the signal a chance. It waits **20 s** (once per gap), then, if no run has started, calls `background.end(false)`. The wait is cleared when SatMap comes to the foreground and when a run starts.
+`waitForSignalInBackground` gives a gap in the signal a chance. It waits **20 s** (once per gap), then, if no run has started, calls `background.end(false)`. The wait is cleared when Spoor comes to the foreground and when a run starts.
 
 `run(area)` does the following.
 
-1. **Guard: a shipped road list that is missing.** If `preset != nil && roadLines == nil`, the area becomes `incomplete` with `"This version of SatMap doesn't have the road list for this area."`, and `startNextIfIdle` is posted. The whole area (terabytes for Kruger) is never downloaded instead.
+1. **Guard: a shipped road list that is missing.** If `preset != nil && roadLines == nil`, the area becomes `incomplete` with `"This version of Spoor doesn't have the road list for this area."`, and `startNextIfIdle` is posted. The whole area (terabytes for Kruger) is never downloaded instead.
 2. **Open the stores.** Opening, and creating if needed, `imagery.mbtiles` and `terrain.mbtiles` in the area folder. If that fails, the area becomes `incomplete` with the store's error text, or `"Couldn't open the tile database."`, and `startNextIfIdle` is posted.
 3. **Metadata.**
    - Imagery: `name`, `format=jpg`, `type=baselayer`, `minzoom=0`, `maxzoom=<maxZoom>` and `attribution=TileSources.attribution`.
@@ -141,7 +141,7 @@ The fetcher maps answers like this:
 | 204, 404, 410 | `missing` |
 | any other status | `failed` |
 
-Errors with no network give `offline`; any other error gives `failed`. The User-Agent is `SatMap/1.0 (Android)` (iOS: `SatMap/1.0 (iOS)`).
+Errors with no network give `offline`; any other error gives `failed`. The User-Agent is `Spoor/1.0 (Android)` (iOS: `Spoor/1.0 (iOS)`).
 
 The download session has:
 - no cache;
@@ -167,7 +167,7 @@ A Wi-Fi-only area uses a session that refuses mobile data and hotspots: its requ
   - Title: the area name.
   - Subtitle `progressText(p)`: `"<layer> · zoom <zoom> of <maxZoom> · <percent>%"`, where `percent = Int(overallDone / overallTotal × 100)`, or 0.
   - The bar adds up every area downloaded in this background session: areas before the current one count as done (`carried = max(done, total)` when the area changes). It never goes back, and the title/subtitle change at most once a second.
-- **Screen**: while a download runs and SatMap is on screen, the screen stays on.
+- **Screen**: while a download runs and Spoor is on screen, the screen stays on.
 
 ## 1.5 Low space
 
@@ -179,9 +179,9 @@ A write failure from SQLite (`SQLITE_FULL`, Android `SQLiteFullException`) ends 
 
 ## 1.6 Background continuation (the iOS semantics to keep)
 
-- A download keeps going when SatMap is left or the phone is locked.
-- When the system ends it, or the user stops it from the system UI while SatMap is in the background: the area goes back to `queued`, the run is cancelled, and **it continues from where it stopped when SatMap is opened again**. The same happens after the app is killed (at load, `downloading → queued`).
-- Without background time, nothing new starts in the background. Waiting areas get one 20 s grace period (§1.3), then wait until SatMap is opened.
+- A download keeps going when Spoor is left or the phone is locked.
+- When the system ends it, or the user stops it from the system UI while Spoor is in the background: the area goes back to `queued`, the run is cancelled, and **it continues from where it stopped when Spoor is opened again**. The same happens after the app is killed (at load, `downloading → queued`).
+- Without background time, nothing new starts in the background. Waiting areas get one 20 s grace period (§1.3), then wait until Spoor is opened.
 - `backgroundStatus` is shown as the footer of the "Offline areas" section. It is nil until the first download, and says what happens to downloads in the background. Android texts are in §2.5.
 - Opening the app again (willEnterForeground) clears the signal wait, ends the extra background time and runs `networkChanged()`. didBecomeActive asks for background time for a run already going on.
 
@@ -313,7 +313,7 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
    - Each file row shows its name and what the file holds (`Format.fileContents`): its shapes, lines and points (`FileShapes` areas, lines and dots), only the kinds it has, as `"2 shapes · 1 line · 3 points"` or `"7 shapes · 1 point"`. It leads to `NewAreaView(PendingArea(f.name, FileShapes(f.document).downloadShape))`: imagery and elevation inside the file's shapes and 15 m around its lines and points (§1.8). `FileShapes` (core) says which features are shapes, lines and points, from their geometry and the file's own marks.
    - With no files: `"Import a KML or GPX file first (Blocks button on the map)."`.
 4. The Kruger roads screen (`OfflineRoute.Preset`, `PresetAreaView`) has no row on the first screen any more, but stays in the code: areas saved with preset `"KrugerRoads"` still load, download, resume, go deeper and back up through `RoadPresets`, and the place search inside Kruger uses its roads (`RoadPresets.covering`). It is `NewAreaView(PendingArea(preset.name, CoverageShape(polygons = preset.boundary)), presetID = "KrugerRoads")`.
-   - If the preset is missing: `"The road list is missing from this build of SatMap."`.
+   - If the preset is missing: `"The road list is missing from this build of Spoor."`.
    - `RoadPresets.load(id)` reads `<id>.json` once (thread-safe cache). A failure is logged as `road preset <id> missing or unreadable`.
    - `RoadPresets.covering(area)` compares coverage at zoom 14: the preset is used if tiles outside its boundary × 10 ≤ the area's tiles.
 5. **"Where I've been"** (walking figure) opens `TrackAreaView`.
@@ -323,7 +323,7 @@ The title is `"Download area"`. A `"Cancel"` button is shown only when the scree
      - `completeTo = existing.maxZoom if existing is complete`;
      - `lines = Roads.mergeTrack(previous, latest)`;
      - `newLines = if (completeTo == null) lines else Roads.newParts(latest, previous)`.
-   - Empty lines: `"No track recorded yet. Your dotted track is recorded while SatMap knows where you are."`.
+   - Empty lines: `"No track recorded yet. Your dotted track is recorded while Spoor knows where you are."`.
    - Otherwise `NewAreaView` with name = the existing track area's name ?: `"Where I've been"`, `shape = Roads.corridor(lines)` and `track = TrackDownload(...)`.
    - `updateTrackArea(name, lines, maxZoom, allowCellular)`, with `shape = Roads.corridor(lines)`:
      - with no track area: `add(...)` with `roads = lines`, then `isTrack = true`;
@@ -423,7 +423,7 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
 - On error: the message (or `"Couldn't get the boundary. Try again."`) and `"Try again"`. Cancellation is silent.
 
 **Requests in general.**
-- User-Agent `SatMap/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)`; iOS says "iPhone offline map".
+- User-Agent `Spoor/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)`; iOS says "iPhone offline map".
 - Timeout 20 s.
 - Errors:
   - status other than 200: `unavailable` (logged `"<host>: HTTP <code>"`);
@@ -457,9 +457,9 @@ The sheet is titled `"Offline maps"`, with `"Done"` on the leading side. Opening
 2. A staging folder `Offline/Restoring` is created fresh and always removed at the end.
 3. File sizes are read for progress: `"Copying <done> of <total>…"`, with `backupProgress` 0…1, updated at most every 0.1 s and at the end.
 4. Each file is copied to `Restoring/<i>.mbtiles` in 4 MiB pieces. If a copy fails, the partial file is removed and `"Couldn't copy <file name> (is there enough free space?)."` is added to the messages.
-5. `OfflineBackup.inspect` reads the layer key and area JSON. A file without them adds `"<file name> isn't a SatMap backup."`. The files are grouped by area id.
+5. `OfflineBackup.inspect` reads the layer key and area JSON. A file without them adds `"<file name> isn't a Spoor backup."`. The files are grouped by area id.
 6. For each area:
-   - one already in SatMap adds `"<name> is already in SatMap."`;
+   - one already in Spoor adds `"<name> is already in Spoor."`;
    - otherwise each layer file is moved into `Offline/<UUID>/<layer file>`. A missing layer makes it incomplete;
    - `status = complete` only if both layers came and the saved status was complete, else `paused`; `problem = nil`; `bytesOnDisk = folder size`.
 7. On the main thread: the new areas are appended, then save, `publishToMap`, and `completedRevision += 1` if any were added. Backups with sealed tiles and backups made before tiles were encrypted (plain tiles) restore alike; the plain tiles are then sealed in the background (§1.16).
@@ -475,7 +475,7 @@ The library holds GPX files too, read by `KMLParser.parseKMLOrGPX` (GPX when the
 **Storage.**
 - `KML/index.json` is a JSON array of `Entry { id (UUID), name, fileName, hidden: Bool? }`. `hidden` is `true` when switched off and left out when shown.
 - Each file is stored as `KML/<UUID>.kml`, or `.kmz` when its data starts with `PK`, or `.gpx` for a GPX file (`document.format == gpx`).
-- The index is read synchronously at start, so an "Open in SatMap" import at launch can't overwrite it. The documents are parsed in the background.
+- The index is read synchronously at start, so an "Open in Spoor" import at launch can't overwrite it. The documents are parsed in the background.
 - Merge after parsing: the loaded files (with the current entry, so a change made meanwhile is kept), plus files imported meanwhile. Files deleted meanwhile are skipped.
 
 **Import** (`importFile(uri, completion)`)
@@ -554,12 +554,12 @@ The library holds GPX files too, read by `KMLParser.parseKMLOrGPX` (GPX when the
 
 Tiles are stored sealed (`TileCrypto`; the format is in `PORTING.md`): `MBTiles.put` seals each tile, and `MBTiles.tile` opens it, so files copied off the phone can't be shown in another app. The app never touches `tile_data` itself. Areas downloaded before tiles were encrypted, and old backups restored, hold plain tiles; the map reads them as they are (a file may hold both), and `encryptOldFiles` seals them in place:
 
-- **Only while SatMap is open:** in the foreground (an Android Auto screen showing SatMap counts), as on iOS. A large area is minutes of work, not worth the battery in the background. Going to the background (`didEnterBackground`) stops the work after the batch in hand, and coming back (`willEnterForeground`) starts it again, carrying on where it stopped (nothing is lost). Started in the background (a download's service started SatMap), nothing is sealed until SatMap is opened.
-- **When:** at launch (after `startNextIfIdle`), after a restore, after each download run, when an export or a "Save to a folder" copy stops holding downloads or the last reader of an exported file closes, and when SatMap comes to the foreground (after `networkChanged`, so an area that starts downloading is left). In the background these calls seal nothing. One run at a time; a call during a run makes it try again, after the area in hand, the areas it couldn't finish so far.
+- **Only while Spoor is open:** in the foreground (an Android Auto screen showing Spoor counts), as on iOS. A large area is minutes of work, not worth the battery in the background. Going to the background (`didEnterBackground`) stops the work after the batch in hand, and coming back (`willEnterForeground`) starts it again, carrying on where it stopped (nothing is lost). Started in the background (a download's service started Spoor), nothing is sealed until Spoor is opened.
+- **When:** at launch (after `startNextIfIdle`), after a restore, after each download run, when an export or a "Save to a folder" copy stops holding downloads or the last reader of an exported file closes, and when Spoor comes to the foreground (after `networkChanged`, so an area that starts downloading is left). In the background these calls seal nothing. One run at a time; a call during a run makes it try again, after the area in hand, the areas it couldn't finish so far.
 - **What:** each area not yet found sealed since launch, in list order, except the downloading one (its store keeps long transactions; it is sealed after its run), every area while an export or a copy holds downloads, and an area another app is reading. For each existing file (`imagery.mbtiles`, then `terrain.mbtiles`), a store of its own: nothing to do if it is marked (`MBTiles.isEncrypted`) and its write-ahead log is empty; otherwise `MBTiles.encryptPlainTiles` (on a marked file that only folds the log in: a run whose checkpoint couldn't finish leaves plain pages in the database file). An area is remembered as sealed when all its files are done.
 - **How:** on `io`, at `Thread.MIN_PRIORITY` (set back afterwards); the store is opened at that priority, so its SQLite thread runs at it too. The map draws meanwhile (its own stores read plain and sealed tiles), and other areas download.
 - **Stopping:** `encryptPlainTiles` is told to stop when the job is cancelled (after the batch in hand). Going to the background cancels the job. An export cancels the job and waits for it, then seals what it shares itself (§1.13); deleting the area being sealed cancels it and deletes the folder once it has stopped, and the job then goes on with the others. A download that starts on the area being sealed (↻, a deeper level, mobile data allowed, Wi-Fi back) cancels the job too and starts once it has stopped, off the main thread: opening the run's stores and writing their settings takes the file's write lock, which a batch or the checkpoint holds, so done at once it would wait on the main thread (up to the 10 s busy timeout, behind the lowest-priority thread). Meanwhile no other download starts and the job leaves that area; once the run has started, the job goes on with the other areas.
-- **Again:** a file that couldn't be finished (busy, storage full, SatMap gone to the background, or the app closed) is tried at the next of the calls above; the work carries on where it stopped, also after the app has started again (the file records the last row checked, `MBTiles.encryptAfterKey`), so the sealed tiles aren't read again. Nothing is shown in the screens.
+- **Again:** a file that couldn't be finished (busy, storage full, Spoor gone to the background, or the app closed) is tried at the next of the calls above; the work carries on where it stopped, also after the app has started again (the file records the last row checked, `MBTiles.encryptAfterKey`), so the sealed tiles aren't read again. Nothing is shown in the screens.
 
 ---
 
@@ -593,7 +593,7 @@ task = scope.launch {
 - Lifecycle comes from `ProcessLifecycleOwner.get().lifecycle` (`androidx.lifecycle:lifecycle-process` is already a dependency):
   - `ON_START` runs `willEnterForeground()` then `didBecomeActive()`;
   - `ON_STOP` runs `didEnterBackground()`.
-- `inForeground = ProcessLifecycleOwner…currentState.isAtLeast(STARTED) || AppModel.carMap?.isShown == true`. With the car screen showing SatMap the app counts as active, as on iOS.
+- `inForeground = ProcessLifecycleOwner…currentState.isAtLeast(STARTED) || AppModel.carMap?.isShown == true`. With the car screen showing Spoor the app counts as active, as on iOS.
 - Connectivity is collected with `Connectivity.state.distinctUntilChanged()`, then `networkChanged()`.
 - `publishToMap()` calls `TileRepository.setAreas(...)`, owned by the map subsystem, with `AreaRef(id, directory, minX, minY, maxX, maxY)` from `WebMercator.world` of the shape's bounds (NW and SE corners).
 - `AppModel` offline API, the same as Swift: `startDrawingArea`, `finishDrawing`, `cancelDrawing`, `confirmDrawnArea`, `prepareArea(from)`, `startDownload`, `startTrackDownload`, `discardPendingArea`. `pendingArea`, `draftArea`, `isDrawingArea`, `lassoActive` and `sheet` are `MutableStateFlow`s.
@@ -608,7 +608,7 @@ val anyNetwork = OkHttpClient.Builder()
     .connectTimeout(20, SECONDS).readTimeout(20, SECONDS).writeTimeout(20, SECONDS)
     .dispatcher(Dispatcher().apply { maxRequests = 64; maxRequestsPerHost = 32 })
     .connectionPool(ConnectionPool(32, 5, TimeUnit.MINUTES))
-    .addInterceptor { it.proceed(it.request().newBuilder().header("User-Agent", "SatMap/1.0 (Android)").build()) }
+    .addInterceptor { it.proceed(it.request().newBuilder().header("User-Agent", "Spoor/1.0 (Android)").build()) }
     .build()
 ```
 
@@ -659,7 +659,7 @@ val anyNetwork = OkHttpClient.Builder()
 - If that throws `ForegroundServiceStartNotAllowedException` (API 31+), the status says Android didn't allow it (text below) and the run goes on while the process lives.
 - After a successful start, `status` is:
   - with notifications allowed (`NotificationManagerCompat.from(ctx).areNotificationsEnabled()`): `"Downloads keep going in the background, with their progress in the notification."`;
-  - without: `"Downloads keep going in the background. Allow notifications for SatMap to see their progress there."`.
+  - without: `"Downloads keep going in the background. Allow notifications for Spoor to see their progress there."`.
 - If the start isn't allowed: `"In the background a download stops, and continues when you open SatMap: Android didn't allow it to keep going in the background."`.
 
 **`allowsBackgroundWork`** is `OfflineDownloadService.running && !stopping`.
@@ -692,7 +692,7 @@ class OfflineDownloadService : Service() {
       }
       ACTION_STOP -> AppModel.shared.offline.stopFromNotification()
     }
-    return START_NOT_STICKY            // killed → continues when SatMap is opened (as iOS)
+    return START_NOT_STICKY            // killed → continues when Spoor is opened (as iOS)
   }
   override fun onTimeout(startId: Int, fgsType: Int) {   // API 35: dataSync's 6 h per 24 h are used up
     AppModel.shared.offline.backgroundTimeEnded(); stopSelf()
@@ -702,8 +702,8 @@ class OfflineDownloadService : Service() {
 }
 ```
 
-`OfflineManager.stopFromNotification()` handles Stop. Unlike iOS, Android shows the notification while SatMap is open too.
-- With SatMap in the foreground: `pause(activeID)`. The row shows "Paused" and ↻.
+`OfflineManager.stopFromNotification()` handles Stop. Unlike iOS, Android shows the notification while Spoor is open too.
+- With Spoor in the foreground: `pause(activeID)`. The row shows "Paused" and ↻.
 - In the background: `backgroundTimeEnded()`, exactly as iOS's Lock Screen stop. `stopping = true` is set first so `allowsBackgroundWork` is false, the area goes back to `queued`, the run is cancelled, and `end(false)` is called. It continues on the next `ON_START`.
 
 **Notification**
@@ -726,7 +726,7 @@ class OfflineDownloadService : Service() {
 - A network retry in the background can't start the service; it waits for the app to open. (Android 12+ forbids starting a foreground service from the background anyway.)
 
 **Different from iOS** (note these in the code)
-- Swiping SatMap away does **not** stop a running download (`stopWithTask` is false by default), and the notification stays.
+- Swiping Spoor away does **not** stop a running download (`stopWithTask` is false by default), and the notification stays.
 - No Wi-Fi lock is taken. The adaptive parallelism absorbs Wi-Fi power-save latency.
 
 **Keep screen on.** In `MapScreen`: `val view = LocalView.current; val active by offline.activeID.collectAsState(); DisposableEffect(active) { view.keepScreenOn = active != null; onDispose { view.keepScreenOn = false } }`. This replaces `updateIdleTimer()`; the manager only exposes `activeID`.
@@ -792,7 +792,7 @@ Manifest `<application>`: `android:allowBackup="true"`, `android:fullBackupConte
   - an area with `ExportShares.readers(id) > 0` is not started: `startNextIfIdle` skips it;
   - if a reader opens an area that is downloading, the area is paused like `pausedForExport` and resumed after the last close;
   - the last close calls `startNextIfIdle()`.
-- Safety: after `checkpoint(TRUNCATE)` the main database file holds everything. The map's read-only connections never write, and no writer runs while a reader is open, so a raw copy taken by the receiving app is consistent. Its tiles are all sealed (the export seals a file still holding plain tiles first, and a file another app still reads is shared again only if it is marked as sealed), so the receiving app can't show them; SatMap on another phone, iPhone or Android, restores them.
+- Safety: after `checkpoint(TRUNCATE)` the main database file holds everything. The map's read-only connections never write, and no writer runs while a reader is open, so a raw copy taken by the receiving app is consistent. Its tiles are all sealed (the export seals a file still holding plain tiles first, and a file another app still reads is shared again only if it is marked as sealed), so the receiving app can't show them; Spoor on another phone, iPhone or Android, restores them.
 
 **Share intent.** `BackupSharing.share(activity, uris)` is launched by `MainActivity` through `registerForActivityResult(ActivityResultContracts.StartActivityForResult())`. The callback is iOS's `completionWithItemsHandler` and calls `offline.finishExport()`.
 
@@ -800,14 +800,14 @@ Manifest `<application>`: `android:allowBackup="true"`, `android:fullBackupConte
 val send = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
     type = "application/octet-stream"
     putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
-    clipData = ClipData.newUri(cr, "SatMap", uris[0]).also { c -> uris.drop(1).forEach { c.addItem(ClipData.Item(it)) } }
+    clipData = ClipData.newUri(cr, "Spoor", uris[0]).also { c -> uris.drop(1).forEach { c.addItem(ClipData.Item(it)) } }
     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 }
 val chooser = Intent.createChooser(send, null)
 ```
 
 - The share sheet's Drive, Gmail, Quick Share (the AirDrop equivalent) and Files targets work.
-- Stock Android has no "Save to Files" target for USB drives or local folders, so the chooser gets one SatMap entry, **"Save to a folder"**:
+- Stock Android has no "Save to Files" target for USB drives or local folders, so the chooser gets one Spoor entry, **"Save to a folder"**:
   - API 34+: `Intent.EXTRA_CHOOSER_CUSTOM_ACTIONS` = `arrayOf(ChooserAction.Builder(Icon.createWithResource(ctx, R.drawable.ic_folder), "Save to a folder", PendingIntent.getActivity(ctx, 2, Intent(ctx, MainActivity::class.java).setAction(ACTION_SAVE_TO_FOLDER), FLAG_IMMUTABLE)).build())`;
   - API 26–33: `Intent.EXTRA_INITIAL_INTENTS` = `arrayOf(LabeledIntent(Intent(ctx, SaveToFolderActivity::class.java), packageName, "Save to a folder", R.drawable.ic_folder))`. `SaveToFolderActivity` is exported with no intent filter, and forwards `ACTION_SAVE_TO_FOLDER` to `MainActivity`.
 - `MainActivity` handles `ACTION_SAVE_TO_FOLDER`:
@@ -827,7 +827,7 @@ val chooser = Intent.createChooser(send, null)
   - then `encryptOldFiles()` (§1.16): an old backup's plain tiles are sealed in the background.
 - Android OfflineSheet backup footer: `"Saves each area as two MBTiles files, satellite and elevation, to Google Drive, a folder or a USB drive, or sends them to a computer. To restore, choose both files of each area. Long-press an area to export only that one."`
 
-## 2.9 KML and GPX import and "share to SatMap"
+## 2.9 KML and GPX import and "share to Spoor"
 
 **Picker** (Blocks `+`): `rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments())` with
 `KMLLibrary.pickerTypes`: `arrayOf("application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", "application/gpx+xml", "application/xml", "text/xml", "application/zip", "application/octet-stream")`.
@@ -839,7 +839,7 @@ These are iOS's kml/kmz/gpx/xml/zip types, plus octet-stream, which many provide
 - Storage: `KML/<UUID upper-case>.kml|.kmz|.gpx`, written with `AtomicFile`, and an atomic `index.json`. Entries are encoded as Swift encodes them: `{"id":"<UPPER-UUID>","name":…,"fileName":…}`, plus `"hidden":true` when switched off.
 - No inbox clean-up is needed on Android (content URIs).
 
-**Intent filters** on `MainActivity`, with `android:launchMode="singleTask"`. SatMap then opens in its own task with the map, as iOS switches to SatMap.
+**Intent filters** on `MainActivity`, with `android:launchMode="singleTask"`. Spoor then opens in its own task with the map, as iOS switches to Spoor.
 
 ```xml
 <intent-filter>                                   <!-- "Open with" by type -->
@@ -864,7 +864,7 @@ These are iOS's kml/kmz/gpx/xml/zip types, plus octet-stream, which many provide
   <data android:pathPattern=".*\\.gpx" /><data android:pathPattern=".*\\..*\\.gpx" />
   <data android:pathPattern=".*\\.GPX" /><data android:pathPattern=".*\\..*\\.GPX" />
 </intent-filter>
-<intent-filter>                                   <!-- Share to SatMap: WhatsApp, Gmail, Files, Drive -->
+<intent-filter>                                   <!-- Share to Spoor: WhatsApp, Gmail, Files, Drive -->
   <action android:name="android.intent.action.SEND" />
   <action android:name="android.intent.action.SEND_MULTIPLE" />
   <category android:name="android.intent.category.DEFAULT" />
@@ -878,7 +878,7 @@ These are iOS's kml/kmz/gpx/xml/zip types, plus octet-stream, which many provide
 </intent-filter>
 ```
 
-WhatsApp and Gmail pass on the sender's type, which for KML/KMZ/GPX is often `application/octet-stream`, `text/xml` or `application/zip`, and their URIs carry no file name. Without those types SatMap couldn't receive their files. As a result SatMap also appears for other files of those types, and parsing rejects them with the usual "Couldn't import" alert. This is a deliberate difference from iOS's kml/kmz/gpx-only document types. Few phones know `application/gpx+xml` (file managers call a `.gpx` octet-stream, `text/xml`, `text/plain` or `*/*`), so "Open with" also takes a `.gpx` by name whatever its type.
+WhatsApp and Gmail pass on the sender's type, which for KML/KMZ/GPX is often `application/octet-stream`, `text/xml` or `application/zip`, and their URIs carry no file name. Without those types Spoor couldn't receive their files. As a result Spoor also appears for other files of those types, and parsing rejects them with the usual "Couldn't import" alert. This is a deliberate difference from iOS's kml/kmz/gpx-only document types. Few phones know `application/gpx+xml` (file managers call a `.gpx` octet-stream, `text/xml`, `text/plain` or `*/*`), so "Open with" also takes a `.gpx` by name whatever its type.
 
 **`MainActivity.handleIncoming(intent)`**
 - It is called from `onCreate` (when `savedInstanceState == null`) and from `onNewIntent`.
@@ -927,13 +927,13 @@ WhatsApp and Gmail pass on the sender's type, which for KML/KMZ/GPX is often `ap
 - **Controls**: switches are `Switch`; the colours checkbox is `Checkbox`; zoom rows are `ListItem`s with a trailing check `Icon` (alpha 0 when not chosen); `DrawingBar` uses a `SegmentedControl` of our own, drawn as iOS's (UI spec §2.3.1).
 - **Android text changes** (everything else is word for word):
   - "iPhone" becomes "phone" in the low-space problem and the free-space line;
-  - `NewAreaView` mobile data footer: `"Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, with its progress in a notification. If Android stops it, it continues when you open SatMap again."`;
+  - `NewAreaView` mobile data footer: `"Without mobile data the download waits for Wi-Fi. It keeps going when you leave Spoor, with its progress in a notification. If Android stops it, it continues when you open Spoor again."`;
   - background status: §2.5;
   - backup footer: §2.8.
 
 ## 2.11 Road and place requests on Android
 
-- Client: `OkHttpClient.Builder().connectTimeout(20, SECONDS).readTimeout(20, SECONDS)` with a User-Agent interceptor (`SatMap/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)`).
+- Client: `OkHttpClient.Builder().connectTimeout(20, SECONDS).readTimeout(20, SECONDS)` with a User-Agent interceptor (`Spoor/1.0 (Android offline map; https://github.com/JacobusOettle/satmap)`).
 - `RoadFetcher` uses `client.newBuilder().connectTimeout(60, SECONDS).readTimeout(60, SECONDS)` and the same User-Agent.
 - URLs are built with `HttpUrl.Builder().addQueryParameter(...)`. Numbers use the core's `stringFormat("%.4f", lat)` and `stringFormat("%.5f", t)`: POSIX formatting, **never** `String.format` with the device locale, which would write `24,9876`.
 - `RoadFetcher.roads(area)`:
@@ -1139,13 +1139,13 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
 - orphaned folders are removed;
 - `downloading` becomes `queued` at load.
 
-**Sealing old files** (§1.16), with files written as an older SatMap wrote them (plain tiles, not marked):
+**Sealing old files** (§1.16), with files written as an older Spoor wrote them (plain tiles, not marked):
 - an old area is sealed at launch, on `io` at the lowest priority (its SQLite thread too), and the thread's priority is set back; every tile is sealed and none is an image, no plain picture is left in the file or its log, and the map reads the same pictures; a sealed area isn't opened again;
 - an old area left downloading is sealed after its run, never during it;
 - while an area is half sealed (held after its first batch, `io` a thread of its own), a real `TileRepository` reader draws every tile, and afterwards, with that reader still open, the file holds no plain picture;
 - deleting the area being sealed stops the work after the batch in hand, and its folder goes once it has stopped;
 - resuming a paused old area while it is being sealed, with its file's write lock held (by a connection of the test's own, as a batch holds it), returns at once without opening its stores; the run starts once the work has stopped, and afterwards the work carries on from where it stopped (it doesn't check the first batch again);
-- started in the background, SatMap seals nothing until it comes to the foreground;
+- started in the background, Spoor seals nothing until it comes to the foreground;
 - going to the background stops the work after the batch in hand, and coming back carries on from where it stopped.
 
 **Backup**
@@ -1155,7 +1155,7 @@ override fun onScale(fx: Float, fy: Float, f: Float) {
   - with both files, the area is complete;
   - with the satellite file only, it is paused and the "Tap ↻" line appears;
   - an area that already exists is reported;
-  - a non-backup file gives `"<name> isn't a SatMap backup."`;
+  - a non-backup file gives `"<name> isn't a Spoor backup."`;
   - the fixture `Tests/SatMapCoreTests/Fixtures/backup/iphone-encrypted` restores, with nothing to seal;
   - the fixtures made before tiles were encrypted, `…/backup/iphone` and `…/backup/android`, restore, and are then sealed (the backup's own files unchanged).
 - The exported files' tiles are all sealed, and none is an image.

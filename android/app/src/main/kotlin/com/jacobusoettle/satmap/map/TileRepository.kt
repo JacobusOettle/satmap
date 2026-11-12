@@ -599,7 +599,7 @@ class HTTPTileFetcher(
             // iOS's `dataNotAllowed`: a Wi-Fi-only request on a metered network.
             if (wifiOnly && network().isExpensive) return TileFetchResult.Offline
             return try {
-                val request = Request.Builder().url(url).header("User-Agent", "SatMap/1.0 (Android)").build()
+                val request = Request.Builder().url(url).header("User-Agent", "Spoor/1.0 (Android)").build()
                 client.newCall(request).executeReading { r ->
                     when (r.code) {
                         200 -> {

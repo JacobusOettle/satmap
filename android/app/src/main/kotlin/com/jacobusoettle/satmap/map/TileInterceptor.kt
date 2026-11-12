@@ -254,7 +254,7 @@ class TileInterceptor(
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .connectionPool(ConnectionPool(10, 5, TimeUnit.MINUTES))
-            .addInterceptor { it.proceed(it.request().newBuilder().header("User-Agent", "SatMap/1.0 (Android)").build()) }
+            .addInterceptor { it.proceed(it.request().newBuilder().header("User-Agent", "Spoor/1.0 (Android)").build()) }
             .build()
     }
 }

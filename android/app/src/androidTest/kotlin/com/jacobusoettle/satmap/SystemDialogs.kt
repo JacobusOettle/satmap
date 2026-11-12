@@ -20,7 +20,7 @@ object SystemDialogs {
         return try {
             val dialog = device.findObject(By.text(title)) ?: return null
             val text = dialog.text ?: ""
-            val answer = if (text.contains("SatMap")) "Wait" else "Close app"
+            val answer = if (text.contains("Spoor")) "Wait" else "Close app"
             (device.findObject(By.text(answer)) ?: device.findObject(By.text("Wait")) ?: device.findObject(By.text("OK")))
                 ?.click()
             text

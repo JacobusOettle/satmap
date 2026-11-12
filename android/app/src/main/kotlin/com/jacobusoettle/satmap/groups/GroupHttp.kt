@@ -175,7 +175,7 @@ class GroupHttp(
                 .readTimeout(30, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .addInterceptor { chain ->
-                    chain.proceed(chain.request().newBuilder().header("User-Agent", "SatMap/1.0 (Android)").build())
+                    chain.proceed(chain.request().newBuilder().header("User-Agent", "Spoor/1.0 (Android)").build())
                 }
                 .build()
         }

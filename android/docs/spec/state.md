@@ -1,4 +1,4 @@
-# SatMap Android spec: app state and location
+# Spoor Android spec: app state and location
 
 Covers `SatMap/App/AppModel.swift`, `SatMapApp.swift`, `AppPaths.swift` (with `Format`), `Connectivity.swift`, `Config.swift` (`LocationPolicy`), `SatMap/Location/LocationRecorder.swift`, and how `MapScreen` / `MapController` observe them.
 
@@ -40,7 +40,7 @@ Kotlin package root: `com.jacobusoettle.satmap`.
     - If `selectedElevation == nil`, call `selectedLookup.retry()`.
   - **didEnterBackground:** stop the retry timer, `TileRepository.shared.trimForBackground()`, `ImageryMemory.enteredBackground()`.
   - **willEnterForeground:** `TileRepository.shared.restoreAfterBackground()`, start the retry timer, and call `requestReload()` if `reloadPending`.
-- **"Foreground" means `applicationState != .background`.** With CarPlay showing SatMap, the app is foreground (even active) while the phone is locked.
+- **"Foreground" means `applicationState != .background`.** With CarPlay showing Spoor, the app is foreground (even active) while the phone is locked.
 - **The phone's own map** (`MapController.isShown`) follows the phone's window scene only. It is true from the scene's willEnterForeground to its didEnterBackground.
 
 ### 1.2 Published state of `AppModel`
@@ -392,8 +392,8 @@ The timer's tolerance is 10% of the interval; it calls `startPeek()`.
 - If authorized, `beginUpdates()`.
 
 **Hints** (MapScreen, under the coordinate and drone rows):
-- Denied or restricted: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services."
-- Otherwise, with reduced accuracy: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location."
+- Denied or restricted: "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services."
+- Otherwise, with reduced accuracy: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › Spoor › Location."
 
 **UI tied to the recorder:**
 - Your coordinate bar shows only with a fix and not while drawing an area. Its icon is "location" (outline) while sleeping and "location.fill" otherwise.
@@ -470,7 +470,7 @@ private fun trim() { TileRepository.shared.trimMemory(); ImageryMemory.trimMemor
 
 **`AppLifecycle`** (Android only) mirrors `UIApplication.State` and its three notifications, for the whole process.
 
-The phone's activities (through `ProcessLifecycleOwner`) and the Android Auto `Session` both count. With Android Auto showing SatMap, the app is foreground even while the phone is locked, as with CarPlay.
+The phone's activities (through `ProcessLifecycleOwner`) and the Android Auto `Session` both count. With Android Auto showing Spoor, the app is foreground even while the phone is locked, as with CarPlay.
 
 ```kotlin
 object AppLifecycle {
@@ -744,9 +744,9 @@ reducedAccuracy = authorization == AUTHORIZED && !fine
 - **If fine is gained** (the user switched on precise location in Settings) → `applyRequests()`, which switches FUSED → GPS.
 - **Revoking** a permission kills the process; nothing more to handle.
 - **Hints in MapScreen** (same `Hint` look). Android settings paths differ by maker, so a **tap opens `Settings.ACTION_APPLICATION_DETAILS_SETTINGS`**, or `ACTION_LOCATION_SOURCE_SETTINGS` for SERVICES_OFF. That tap is an Android addition.
-  - DENIED: "Location is off for SatMap. Turn it on in Settings › Apps › SatMap › Permissions › Location."
+  - DENIED: "Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location."
   - SERVICES_OFF: "Location is off. Turn it on in Settings › Location."
-  - Reduced accuracy: "Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › SatMap › Permissions › Location (Use precise location)."
+  - Reduced accuracy: "Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › Spoor › Permissions › Location (Use precise location)."
 
 #### Altitude (for the HeightBar's GPS fallback)
 
@@ -813,18 +813,18 @@ class LocationService : Service() {
 - **When it is started:** only from `beginUpdates()`, that is, foreground and permission granted. It runs for as long as recording is started, including while sleeping. iOS likewise never stops its updates.
   - `startForegroundService` from the background throws `ForegroundServiceStartNotAllowedException` (API 31+). Catch it, along with `SecurityException`, and carry on without the service; recording continues while the app is visible.
 - **`START_NOT_STICKY`:** if the system kills the process, it is not restarted in the background. Android 14+ wouldn't allow location access then anyway. Recording starts again when the app is opened, which is the iOS behaviour.
-- **Swiping SatMap away from Recents does not stop recording** (`stopWithTask` stays false). Android doesn't impose the iOS force-quit limit.
+- **Swiping Spoor away from Recents does not stop recording** (`stopWithTask` stays false). Android doesn't impose the iOS force-quit limit.
   - The notification's **Stop** action is the way to end recording, the equivalent of an iOS force-quit. It stops it until the app is next opened; `didBecomeActive → if (!started) start()` restarts it.
   - Android 13+ also offers Stop in the foreground-services task manager. That kills the process, with the same result.
 - **Notification:**
   - Channel `"recording"`, name "Track recording", `IMPORTANCE_LOW`, no badge.
   - Small icon `ic_stat_location`.
-  - Title "SatMap", text "Recording your track".
+  - Title "Spoor", text "Recording your track".
   - `setOngoing(true)`, `setSilent(true)`, `setShowWhen(false)`, `CATEGORY_SERVICE`.
   - Content intent: open `MainActivity` (`FLAG_IMMUTABLE`).
   - Action "Stop": `PendingIntent.getService(…, Intent(ACTION_STOP), FLAG_IMMUTABLE)`.
   - Without `POST_NOTIFICATIONS` the service still runs; the notification is just not shown in the drawer.
-- **Android Auto:** call `beginUpdates()` when the car session reaches STARTED, which makes `AppLifecycle` foreground. The Car App host binds the app with its while-in-use capabilities, so locations arrive while the car screen shows SatMap. Starting the service then may be refused (caught above); background recording then begins the next time the phone app is opened.
+- **Android Auto:** call `beginUpdates()` when the car session reaches STARTED, which makes `AppLifecycle` foreground. The Car App host binds the app with its while-in-use capabilities, so locations arrive while the car screen shows Spoor. Starting the service then may be refused (caught above); background recording then begins the next time the phone app is opened.
 - **No battery-optimization exemption is requested**, for parity and Play policy.
 
 ### 2.6 Runtime permission flow (`PermissionFlow`, used by `MainActivity`)

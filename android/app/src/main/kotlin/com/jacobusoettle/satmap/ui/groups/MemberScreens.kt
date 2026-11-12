@@ -170,7 +170,7 @@ fun MemberDetailScreen(model: AppModel, route: GroupsRoute.Member, nav: GroupsNa
 fun HandoverAlert(name: String, onDismiss: () -> Unit, send: () -> Unit) {
     AlertBox(
         "Make $name the owner?",
-        "$name needs SatMap Pro to accept. You'll become an admin. If they don't accept within 7 days, the request ends.",
+        "$name needs Spoor Pro to accept. You'll become an admin. If they don't accept within 7 days, the request ends.",
         listOf(AlertButton("Send request", onClick = send), AlertButton("Cancel") {}),
         onDismiss,
     )

@@ -83,15 +83,15 @@ class GroupPartsTest {
 
     @Test
     fun pausedTextsFollowTheReasonAndWhoReadsThem() {
-        assertEquals("Drone team is paused: the owner's SatMap Pro has ended.", GroupTexts.pausedBanner("Drone team", PausedReason.proEnded, false))
-        assertEquals("Drone team is paused: your SatMap Pro couldn't be confirmed. Tap to fix.", GroupTexts.pausedBanner("Drone team", PausedReason.proUnverified, true))
+        assertEquals("Drone team is paused: the owner's Spoor Pro has ended.", GroupTexts.pausedBanner("Drone team", PausedReason.proEnded, false))
+        assertEquals("Drone team is paused: your Spoor Pro couldn't be confirmed. Tap to fix.", GroupTexts.pausedBanner("Drone team", PausedReason.proUnverified, true))
         assertEquals(
-            "This group is paused because the owner's SatMap Pro has ended. Nobody can share their location or drop pins until the owner " +
+            "This group is paused because the owner's Spoor Pro has ended. Nobody can share their location or drop pins until the owner " +
                 "renews Pro or hands the group to a member who has Pro. If it stays paused, everything shared in the group is deleted on 29 Nov.",
             GroupTexts.pausedSection(PausedReason.proEnded, owner = false, date = "29 Nov"),
         )
         assertEquals(
-            "This group is paused because your SatMap Pro was refunded or cancelled. Nobody can share their location or drop pins until you " +
+            "This group is paused because your Spoor Pro was refunded or cancelled. Nobody can share their location or drop pins until you " +
                 "renew Pro or hand the group to a member who has Pro.",
             GroupTexts.pausedSection(PausedReason.proRefunded, owner = true, date = null),
         )
@@ -118,7 +118,7 @@ class GroupPartsTest {
         assertEquals("Why are you reporting this pin?", GroupTexts.reportQuestion(ReportTarget.Pin("p")))
         assertEquals("Why are you reporting this group name?", GroupTexts.reportQuestion(ReportTarget.Group))
         assertTrue(GroupTexts.reportNote(ReportTarget.Pin("p")).startsWith("We'll get a copy of this pin's text to review"))
-        assertEquals("Join \"Kruger trip\" on SatMap: https://x/j/t#k", GroupTexts.shareText("Kruger trip", "https://x/j/t#k"))
+        assertEquals("Join \"Kruger trip\" on Spoor: https://x/j/t#k", GroupTexts.shareText("Kruger trip", "https://x/j/t#k"))
         assertEquals("Animal sighting", GroupTexts.pinLabel(PinType.animal))
         assertEquals("Animal", GroupTexts.pinShortLabel(PinType.animal))
         assertEquals("Pin", GroupTexts.pinLabel(null))
@@ -128,7 +128,7 @@ class GroupPartsTest {
     fun aPastedOrScannedLinkSaysWhatIsWrongWithIt() {
         val incomplete = "This invite link is incomplete. Copy the whole link from the message, or scan the QR code."
         assertEquals(incomplete, GroupTexts.linkProblem(InviteLink.Parsed.MissingKey, "https://satmap.app/j/abc"))
-        assertEquals("That isn't a SatMap invite link.", GroupTexts.linkProblem(InviteLink.Parsed.NotInvite, "https://example.com"))
+        assertEquals("That isn't a Spoor invite link.", GroupTexts.linkProblem(InviteLink.Parsed.NotInvite, "https://example.com"))
         assertNull(GroupTexts.linkProblem(InviteLink.Parsed.NotInvite, "  "))
         val whole = InviteLink.parse(GroupDemo.inviteLink, GroupDemo.domain)
         assertNull(GroupTexts.linkProblem(whole, GroupDemo.inviteLink))

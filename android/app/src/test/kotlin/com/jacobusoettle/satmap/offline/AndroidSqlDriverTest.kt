@@ -423,7 +423,7 @@ class AndroidSqlDriverTest {
         // Android's default handler would have deleted it.
         assertTrue(file.exists())
         val e = assertFailsWith<OfflineBackup.Failure.NotABackup> { OfflineBackup.inspect(file) }
-        assertEquals("holiday.jpg isn't a SatMap backup.", e.errorDescription)
+        assertEquals("holiday.jpg isn't a Spoor backup.", e.errorDescription)
         assertFailsWith<MBTiles.StoreError.Sql> { MBTiles(file, create = true) }
         assertEquals(8192L, file.length())
     }
