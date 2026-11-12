@@ -168,6 +168,16 @@ ADS-B (adsb.lol and the like) may be added later for aircraft when the drone has
   the imagery within 15 m of each side of them is downloaded, at every zoom level. Away from the roads the map
   shows the nearest coarser imagery that was saved, enlarged. Roads missing from OpenStreetMap are missed too,
   so check the area first: rural tracks are not always mapped.
+- **Finding a place:** the name is searched with [Photon](https://photon.komoot.io) (komoot's OpenStreetMap search,
+  forgiving of spelling, nearest the map's middle first), once per tap of Search. If Photon fails (a network or HTTP
+  error, an answer that isn't Photon's, or no answer within 5 seconds), the search uses
+  [Nominatim](https://nominatim.openstreetmap.org)'s own search instead, with the same limit and the same kinds of
+  places kept, within South Africa and its neighbours first when the map is there, then the whole world; the
+  results look the same and download the same. A failure is remembered for 10 minutes, during which searches go
+  straight to Nominatim; then Photon is tried again. A Photon answer with nothing in it is a real "nothing found".
+  The chosen place's boundary always comes from Nominatim, which is asked at most once a second (its usage policy).
+  The rule is in `SatMap/Core/Places.swift` (`PlaceSearchFallback`), tested against recorded answers in
+  `Tests/SatMapCoreTests/Fixtures/places/`, the same in both apps.
 - **From a GPX or KML file:** each of the file's features is saved on its own, with nothing in between, however
   far apart they are. A shape (a KML polygon, or a closed line: a ring, or a line ending within 5 m of where it
   starts) is saved inside its outline, with nothing around it. A line (a KML line, a GPX track, its segments joined
@@ -346,6 +356,8 @@ treats the lock screen as a good launch, so pushes stay green and the `android-t
 
 - **Roads:** [OpenStreetMap](https://www.openstreetmap.org/copyright) via the public Overpass API, © OpenStreetMap
   contributors (ODbL). Only used to choose which imagery to download.
+- **Places:** OpenStreetMap names and boundaries, found with Photon (komoot) or, when Photon fails, Nominatim, and
+  boundaries from Nominatim, © OpenStreetMap contributors (ODbL). Only used to choose which imagery to download.
 - **Elevation:** [Terrain Tiles on AWS](https://registry.opendata.aws/terrain-tiles/) (Mapzen). Open data,
   free to download and store, with attribution.
 - The map credits ("Powered by Esri", the imagery and elevation sources) are at the bottom of the

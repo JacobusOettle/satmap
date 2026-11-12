@@ -1,0 +1,54 @@
+{
+  "about": "The places each search answer in this folder gives, in order, in both apps. nominatim-*.json are Nominatim /search answers recorded on 12 Nov 2026 (format=jsonv2, addressdetails=1, limit=20, countrycodes=za,ls,sz,na,bw,zw,mz); photon-sabi-sand.json is Photon's answer for the same places, written by hand (Photon was down), and must give the same Sabi Sand reserve. extent is [minLat, minLon, maxLat, maxLon], null for a spot.",
+  "answers": {
+    "photon-sabi-sand.json": [
+      {"id": "R1751334", "name": "Sabi Sand Nature Reserve", "kind": "Nature reserve", "tag": "nature_reserve",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.821303, "lon": 31.4411616,
+       "extent": [-24.97716, 31.32745, -24.6654308, 31.6223272]}
+    ],
+    "nominatim-sabi-sand.json": [
+      {"id": "R1751334", "name": "Sabi Sand Nature Reserve", "kind": "Nature reserve", "tag": "nature_reserve",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.821303, "lon": 31.4411616,
+       "extent": [-24.97716, 31.32745, -24.6654308, 31.6223272]}
+    ],
+    "nominatim-sabi-sands.json": [
+      {"id": "W1238644991", "name": "Sabi Sands Game Reserve", "kind": "Nature reserve", "tag": "nature_reserve",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.7723521, "lon": 31.3714314,
+       "extent": [-24.8503565, 31.32745, -24.695234, 31.5747579]},
+      {"id": "W1238637922", "name": "Sabi-Sands Game Reserve", "kind": "Nature reserve", "tag": "nature_reserve",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.9374175, "lon": 31.5299984,
+       "extent": [-24.9791673, 31.4392133, -24.896438, 31.6223272]}
+    ],
+    "nominatim-kruger.json": [
+      {"id": "R1752987", "name": "Kruger National Park", "kind": "Nature reserve", "tag": "nature_reserve",
+       "region": "Limpopo, South Africa", "lat": -23.9357763, "lon": 31.5083741,
+       "extent": [-25.5299413, 30.88753, -22.32839, 32.0337161]},
+      {"id": "R17472112", "name": "Kruger to Canyons Biosphere Reserve", "kind": "Nature reserve", "tag": "nature_reserve",
+       "region": "Limpopo, South Africa", "lat": -24.1934416, "lon": 30.7309103,
+       "extent": [-25.1148878, 29.5386807, -23.2700675, 32.0302458]},
+      {"id": "W118125781", "name": "Kruger Mpumalanga International Airport", "kind": "Airfield", "tag": "aerodrome",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -25.3817374, "lon": 31.1070139,
+       "extent": [-25.3976755, 31.0927885, -25.3663659, 31.1165227]},
+      {"id": "W813365774", "name": "Phalaborwa Airport", "kind": "Airfield", "tag": "aerodrome",
+       "region": "Mopani District Municipality, Limpopo, South Africa", "lat": -23.9363418, "lon": 31.1551625,
+       "extent": [-23.9451983, 31.1535439, -23.9275699, 31.1574961]},
+      {"id": "W1221943522", "name": "President Kruger Park", "kind": "Park", "tag": "park",
+       "region": "Mopani District Municipality, Limpopo, South Africa", "lat": -23.9388169, "lon": 31.1486421,
+       "extent": [-23.9408623, 31.1475317, -23.9370649, 31.1501194]},
+      {"id": "N253149306", "name": "Kruger Gate", "kind": "Locality", "tag": "locality",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.9809685, "lon": 31.4849369,
+       "extent": null}
+    ],
+    "nominatim-skukuza.json": [
+      {"id": "W521049369", "name": "Skukuza", "kind": "Camp", "tag": "camp_site",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.9952608, "lon": 31.5945572,
+       "extent": [-24.9968058, 31.5934583, -24.9937257, 31.5957527]},
+      {"id": "R13515582", "name": "Skukuza Airport", "kind": "Airfield", "tag": "aerodrome",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.9611745, "lon": 31.5899714,
+       "extent": [-24.9707552, 31.5836415, -24.9521955, 31.5944991]},
+      {"id": "N262716119", "name": "Skukuza Rest Camp", "kind": "Village", "tag": "village",
+       "region": "Ehlanzeni District Municipality, Mpumalanga, South Africa", "lat": -24.9936099, "lon": 31.5914391,
+       "extent": null}
+    ]
+  }
+}
