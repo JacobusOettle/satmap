@@ -371,8 +371,8 @@ fun NewAreaView(
             // Android: the download goes on in a foreground service, its progress in a notification (iOS: the Lock
             // Screen's).
             FormSection(
-                footer = "Without mobile data the download waits for Wi-Fi. It keeps going when you leave SatMap, " +
-                    "with its progress in a notification. If Android stops it, it continues when you open SatMap again.",
+                footer = "Without mobile data the download waits for Wi-Fi. It keeps going when you leave Spoor, " +
+                    "with its progress in a notification. If Android stops it, it continues when you open Spoor again.",
             ) {
                 FormToggleRow("Allow mobile data", state.allowCellular) { state.allowCellular = it }
             }

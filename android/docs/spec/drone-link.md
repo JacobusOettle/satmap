@@ -39,7 +39,7 @@ second at a time so a closed socket's thread ends promptly. Datagrams over 8 KB 
 MAVLink datagrams are a few hundred bytes) are dropped. If the socket fails under it (not stopped), it closes it,
 stops counting as running and calls `onStopped`. **Nothing is ever sent.**
 
-`DroneLinkModel` (in `AppModel.droneLink`; iPhone `DroneLinkModel`) opens it only while the switch is on, SatMap is in
+`DroneLinkModel` (in `AppModel.droneLink`; iPhone `DroneLinkModel`) opens it only while the switch is on, Spoor is in
 the foreground (`AppModel.willEnterForeground` / `didEnterBackground`) and no test-build lock is up (`setLocked`);
 otherwise it is closed. Each datagram is decoded on the socket's thread (`MAVLink.decode`), and only its frames wait
 for the main thread, at most 2,000 datagrams and 1 MB between two ticks (more is dropped: a flood can't run the app out
@@ -50,7 +50,7 @@ can't be had, or a socket that failed (`onStopped`), shows `Status.Failed` and i
 bound at once whenever the link should listen, also after the old one failed. Switching off forgets everything heard.
 
 Permissions: receiving unicast UDP needs only INTERNET at targetSdk 36. Android 17 (API 37) will need
-`ACCESS_LOCAL_NETWORK` for local-network traffic once SatMap targets it: add it then, asked when the switch is turned
+`ACCESS_LOCAL_NETWORK` for local-network traffic once Spoor targets it: add it then, asked when the switch is turned
 on. The iPhone needs no Local Network prompt to receive unicast UDP (TN3179); it declares
 `NSLocalNetworkUsageDescription` for a later TCP option.
 
@@ -122,7 +122,7 @@ A tap within 26 dp of a drone (first) or an aircraft selects it (`DroneLinkModel
 panel. The panel (`DroneLinkPanel`, `droneLinkPanel`) shows under the button, with ✕ (`droneLinkPanelClose`):
 
 - Drone: header "Drone 1" with Armed/Disarmed; Position "No position for 12 s" (orange) when stale; Height "50 m above
-  take-off · 192 m above sea level"; "≈ above ground" (`DroneLink.aboveGroundM`: above sea level less SatMap's
+  take-off · 192 m above sea level"; "≈ above ground" (`DroneLink.aboveGroundM`: above sea level less Spoor's
   elevation under it, looked up again once it has moved 20 m; up to 10 m (`DroneLink.groundSlackM`) below that ground
   reads 0 m, further below it reads "– (heights don't match the map)", as on the iPhone; without the ground the row is
   left out); Speed "35 km/h · climb +0.5 m/s"; Battery "86 % · 16.1 V"; GPS "3D fix · 17

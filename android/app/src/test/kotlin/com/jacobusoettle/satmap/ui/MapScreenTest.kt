@@ -231,10 +231,10 @@ class MapScreenTest {
 
     @Test
     fun theLocationHintsSayWhyYourPositionIsMissing() {
-        val off = "Location is off for SatMap. Turn it on in Settings › Apps › SatMap › Permissions › Location."
+        val off = "Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location."
         val servicesOff = "Location is off. Turn it on in Settings › Location."
         val approximate = "Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › " +
-            "SatMap › Permissions › Location (Use precise location)."
+            "Spoor › Permissions › Location (Use precise location)."
         // Not asked yet: nothing to say.
         compose.onNodeWithText(off).assertDoesNotExist()
         compose.runOnUiThread {

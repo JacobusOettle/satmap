@@ -26,7 +26,7 @@ object GroupTexts {
      *  all (nothing for an empty field); null for a whole invite link. */
     fun linkProblem(parsed: InviteLink.Parsed, text: String): String? = when (parsed) {
         InviteLink.Parsed.MissingKey -> "This invite link is incomplete. Copy the whole link from the message, or scan the QR code."
-        InviteLink.Parsed.NotInvite -> if (text.isBlank()) null else "That isn't a SatMap invite link."
+        InviteLink.Parsed.NotInvite -> if (text.isBlank()) null else "That isn't a Spoor invite link."
         is InviteLink.Parsed.Invite -> null
     }
 
@@ -66,18 +66,18 @@ object GroupTexts {
     /** The map's paused banner (§9.1). */
     fun pausedBanner(group: String, reason: PausedReason?, owner: Boolean): String = when (reason ?: PausedReason.proEnded) {
         PausedReason.proEnded ->
-            if (owner) "$group is paused: your SatMap Pro has ended. Tap to renew." else "$group is paused: the owner's SatMap Pro has ended."
+            if (owner) "$group is paused: your Spoor Pro has ended. Tap to renew." else "$group is paused: the owner's Spoor Pro has ended."
         PausedReason.proRefunded ->
-            if (owner) "$group is paused: your SatMap Pro was refunded or cancelled. Tap to renew."
-            else "$group is paused: the owner's SatMap Pro was refunded or cancelled."
+            if (owner) "$group is paused: your Spoor Pro was refunded or cancelled. Tap to renew."
+            else "$group is paused: the owner's Spoor Pro was refunded or cancelled."
         PausedReason.proUnverified ->
-            if (owner) "$group is paused: your SatMap Pro couldn't be confirmed. Tap to fix."
-            else "$group is paused: the owner's SatMap Pro couldn't be confirmed."
+            if (owner) "$group is paused: your Spoor Pro couldn't be confirmed. Tap to fix."
+            else "$group is paused: the owner's Spoor Pro couldn't be confirmed."
     }
 
     /** S5's paused section (§9.3 "Paused texts"); `date` is the formatted `deleteAt`. */
     fun pausedSection(reason: PausedReason?, owner: Boolean, date: String?): String {
-        val whose = if (owner) "your SatMap Pro" else "the owner's SatMap Pro"
+        val whose = if (owner) "your Spoor Pro" else "the owner's Spoor Pro"
         val because = when (reason ?: PausedReason.proEnded) {
             PausedReason.proEnded -> "because $whose has ended"
             PausedReason.proRefunded -> "because $whose was refunded or cancelled"
@@ -143,7 +143,7 @@ object GroupTexts {
     }
 
     /** S6's share text. */
-    fun shareText(group: String, link: String) = "Join \"$group\" on SatMap: $link"
+    fun shareText(group: String, link: String) = "Join \"$group\" on Spoor: $link"
 
     /** "9 Nov", with the year when it isn't this year (§9 intro), in the phone's time zone and in its locale's order
      *  ("Nov 9" in the US), as the iPhone app's day-and-month template. */

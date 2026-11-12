@@ -270,7 +270,7 @@ class ProStore(
         private const val TAG = "groups"
         const val CACHE_KEY = "proCache"
         const val PENDING = "Your purchase is waiting for approval. Pro starts when it's approved."
-        const val NOT_FOUND = "No SatMap Pro purchase was found for this Google account."
+        const val NOT_FOUND = "No Spoor Pro purchase was found for this Google account."
         const val STORE_UNAVAILABLE = "The store can't be reached right now. Try again later."
 
         fun isProProduct(p: StorePurchase): Boolean =

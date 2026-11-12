@@ -105,7 +105,7 @@ fun PaywallScreen(model: AppModel, route: GroupsRoute.Paywall, nav: GroupsNav) {
         }
     }
 
-    SheetScreen(ScreenChrome("SatMap Pro", ScreenChrome.Leading.Cancel(nav::pop))) {
+    SheetScreen(ScreenChrome("Spoor Pro", ScreenChrome.Leading.Cancel(nav::pop))) {
         item {
             FormSection(first = true) {
                 HeadlineRow("Create your own groups")

@@ -59,7 +59,7 @@ class ScreenRendersTestBuildTest {
         val longest = TestBuildSwitch.Status(
             on = false,
             title = "T".repeat(TestBuildSwitch.maxTitleLength / 2) + " " + "t".repeat(TestBuildSwitch.maxTitleLength / 2 - 1),
-            message = "Thanks for testing SatMap. ".repeat(40).take(TestBuildSwitch.maxMessageLength),
+            message = "Thanks for testing Spoor. ".repeat(40).take(TestBuildSwitch.maxMessageLength),
             playStoreURL = TestBuildSwitch.sample.playStoreURL,
             websiteURL = TestBuildSwitch.sample.websiteURL,
         )

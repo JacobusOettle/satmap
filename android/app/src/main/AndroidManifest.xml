@@ -27,7 +27,7 @@
 
     <application
         android:name=".app.SatMapApplication"
-        android:label="SatMap"
+        android:label="Spoor"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:theme="@style/Theme.SatMap"

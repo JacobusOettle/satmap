@@ -297,7 +297,7 @@ class GroupHubTests {
         detail = owner.hub.detail(gid)!!
         assertEquals(listOf(made.link), detail.invites?.map { it.link })
         assertEquals("Sam", detail.invites?.first()?.createdByName)
-        val parsed = InviteLink.parse("Join \"Kruger trip\" on SatMap: ${made.link}", domain = "example.invalid")
+        val parsed = InviteLink.parse("Join \"Kruger trip\" on Spoor: ${made.link}", domain = "example.invalid")
         if (parsed !is InviteLink.Parsed.Invite) return@test fail("link doesn't parse")
         val link = parsed.link
         assertEquals(gid, link.groupIdText)
@@ -353,7 +353,7 @@ class GroupHubTests {
         server.proAccepted = false
         val noPro = actionError { p.hub.createGroup(name = "Trip", displayName = "Sam", pro = pro) }
         assertEquals(GroupActionError.Kind.ProNotConfirmed, noPro.kind)
-        assertEquals("SatMap Pro couldn't be confirmed. Tap Restore purchases, then try again.", noPro.message)
+        assertEquals("Spoor Pro couldn't be confirmed. Tap Restore purchases, then try again.", noPro.message)
         // A definite refusal forgets the membership saved before the request.
         assertTrue(p.secrets.loadAll().isEmpty())
         server.proAccepted = true
@@ -1844,7 +1844,7 @@ class GroupHubTests {
         val p = phone()
         val outdated = actionError { p.hub.createGroup(name = "Trip", displayName = "Sam", pro = pro) }
         assertEquals(GroupActionError.Kind.TermsOutdated, outdated.kind)
-        assertEquals("Please update SatMap to create or join groups.", outdated.message)
+        assertEquals("Please update Spoor to create or join groups.", outdated.message)
         assertTrue(p.secrets.loadAll().isEmpty())
         // The app had newer terms: S1 again, then the retry with the new version works.
         p.hub.acceptedTermsVersion = 2

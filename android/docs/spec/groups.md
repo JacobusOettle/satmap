@@ -1,4 +1,4 @@
-# SatMap Android spec: groups
+# Spoor Android spec: groups
 
 Covers the Android app side of groups: `docs/groups/SPEC.md` §5.6, §8, §9, §10, §11.5, §11.6 and §12.3 ("groups
 §9.3" below means that section of the groups spec). The logic is in the Kotlin core (`android/core`, `GroupHub` and
@@ -79,7 +79,7 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
 
 ## 3. Transport and socket (`GroupHttp`)
 
-- OkHttp, 20 s connect, 30 s read and write, User-Agent `SatMap/1.0 (Android)`, no cache. One request per hub call:
+- OkHttp, 20 s connect, 30 s read and write, User-Agent `Spoor/1.0 (Android)`, no cache. One request per hub call:
   `baseURL + path` (the core's paths start with `/v1`), `Authorization: Bearer {pass}` when there is one, JSON body
   (an empty one for a body-less POST). The status and the bytes are handed back as they are (`GroupResponse`); no
   header reaches the core.
@@ -128,7 +128,7 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
   `updatePro(proof, productId, expiresAt = null)` (`ProProof.Google(productId, purchaseToken)`); none clears the cache.
   The cache makes `isPro` true at once at launch.
 - `buy`: `Done` (the paywall closes and the flow goes on), the pending text, nothing (cancelled), or the store text.
-  `restore`: `Done`, pending, "No SatMap Pro purchase was found for this Google account." or the store text.
+  `restore`: `Done`, pending, "No Spoor Pro purchase was found for this Google account." or the store text.
 - "Save {n}%": `savingPercent(yearlyMicros, monthlyMicros)`, floored, hidden unless above 0.
 - "The phone has Pro" for an action that sends a proof (S4's create, S5's Renew and Accept) is `hasConfirmedPro`: the
   store has confirmed a purchase since launch (`proof()` isn't null). The cached `isPro` (S2's button, the paywall's
@@ -177,7 +177,7 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
   S6 only shows an invite it is given (the one just made, or a pending one this phone made).
 - S5 "Share my location" with consent recorded checks location as S9 does: allowed, sharing goes on; never asked,
   the permission is asked (fine and coarse) and sharing goes on only if it is given; refused, denied before or
-  location off, the alert "Location is off for SatMap. …" (`LOCATION_OFF`) and sharing stays off (§8.13).
+  location off, the alert "Location is off for Spoor. …" (`LOCATION_OFF`) and sharing stays off (§8.13).
 - S13: "Thanks for reporting" offers Block only for someone who can still be blocked (`blockable`: a pin whose
   dropper can be, a member who can be and isn't yet); otherwise it has OK only.
 - S10: "Drop pin" is enabled once a type is chosen and, for Animal, something is typed; a name that is too long is
@@ -186,9 +186,9 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
   `ClipData` labelled "Invite link" with `EXTRA_IS_SENSITIVE` (the string key below API 33) in its description's
   extras (§9.9).
 - S9 asks for location (fine and coarse together, as `PermissionFlow`, marking `locationPermissionAsked`) when it was
-  never asked; refused (or denied before, or location off), the alert "Location is off for SatMap. Turn it on in
+  never asked; refused (or denied before, or location off), the alert "Location is off for Spoor. Turn it on in
   Settings › Privacy › Location Services to share." and sharing stays off.
-- S17 asks for `CAMERA` when it opens; without it, "Camera access is off for SatMap. Turn it on in Settings to scan a
+- S17 asks for `CAMERA` when it opens; without it, "Camera access is off for Spoor. Turn it on in Settings to scan a
   code." with "Open Settings" (the app's details page). `QRScannerView`: CameraX preview and an `ImageAnalysis`
   (latest frame only) decoding the Y plane with ZXing (`PlanarYUVLuminanceSource`); the first invite found replaces
   the scanner with S8. A code that is an incomplete invite link or no invite link shows S7's text for it
@@ -241,7 +241,7 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
 
 ## 10. Location notification (§11.6)
 
-`LocationService.notification(context, sharing)`: the title "SatMap" and content text "Recording your track" stay;
+`LocationService.notification(context, sharing)`: the title "Spoor" and content text "Recording your track" stay;
 while groups share (`groups.sharingNames`: sharing on and not paused) a `BigTextStyle` adds "Sharing your location
 with {group}." or "… with {n} groups.". The service collects `sharingNames` while it runs and posts the notification
 again when it changes. Stop also calls `groups.stopSharingEverywhere()` (an Android-only difference, §9.9).

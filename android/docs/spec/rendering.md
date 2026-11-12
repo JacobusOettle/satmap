@@ -1,4 +1,4 @@
-# SatMap for Android: map rendering and tiles
+# Spoor for Android: map rendering and tiles
 
 This spec covers `SatMap/Map/SatelliteLayer.swift`, `DrawnImagery.swift`, `TileRepository.swift`, `TileOverlays.swift`, `SatMap/Core/TileFallback.swift` and `SatMap/App/Config.swift`. It also covers how they are called from `MapController`, `CarPlayMapController`, `PointAdjuster` (the loupe), `AppModel` and `AppDelegate`.
 
@@ -148,7 +148,7 @@ A tile with an incomplete result (an elevation tile around it was missing, so it
   - `background`: `ImageryPrefetch`.
 
 **HTTP (`HTTPTileFetcher.fetch`):**
-- User-Agent `SatMap/1.0 (iOS)`, 15 s timeout, 10 connections per host.
+- User-Agent `Spoor/1.0 (iOS)`, 15 s timeout, 10 connections per host.
 - Cache: `URLCache` with 16 MB memory and 1 GB disk, at `Caches/tiles-http`, using the protocol cache policy.
 - Results:
   - 200 with an empty body → `missing`;
@@ -675,7 +675,7 @@ OkHttpClient.Builder()
 - Calls run as `withContext(Dispatchers.IO) { client.newCall(req).execute() }` after `RequestLimiter.acquire`. Cancelling the coroutine cancels the `Call` (`invokeOnCancellation`).
 
 **`HTTPTileFetcher(client, url: (TileID) -> String) : TileFetching`:**
-- `companion suspend fun fetch(url, client): TileFetchResult`, with the iOS classification and `User-Agent: SatMap/1.0 (Android)`.
+- `companion suspend fun fetch(url, client): TileFetchResult`, with the iOS classification and `User-Agent: Spoor/1.0 (Android)`.
 - An `IOException` gives `offline` if `!Connectivity.shared.isOnlineNow`, otherwise `failed`. This is iOS's "not connected" versus everything else.
 - `ImageTools.looksLikeImage`: the same magic bytes. The offline downloader uses this fetcher too.
 

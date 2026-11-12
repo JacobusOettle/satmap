@@ -147,7 +147,7 @@ fun DroneLinkSheet(link: DroneLinkModel, close: () -> Unit) {
             FormSection(
                 header = "In QGroundControl",
                 footer = "QGroundControl forwards MAVLink 2 only. Mission Planner and MAVProxy can forward too: in " +
-                    "MAVProxy, --out=udp:${first ?: "<phone IP>"}:$port. Nothing is sent back: SatMap only listens, and " +
+                    "MAVProxy, --out=udp:${first ?: "<phone IP>"}:$port. Nothing is sent back: Spoor only listens, and " +
                     "only while it is open.",
             ) {
                 val steps = DroneLink.qgcInstructions(addresses.map { it.address }, port)

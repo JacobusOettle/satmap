@@ -101,7 +101,7 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
     override fun onGetTemplate(): Template {
         model.testBuildLock.value?.let { lock ->
             return MessageTemplate.Builder(switchedOffMessage(lock))
-                .setTitle("SatMap")
+                .setTitle("Spoor")
                 .build()
         }
         val terrain = Action.Builder()
@@ -131,7 +131,7 @@ class CarMapScreen(carContext: CarContext) : Screen(carContext) {
         /** The car's text while a test build is switched off: the lock's title and a short line (the phone's lock has
          *  the message and the links), as CarPlay's `CarPlayLockView`. */
         fun switchedOffMessage(lock: TestBuildSwitch.Lock): String =
-            lock.title + "\n\nGet SatMap from Google Play on your phone to keep using it."
+            lock.title + "\n\nGet Spoor from Google Play on your phone to keep using it."
 
         /** What the map shows of the terrain, short enough for the car's bar. */
         fun shortTitle(mode: TerrainMode): String = when (mode) {

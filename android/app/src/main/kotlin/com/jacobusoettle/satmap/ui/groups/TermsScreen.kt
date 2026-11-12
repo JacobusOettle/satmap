@@ -36,7 +36,7 @@ fun TermsScreen(model: AppModel, below: GroupsRoute?, leading: ScreenChrome.Lead
                     GroupSymbols.lock,
                 )
                 IconTextRow("Don't post anything illegal, hateful or dangerous. You can report and block anyone.", GroupSymbols.flag)
-                IconTextRow("Creating a group needs SatMap Pro. Joining is free.", GroupSymbols.star)
+                IconTextRow("Creating a group needs Spoor Pro. Joining is free.", GroupSymbols.star)
             }
         }
         item {

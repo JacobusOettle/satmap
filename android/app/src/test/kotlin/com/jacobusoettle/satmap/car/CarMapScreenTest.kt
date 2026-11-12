@@ -135,7 +135,7 @@ class CarMapScreenTest {
         idle()
         val message = controller.templatesReturned.last() as MessageTemplate
         assertEquals(
-            "This test version of SatMap has been switched off\n\nGet SatMap from Google Play on your phone to keep using it.",
+            "This test version of Spoor has been switched off\n\nGet Spoor from Google Play on your phone to keep using it.",
             message.message.toString(),
         )
         assertTrue("no buttons on the car's screen", message.actions.isEmpty())

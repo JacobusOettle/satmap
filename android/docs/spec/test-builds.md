@@ -32,7 +32,7 @@ Read from `TestBuildConfig.statusURLs`, in order, until one gives information:
 
 Each is fetched with `?t=<unix seconds>` added (`TestBuildSwitch.requestURL`), a 10 s limit (`TestBuildSwitch.timeout`),
 normal HTTPS certificate checks and no redirect from https to http, and **no identifiers**: a plain GET with no cookies
-or cache, `User-Agent: SatMap/<version>` (`TestBuildSwitch.userAgent`) and `Accept: application/json`. Only a 200
+or cache, `User-Agent: Spoor/<version>` (`TestBuildSwitch.userAgent`) and `Accept: application/json`. Only a 200
 counts, and at most 64 KiB + 1 byte is read.
 
 Format (schema 1):
@@ -108,7 +108,7 @@ observer of its own; `AppModel` drives it):
   over the map is kept, only not composed, and is there again once it is switched on, as on the iPhone (which keeps
   it behind its lock): a sheet, an area drawn but not saved yet (`draftArea`, `pendingArea`), a pin's or an invite's
   sheet, the "Clear track" question. A long message or a large font scrolls, so the buttons stay reachable. Back
-  leaves SatMap, as on the bare map.
+  leaves Spoor, as on the bare map.
 - **Links and files are ignored** (`MainActivity.handleIncoming` returns at once, as the iPhone's `onOpenURL`): an
   invite link does nothing (`GroupsModel.openInvite` is guarded too) and a shared or opened KML/KMZ/GPX is not
   imported. The intent counts as handled, so nothing waits to pop up after the unlock. (A backup's share that was
@@ -122,7 +122,7 @@ observer of its own; `AppModel` drives it):
   answer starts them again, and `PermissionFlow` asks for nothing while locked (as the iPhone asks for no permission).
 - **Groups pause** (`GroupsModel.setLockedOut`): ticks, uploads, the socket and the upload alarm stop, and the network
   coming back sends nothing; the memberships and queued data stay.
-- **Android Auto** shows a `MessageTemplate` with the lock's title and "Get SatMap from Google Play on your phone to
+- **Android Auto** shows a `MessageTemplate` with the lock's title and "Get Spoor from Google Play on your phone to
   keep using it." instead of the map (`CarMapScreen`), as CarPlay's `CarPlayLockView`.
 
 Nothing is ever deleted. When the switch is turned on again, everything resumes as before: a paused download continues,

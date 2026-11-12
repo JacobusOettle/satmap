@@ -29,7 +29,7 @@ object BackupSharing {
             type = BackupFileProvider.mimeType
             putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
             if (uris.isNotEmpty()) {
-                clipData = ClipData.newUri(context.contentResolver, "SatMap", uris[0]).also { c ->
+                clipData = ClipData.newUri(context.contentResolver, "Spoor", uris[0]).also { c ->
                     uris.drop(1).forEach { c.addItem(ClipData.Item(it)) }
                 }
             }

@@ -650,7 +650,7 @@ fun PresetAreaView(model: AppModel, state: NewAreaState?, back: ScreenChrome.Lea
         NewAreaView(model, state, back = back, close = close)
     } else {
         SheetPlainScreen(ScreenChrome("", back)) {
-            Text("The road list is missing from this build of SatMap.", style = Body, color = LabelSecondary)
+            Text("The road list is missing from this build of Spoor.", style = Body, color = LabelSecondary)
         }
     }
 }
@@ -664,7 +664,7 @@ fun TrackAreaView(model: AppModel, state: TrackState, back: ScreenChrome.Leading
         newArea != null -> NewAreaView(model, newArea, back = back, close = close)
         state.worked -> SheetPlainScreen(ScreenChrome("", back)) {
             Text(
-                "No track recorded yet. Your dotted track is recorded while SatMap knows where you are.",
+                "No track recorded yet. Your dotted track is recorded while Spoor knows where you are.",
                 style = Body,
                 color = LabelSecondary,
                 modifier = Modifier.padding(16.dp),

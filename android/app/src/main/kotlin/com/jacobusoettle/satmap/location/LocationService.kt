@@ -128,7 +128,7 @@ internal fun LocationService.Companion.notification(context: Context, sharing: L
     )
     val builder = NotificationCompat.Builder(context, LocationService.CHANNEL)
         .setSmallIcon(R.drawable.ic_stat_location)
-        .setContentTitle("SatMap")
+        .setContentTitle("Spoor")
         .setContentText(RECORDING)
         .setOngoing(true)
         .setSilent(true)

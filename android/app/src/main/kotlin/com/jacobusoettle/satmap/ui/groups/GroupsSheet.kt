@@ -59,7 +59,7 @@ fun leading(model: AppModel, nav: GroupsNav, below: GroupsRoute?): ScreenChrome.
 /** A screen's title, which also labels the back button of a screen pushed over it. */
 fun title(groups: GroupsModel, r: GroupsRoute): String = when (r) {
     GroupsRoute.List, GroupsRoute.Terms -> "Groups"
-    is GroupsRoute.Paywall -> "SatMap Pro"
+    is GroupsRoute.Paywall -> "Spoor Pro"
     GroupsRoute.Create -> "New group"
     is GroupsRoute.Detail -> groups.hub.detail(r.groupId)?.name ?: "Groups"
     is GroupsRoute.Consent -> "Share your location?"

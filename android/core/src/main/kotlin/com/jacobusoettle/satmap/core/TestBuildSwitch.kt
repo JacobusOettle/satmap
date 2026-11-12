@@ -56,8 +56,8 @@ object TestBuildSwitch {
     const val maxFileBytes = 64 * 1024
 
     /** The lock's texts when the file gives none. */
-    const val defaultTitle = "This test version of SatMap has been switched off"
-    const val defaultMessage = "Get SatMap from the App Store or Google Play to keep using it."
+    const val defaultTitle = "This test version of Spoor has been switched off"
+    const val defaultMessage = "Get Spoor from the App Store or Google Play to keep using it."
 
     /** The buttons' titles. */
     const val appStoreButtonTitle = "Get it on the App Store"
@@ -103,7 +103,7 @@ object TestBuildSwitch {
     val sample = Status(
         on = false,
         title = defaultTitle,
-        message = "Thanks for testing SatMap. Get SatMap from the App Store or Google Play to keep using it.",
+        message = "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
         appStoreURL = "https://apps.apple.com/app/satmap/id0000000000",
         playStoreURL = "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
         websiteURL = "https://github.com/JacobusOettle/satmap",
@@ -124,7 +124,7 @@ object TestBuildSwitch {
     }
 
     /** The requests' User-Agent: the app and its version, nothing else (no device or user identifier is ever sent). */
-    fun userAgent(version: String): String = "SatMap/$version"
+    fun userAgent(version: String): String = "Spoor/$version"
 
     // Reading the file
 

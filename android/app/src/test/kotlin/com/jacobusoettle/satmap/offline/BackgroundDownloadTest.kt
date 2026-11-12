@@ -117,7 +117,7 @@ class BackgroundDownloadTest {
         notifications.setNotificationsEnabled(false)
         val quiet = background()
         quiet.begin(title = "Farm", subtitle = "Starting…")
-        assertEquals("Downloads keep going in the background. Allow notifications for SatMap to see their progress there.",
+        assertEquals("Downloads keep going in the background. Allow notifications for Spoor to see their progress there.",
                      quiet.status)
         notifications.setNotificationsEnabled(true)
         // Asked again (SatMap opened, or active again after the notification question): it says what happens now.
@@ -127,7 +127,7 @@ class BackgroundDownloadTest {
 
         val refused = BackgroundDownload(app) { _, _ -> throw IllegalStateException("not allowed") }
         refused.begin(title = "Farm", subtitle = "Starting…")
-        assertEquals("In the background a download stops, and continues when you open SatMap: Android didn't allow it to keep going in the background.",
+        assertEquals("In the background a download stops, and continues when you open Spoor: Android didn't allow it to keep going in the background.",
                      refused.status)
         assertFalse(refused.allowsBackgroundWork)
 
@@ -359,7 +359,7 @@ class BackgroundDownloadTest {
         idle()
         started += shadowOf(app).nextStartedService
         startService()
-        assertEquals("Downloads keep going in the background. Allow notifications for SatMap to see their progress there.",
+        assertEquals("Downloads keep going in the background. Allow notifications for Spoor to see their progress there.",
                      m.backgroundStatus.value)
 
         // Allowed: SatMap is active again as the question closes.
@@ -376,7 +376,7 @@ class BackgroundDownloadTest {
         idle()
         process.currentState = Lifecycle.State.RESUMED
         idle()
-        assertEquals("Downloads keep going in the background. Allow notifications for SatMap to see their progress there.",
+        assertEquals("Downloads keep going in the background. Allow notifications for Spoor to see their progress there.",
                      m.backgroundStatus.value)
         assertNull(shadowOf(app).nextStartedService) // the service runs on, not asked for again
         notifications.setNotificationsEnabled(true)
@@ -391,7 +391,7 @@ class BackgroundDownloadTest {
         shadowOf(c.get()).setThrowInStartForeground(IllegalStateException("time used up"))
         c.startCommand(0, 1)
         services += c
-        assertEquals("In the background a download stops, and continues when you open SatMap: Android didn't allow it to keep going in the background.",
+        assertEquals("In the background a download stops, and continues when you open Spoor: Android didn't allow it to keep going in the background.",
                      b.status)
         assertFalse(b.allowsBackgroundWork)
         assertTrue(shadowOf(c.get()).isStoppedBySelf)

@@ -1373,7 +1373,7 @@ class ScreenshotTest {
             } catch (e: Throwable) {
                 problem(e)
             }
-            SystemDialogs.dismiss(device)?.let { if (it.contains("SatMap")) fail(it) else Log.w(TAG, "Closed: $it") }
+            SystemDialogs.dismiss(device)?.let { if (it.contains("Spoor")) fail(it) else Log.w(TAG, "Closed: $it") }
         }
     }
 
