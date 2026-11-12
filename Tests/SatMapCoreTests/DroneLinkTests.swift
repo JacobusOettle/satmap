@@ -2,6 +2,8 @@ import Dispatch
 import Foundation
 #if canImport(Glibc)
 import Glibc
+#elseif canImport(Darwin)
+import Darwin
 #endif
 import XCTest
 @testable import SatMapCore
@@ -632,8 +634,14 @@ final class DroneLinkTests: XCTestCase {
         addr.sin_family = sa_family_t(AF_INET)
         addr.sin_port = 0
         addr.sin_addr = in_addr(s_addr: INADDR_ANY)
+        // The C function, not NSObject's bind(_:to:withKeyPath:options:) (XCTestCase on macOS).
+        #if canImport(Glibc)
+        let bindSocket = Glibc.bind
+        #else
+        let bindSocket = Darwin.bind
+        #endif
         let bound = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bindSocket(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
         }
         XCTAssertEqual(bound, 0)
         var actual = sockaddr_in()
