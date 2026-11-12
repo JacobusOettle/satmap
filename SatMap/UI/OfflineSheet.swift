@@ -204,6 +204,8 @@ private struct PlaceSearchView: View {
     @State private var results: [FoundPlace] = []
     @State private var searching = false
     @State private var message: String?
+    /// The search in flight, stopped when this screen goes (so its Nominatim requests don't outlive it).
+    @State private var searchTask: Task<Void, Never>?
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -247,6 +249,7 @@ private struct PlaceSearchView: View {
         .navigationTitle("Find a place")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { if results.isEmpty { focused = true } }
+        .onDisappear { searchTask?.cancel() }
     }
 
     /// "Nature reserve · Mpumalanga, South Africa · about 650 km²", or for a spot "Town · … · 4 km around it".
@@ -268,15 +271,18 @@ private struct PlaceSearchView: View {
         searching = true
         message = nil
         let near = model.map.map { GeoPoint(lat: $0.centerCoordinate.latitude, lon: $0.centerCoordinate.longitude) }
-        Task {
+        searchTask = Task {
             do {
                 let found = try await PlaceSearch.search(q, near: near)
                 results = found
                 message = found.isEmpty ? "No park, reserve, town or camp called “\(q)” was found. Try another spelling." : nil
+            } catch is CancellationError {
+                // Stopped because the screen went: nothing to say.
             } catch {
                 message = (error as? LocalizedError)?.errorDescription ?? "The search didn't work. Try again."
             }
             searching = false
+            searchTask = nil
         }
     }
 }

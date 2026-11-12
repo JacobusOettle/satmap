@@ -3381,4 +3381,154 @@ final class ScaleBarTests: XCTestCase {
         let merged = Places.merged([[reserve("W1", 170), town, reserve("W2", 431)], [reserve("R3", 1_032), reserve("W1", 170)]])
         XCTAssertEqual(merged.map(\.id), ["R3", "W2", "W1", "N9"])
     }
+
+    /// Recorded Nominatim answers (and Photon's for the same reserve) give the places in `Fixtures/places/expected.json`,
+    /// the same model, chosen the same way, whichever service answered.
+    func testPlaceSearchAnswersFromEitherServiceGiveTheSamePlaces() throws {
+        let expected = try XCTUnwrap(JSONSerialization.jsonObject(with: fixture("places/expected.json")) as? [String: Any])
+        let answers = try XCTUnwrap(expected["answers"] as? [String: [[String: Any]]])
+        XCTAssertEqual(answers.count, 5)
+        for (file, places) in answers {
+            let data = try fixture("places/" + file)
+            let found = try XCTUnwrap(file.hasPrefix("photon") ? Places.photonPlaces(data) : Places.nominatimPlaces(data), file)
+            XCTAssertEqual(found.map(\.id), places.map { $0["id"] as? String ?? "" }, file)
+            for (place, want) in zip(found, places) {
+                XCTAssertEqual(place.name, want["name"] as? String, file)
+                XCTAssertEqual(place.kind, want["kind"] as? String, file)
+                XCTAssertEqual(place.tag, want["tag"] as? String, file)
+                XCTAssertEqual(place.region, want["region"] as? String, file)
+                XCTAssertEqual(place.centre.lat, want["lat"] as? Double ?? 0, accuracy: 1e-9, file)
+                XCTAssertEqual(place.centre.lon, want["lon"] as? Double ?? 0, accuracy: 1e-9, file)
+                if let e = want["extent"] as? [Double] {
+                    let got = try XCTUnwrap(place.extent, "\(file) \(place.id)")
+                    XCTAssertEqual([got.minLat, got.minLon, got.maxLat, got.maxLon], e, file)
+                } else {
+                    XCTAssertNil(place.extent, "\(file) \(place.id)")
+                }
+            }
+        }
+        // The same reserve from either service is the same place: the same line under it, the same boundary to fetch.
+        // (Only these parts: the two services' centres and extents differ a little, and the Photon fixture's were
+        // copied from Nominatim's answer.)
+        let photon = Places.photonResults(try fixture("places/photon-sabi-sand.json"))
+        let nominatim = try XCTUnwrap(Places.nominatimPlaces(try fixture("places/nominatim-sabi-sand.json")))
+        func listed(_ p: [FoundPlace]) -> [[String]] { p.map { [$0.id, $0.name, $0.kind, $0.tag, $0.region] } }
+        XCTAssertEqual(listed(photon), listed(nominatim))
+        XCTAssertEqual(photon.map(\.hasBoundary), nominatim.map(\.hasBoundary))
+        XCTAssertEqual(Places.area(for: nominatim[0], rings: []).polygons.first?.count, 4)
+        // Answers that aren't answers (an error page, a cut-off body) differ from answers with nothing in them.
+        let page = Data("<html><body>502 Bad Gateway</body></html>".utf8)
+        XCTAssertNil(Places.photonPlaces(page))
+        XCTAssertNil(Places.nominatimPlaces(page))
+        XCTAssertNil(Places.nominatimPlaces(Data(#"[{"osm_type":"node""#.utf8)))
+        XCTAssertEqual(Places.photonPlaces(Data(#"{"type":"FeatureCollection","features":[]}"#.utf8)), [])
+        XCTAssertEqual(Places.nominatimPlaces(Data("[]".utf8)), [])
+        XCTAssertEqual(Places.photonResults(page), [])
+    }
+
+    func testPlaceSearchRequests() throws {
+        func items(_ url: URL) -> [String: String] {
+            let list = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            return Dictionary(list.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        }
+        let stellenbosch = GeoPoint(lat: -33.9197, lon: 18.9222)
+        let photon = Places.photonURL("Sabi Sand", near: stellenbosch)
+        XCTAssertEqual(photon.host, "photon.komoot.io")
+        XCTAssertEqual(items(photon), ["q": "Sabi Sand", "limit": "20", "lat": "-33.9197", "lon": "18.9222"])
+        XCTAssertEqual(items(Places.photonURL("Kruger", near: nil)), ["q": "Kruger", "limit": "20"])
+
+        let countries = try XCTUnwrap(Places.nominatimCountries(near: stellenbosch))
+        XCTAssertEqual(countries, ["za", "ls", "sz", "na", "bw", "zw", "mz", "zm", "mw", "ao", "cd", "tz"])
+        let nominatim = Places.nominatimURL("Sabi Sand", near: stellenbosch, countries: countries)
+        XCTAssertEqual(nominatim.host, "nominatim.openstreetmap.org")
+        XCTAssertEqual(nominatim.path, "/search")
+        XCTAssertEqual(items(nominatim), ["q": "Sabi Sand", "format": "jsonv2", "addressdetails": "1", "limit": "20",
+                                          "viewbox": "17.9222,-32.9197,19.9222,-34.9197",
+                                          "countrycodes": "za,ls,sz,na,bw,zw,mz,zm,mw,ao,cd,tz"])
+        XCTAssertEqual(items(Places.nominatimURL("London", near: nil, countries: nil)),
+                       ["q": "London", "format": "jsonv2", "addressdetails": "1", "limit": "20"])
+
+        // Within the countries around a map in southern Africa first, then the world; elsewhere the world only.
+        XCTAssertEqual(Places.nominatimCountryPasses(near: GeoPoint(lat: -24.82, lon: 31.44)), [countries, nil])
+        XCTAssertEqual(Places.nominatimCountryPasses(near: GeoPoint(lat: 51.5, lon: -0.12)), [nil])
+        XCTAssertEqual(Places.nominatimCountryPasses(near: nil), [nil])
+        XCTAssertNil(Places.nominatimCountries(near: GeoPoint(lat: -1.29, lon: 36.82))) // Nairobi
+        // Every country the box reaches is in the list, so a map's own country is searched first.
+        for (point, country) in [(GeoPoint(lat: -15.0, lon: 26.0), "zm"),   // Kafue, Zambia
+                                 (GeoPoint(lat: -14.8, lon: 35.3), "mw"),   // Liwonde, Malawi
+                                 (GeoPoint(lat: -12.8, lon: 15.7), "ao"),   // Huambo, Angola
+                                 (GeoPoint(lat: -11.66, lon: 27.48), "cd"), // Lubumbashi, DRC
+                                 (GeoPoint(lat: -10.7, lon: 35.6), "tz")] { // Songea, Tanzania
+            XCTAssertTrue(Places.nominatimCountries(near: point)?.contains(country) == true, country)
+        }
+    }
+
+    func testPlaceSearchFallsBackToNominatimWhilePhotonFails() throws {
+        let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+        let found = try fixture("places/photon-sabi-sand.json")
+        let empty = Data(#"{"type":"FeatureCollection","features":[]}"#.utf8)
+        var choice = PlaceSearchFallback()
+        XCTAssertEqual(PlaceSearchFallback.photonTimeout, 5)
+        XCTAssertEqual(choice.source(at: t0), .photon)
+
+        // Photon answers: its places, and nothing found is nothing found (no Nominatim).
+        XCTAssertEqual(choice.photon(.answer(status: 200, body: found), at: t0), .places(Places.photonResults(found)))
+        XCTAssertEqual(choice.photon(.answer(status: 200, body: empty), at: t0), .places([]))
+        XCTAssertEqual(choice.source(at: t0), .photon)
+        // No connection: no service would answer, and it isn't Photon's fault.
+        XCTAssertEqual(choice.photon(.offline, at: t0), .offline)
+        XCTAssertEqual(choice.source(at: t0), .photon)
+
+        // Each way of failing sends the search to Nominatim, and later searches too, for 10 minutes.
+        for failure in [PlaceRequestOutcome.failed, .answer(status: 503, body: Data()), .answer(status: 429, body: empty),
+                        .answer(status: 200, body: Data("<html>busy</html>".utf8)), .answer(status: 200, body: Data())] {
+            var c = PlaceSearchFallback()
+            XCTAssertEqual(c.photon(failure, at: t0), .useNominatim)
+            XCTAssertEqual(c.source(at: t0), .nominatim)
+            XCTAssertEqual(c.source(at: t0.addingTimeInterval(599)), .nominatim)
+            XCTAssertEqual(c.source(at: t0.addingTimeInterval(600)), .photon)
+        }
+        // Photon refusing one query (a 4xx other than 408 and 429) sends that search to Nominatim, not the next ones.
+        for refusal in [400, 404, 414] {
+            var c = PlaceSearchFallback()
+            XCTAssertEqual(c.photon(.answer(status: refusal, body: empty), at: t0), .useNominatim)
+            XCTAssertEqual(c.source(at: t0), .photon, "\(refusal)")
+        }
+        for busy in [408, 429, 500, 502] {
+            var c = PlaceSearchFallback()
+            XCTAssertEqual(c.photon(.answer(status: busy, body: empty), at: t0), .useNominatim)
+            XCTAssertEqual(c.source(at: t0), .nominatim, "\(busy)")
+        }
+        // Network errors: offline only when the phone has no connection; a connection Photon dropped is Photon failing.
+        XCTAssertEqual(PlaceRequestOutcome.networkError(code: -1009), .offline) // not connected to the internet
+        XCTAssertEqual(PlaceRequestOutcome.networkError(code: -1020), .offline) // data not allowed
+        for code in [-1005, -1001, -1004, -1003, -1200, -1011] { // connection lost, timed out, refused, no host, TLS, bad answer
+            XCTAssertEqual(PlaceRequestOutcome.networkError(code: code), .failed, "\(code)")
+        }
+
+        // Tried again after the cool-down: a failure starts it again, an answer forgets it.
+        XCTAssertEqual(choice.photon(.failed, at: t0), .useNominatim)
+        let later = t0.addingTimeInterval(PlaceSearchFallback.photonCoolDown)
+        XCTAssertEqual(choice.source(at: later), .photon)
+        XCTAssertEqual(choice.photon(.failed, at: later), .useNominatim)
+        XCTAssertEqual(choice.source(at: later.addingTimeInterval(300)), .nominatim)
+        let again = later.addingTimeInterval(700)
+        XCTAssertEqual(choice.photon(.answer(status: 200, body: empty), at: again), .places([]))
+        XCTAssertNil(choice.photonFailedAt)
+        XCTAssertEqual(choice.source(at: again), .photon)
+
+        // Nominatim at most once a second, however fast the requests come.
+        XCTAssertEqual(choice.nominatimDelay(at: t0), 0)
+        XCTAssertEqual(choice.nominatimDelay(at: t0), 1, accuracy: 1e-9)
+        XCTAssertEqual(choice.nominatimDelay(at: t0.addingTimeInterval(0.5)), 1.5, accuracy: 1e-9)
+        XCTAssertEqual(choice.nominatimDelay(at: t0.addingTimeInterval(10)), 0)
+
+        // A Nominatim search that didn't answer is a failed search; one that did gives its places.
+        XCTAssertNil(PlaceSearchFallback.nominatimPlaces(.failed))
+        XCTAssertNil(PlaceSearchFallback.nominatimPlaces(.offline))
+        XCTAssertNil(PlaceSearchFallback.nominatimPlaces(.answer(status: 429, body: Data("[]".utf8))))
+        XCTAssertEqual(PlaceSearchFallback.nominatimPlaces(.answer(status: 200, body: Data("[]".utf8))), [])
+        let sabi = try fixture("places/nominatim-sabi-sand.json")
+        XCTAssertEqual(PlaceSearchFallback.nominatimPlaces(.answer(status: 200, body: sabi))?.map(\.id), ["R1751334"])
+    }
 }
