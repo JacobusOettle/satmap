@@ -859,27 +859,27 @@ final class ScreenshotTests: XCTestCase {
         if panel.exists {
             let panelBottom = panel.frame.maxY
             let clear = panelBottom + (screen.height - panelBottom) / 3
-            // Drag on the open map below the panel. A drag that starts on a label (an aircraft's, an airfield's)
-            // doesn't move the map, so a drag that didn't is tried again further along; long moves take several.
-            let xs: [CGFloat] = [0.1, 0.35, 0.6, 0.2]
-            var attempt = 0
-            for _ in 0..<6 {
+            // Drag on the open map below the panel, at its left edge, clear of the labels round the drone and the
+            // buttons. MapKit takes the first few points of a drag before the map moves, so the drag is that much
+            // longer; a short drag would be a tap (selecting an aircraft, placing a pin), so small misses are left.
+            let slack: CGFloat = 30
+            let x = screen.width * 0.1
+            for _ in 0..<3 {
                 let before = drone.frame.midY
                 let dy = clear - before
-                if abs(dy) < 24 { break }
-                let x = screen.width * xs[attempt % xs.count]
-                let startY = dy > 0 ? panelBottom + 40 : screen.height * 0.8
-                let endY = min(screen.height - 40, max(panelBottom + 16, startY + dy))
+                if abs(dy) < 40 { break }
+                let startY = dy > 0 ? panelBottom + 40 : screen.height - 60
+                let endY = min(screen.height - 40, max(panelBottom + 16, startY + dy + (dy > 0 ? slack : -slack)))
                 let origin = app.coordinate(withNormalizedOffset: .zero)
                 origin.withOffset(CGVector(dx: x, dy: startY))
                     .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
                            withVelocity: .slow, thenHoldForDuration: 0.5)
                 sleep(2)
                 print("Shot 43: drag at x \(Int(x)) from y \(Int(startY)) to \(Int(endY)) moved the drone from y \(Int(before)) to \(Int(drone.frame.midY)) (panel bottom \(Int(panelBottom)), wanted \(Int(clear)))")
-                if abs(drone.frame.midY - before) < 8 { attempt += 1 }
             }
         }
         XCTAssertTrue(panel.exists, "The drone's panel closed when the map moved")
+        XCTAssertTrue(panel.staticTexts["Drone 1"].exists, "The panel no longer shows the drone")
         XCTAssertTrue(!panel.exists || drone.frame.midY > panel.frame.maxY, "The drone is under its panel")
         sleep(2)
         snap("43-drone-on-map")
