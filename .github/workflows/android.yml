@@ -208,7 +208,7 @@ jobs:
           # Replaced in place, so the download link never goes missing; a new release only when there is none.
           if gh release view android-test-build > /dev/null 2>&1; then
             gh release upload android-test-build SatMap.apk --clobber
-            gh release edit android-test-build --prerelease --notes "$notes"
+            gh release edit android-test-build --prerelease --title "Spoor Android test build" --notes "$notes"
             gh api -X PATCH "repos/$GH_REPO/git/refs/tags/android-test-build" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
               || echo "The tag stays at the earlier commit."
           else

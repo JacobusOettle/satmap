@@ -2961,7 +2961,7 @@ Paused texts. `{date}` is `deleteAt`.
 - The QR code, 240 pt/dp (id `inviteQR`), with the group name under it.
 - Text: "Ask them to scan this code with their phone's camera, or send them the link."
 - Buttons:
-  - "Share link" (`square.and.arrow.up`, id `shareInvite`). Text shared: `Join "{group}" on SatMap: {link}`. iOS
+  - "Share link" (`square.and.arrow.up`, id `shareInvite`). Text shared: `Join "{group}" on Spoor: {link}`. iOS
     uses `SharePresenter`; Android adds a text share to `ShareHost`.
   - "Copy link" (`doc.on.doc`, id `copyInvite`). Shows the toast "Link copied". The link holds the group key, so:
     - iOS: `UIPasteboard.general.setItems([[UTType.plainText.identifier: link]], options: [.localOnly: true,
