@@ -184,6 +184,8 @@ struct PendingArea: Identifiable {
 
 enum ActiveSheet: String, Identifiable {
     case blocks
+    /// Drone link's settings, from drone mode.
+    case droneLink
     case offline
     case coordinates
     /// Groups (docs/groups/SPEC.md §9.2): the list or the terms, with the screens pushed on it.
@@ -204,6 +206,8 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     let groups = GroupsModel()
     /// Test builds can be switched off remotely (`TestBuildGate`): nothing in store or debug builds.
     let testBuild = TestBuildGate()
+    /// Drone link (drone mode): the MAVLink a ground station forwards over Wi-Fi.
+    let droneLink = DroneLinkModel()
     private let trackLog = TrackLog(url: AppPaths.track)
 
     /// The recorded track. Changes are announced through `trackRevision` (cheaper than publishing the array).

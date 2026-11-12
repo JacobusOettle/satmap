@@ -58,6 +58,10 @@ struct MapScreen: View {
                    model.droneReport.you != nil || model.droneReport.pin != nil {
                     DroneCard(report: model.droneReport)
                 }
+                // Drone link: its button, and a tapped drone's or aircraft's panel.
+                if model.terrainMode.showsAviation, !model.isDrawingArea {
+                    DroneLinkOverlay(link: model.droneLink, model: model)
+                }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
                     Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
                 } else if recorder.reducedAccuracy {
@@ -140,6 +144,8 @@ struct MapScreen: View {
             switch sheet {
             case .blocks:
                 BlocksSheet(model: model, library: model.kml)
+            case .droneLink:
+                DroneLinkSheet(link: model.droneLink)
             case .offline:
                 OfflineSheet(model: model, offline: offline, library: model.kml)
             case .coordinates:
@@ -826,6 +832,23 @@ struct DroneCard: View {
                 .minimumScaleFactor(0.75)
         }
         .foregroundColor(colour)
+    }
+}
+
+/// Drone mode's Drone link button and, with a drone or aircraft tapped, its panel (observing the link, so the map
+/// screen isn't redrawn for every message).
+struct DroneLinkOverlay: View {
+    @ObservedObject var link: DroneLinkModel
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            DroneLinkBar(link: link) { model.sheet = .droneLink }
+                .frame(maxWidth: .infinity)
+            if link.selection != nil {
+                DroneLinkPanel(link: link, model: model)
+            }
+        }
     }
 }
 

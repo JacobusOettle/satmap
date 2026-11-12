@@ -24,6 +24,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
     private var blocks: BlockLayers!
     /// Drone mode: aerodromes, strips, helipads and navaids, with distances from you and the tapped spot.
     private var aviation: AviationLayer!
+    /// Drone link, in drone mode: the drones and ADS-B aircraft a ground station forwards, above the airfields.
+    private var droneLink: DroneLinkLayer!
     /// The shown group: members, trails and pins.
     private var groups: GroupLayer!
     private let track = TrackOverlay()
@@ -98,6 +100,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         blocks = BlockLayers(mapView: mapView, below: groups.anchor)
         aviation = AviationLayer(mapView: mapView)
         aviation.isOn = model.terrainMode.showsAviation
+        droneLink = DroneLinkLayer(mapView: mapView)
+        droneLink.isOn = model.terrainMode.showsAviation
 
         container.addSubview(mapView)
         mapView.translatesAutoresizingMaskIntoConstraints = false
@@ -189,6 +193,8 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
                 DispatchQueue.main.async {
                     self?.imagery.terrainChanged(mode)
                     self?.aviation.isOn = mode.showsAviation
+                    self?.droneLink.isOn = mode.showsAviation
+                    self?.droneLinkChanged()
                 }
             }
             .store(in: &cancellables)
@@ -218,6 +224,19 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         model.groups.$mapRevision
             .sink { [weak self] _ in DispatchQueue.main.async { self?.groupsChanged() } }
             .store(in: &cancellables)
+        // Drone link: what it hears, what is selected, and the heights' unit.
+        model.droneLink.$revision.map { _ in () }
+            .merge(with: model.droneLink.$selection.map { _ in () }, model.$heightUnit.map { _ in () })
+            .sink { [weak self] _ in DispatchQueue.main.async { self?.droneLinkChanged() } }
+            .store(in: &cancellables)
+    }
+
+    /// Drone link's drones and aircraft as they are now (drone mode only; drawn again when the screen comes back).
+    private func droneLinkChanged() {
+        guard isShown, droneLink.isOn else { return }
+        let me = model.recorder.location.map { GeoPoint(lat: $0.coordinate.latitude, lon: $0.coordinate.longitude) }
+        droneLink.update(model.droneLink.traffic, selection: model.droneLink.selection, me: me, meGroundM: model.userElevation,
+                         heightUnit: model.heightUnit, now: Date())
     }
 
     /// The shown group's members, trails and pins, as the hub has them now (§9.5).
@@ -334,6 +353,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         updateScale()
         if heading != nil { updateArrow() } // the map may have turned
         aviation?.headingChanged()
+        droneLink?.headingChanged()
         groups?.headingChanged()
         imagery?.visibleRegionChanged()
     }
@@ -457,6 +477,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
                 return
             }
         }
+        // In drone mode, a drone or an aircraft from the drone link: its panel. Any other tap closes the panel.
+        if model.measure == .off, let item = droneLink.item(near: spot) {
+            model.droneLink.select(item)
+            return
+        }
+        if model.droneLink.selection != nil { model.droneLink.select(nil) }
         if model.measure == .off, let k = kmlPoint(near: spot) {
             model.pointTapped(GeoPoint(lat: k.coordinate.latitude, lon: k.coordinate.longitude), name: k.title)
             return
@@ -811,6 +837,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
         imagery.becameVisible()
         trackChanged()
         groupsChanged()
+        droneLinkChanged()
         if let loc = model.recorder.location { locationUpdated(loc) }
     }
 
@@ -861,6 +888,12 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
             return mapView.dequeueReusableAnnotationView(withIdentifier: BlockLabelView.reuseID, for: annotation)
         case let a as AviationAnnotation:
             return aviation.view(for: a)
+        case let a as DroneAnnotation:
+            return droneLink.view(for: a)
+        case let a as DroneHomeAnnotation:
+            return droneLink.view(for: a)
+        case let a as AircraftAnnotation:
+            return droneLink.view(for: a)
         case let a as GroupMemberAnnotation:
             return groups.view(for: a)
         case let a as GroupPinAnnotation:

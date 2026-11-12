@@ -142,6 +142,7 @@ final class TestBuildGate: ObservableObject {
         app?.offline.setLocked(nowLocked)
         app?.recorder.setLocked(nowLocked)
         app?.groups.setLocked(nowLocked)
+        app?.droneLink.setLocked(nowLocked)
         app?.carPlayMap?.setLocked(newLock)
     }
 }

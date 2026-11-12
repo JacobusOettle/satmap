@@ -39,7 +39,7 @@ jobs:
           for key in UIBackgroundModes BGTaskSchedulerPermittedIdentifiers NSLocationWhenInUseUsageDescription NSMotionUsageDescription \
                      CFBundleDocumentTypes UTImportedTypeDeclarations LSSupportsOpeningDocumentsInPlace \
                      UIApplicationSceneManifest CPTemplateApplicationSceneSessionRoleApplication \
-                     NSCameraUsageDescription CFBundleURLTypes SatMapGroupsDomain; do
+                     NSCameraUsageDescription CFBundleURLTypes SatMapGroupsDomain NSLocalNetworkUsageDescription; do
             plutil -p "$plist" | grep -q "\"$key\"" || { echo "Missing $key"; exit 1; }
           done
           # Groups: the invite domain is filled in from the GROUPS_DOMAIN build setting, and satmap:// is registered.

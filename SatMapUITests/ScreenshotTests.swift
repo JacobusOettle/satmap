@@ -65,6 +65,9 @@ final class ScreenshotTests: XCTestCase {
         // The real test-build switch never locks the walkthrough: the check is turned off through this launch argument
         // (read only in the simulator and debug builds, `TestBuildConfig`). Shot 41 forces the lock instead.
         app.launchArguments += ["-testBuildSwitch", "skip"]
+        // Drone link replays a recorded flight near the farm with three ADS-B aircraft through its decoder instead of
+        // listening on the network (read only in the simulator and debug builds, `DroneLinkConfig`): shots 42 and 43.
+        app.launchArguments += ["-droneLinkDemo", "YES"]
         mapScreenshots()
         groupScreenshots()
         testBuildOffScreenshot()
@@ -273,6 +276,7 @@ final class ScreenshotTests: XCTestCase {
         // On the map itself, not only in the card ("6.1 NM NE of FASH Stellenbosch").
         XCTAssertTrue(airfield.exists, "Stellenbosch airfield (FASH) isn't on the map in drone mode")
         snap("25-drone-mode")
+        droneLinkScreenshots()
         setTerrain("Contour lines")
         // Back in close: My location, then again for 300 m across.
         tap("My location")
@@ -796,6 +800,64 @@ final class ScreenshotTests: XCTestCase {
             sleep(2)
         }
         XCTAssertEqual(button.value as? String, wanted)
+    }
+
+    /// Shots 42–43: Drone link's settings, switched on for the first time (the disclaimer first), receiving the demo
+    /// replay; then the drone on the map with the traffic around it, and the drone's panel.
+    private func droneLinkScreenshots() {
+        let button = app.buttons["droneLinkButton"]
+        guard button.waitForExistence(timeout: 10) else { return XCTFail("No Drone link button in drone mode") }
+        button.tap()
+        let row = app.switches["droneLinkSwitch"].firstMatch
+        guard row.waitForExistence(timeout: 10) else { return XCTFail("Drone link's settings didn't open") }
+        let control = row.switches.firstMatch
+        func isOn() -> Bool { [row, control].contains { $0.exists && $0.value as? String == "1" } }
+        XCTAssertFalse(isOn(), "Drone link is on before it was switched on")
+        let understand = app.alerts.buttons["I understand"]
+        for _ in 0..<3 where !understand.exists && !isOn() {
+            if control.exists && control.isHittable {
+                control.tap()
+            } else {
+                row.coordinate(withNormalizedOffset: CGVector(dx: 0.92, dy: 0.5)).tap()
+            }
+            _ = understand.waitForExistence(timeout: 4)
+        }
+        XCTAssertTrue(understand.exists, "No disclaimer when Drone link is first switched on")
+        if understand.exists { understand.tap() }
+        sleep(1)
+        XCTAssertTrue(isOn(), "Drone link didn't come on after the disclaimer")
+        let status = app.descendants(matching: .any)["droneLinkStatus"].firstMatch
+        let receiving = NSPredicate(format: "label CONTAINS %@", "Receiving from 1 drone")
+        let heard = expectation(for: receiving, evaluatedWith: status)
+        if XCTWaiter().wait(for: [heard], timeout: 20) != .completed {
+            XCTFail("Drone link isn't receiving the demo flight: \(status.exists ? status.label : "no status")")
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["droneLinkQGC"].firstMatch.label.contains("MAVLink Forwarding"),
+                      "No QGroundControl steps")
+        sleep(1)
+        snap("42-drone-link-settings")
+        tap("Done")
+        sleep(4) // the flight climbs away from home and the aircraft move
+
+        // On the map: the drone (over the farm, above your dot) and the aircraft; a tap on the drone opens its panel.
+        let drone = app.descendants(matching: .any)["droneLinkDrone"].firstMatch
+        guard drone.waitForExistence(timeout: 10) else { return XCTFail("The drone isn't on the map") }
+        let aircraft = app.descendants(matching: .any).matching(identifier: "droneLinkAircraft")
+        XCTAssertGreaterThanOrEqual(aircraft.count, 2, "The ADS-B aircraft aren't on the map")
+        XCTAssertTrue(app.descendants(matching: .any)["droneLinkHome"].firstMatch.exists, "No home point")
+        let panel = app.descendants(matching: .any)["droneLinkPanel"].firstMatch
+        for _ in 0..<3 where !panel.exists {
+            let f = drone.frame
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: f.midX, dy: f.minY + 16)).tap()
+            _ = panel.waitForExistence(timeout: 4)
+        }
+        XCTAssertTrue(panel.exists, "Tapping the drone didn't open its panel")
+        XCTAssertTrue(app.descendants(matching: .any)["droneLinkPanelDisclaimer"].firstMatch.exists, "No disclaimer in the panel")
+        sleep(2)
+        snap("43-drone-on-map")
+        let close = app.buttons["droneLinkPanelClose"]
+        if close.exists { close.tap() }
+        sleep(1)
     }
 
     /// Opens the Offline maps sheet, tapping again if a tap was lost.

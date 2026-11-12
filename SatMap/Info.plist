@@ -4,6 +4,8 @@
 <dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>SatMap shows where you are on the map and records the dotted track of where you have been, also while the app is in the background. If you turn on sharing in a group, your position and track are also shared with that group's members.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>With Drone link on, SatMap listens on your Wi-Fi or hotspot for the MAVLink your drone's ground station (QGroundControl, Mission Planner) forwards, to show your drone and the aircraft around it on the map. Nothing is sent.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>SatMap uses the camera to scan a group's invite QR code.</string>
 	<key>SatMapGroupsDomain</key>
