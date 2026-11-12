@@ -877,6 +877,22 @@ final class ScreenshotTests: XCTestCase {
                 sleep(2)
                 print("Shot 43: drag at x \(Int(x)) from y \(Int(startY)) to \(Int(endY)) moved the drone from y \(Int(before)) to \(Int(drone.frame.midY)) (panel bottom \(Int(panelBottom)), wanted \(Int(clear)))")
             }
+            // The iPhone's buttons fill the lower right, so the drone also moves left of them, a third of the way
+            // across: a sideways drag along the open strip under the buttons, from its right end.
+            let wantX = screen.width * 0.3
+            let beforeX = drone.frame.midX
+            let dx = wantX - beforeX
+            if abs(dx) >= 40 {
+                let y = screen.height - 120
+                let startX = dx < 0 ? screen.width * 0.85 : screen.width * 0.1
+                let endX = min(screen.width - 16, max(16, startX + dx + (dx > 0 ? slack : -slack)))
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                origin.withOffset(CGVector(dx: startX, dy: y))
+                    .press(forDuration: 0.1, thenDragTo: origin.withOffset(CGVector(dx: endX, dy: y)),
+                           withVelocity: .slow, thenHoldForDuration: 0.5)
+                sleep(2)
+                print("Shot 43: drag at y \(Int(y)) from x \(Int(startX)) to \(Int(endX)) moved the drone from x \(Int(beforeX)) to \(Int(drone.frame.midX)) (wanted \(Int(wantX)))")
+            }
         }
         XCTAssertTrue(panel.exists, "The drone's panel closed when the map moved")
         XCTAssertTrue(panel.staticTexts["Drone 1"].exists, "The panel no longer shows the drone")
