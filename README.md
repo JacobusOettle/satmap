@@ -323,12 +323,18 @@ sources*. This part hasn't been tried in a car yet.
 ## Moving to the new app ID
 
 The app's ID is now `com.koonap.spoor` on both phones. Because of that, the next
-test build installs as a new app named **Spoor**, next to the old one, and starts empty. To bring your offline maps
-across:
+test build installs as a new app named **Spoor**, next to the old one. The old one may also be called Spoor (or
+still SatMap), so tell them apart by what is inside: the new one opens with no offline maps, the old one is the one
+that still has them. To bring your offline maps across:
 
-1. In the old app: **Offline** → *Export all offline maps*, and save the files somewhere the phone can reach.
-2. In the new app: **Offline** → *Restore from a backup*, and choose those files.
-3. Check that your maps are there, then delete the old app.
+1. In the old app (the one with your maps): **Offline** → *Export all offline maps*, and save the files somewhere
+   the phone can reach.
+2. In the new app (the one that opened empty): **Offline** → *Restore from a backup*, and choose those files
+   (both files of each area, satellite and elevation).
+3. Only once the new app shows your maps, delete the old app.
+
+Only offline maps move this way. KML and GPX files, your "Where I've been" track, settings and group memberships
+stay in the old app: re-add the KML and GPX files and rejoin your groups in the new one before you delete the old one.
 
 The App Store and Google Play listings (not set up yet) must use `com.koonap.spoor`.
 
