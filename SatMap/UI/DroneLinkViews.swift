@@ -302,9 +302,8 @@ struct DroneLinkPanel: View {
                 colour: Color(DroneLinkLayer.highlightColour))
         }
         if let alt = a.altitudeM {
-            var text = DroneLink.feet(alt)
-            if model.heightUnit == .metres { text += " (\(Format.height(alt, .metres)))" }
-            row("Altitude", text + (a.altitudeType == 1 ? " GPS" : " QNH"))
+            let metres = model.heightUnit == .metres ? " (\(Format.height(alt, .metres)))" : ""
+            row("Altitude", DroneLink.feet(alt) + metres + (a.altitudeType == 1 ? " GPS" : " QNH"))
         }
         let motion = [a.speedText, a.climbMs.map { DroneLink.climb($0, .feet) }].compactMap { $0 }
         if !motion.isEmpty { row("Speed", motion.joined(separator: " · ")) }
