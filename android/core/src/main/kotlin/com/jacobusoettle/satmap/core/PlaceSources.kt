@@ -4,7 +4,7 @@ import kotlin.math.max
 
 /** Which service finds places by name (Swift's `PlaceSearchFallback`): Photon first (forgiving of spelling, near the
  *  map's middle), Nominatim's own search when Photon fails or doesn't answer within [photonTimeoutMillis]. A failure
- *  is remembered for [photonRestMillis], so the searches in between go straight to Nominatim; then Photon is tried
+ *  (not Photon refusing one query, [photonRefusedQuery], nor the phone having no network) is remembered for [photonRestMillis], so the searches in between go straight to Nominatim; then Photon is tried
  *  again. A working Photon that finds nothing has found nothing. Nominatim is asked at most once a second
  *  ([nominatimSpacingMillis]), as its usage policy asks: searches and boundaries alike, and only per search, never per
  *  keystroke. `now` is a monotonic clock in milliseconds (a test sets its own). */
@@ -22,13 +22,19 @@ class PlaceSources(private val now: () -> Long = { System.nanoTime() / 1_000_000
         /** At most this many results per search, from either service. */
         const val searchLimit = 20
 
-        /** The countries Nominatim searches first for a map in southern Africa (South Africa and its neighbours, as far
-         *  as Mozambique's north): Nominatim, unlike Photon, doesn't rank by nearness, and misses "Sabi Sand" among the
-         *  whole world's names. Null elsewhere, or with no map. */
+        /** The countries Nominatim searches first for a map in southern Africa (lat -35.5 to -10.3, lon 11.5 to 41):
+         *  South Africa and its neighbours, and every other country that box reaches (Zambia, Malawi, Angola, the DRC's
+         *  and Tanzania's south), so a map's own country is always in the list. Nominatim, unlike Photon, doesn't rank by
+         *  nearness, and misses "Sabi Sand" among the whole world's names. Null elsewhere, or with no map. */
         fun nominatimCountries(near: GeoPoint?): List<String>? {
             if (near == null || near.lat !in -35.5..-10.3 || near.lon !in 11.5..41.0) return null
-            return listOf("za", "ls", "sz", "na", "bw", "zw", "mz")
+            return listOf("za", "ls", "sz", "na", "bw", "zw", "mz", "zm", "mw", "ao", "cd", "tz")
         }
+
+        /** Whether a Photon HTTP status is Photon refusing that one query (a 4xx other than 408 and 429), not Photon
+         *  being down: that search goes to Nominatim, but no failure is remembered ([photonFailed] isn't called), so
+         *  the next search tries Photon again. 5xx, 408 and 429 are Photon failing. */
+        fun photonRefusedQuery(status: Int): Boolean = status in 400..499 && status != 408 && status != 429
 
         /** The Nominatim searches for one text, each only if the one before found no place: within the countries
          *  around the map, then the whole world. */

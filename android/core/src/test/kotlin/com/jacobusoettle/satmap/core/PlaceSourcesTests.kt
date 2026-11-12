@@ -51,6 +51,14 @@ class PlaceSourcesTests {
         assertTrue(sources.usePhoton())
     }
 
+    /** Photon refusing one query (a 4xx other than 408 and 429) sends that search to Nominatim without remembering a
+     *  failure; 5xx, 408 and 429 are Photon failing. */
+    @Test
+    fun testAPhotonRefusalIsntAFailure() {
+        for (refusal in listOf(400, 403, 404, 414, 499)) assertTrue("$refusal", PlaceSources.photonRefusedQuery(refusal))
+        for (busy in listOf(200, 301, 408, 429, 500, 502, 503, 504)) assertFalse("$busy", PlaceSources.photonRefusedQuery(busy))
+    }
+
     @Test
     fun testNominatimAtMostOnceASecond() {
         var now = 50_000L
@@ -70,12 +78,12 @@ class PlaceSourcesTests {
         try {
             Locale.setDefault(Locale.GERMANY)
             val kruger = GeoPoint(lat = -24.987654, lon = 31.592134)
-            val southernAfrica = listOf("za", "ls", "sz", "na", "bw", "zw", "mz")
+            val southernAfrica = listOf("za", "ls", "sz", "na", "bw", "zw", "mz", "zm", "mw", "ao", "cd", "tz")
             assertEquals(southernAfrica, PlaceSources.nominatimCountries(kruger))
             assertEquals(listOf(southernAfrica, null), PlaceSources.nominatimCountryPasses(kruger))
             assertEquals(
                 listOf("q" to "Sabi Sand", "format" to "jsonv2", "addressdetails" to "1", "limit" to "20",
-                       "viewbox" to "30.5921,-23.9877,32.5921,-25.9877", "countrycodes" to "za,ls,sz,na,bw,zw,mz"),
+                       "viewbox" to "30.5921,-23.9877,32.5921,-25.9877", "countrycodes" to "za,ls,sz,na,bw,zw,mz,zm,mw,ao,cd,tz"),
                 PlaceSources.nominatimQuery("Sabi Sand", kruger, southernAfrica),
             )
             assertEquals(
@@ -96,6 +104,16 @@ class PlaceSourcesTests {
             assertEquals(southernAfrica, PlaceSources.nominatimCountries(GeoPoint(lat = -35.5, lon = 11.5)))
             assertEquals(southernAfrica, PlaceSources.nominatimCountries(GeoPoint(lat = -10.3, lon = 41.0)))
             assertNull(PlaceSources.nominatimCountries(GeoPoint(lat = -10.2, lon = 30.0)))
+            // Every country the box reaches is in the list, so a map's own country is searched first.
+            for ((point, country) in listOf(
+                GeoPoint(lat = -15.0, lon = 26.0) to "zm",   // Kafue, Zambia
+                GeoPoint(lat = -14.8, lon = 35.3) to "mw",   // Liwonde, Malawi
+                GeoPoint(lat = -12.8, lon = 15.7) to "ao",   // Huambo, Angola
+                GeoPoint(lat = -11.66, lon = 27.48) to "cd", // Lubumbashi, DRC
+                GeoPoint(lat = -10.7, lon = 35.6) to "tz",   // Songea, Tanzania
+            )) {
+                assertTrue(country, PlaceSources.nominatimCountries(point)?.contains(country) == true)
+            }
         } finally {
             Locale.setDefault(saved)
         }
@@ -119,8 +137,14 @@ class PlaceSourcesTests {
             val got = if (file.startsWith("photon")) Places.photonAnswer(recorded(file)) else Places.nominatimResults(recorded(file))
             assertEquals(file, want, got)
         }
-        // Photon's answer and Nominatim's for the same name: the same reserve, the same boundary to look up.
-        assertEquals(Places.photonResults(recorded("photon-sabi-sand.json")), Places.nominatimResults(recorded("nominatim-sabi-sand.json")))
+        // Photon's answer and Nominatim's for the same name: the same reserve, the same line under it, the same boundary
+        // to look up. (Only these parts: the two services' centres and extents differ a little, and the Photon fixture's
+        // were copied from Nominatim's answer.)
+        fun listed(places: List<FoundPlace>) = places.map { listOf(it.id, it.name, it.kind, it.tag, it.region) }
+        val photon = Places.photonResults(recorded("photon-sabi-sand.json"))
+        val nominatim = Places.nominatimResults(recorded("nominatim-sabi-sand.json"))!!
+        assertEquals(listed(photon), listed(nominatim))
+        assertEquals(photon.map { it.hasBoundary }, nominatim.map { it.hasBoundary })
     }
 
     private fun JsonObject.text(key: String) = this[key]!!.jsonPrimitive.content

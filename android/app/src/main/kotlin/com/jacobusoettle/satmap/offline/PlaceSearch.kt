@@ -18,7 +18,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 private const val placeLog = "places"
@@ -72,27 +71,29 @@ object PlaceSearch {
     }
 
     /** One search: Photon, unless it failed lately; Nominatim when it fails now (an error, no answer within
-     *  [photonTimeoutMillis], or an answer that isn't one). Photon finding nothing is an answer: nothing is found. */
+     *  [photonTimeoutMillis], or an answer that isn't one), and that failure remembered (`PlaceSources.photonFailed`).
+     *  Photon refusing this one query (`PlaceSources.photonRefusedQuery`) sends only this search to Nominatim. No
+     *  network on the phone is no service's fault: `Offline` at once, nothing remembered. Photon finding nothing is
+     *  an answer: nothing is found. */
     private suspend fun find(text: String, near: GeoPoint?): List<FoundPlace> {
         if (!sources.usePhoton()) return searchNominatim(text, near)
-        val photonFailure = try {
+        try {
             return photon(text, near).also { sources.photonWorked() }
         } catch (e: CancellationException) {
             throw e
-        } catch (e: Failure) {
-            e
-        }
-        Log.w(placeLog, "Photon failed (${photonFailure.javaClass.simpleName}): searching with Nominatim")
-        val places = try {
-            searchNominatim(text, near)
-        } catch (e: Failure) {
-            // No network at all isn't Photon's fault: it's asked again next time.
-            if (photonFailure is Failure.Unavailable) sources.photonFailed()
+        } catch (e: Failure.Offline) {
             throw e
+        } catch (e: PhotonRefused) {
+            Log.w(placeLog, "Photon refused the query (HTTP ${e.status}): searching with Nominatim this once")
+        } catch (e: Failure) {
+            Log.w(placeLog, "Photon failed: searching with Nominatim for a while")
+            sources.photonFailed()
         }
-        sources.photonFailed()
-        return places
+        return searchNominatim(text, near)
     }
+
+    /** Photon's HTTP 4xx for one query (`PlaceSources.photonRefusedQuery`). */
+    private class PhotonRefused(val status: Int) : Exception("HTTP $status")
 
     private suspend fun photon(text: String, near: GeoPoint?): List<FoundPlace> {
         val url = photon.newBuilder()
@@ -104,8 +105,12 @@ object PlaceSearch {
             url.addQueryParameter("lon", stringFormat("%.4f", near.lon))
         }
         val quick = client.newBuilder().callTimeout(photonTimeoutMillis, TimeUnit.MILLISECONDS).build()
-        val data = get(url.build(), quick)
-        return withContext(work) { Places.photonAnswer(data) } ?: run {
+        val answer = request(url.build(), quick)
+        if (answer.code != 200) {
+            if (PlaceSources.photonRefusedQuery(answer.code)) throw PhotonRefused(answer.code)
+            throw Failure.Unavailable()
+        }
+        return withContext(work) { Places.photonAnswer(answer.data) } ?: run {
             Log.e(placeLog, "${photon.host}: not a search answer")
             throw Failure.Unavailable()
         }
@@ -159,23 +164,26 @@ object PlaceSearch {
     }
 
     private suspend fun get(url: HttpUrl, client: OkHttpClient): ByteArray {
-        val answer = try {
-            client.newCall(Request.Builder().url(url).build()).answer()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: IOException) {
-            // iOS's notConnectedToInternet, networkConnectionLost and dataNotAllowed: no network, or no name lookup.
-            if (!isOnline() || e is UnknownHostException) throw Failure.Offline()
-            Log.e(placeLog, "${url.host}: ${e.message ?: e}")
-            throw Failure.Unavailable()
-        } catch (e: Exception) {
-            Log.e(placeLog, "${url.host}: ${e.message ?: e}")
-            throw Failure.Unavailable()
-        }
-        if (answer.code != 200) {
-            Log.e(placeLog, "${url.host}: HTTP ${answer.code}")
-            throw Failure.Unavailable()
-        }
+        val answer = request(url, client)
+        if (answer.code != 200) throw Failure.Unavailable()
         return answer.data
+    }
+
+    /** A request's answer, any status. A network error is `Offline` only when the phone has no network (iOS's
+     *  notConnectedToInternet and dataNotAllowed); anything else, a name that can't be looked up or a connection the
+     *  server dropped included, is that service failing: `Unavailable`. */
+    private suspend fun request(url: HttpUrl, client: OkHttpClient): HttpAnswer = try {
+        client.newCall(Request.Builder().url(url).build()).answer().also {
+            if (it.code != 200) Log.e(placeLog, "${url.host}: HTTP ${it.code}")
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: IOException) {
+        if (!isOnline()) throw Failure.Offline()
+        Log.e(placeLog, "${url.host}: ${e.message ?: e}")
+        throw Failure.Unavailable()
+    } catch (e: Exception) {
+        Log.e(placeLog, "${url.host}: ${e.message ?: e}")
+        throw Failure.Unavailable()
     }
 }

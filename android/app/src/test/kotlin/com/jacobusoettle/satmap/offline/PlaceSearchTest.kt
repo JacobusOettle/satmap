@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import okhttp3.ConnectionPool
 import okhttp3.Dns
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.SocketPolicy
@@ -63,7 +64,7 @@ class PlaceSearchTest {
 
     private val kruger = GeoPoint(lat = -24.987654, lon = 31.592134)
     private val krugerBox = "viewbox=30.5921%2C-23.9877%2C32.5921%2C-25.9877"
-    private val southernAfrica = "countrycodes=za%2Cls%2Csz%2Cna%2Cbw%2Czw%2Cmz"
+    private val southernAfrica = "countrycodes=za%2Cls%2Csz%2Cna%2Cbw%2Czw%2Cmz%2Czm%2Cmw%2Cao%2Ccd%2Ctz"
 
     @Before
     fun setUp() {
@@ -211,6 +212,29 @@ class PlaceSearchTest {
     }
 
     @Test
+    fun aPhotonRefusalSendsOnlyThatSearchToNominatim() {
+        // A 4xx other than 408 and 429: this search with Nominatim, but Photon is asked again next time.
+        for (refusal in listOf(400, 404, 414)) {
+            photon.enqueue(MockResponse().setResponseCode(refusal))
+            nominatim.enqueue(nominatimAnswer("nominatim-sabi-sand.json"))
+            assertEquals(listOf("R1751334"), runBlocking { PlaceSearch.search("Sabi Sand", near = kruger) }.map { it.id })
+            assertTrue("$refusal", PlaceSearch.sources.usePhoton())
+        }
+        assertEquals(3, photon.requestCount)
+        assertEquals(3, nominatim.requestCount)
+        // 408, 429 and 5xx are Photon failing: the 10-minute rest.
+        for (busy in listOf(408, 429, 500)) {
+            now += PlaceSources.photonRestMillis
+            // OkHttp itself asks once more after a 408.
+            repeat(if (busy == 408) 2 else 1) { photon.enqueue(MockResponse().setResponseCode(busy)) }
+            nominatim.enqueue(nominatimAnswer("nominatim-sabi-sand.json"))
+            assertEquals(listOf("R1751334"), runBlocking { PlaceSearch.search("Sabi Sand", near = kruger) }.map { it.id })
+            assertTrue("$busy", !PlaceSearch.sources.usePhoton())
+        }
+        assertEquals(7, photon.requestCount)
+    }
+
+    @Test
     fun nominatimAtMostOnceASecond() {
         ticking = false
         PlaceSearch.sources.photonFailed()
@@ -267,29 +291,47 @@ class PlaceSearchTest {
         nominatim.enqueue(MockResponse().setResponseCode(429))
         assertEquals(unavailable, failure { PlaceSearch.area(place) }!!.message)
 
-        // A connection that breaks while online: unavailable.
+        // A connection that breaks while online: Photon failing (Nominatim, and the rest), then unavailable.
         repeat(3) { photon.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START)) }
         repeat(3) { nominatim.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START)) }
+        val nominatimBefore = nominatim.requestCount
         assertTrue(failure { PlaceSearch.search("Kruger", near = null) } is PlaceSearch.Failure.Unavailable)
+        assertTrue(nominatim.requestCount > nominatimBefore)
+        assertTrue(!PlaceSearch.sources.usePhoton())
         now += PlaceSources.photonRestMillis
 
-        // No network: not Photon's fault, so it's asked again next time.
+        // No network on the phone: offline at once, Nominatim not asked, and not remembered as Photon's failure.
         online = false
         repeat(3) { photon.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START)) }
-        repeat(3) { nominatim.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START)) }
+        val asked = nominatim.requestCount
         val none = failure { PlaceSearch.search("Kruger", near = null) }
         assertTrue(none is PlaceSearch.Failure.Offline)
         assertEquals(offline, none!!.message)
+        assertEquals(asked, nominatim.requestCount)
         assertTrue(PlaceSearch.sources.usePhoton())
 
-        // Names that can't be looked up mean no internet too.
+        // A name that can't be looked up while the phone is online is that service failing, not no internet: Photon's
+        // search goes to Nominatim and the rest starts.
         online = true
         PlaceSearch.client = PlaceSearch.client.newBuilder().dns(object : Dns {
             override fun lookup(hostname: String) = throw UnknownHostException(hostname)
         }).build()
-        assertTrue(failure { PlaceSearch.area(place) } is PlaceSearch.Failure.Offline)
-        assertTrue(failure { PlaceSearch.search("Kruger", near = null) } is PlaceSearch.Failure.Offline)
-        assertTrue(PlaceSearch.sources.usePhoton())
+        assertTrue(failure { PlaceSearch.area(place) } is PlaceSearch.Failure.Unavailable)
+        assertTrue(failure { PlaceSearch.search("Kruger", near = null) } is PlaceSearch.Failure.Unavailable)
+        assertTrue(!PlaceSearch.sources.usePhoton())
+    }
+
+    @Test
+    fun photonsNameNotFoundWhileOnlineGoesToNominatim() {
+        // Photon's host can't be looked up (the phone is online): Nominatim answers, and the rest starts.
+        PlaceSearch.photon = "http://photon.invalid/api/".toHttpUrl()
+        PlaceSearch.client = PlaceSearch.client.newBuilder().dns(object : Dns {
+            override fun lookup(hostname: String) =
+                if (hostname == "photon.invalid") throw UnknownHostException(hostname) else Dns.SYSTEM.lookup(hostname)
+        }).build()
+        nominatim.enqueue(nominatimAnswer("nominatim-sabi-sand.json"))
+        assertEquals(listOf("R1751334"), runBlocking { PlaceSearch.search("Sabi Sand", near = kruger) }.map { it.id })
+        assertTrue(!PlaceSearch.sources.usePhoton())
     }
 
     @Test
