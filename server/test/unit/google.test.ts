@@ -17,7 +17,7 @@ import { inPro, randomId } from "../helpers/client";
 import { fakeGoogle, product, purchaseToken, rfc3339, subscription } from "../helpers/google";
 
 const NOW = 1_900_000_000;
-const S = { packageName: "com.jacobusoettle.satmap", allowTestPurchases: true };
+const S = { packageName: "com.koonap.spoor", allowTestPurchases: true };
 
 describe("subscriptionsv2 decisions", () => {
   const decide = (body: Record<string, unknown>, s = S) => decideSubscription(body, "pro", s, NOW);
@@ -130,10 +130,10 @@ describe("Play Developer API client", () => {
     expect(await googleStoreCheck(life, "pro_lifetime", S, sa, google.fetch, NOW)).toMatchObject({ type: "state", state: { active: true } });
     expect(google.tokenRequests).toBe(1);
     expect(google.calls).toContain(
-      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.jacobusoettle.satmap/purchases/subscriptionsv2/tokens/${sub}`,
+      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.koonap.spoor/purchases/subscriptionsv2/tokens/${sub}`,
     );
     expect(google.calls).toContain(
-      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.jacobusoettle.satmap/purchases/productsv2/tokens/${life}`,
+      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/com.koonap.spoor/purchases/productsv2/tokens/${life}`,
     );
   });
 

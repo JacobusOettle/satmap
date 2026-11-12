@@ -151,23 +151,23 @@ jobs:
           # checks that the lock has that id.
           script: |
             adb install -r SatMap.apk
-            adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_FINE_LOCATION || true
-            adb shell pm grant com.jacobusoettle.satmap android.permission.ACCESS_COARSE_LOCATION || true
-            adb shell pm grant com.jacobusoettle.satmap android.permission.ACTIVITY_RECOGNITION || true
-            adb shell pm grant com.jacobusoettle.satmap android.permission.POST_NOTIFICATIONS || true
+            adb shell pm grant com.koonap.spoor android.permission.ACCESS_FINE_LOCATION || true
+            adb shell pm grant com.koonap.spoor android.permission.ACCESS_COARSE_LOCATION || true
+            adb shell pm grant com.koonap.spoor android.permission.ACTIVITY_RECOGNITION || true
+            adb shell pm grant com.koonap.spoor android.permission.POST_NOTIFICATIONS || true
             adb shell pm disable-user --user 0 com.google.android.apps.messaging || true
             adb shell svc power stayon true || true
             adb shell input keyevent KEYCODE_WAKEUP || true
             adb shell wm dismiss-keyguard || true
             adb logcat -c
-            adb shell am start -W -n com.jacobusoettle.satmap/.MainActivity
+            adb shell am start -W -n com.koonap.spoor/com.jacobusoettle.satmap.MainActivity
             sleep 30
             adb exec-out screencap -p > android-launch.png || true
             adb exec-out screencap > android-launch.raw || true
-            adb shell pidof com.jacobusoettle.satmap || { echo "SatMap quit after it was opened: not publishing this build."; adb logcat -d -b crash; adb logcat -d | grep -iE "satmap|AndroidRuntime|maplibre|mbgl" | tail -n 150; exit 1; }
-            if adb logcat -d -b crash | grep -q com.jacobusoettle.satmap; then echo "SatMap crashed after it was opened (and was started again): not publishing this build."; adb logcat -d -b crash; exit 1; fi
-            if adb logcat -d -b events | grep am_anr | grep -q com.jacobusoettle.satmap; then echo "SatMap stopped responding after it was opened: not publishing this build."; adb logcat -d -b events | grep am_anr; adb logcat -d | grep -iE "satmap|ANR" | tail -n 150; exit 1; fi
-            adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | grep -q 'com.jacobusoettle.satmap/.MainActivity' || { echo "SatMap's map is not the resumed activity: not publishing this build."; adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp|mCurrentFocus'; adb logcat -d | grep -iE "satmap|AndroidRuntime" | tail -n 150; exit 1; }
+            adb shell pidof com.koonap.spoor || { echo "SatMap quit after it was opened: not publishing this build."; adb logcat -d -b crash; adb logcat -d | grep -iE "satmap|AndroidRuntime|maplibre|mbgl" | tail -n 150; exit 1; }
+            if adb logcat -d -b crash | grep -q com.koonap.spoor; then echo "SatMap crashed after it was opened (and was started again): not publishing this build."; adb logcat -d -b crash; exit 1; fi
+            if adb logcat -d -b events | grep am_anr | grep -q com.koonap.spoor; then echo "SatMap stopped responding after it was opened: not publishing this build."; adb logcat -d -b events | grep am_anr; adb logcat -d | grep -iE "satmap|ANR" | tail -n 150; exit 1; fi
+            adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity' | grep -q 'com.koonap.spoor/com.jacobusoettle.satmap.MainActivity' || { echo "SatMap's map is not the resumed activity: not publishing this build."; adb shell dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|mFocusedApp|mCurrentFocus'; adb logcat -d | grep -iE "satmap|AndroidRuntime" | tail -n 150; exit 1; }
             timeout 90 adb shell uiautomator dump --windows /sdcard/satmap-launch.xml || echo "The accessibility tree couldn't be read."
             adb shell cat /sdcard/satmap-launch.xml > android-launch.xml 2> /dev/null || true
             echo "Test tags on screen: $(grep -o 'resource-id="[A-Za-z0-9_-][A-Za-z0-9_-]*"' android-launch.xml 2> /dev/null | sed 's/resource-id=//' | sort -u | tr '\n' ' ')"

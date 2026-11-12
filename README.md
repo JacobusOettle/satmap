@@ -292,7 +292,7 @@ You need a Mac with **Xcode 16 or newer** and an iPhone with **iOS 16 or newer**
 1. Open `SatMap.xcodeproj` in Xcode.
 2. Select the **SatMap** target → **Signing & Capabilities** → choose your **Team** (sign in with your
    Apple ID if asked). If Xcode says the bundle identifier is taken, change it, e.g. to
-   `com.yourname.satmap`.
+   `com.yourname.spoor`.
 3. Connect the iPhone, select it as the run destination, and press **Run** (⌘R). The first time, on the
    iPhone open *Settings → General → VPN & Device Management* and trust your developer certificate.
 4. When the app asks, allow **location** and **motion**.
@@ -319,6 +319,18 @@ drone mode (the button at the top cycles them, like the mountain button on the p
 apps installed from the Play Store unless you allow others: in the Android Auto settings on the phone, tap
 *Version* ten times to unlock developer mode, then in the ⋮ menu → *Developer settings* turn on *Unknown
 sources*. This part hasn't been tried in a car yet.
+
+## Moving to the new app ID
+
+The app's ID is now `com.koonap.spoor` on both phones. Because of that, the next
+test build installs as a new app named **Spoor**, next to the old one, and starts empty. To bring your offline maps
+across:
+
+1. In the old app: **Offline** → *Export all offline maps*, and save the files somewhere the phone can reach.
+2. In the new app: **Offline** → *Restore from a backup*, and choose those files.
+3. Check that your maps are there, then delete the old app.
+
+The App Store and Google Play listings (not set up yet) must use `com.koonap.spoor`.
 
 ## Test builds can be switched off
 

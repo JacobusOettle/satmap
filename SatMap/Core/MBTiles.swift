@@ -7,7 +7,7 @@ import CSQLite
 #if canImport(os)
 import os
 
-private let storeLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "tiles")
+private let storeLog = Logger(subsystem: "com.koonap.spoor", category: "tiles")
 #endif
 
 /// A tile store in the MBTiles layout (SQLite; tile_row uses the TMS convention, flipped from XYZ).

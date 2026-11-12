@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-private let roadLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "roads")
+private let roadLog = Logger(subsystem: "com.koonap.spoor", category: "roads")
 
 /// Road sets shipped with the app (SatMap/Resources/<id>.json), loaded once.
 enum RoadPresets {

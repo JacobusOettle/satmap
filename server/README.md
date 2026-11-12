@@ -99,9 +99,9 @@ Variables are in `wrangler.jsonc` (`vars`) with their defaults:
 | `PUBLIC_BASE_URL` | `https://example.invalid` | The domain |
 | `CONTACT_EMAIL` | `groups@example.invalid` | Pages and the landing page footer |
 | `APP_STORE_URL`, `PLAY_STORE_URL` | `""` | Landing page links (left out when empty) |
-| `APPLE_BUNDLE_ID` | `com.jacobusoettle.satmap` | JWS checks |
-| `APPLE_APP_IDS` | `TEAMID.com.jacobusoettle.satmap` | apple-app-site-association, comma-separated |
-| `ANDROID_PACKAGE` | `com.jacobusoettle.satmap` | assetlinks.json; Play API path; the landing page's `intent://` link |
+| `APPLE_BUNDLE_ID` | `com.koonap.spoor` | JWS checks |
+| `APPLE_APP_IDS` | `TEAMID.com.koonap.spoor` | apple-app-site-association, comma-separated |
+| `ANDROID_PACKAGE` | `com.koonap.spoor` | assetlinks.json; Play API path; the landing page's `intent://` link |
 | `ANDROID_CERT_SHA256` | `""` | assetlinks.json fingerprints, comma-separated |
 | `PRO_PRODUCTS_APPLE` | `pro.monthly,pro.yearly,pro.lifetime` | Accepted Apple products |
 | `PRO_PRODUCTS_GOOGLE` | `pro,pro_lifetime` | `pro` = subscription, `pro_lifetime` = one-time |
@@ -146,7 +146,7 @@ Bindings: `GROUP`, `PRO`, `ADMIN` (Durable Objects, all SQLite), `ARCHIVE` (R2 b
    `"0"`, and deploy again.
 4. **Check the app links:** open `https://{domain}/.well-known/apple-app-site-association` and
    `https://{domain}/.well-known/assetlinks.json`, then run
-   `adb shell pm verify-app-links --re-verify com.jacobusoettle.satmap`.
+   `adb shell pm verify-app-links --re-verify com.koonap.spoor`.
 5. **Store setup** (SPEC §10.2):
    - App Store Connect: the subscription group "Spoor Pro" with `pro.monthly` and `pro.yearly`, the non-consumable
      `pro.lifetime`; App Store Server Notifications V2 to `https://{domain}/v1/store/apple` for production and

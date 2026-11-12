@@ -14,7 +14,7 @@ describe("routing", () => {
     expect((await api("GET", "/j/not-a-token")).status).toBe(404);
     expect((await api("GET", "/j/")).status).toBe(404);
     expect((await api("GET", "/.well-known/apple-app-site-association")).body.applinks.details[0].components).toEqual([{ "/": "/j/*", comment: "Group invites" }]);
-    expect((await api("GET", "/.well-known/assetlinks.json")).body[0].target.package_name).toBe("com.jacobusoettle.satmap");
+    expect((await api("GET", "/.well-known/assetlinks.json")).body[0].target.package_name).toBe("com.koonap.spoor");
     for (const path of ["/terms", "/privacy", "/"]) {
       const res = await api("GET", path);
       expect(res.status, path).toBe(200);

@@ -58,10 +58,10 @@ jobs:
       - name: Install the app with the demo farm blocks
         run: |
           xcrun simctl install "$UDID" build/Build/Products/Release-iphonesimulator/SatMap.app
-          xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
+          xcrun simctl privacy "$UDID" grant location com.koonap.spoor || true
           # Pre-grant Motion & Fitness too, so its prompt never floats over a screenshot (the lock shot especially).
-          xcrun simctl privacy "$UDID" grant motion com.jacobusoettle.satmap || true
-          DATA=$(xcrun simctl get_app_container "$UDID" com.jacobusoettle.satmap data)
+          xcrun simctl privacy "$UDID" grant motion com.koonap.spoor || true
+          DATA=$(xcrun simctl get_app_container "$UDID" com.koonap.spoor data)
           KML="$DATA/Library/Application Support/SatMap/KML"
           mkdir -p "$KML"
           ID=6F1C2D3E-4B5A-4C7D-8E9F-0A1B2C3D4E5F
@@ -72,7 +72,7 @@ jobs:
         run: |
           mkdir -p shots
           xcrun simctl spawn "$UDID" log stream --level debug --style compact \
-            --predicate 'subsystem == "com.jacobusoettle.satmap"' > applog.txt 2>&1 &
+            --predicate 'subsystem == "com.koonap.spoor"' > applog.txt 2>&1 &
           LOGPID=$!
           TEST_RUNNER_SCREENSHOT_DIR="$PWD/shots" xcodebuild test-without-building \
             -xctestrun "$(ls build/Build/Products/*.xctestrun | head -n 1)" -destination "id=$UDID" \

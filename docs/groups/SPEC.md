@@ -775,7 +775,7 @@ Exact content:
 - Body:
 
 ```json
-{"applinks":{"details":[{"appIDs":["TEAMID.com.jacobusoettle.satmap"],"components":[{"/":"/j/*","comment":"Group invites"}]}]}}
+{"applinks":{"details":[{"appIDs":["TEAMID.com.koonap.spoor"],"components":[{"/":"/j/*","comment":"Group invites"}]}]}}
 ```
 
 - `appIDs` is the variable `APPLE_APP_IDS` split on commas.
@@ -786,7 +786,7 @@ Exact content:
 - Body:
 
 ```json
-[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"com.jacobusoettle.satmap","sha256_cert_fingerprints":["AA:BB:…"]}}]
+[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"com.koonap.spoor","sha256_cert_fingerprints":["AA:BB:…"]}}]
 ```
 
 - `package_name` comes from `ANDROID_PACKAGE` and the fingerprints from `ANDROID_CERT_SHA256`, split on commas.
@@ -798,7 +798,7 @@ Exact content:
 **iPhone**
 
 - `SatMap.entitlements` adds `com.apple.developer.associated-domains` = [`applinks:$(GROUPS_DOMAIN)`].
-- Info.plist adds `CFBundleURLTypes`: one entry with name `com.jacobusoettle.satmap.invite`, role Viewer and
+- Info.plist adds `CFBundleURLTypes`: one entry with name `com.koonap.spoor.invite`, role Viewer and
   scheme `satmap`.
 - In `SatMapApp.onOpenURL`, first call `InviteLink.parse(url.absoluteString, domain:)`. If the result is not
   `notInvite`, hand it to the groups model (`model.groups.openInvite(result)`) and return. Only otherwise call the
@@ -1948,9 +1948,9 @@ proofs answer `503 store_unavailable`, unless `TEST_MODE=1`):
 | `PUBLIC_BASE_URL` | `https://example.invalid` | The domain (§5.1) |
 | `CONTACT_EMAIL` | `groups@example.invalid` | Pages and landing footer |
 | `APP_STORE_URL`, `PLAY_STORE_URL` | `""` | Landing page links |
-| `APPLE_BUNDLE_ID` | `com.jacobusoettle.satmap` | JWS check |
-| `APPLE_APP_IDS` | `TEAMID.com.jacobusoettle.satmap` | AASA |
-| `ANDROID_PACKAGE` | `com.jacobusoettle.satmap` | assetlinks; Google API path |
+| `APPLE_BUNDLE_ID` | `com.koonap.spoor` | JWS check |
+| `APPLE_APP_IDS` | `TEAMID.com.koonap.spoor` | AASA |
+| `ANDROID_PACKAGE` | `com.koonap.spoor` | assetlinks; Google API path |
 | `ANDROID_CERT_SHA256` | `""` | assetlinks fingerprints, comma-separated |
 | `PRO_PRODUCTS_APPLE` | `pro.monthly,pro.yearly,pro.lifetime` | |
 | `PRO_PRODUCTS_GOOGLE` | `pro,pro_lifetime` | `pro` = subscription, `pro_lifetime` = one-time |
@@ -2323,7 +2323,7 @@ files (§13.1).
 **Secrets** (`GroupSecret` as JSON) never go to backups or other devices.
 
 - **iPhone:** one Keychain item per group:
-  - `kSecClassGenericPassword`, `kSecAttrService` `com.jacobusoettle.satmap.groups`, `kSecAttrAccount` = `groupId`
+  - `kSecClassGenericPassword`, `kSecAttrService` `com.koonap.spoor.groups`, `kSecAttrAccount` = `groupId`
   - `kSecAttrAccessible` = `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` (readable in the background after the
     first unlock, never in backups or on other devices)
   - `kSecAttrSynchronizable` false
@@ -3411,9 +3411,10 @@ Both apps link to them (S1, S2, S3).
 
 **Privacy notice points:**
 
-1. **Responsible party:** the developer's name and `CONTACT_EMAIL`. The developer registers an Information Officer
-   with the Information Regulator (owner task). There is no variable for the name: the draft says "Jacobus Oettle,
-   the developer of Spoor", a constant in `src/web/pages.ts`, for the owner's review.
+1. **Responsible party:** the company, Koonap (Pty) Ltd, and `CONTACT_EMAIL`. The company registers an Information
+   Officer with the Information Regulator (owner task). There is no variable for the name: the draft says "Koonap
+   (Pty) Ltd (registration 2026/913811/07), the company that makes Spoor", from a constant in `src/web/pages.ts`,
+   for the owner's review.
 2. **What is processed:**
    - random ids, role, join time and a hash of the member pass
    - encrypted names, positions, trails and pins, which the developer cannot read
@@ -3800,7 +3801,7 @@ Notes:
    `GOOGLE_SERVICE_ACCOUNT_JSON`, `GOOGLE_RTDN_TOKEN` (32+ random characters) and `REPORT_WEBHOOK_URL`. Set
    `APPLE_APP_IDS` (Team ID), `APPLE_APP_APPLE_ID` and `ANDROID_CERT_SHA256`. Check `TEST_MODE` is `0`.
 4. Check `https://{domain}/.well-known/apple-app-site-association` and `assetlinks.json`, then
-   `adb shell pm verify-app-links --re-verify com.jacobusoettle.satmap`.
+   `adb shell pm verify-app-links --re-verify com.koonap.spoor`.
 5. Store setup (§10.2), the privacy notice and terms review, the word list review, and the contact address.
 
 ---

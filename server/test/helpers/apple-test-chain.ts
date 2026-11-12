@@ -80,7 +80,7 @@ export function appleTransaction(now: number, overrides: Record<string, unknown>
   const base: Record<string, unknown> = {
     transactionId: id,
     originalTransactionId: id,
-    bundleId: "com.jacobusoettle.satmap",
+    bundleId: "com.koonap.spoor",
     productId,
     purchaseDate: (now - 3600) * 1000,
     originalPurchaseDate: (now - 3600) * 1000,
@@ -120,7 +120,7 @@ export async function appleNotification(
 ): Promise<string> {
   const environment = opts.environment ?? (opts.transaction?.environment as string | undefined) ?? "Production";
   const data: Record<string, unknown> = {
-    bundleId: opts.bundleId ?? "com.jacobusoettle.satmap",
+    bundleId: opts.bundleId ?? "com.koonap.spoor",
     environment,
   };
   if (opts.appAppleId !== null) data.appAppleId = opts.appAppleId ?? 1234567890;

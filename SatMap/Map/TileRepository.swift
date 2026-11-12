@@ -3,8 +3,8 @@ import ImageIO
 import os
 import UIKit
 
-/// Tile pipeline diagnostics (visible in Console.app, subsystem com.jacobusoettle.satmap).
-let tileLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "tiles")
+/// Tile pipeline diagnostics (visible in Console.app, subsystem com.koonap.spoor).
+let tileLog = Logger(subsystem: "com.koonap.spoor", category: "tiles")
 
 /// Where map tiles come from: downloaded offline areas first, then the network (if online), and for zooms
 /// deeper than the imagery goes, the nearest ancestor tile (which the imagery layer enlarges).

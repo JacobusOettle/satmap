@@ -75,7 +75,9 @@ jobs:
         run: |
           cat > "$RUNNER_TEMP/adb-helpers.sh" <<'EOF'
           export PATH="$PATH:${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools"
-          PKG=com.jacobusoettle.satmap
+          # The app ID (applicationId); the Kotlin classes keep their package (KPKG).
+          PKG=com.koonap.spoor
+          KPKG=com.jacobusoettle.satmap
           SHOTS=/sdcard/Android/data/$PKG/files/screenshots
 
           # adb with a time limit (LIMIT seconds, 60 unless set): with the emulator gone, an adb command can wait for it
@@ -165,7 +167,7 @@ jobs:
           LOGCAT=$!
 
           # The walk: at most 45 minutes (it stops itself after 40, ScreenshotTest.WALK_MINUTES, to report what failed).
-          timeout -k 30 45m adb shell am instrument -w -e class $PKG.ScreenshotTest,$PKG.InviteIntentTest \
+          timeout -k 30 45m adb shell am instrument -w -e class $KPKG.ScreenshotTest,$KPKG.InviteIntentTest \
             $PKG.test/androidx.test.runner.AndroidJUnitRunner > test-output.txt 2>&1 &
           TEST=$!
 

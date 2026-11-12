@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-private let placeLog = Logger(subsystem: "com.jacobusoettle.satmap", category: "places")
+private let placeLog = Logger(subsystem: "com.koonap.spoor", category: "places")
 
 /// Finding a place by name for an offline area: Photon (komoot's OpenStreetMap search, forgiving of spelling) for the
 /// names, then Nominatim (OpenStreetMap's own) for the chosen place's boundary. Both are public services: one search
