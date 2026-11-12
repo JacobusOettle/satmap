@@ -9,7 +9,8 @@ import android.os.Bundle
  *  `adb shell am start -n com.jacobusoettle.satmap/.MainActivity --es terrainMode colours --ez zoomScript true`.
  *
  *  Keys: terrainMode, showContours (legacy, read only), distanceUnit, heightUnit, kmlFileColours, offlineMaxZoom,
- *  trackAutoDownload (stored value only, `storedBool`), camera ("lat,lon,latDelta,lonDelta"), zoomScript (launch extra
+ *  trackAutoDownload (stored value only, `storedBool`), droneLinkEnabled, droneLinkPort and droneLinkDisclaimerAccepted
+ *  (stored values only, `storedBool`/`storedInt`: no intent may switch the drone link on), camera ("lat,lon,latDelta,lonDelta"), zoomScript (launch extra
  *  only), and Android's locationPermissionAsked, motionPermissionAsked and notificationPermissionAsked (Android can't
  *  tell "never asked" from "denied"). */
 object Defaults {
@@ -65,6 +66,16 @@ object Defaults {
         if (!prefs.contains(key)) return null
         return try {
             prefs.getBoolean(key, false)
+        } catch (e: ClassCastException) {
+            null
+        }
+    }
+
+    /** The stored value alone, whatever the launch extras say (the drone link's port). */
+    fun storedInt(key: String): Int? {
+        if (!prefs.contains(key)) return null
+        return try {
+            prefs.getInt(key, 0)
         } catch (e: ClassCastException) {
             null
         }

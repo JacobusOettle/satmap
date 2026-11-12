@@ -52,7 +52,9 @@ shots replay a recorded flight over the farm with three ADS-B aircraft (`docs/ma
 same decoder, instead of listening on the network (`-droneLinkDemo YES`, simulator and debug builds only).
 
 The Android app's screenshots, taken the same way on an Android emulator (`.github/workflows/android-screenshots.yml`),
-are in [docs/screenshots/android](docs/screenshots/android):
+are in [docs/screenshots/android](docs/screenshots/android). Its Drone link shots replay a recorded flight over the
+farm with three ADS-B aircraft (`docs/mavlink/demo_flight.json`) through the same decoder, instead of listening on the
+network (set by the walkthrough's instrumentation in the app's own process; no intent can switch it on):
 
 | Map | Measuring | Offline maps | Drone mode |
 | --- | --- | --- | --- |
@@ -63,8 +65,8 @@ are in [docs/screenshots/android](docs/screenshots/android):
 | <img src="docs/screenshots/android/32-group-detail.jpg" width="180"> | <img src="docs/screenshots/android/33-invite-qr.jpg" width="180"> | <img src="docs/screenshots/android/34-join-group.jpg" width="180"> | <img src="docs/screenshots/android/35-share-consent.jpg" width="180"> |
 | **A group on the map** | **Dropping a pin** | **A pin** | **A member** |
 | <img src="docs/screenshots/android/36-group-map.jpg" width="180"> | <img src="docs/screenshots/android/37-drop-pin.jpg" width="180"> | <img src="docs/screenshots/android/38-pin-detail.jpg" width="180"> | <img src="docs/screenshots/android/39-member-detail.jpg" width="180"> |
-| **A paused group** | **Test build switched off** | | |
-| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | <img src="docs/screenshots/android/41-test-build-off.jpg" width="180"> | | |
+| **A paused group** | **Test build switched off** | **Drone link: settings** | **Drone link: your drone and the traffic** |
+| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | <img src="docs/screenshots/android/41-test-build-off.jpg" width="180"> | <img src="docs/screenshots/android/42-drone-link-settings.jpg" width="180"> | <img src="docs/screenshots/android/43-drone-on-map.jpg" width="180"> |
 
 ## Features
 
@@ -111,10 +113,12 @@ is from you, and the nearest airfields in nautical miles. Tap an aircraft for it
 from you and from the drone. A drone with no new position for 10 s turns grey and goes after 60 s; an aircraft fades
 after 15 s and goes after 120 s (as in QGroundControl). Heights and speeds follow your units. Until the drone has a
 GPS position (autopilots report 0°, 0° before then) it stays off the map. Heartbeats from a companion computer,
-camera or gimbal on the drone are ignored, so armed or not is always the flight controller's.
+camera or gimbal on the drone are ignored, so armed or not is always the flight controller's. When the drone's height
+above sea level is well below SatMap's ground there (a wrong altitude datum, coarse elevation data), the estimate
+is left out.
 
-**Set it up.** Put the phone and the ground station on the same Wi-Fi (or turn on Personal Hotspot on the phone and
-join it from the laptop or tablet running the ground station). In drone mode tap **Drone link**, switch it on, and
+**Set it up.** Put the phone and the ground station on the same Wi-Fi (or turn on the phone's hotspot, Personal
+Hotspot on iPhone, and join it from the laptop or tablet running the ground station). In drone mode tap **Drone link**, switch it on, and
 note the phone's address and port shown there (port 14445 by default). Then, in **QGroundControl**:
 
 1. Open **Application Settings > Telemetry**.
@@ -137,7 +141,8 @@ for later. On Android no extra permission is needed today (Android 17 will add `
 > Drone link on, and in every drone and aircraft panel.
 
 The decoder (MAVLink 1 and 2, CRCs, signed frames, several frames to a datagram) and the rules are in the shared core
-(`SatMap/Core/MAVLink.swift`, `DroneLink.swift` and their Kotlin twins), tested against the same fixture
+of each app (`SatMap/Core`: `MAVLink.swift`, `DroneLink.swift`; `android/core`: `MAVLink.kt`, `DroneLink.kt`), with
+the same names and behaviour, both tested against the shared fixture
 (`Tests/SatMapCoreTests/Fixtures/mavlink/cases.json`, made with pymavlink by `docs/mavlink/make_fixtures.py`). Online
 ADS-B (adsb.lol and the like) may be added later for aircraft when the drone has no receiver.
 

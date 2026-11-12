@@ -208,6 +208,7 @@ fun MapScreen(model: AppModel, offline: OfflineManager, recorder: LocationRecord
                     ActiveSheet.offline -> OfflineSheet(model, offline, model.kml, close)
                     ActiveSheet.coordinates -> CoordinateEntryView(model, close, sheetState)
                     ActiveSheet.groups -> GroupsSheet(model, close)
+                    ActiveSheet.droneLink -> DroneLinkSheet(model.droneLink, close)
                 }
             }
             // Groups (docs/groups/SPEC.md §9.2): a pin or member tapped on the map (or a pin dropped there) in a sheet
@@ -256,6 +257,8 @@ private fun MapOverlay(
             if (!drawing) MyCoordinates(model, recorder)
             // Drone mode: where you (and the tapped spot) are from the nearest airfield, as a pilot says it.
             if (!drawing) Drone(model)
+            // Drone link (android/docs/spec/drone-link.md): its button, and a tapped drone's or aircraft's panel.
+            if (!drawing) DroneLinkOverlay(model)
             LocationHint(recorder)
             GroupPausedHint(model)
             Spacer(Modifier.weight(1f))

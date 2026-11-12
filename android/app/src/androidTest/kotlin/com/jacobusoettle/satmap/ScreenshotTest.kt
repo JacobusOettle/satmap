@@ -36,10 +36,12 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
 import com.jacobusoettle.satmap.app.AppModel
+import com.jacobusoettle.satmap.core.DroneLink
 import com.jacobusoettle.satmap.core.GeoPoint
 import com.jacobusoettle.satmap.core.GroupDemo
 import com.jacobusoettle.satmap.core.OfflineArea
 import com.jacobusoettle.satmap.core.TestBuildSwitch
+import com.jacobusoettle.satmap.map.DroneLinkLayer
 import com.jacobusoettle.satmap.map.GroupLayers
 import com.jacobusoettle.satmap.map.MapController
 import com.jacobusoettle.satmap.map.MapIds
@@ -172,6 +174,16 @@ class ScreenshotTest {
         // The real test-build switch must never lock the walkthrough: turned off in the app's own process (never an
         // intent extra, which any app or web page could send). Screenshot 41 forces the lock through the same object.
         instrumentation.runOnMainSync { AppModel.shared.testBuild.disableForTests() }
+        // Drone link replays a recorded flight near the farm with three ADS-B aircraft (docs/mavlink/demo_flight.json, in
+        // the test APK's assets) through its decoder instead of listening on the network: shots 42 and 43. Set in the
+        // app's own process, never by an intent extra, as the iPhone's `-droneLinkDemo YES`.
+        val flight = try {
+            instrumentation.context.assets.open("demo_flight.json").use { DroneLink.Replay.parse(it.readBytes().decodeToString()) }
+        } catch (e: Exception) {
+            null
+        }
+        if (flight == null) fail("No demo flight in the test's assets")
+        instrumentation.runOnMainSync { AppModel.shared.droneLink.useReplayForTests(flight) }
         try {
             setLocation(arrival[0])
             val scenario = launch()
@@ -353,6 +365,7 @@ class ScreenshotTest {
         // On the map itself, not only in the card ("6.1 NM NE of FASH Stellenbosch").
         check(mapElement(airfield, 0) != null, "Stellenbosch airfield (FASH) isn't on the map in drone mode")
         snap("25-drone-mode")
+        droneLinkScreenshots()
         setTerrain("Contour lines")
         // Back in close: My location, then again for 300 m across.
         tap("My location")
@@ -794,6 +807,79 @@ class ScreenshotTest {
         }
         // The map and its buttons come back (the walk is over, but leave nothing paused).
         check(waitForExistence(id("terrainButton"), 10), "The map didn't come back after the lock")
+    }
+
+    /** Shots 42-43 (android/docs/spec/drone-link.md §5): Drone link's settings, switched on for the first time (the
+     *  disclaimer first), receiving the demo replay; then the drone on the map with the traffic around it, and the
+     *  drone's panel. The iPhone's `droneLinkScreenshots`, step for step. */
+    private fun droneLinkScreenshots() {
+        val button = id("droneLinkButton")
+        if (!waitForExistence(button, 10)) return fail("No Drone link button in drone mode")
+        click(button)
+        val row = id("droneLinkSwitch")
+        if (!waitForExistence(row, 10)) {
+            click(button) // a tap can be lost while the app is busy
+            if (!waitForExistence(row, 10)) return fail("Drone link's settings didn't open")
+        }
+        fun isOn() = node(row)?.config?.getOrNull(SemanticsProperties.ToggleableState) == ToggleableState.On
+        check(!isOn(), "Drone link is on before it was switched on")
+        val understand = id("droneLinkAccept")
+        for (i in 0 until 3) {
+            if (exists(understand) || isOn()) break
+            click(row)
+            waitForExistence(understand, 4)
+        }
+        check(exists(understand), "No disclaimer when Drone link is first switched on")
+        if (exists(understand)) click(understand)
+        sleep(1)
+        check(isOn(), "Drone link didn't come on after the disclaimer")
+        val receiving = staticText(startingWith = "Receiving from 1 drone")
+        if (!waitForExistence(receiving, 20)) {
+            fail("Drone link isn't receiving the demo flight: ${AppModel.shared.droneLink.status.value.text}")
+        }
+        check(label(id("droneLinkQGC")).contains("MAVLink Forwarding"), "No QGroundControl steps")
+        sleep(1)
+        snap("42-drone-link-settings")
+        tap("Done")
+        sleep(4) // the flight climbs away from home and the aircraft move
+
+        // On the map: the drone (over the farm, above your dot) and the aircraft; a tap on the drone opens its panel.
+        fun linked(): List<Pair<DroneLinkLayer.Item, PointF>> {
+            var items = emptyList<Pair<DroneLinkLayer.Item, PointF>>()
+            instrumentation.runOnMainSync {
+                try {
+                    items = (AppModel.shared.map as? MapController)?.droneLinkScreenPoints().orEmpty()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "Drone link's items: ${short(e)}")
+                }
+            }
+            return items
+        }
+        val drone = { linked().firstOrNull { it.first is DroneLinkLayer.Item.Drone }?.second }
+        if (!waitUntil(10.0) { drone() != null }) return fail("The drone isn't on the map")
+        check(linked().count { it.first is DroneLinkLayer.Item.Aircraft } >= 2, "The ADS-B aircraft aren't on the map")
+        check(linked().any { it.first is DroneLinkLayer.Item.Home }, "No home point")
+        val panel = id("droneLinkPanel")
+        check(tapMap("the drone", drone) { exists(panel) }, "Tapping the drone didn't open its panel")
+        check(exists(id("droneLinkPanelDisclaimer")), "No disclaimer in the panel")
+        // The panel covers the top of the map: the map moves so the drone (and the traffic round it) is in the clear
+        // below it, a third of the way down what is left.
+        val panelBottom = node(panel)?.boundsInWindow?.bottom
+        val at = drone()
+        if (panelBottom != null && at != null) {
+            val clear = panelBottom + (device.displayHeight - panelBottom) / 3f
+            if (at.y < clear) {
+                val dy = clear - at.y
+                instrumentation.runOnMainSync { (AppModel.shared.map as? MapController)?.scrollForTests(dy) }
+                waitForStillMap()
+            }
+        }
+        check(exists(panel), "The drone's panel closed when the map moved")
+        check(drone()?.let { panelBottom == null || it.y > panelBottom } == true, "The drone is under its panel")
+        sleep(2)
+        snap("43-drone-on-map")
+        if (exists(id("droneLinkPanelClose"))) click(id("droneLinkPanelClose"))
+        sleep(1)
     }
 
     /** Closes what is over the map: the system share sheet, then every sheet (back pops a sheet's screens, then

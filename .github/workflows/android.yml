@@ -12,12 +12,14 @@ on:
       - "android/**"
       - "SatMap/Resources/**"
       - "Tests/SatMapCoreTests/Fixtures/**"
+      - "docs/mavlink/**"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
       - "android/**"
       - "SatMap/Resources/**"
       - "Tests/SatMapCoreTests/Fixtures/**"
+      - "docs/mavlink/**"
       - ".github/workflows/android.yml"
 
 # Read-only: the build runs Gradle plugins, dependencies and third-party actions from the internet. Only publish can
