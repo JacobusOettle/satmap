@@ -75,7 +75,7 @@ final class DroneLinkTests: XCTestCase {
         switch m {
         case .heartbeat(let h):
             return ["type": h.type, "autopilot": h.autopilot, "baseMode": h.baseMode, "customMode": Int(h.customMode),
-                    "systemStatus": h.systemStatus, "armed": h.armed, "isGcs": !h.isAutopilot]
+                    "systemStatus": h.systemStatus, "armed": h.armed, "isGcs": h.isGcs]
         case .sysStatus(let s):
             return ["batteryVoltageV": s.batteryVoltageV, "batteryCurrentA": s.batteryCurrentA,
                     "batteryRemainingPct": s.batteryRemainingPct]
@@ -184,14 +184,14 @@ final class DroneLinkTests: XCTestCase {
         return MAVLink.Frame(version: 2, signed: false, sysid: sysid, compid: compid, msgId: 0, payload: payload)
     }
 
-    private func positionFrame(sysid: UInt8, lat: Double, lon: Double, altM: Double = 481, relM: Double = 50) -> MAVLink.Frame {
+    private func positionFrame(sysid: UInt8, lat: Double, lon: Double, altM: Double = 192, relM: Double = 50) -> MAVLink.Frame {
         var payload = le(UInt32(1000)) + le(Int32((lat * 1e7).rounded())) + le(Int32((lon * 1e7).rounded()))
         payload += le(Int32(altM * 1000)) + le(Int32(relM * 1000)) + le16(0) + le16(0) + le16(0) + le16(9000)
         return MAVLink.Frame(version: 2, signed: false, sysid: sysid, compid: 1, msgId: 33, payload: payload)
     }
 
     private func homeFrame(sysid: UInt8, lat: Double, lon: Double) -> MAVLink.Frame {
-        var payload = le(Int32((lat * 1e7).rounded())) + le(Int32((lon * 1e7).rounded())) + le(Int32(431_000))
+        var payload = le(Int32((lat * 1e7).rounded())) + le(Int32((lon * 1e7).rounded())) + le(Int32(142_000))
         payload += [UInt8](repeating: 0, count: 60 - payload.count)
         return MAVLink.Frame(version: 2, signed: false, sysid: sysid, compid: 1, msgId: 242, payload: payload)
     }
@@ -224,6 +224,52 @@ final class DroneLinkTests: XCTestCase {
         traffic.apply(heartbeatFrame(sysid: 255, compid: 190, type: 6, autopilot: 8, armed: false), at: t0)
         XCTAssertEqual(traffic.groundStations, [255])
         XCTAssertEqual(traffic.apply(positionFrame(sysid: 255, lat: -33.9, lon: 18.9), at: t0), .ignored)
+    }
+
+    func testPeripheralHeartbeatsOnTheDronesSystemIdNeitherBlockItNorChangeIt() throws {
+        let traffic = DroneLink.Traffic()
+        // A camera manager (compid 100, MAV_TYPE_CAMERA, MAV_AUTOPILOT_INVALID) heard before the autopilot.
+        let camera = heartbeatFrame(sysid: 1, compid: 100, type: 30, autopilot: 8, armed: false)
+        XCTAssertEqual(traffic.apply(camera, at: t0), .ignored)
+        // MAVROS on a companion computer (compid 191, onboard controller, autopilot 8).
+        traffic.apply(heartbeatFrame(sysid: 1, compid: 191, type: 18, autopilot: 8, armed: false), at: t0)
+        XCTAssertTrue(traffic.drones.isEmpty, "a peripheral makes no drone")
+        XCTAssertTrue(traffic.groundStations.isEmpty, "nor is the drone's system id taken for a ground station")
+        traffic.receive(try datagram(try named("v2-global-position-int")), at: t0)
+        traffic.receive(try datagram(try named("v2-heartbeat-armed")), at: t0)
+        XCTAssertNotNil(traffic.drones[1]?.position, "the autopilot's frames still count")
+        XCTAssertEqual(traffic.drones[1]?.heartbeat?.armed, true)
+        // An ADS-B receiver's heartbeat (type 27, a real autopilot enum) doesn't flip it to disarmed.
+        traffic.apply(heartbeatFrame(sysid: 1, compid: 156, type: 27, autopilot: 3, armed: false), at: t0 + 1)
+        traffic.apply(camera, at: t0 + 1)
+        XCTAssertEqual(traffic.drones[1]?.heartbeat?.armed, true)
+        XCTAssertEqual(traffic.drones[1]?.heartbeat?.type, 2)
+        // On a system id of its own, a peripheral is no phantom drone.
+        traffic.apply(heartbeatFrame(sysid: 7, compid: 156, type: 27, autopilot: 0, armed: false), at: t0 + 1)
+        XCTAssertEqual(Set(traffic.drones.keys), [1])
+    }
+
+    func testGroundStationsAreKnownByTypeOrByMissionPlannersIds() {
+        let traffic = DroneLink.Traffic()
+        // QGroundControl / MAVProxy: MAV_TYPE_GCS on any system id.
+        traffic.apply(heartbeatFrame(sysid: 250, compid: 1, type: 6, autopilot: 8, armed: false), at: t0)
+        // Mission Planner-style autopilot-INVALID heartbeats from component 190, or from system id 255.
+        traffic.apply(heartbeatFrame(sysid: 251, compid: 190, type: 0, autopilot: 8, armed: false), at: t0)
+        traffic.apply(heartbeatFrame(sysid: 255, compid: 0, type: 0, autopilot: 8, armed: false), at: t0)
+        XCTAssertEqual(traffic.groundStations, [250, 251, 255])
+        XCTAssertTrue(traffic.drones.isEmpty)
+        XCTAssertTrue(MAVLink.Heartbeat(type: 2, autopilot: 3, baseMode: 0x80, customMode: 0, systemStatus: 4).isAutopilot)
+        XCTAssertFalse(MAVLink.Heartbeat(type: 30, autopilot: 3, baseMode: 0, customMode: 0, systemStatus: 4).isAutopilot)
+        XCTAssertFalse(MAVLink.Heartbeat(type: 2, autopilot: 8, baseMode: 0, customMode: 0, systemStatus: 4).isAutopilot)
+        XCTAssertTrue(MAVLink.Heartbeat(type: 2, autopilot: 8, baseMode: 0, customMode: 0, systemStatus: 4).isGcs)
+    }
+
+    func testAboveGroundEstimate() throws {
+        XCTAssertEqual(try XCTUnwrap(DroneLink.aboveGroundM(altMslM: 430, groundM: 382)), 48, accuracy: 1e-9)
+        XCTAssertEqual(DroneLink.aboveGroundM(altMslM: 370, groundM: 382), 0, "a little under the data's ground reads as on it")
+        XCTAssertEqual(DroneLink.aboveGroundM(altMslM: 362, groundM: 382), 0)
+        XCTAssertNil(DroneLink.aboveGroundM(altMslM: 191, groundM: 382), "clearly wrong: not shown")
+        XCTAssertNil(DroneLink.aboveGroundM(altMslM: 191, groundM: nil))
     }
 
     func testNoPositionYetIsNotAPosition() throws {
@@ -288,7 +334,7 @@ final class DroneLinkTests: XCTestCase {
         XCTAssertEqual(d.groundSpeedMs ?? 0, 9.75, accuracy: 1e-9)
         XCTAssertEqual(d.climbMs ?? 0, 0.5, accuracy: 1e-9)
         XCTAssertEqual(d.headingDeg ?? 0, 50.2, accuracy: 1e-9)
-        XCTAssertEqual(d.takeOffGroundM ?? 0, 431, accuracy: 1e-6)
+        XCTAssertEqual(d.takeOffGroundM ?? 0, 142, accuracy: 1e-6)
         XCTAssertEqual(d.homePoint?.lat ?? 0, -33.918292, accuracy: 1e-7)
         // Unknown battery values don't wipe known ones.
         traffic.receive(try datagram(try named("v2-sys-status-unknown-battery")), at: t0)
@@ -363,7 +409,7 @@ final class DroneLinkTests: XCTestCase {
         let traffic = DroneLink.Traffic()
         traffic.receive(try datagram(try named("adsb-three-in-one-datagram")), at: t0)
         let farm = GeoPoint(lat: -33.918292, lon: 18.921204)
-        let refs: [(point: GeoPoint, groundM: Double?)] = [(farm, 431)]
+        let refs: [(point: GeoPoint, groundM: Double?)] = [(farm, 142)]
         // The helicopter (800 ft, 2.9 NM) and the light aircraft (1,500 ft, about 4 NM) are; the airliner isn't.
         XCTAssertTrue(DroneLink.isLowAndClose(try XCTUnwrap(traffic.aircraft[0x00C5D6]), references: refs))
         XCTAssertTrue(DroneLink.isLowAndClose(try XCTUnwrap(traffic.aircraft[0x00B3C4]), references: refs))

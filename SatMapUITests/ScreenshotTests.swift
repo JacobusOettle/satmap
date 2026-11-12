@@ -838,9 +838,6 @@ final class ScreenshotTests: XCTestCase {
         snap("42-drone-link-settings")
         tap("Done")
         sleep(4) // the flight climbs away from home and the aircraft move
-        // The drone (over the farm, by you) down and left of the middle, so the panel at the top and the buttons at
-        // the bottom right leave it and the traffic in sight.
-        dragMap(dx: -0.25, dy: 0.15)
 
         // On the map: the drone (over the farm, above your dot) and the aircraft; a tap on the drone opens its panel.
         let drone = app.descendants(matching: .any)["droneLinkDrone"].firstMatch
@@ -856,6 +853,28 @@ final class ScreenshotTests: XCTestCase {
         }
         XCTAssertTrue(panel.exists, "Tapping the drone didn't open its panel")
         XCTAssertTrue(app.descendants(matching: .any)["droneLinkPanelDisclaimer"].firstMatch.exists, "No disclaimer in the panel")
+        // The panel covers the top of the map: the map moves so the drone (and the traffic round it) is in the clear
+        // below it, a third of the way down what is left.
+        let screen = app.frame
+        if panel.exists {
+            let panelBottom = panel.frame.maxY
+            let clear = panelBottom + (screen.height - panelBottom) / 3
+            for _ in 0..<3 {
+                let dy = clear - drone.frame.midY
+                if abs(dy) < 24 { break }
+                // Drag on the open map below the panel, left of the buttons; long moves take more than one drag.
+                let startY = dy > 0 ? panelBottom + 16 : screen.height * 0.8
+                let endY = min(screen.height - 40, max(panelBottom + 16, startY + dy))
+                let x = screen.width * 0.35
+                let origin = app.coordinate(withNormalizedOffset: .zero)
+                origin.withOffset(CGVector(dx: x, dy: startY))
+                    .press(forDuration: 0.2, thenDragTo: origin.withOffset(CGVector(dx: x, dy: endY)),
+                           withVelocity: .slow, thenHoldForDuration: 0.5)
+                sleep(2)
+            }
+        }
+        XCTAssertTrue(panel.exists, "The drone's panel closed when the map moved")
+        XCTAssertTrue(!panel.exists || drone.frame.midY > panel.frame.maxY, "The drone is under its panel")
         sleep(2)
         snap("43-drone-on-map")
         let close = app.buttons["droneLinkPanelClose"]

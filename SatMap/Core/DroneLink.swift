@@ -147,6 +147,18 @@ enum DroneLink {
         return false
     }
 
+    /// The "≈ above ground" estimate: height above sea level less the elevation data's ground under it. A little
+    /// below ground (GPS and elevation data disagree by up to `groundSlackM`) reads as 0; further below, the two
+    /// clearly disagree (a wrong altitude datum, coarse elevation data) and nothing is shown. Nil without ground.
+    static func aboveGroundM(altMslM: Double, groundM: Double?) -> Double? {
+        guard let g = groundM else { return nil }
+        let h = altMslM - g
+        guard h.isFinite, h >= -groundSlackM else { return nil }
+        return max(0, h)
+    }
+
+    static let groundSlackM = 20.0
+
     // MARK: - Aircraft
 
     /// The map's icon for an ADS-B emitter type.
@@ -384,9 +396,10 @@ enum DroneLink {
         func apply(_ f: MAVLink.Frame, at now: Date) -> Applied {
             guard let message = f.message else { return .ignored }
             if case .heartbeat(let h) = message, !h.isAutopilot {
-                // A ground station's heartbeat marks its system id; a companion's, camera's or gimbal's is ignored
-                // without hiding the vehicle it rides on.
-                if h.isGroundStation, drones[f.sysid] == nil { groundStations.insert(f.sysid) }
+                // A ground station's own heartbeat keeps its system id out; any other component's (a camera, gimbal,
+                // ADS-B receiver or companion computer, often on the drone's own system id) is ignored: it neither
+                // makes a drone nor changes one's armed state.
+                if Self.isGroundStation(f, h), drones[f.sysid] == nil { groundStations.insert(f.sysid) }
                 return .ignored
             }
             if case .adsbVehicle(let a) = message {
@@ -427,6 +440,12 @@ enum DroneLink {
             }
             drones[f.sysid] = d
             return .drone
+        }
+
+        /// A ground station's heartbeat (MAV_TYPE_GCS, or MAV_AUTOPILOT_INVALID from Mission Planner's component
+        /// 190 or the usual GCS system id 255), as opposed to a peripheral's on the drone.
+        static func isGroundStation(_ f: MAVLink.Frame, _ h: MAVLink.Heartbeat) -> Bool {
+            h.type == 6 || (h.autopilot == 8 && (f.compid == 190 || f.sysid == 255))
         }
 
         private func applyAircraft(_ m: MAVLink.AdsbVehicle, via sysid: UInt8, at now: Date) -> Bool {

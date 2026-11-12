@@ -98,7 +98,7 @@ struct DroneLinkSheet: View {
             .navigationTitle("Drone link")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
             }
@@ -260,11 +260,8 @@ struct DroneLinkPanel: View {
         let hu = model.heightUnit
         if let p = d.position {
             row("Height", "\(Format.height(p.relativeAltM, hu)) above take-off · \(Format.height(p.altMslM, hu)) above sea level")
-            if let ground = link.selectedGroundM {
-                // A drone reporting itself well under the elevation model's ground has a sea-level height that doesn't
-                // match the map's (another datum, or a barometric height): no estimate rather than a wrong one.
-                let agl = p.altMslM - ground
-                row("≈ above ground", agl >= -10 ? Format.height(max(0, agl), hu) : "– (heights don't match the map)")
+            if let agl = DroneLink.aboveGroundM(altMslM: p.altMslM, groundM: link.selectedGroundM) {
+                row("≈ above ground", Format.height(agl, hu))
             }
         }
         let motion = [d.groundSpeedMs.map { DroneLink.speed($0, model.distanceUnit) },

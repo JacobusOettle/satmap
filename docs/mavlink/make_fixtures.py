@@ -31,9 +31,15 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CASES_PATH = os.path.join(ROOT, "Tests", "SatMapCoreTests", "Fixtures", "mavlink", "cases.json")
 DEMO_PATH = os.path.join(ROOT, "docs", "mavlink", "demo_flight.json")
 
-# Demo farm anchor (SatMap/Core/GroupDemo.swift), near Stellenbosch. HOME_ALT is the ground there in
-# SatMap's elevation data (about 431 m), so the demo's "≈ above ground" reads about the height above take-off.
-HOME_LAT, HOME_LON, HOME_ALT = -33.918292, 18.921204, 431.0
+# Demo farm anchor (SatMap/Core/GroupDemo.swift), near Stellenbosch.
+HOME_LAT, HOME_LON, HOME_ALT = -33.918292, 18.921204, 142.0
+
+# The demo flight's take-off height above sea level: the ground at the farm (~380 m in the
+# elevation data the apps show), so its "~ above ground" reads sensibly in the walkthroughs.
+# The decoder cases keep HOME_ALT, so cases.json is unchanged.
+DEMO_HOME_ALT = 380.0
+# The demo's aircraft fly this much higher than in the cases (over that ground, not under it).
+DEMO_AIRCRAFT_RAISE_FT = 1250
 
 # Messages the apps decode: id -> (name, CRC_EXTRA, v1 payload length, v2 full payload length)
 MESSAGES = {}
@@ -509,6 +515,7 @@ def demo_flight():
     of radius 70 m (centred 70 m east of home) 13-55 s, descend over home 55-60 s."""
     L = Link(2, 1, 1)
     frames = []
+    demo_aircraft = [dict(a, alt_ft=a["alt_ft"] + DEMO_AIRCRAFT_RAISE_FT) for a in AIRCRAFT]
     radius = 70.0
     m_lat = 111_320.0
     m_lon = 111_320.0 * math.cos(math.radians(HOME_LAT))
@@ -536,7 +543,7 @@ def demo_flight():
     for k in range(int(t_end * 4) + 1):
         t = k / 4.0
         n, e, rel, vn, ve, vz, hdg = state(t)
-        lat, lon, alt = HOME_LAT + n / m_lat, HOME_LON + e / m_lon, HOME_ALT + rel
+        lat, lon, alt = HOME_LAT + n / m_lat, HOME_LON + e / m_lon, DEMO_HOME_ALT + rel
         flying = t >= t_climb0
         if k % 4 == 0:
             sec = k // 4
@@ -547,8 +554,8 @@ def demo_flight():
                                          pct=100 - sec // 5)))
             frames.append((t, gps_raw(L, lat, lon, alt, fix=3, sats=17 if sec % 20 < 15 else 16)))
             if sec % 10 == 0:
-                frames.append((t, home_position(L)))
-            for a in AIRCRAFT:
+                frames.append((t, home_position(L, alt_m=DEMO_HOME_ALT)))
+            for a in demo_aircraft:
                 frames.append((t, adsb_for(L, a, t)))
         frames.append((t, global_pos(L, 812_000 + int(t * 1000), lat, lon, alt, rel,
                                      vn, ve, vz, hdg)))
@@ -562,11 +569,11 @@ def demo_flight():
                        "through the MAVLink decoder at its time offset t (seconds).",
         "generator": "docs/mavlink/make_fixtures.py (pymavlink %s, common dialect, MAVLink 2)"
                      % pymavlink.__version__,
-        "home": {"latDeg": HOME_LAT, "lonDeg": HOME_LON, "altMslM": HOME_ALT},
+        "home": {"latDeg": HOME_LAT, "lonDeg": HOME_LON, "altMslM": DEMO_HOME_ALT},
         "durationS": t_end,
         "drone": {"sysid": 1, "compid": 1, "type": 2, "autopilot": 3},
         "aircraft": [{"icaoHex": "%06X" % a["icao"], "callsign": a["callsign"],
-                      "emitterType": a["emitter"]} for a in AIRCRAFT],
+                      "emitterType": a["emitter"]} for a in demo_aircraft],
         "frames": [{"t": t, "hex": f.hex()} for t, f in frames],
     }
 

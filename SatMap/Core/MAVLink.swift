@@ -129,12 +129,17 @@ enum MAVLink {
         let systemStatus: Int
         /// MAV_MODE_FLAG_SAFETY_ARMED.
         var armed: Bool { baseMode & 0x80 != 0 }
-        /// A ground station's own heartbeat (MAV_TYPE_GCS): its system id is never a drone.
-        var isGroundStation: Bool { type == 6 }
-        /// The flight controller's own heartbeat. A companion computer, camera, gimbal or ADS-B transceiver on the
-        /// vehicle sends MAV_AUTOPILOT_INVALID (8) under the vehicle's system id: it says nothing about the vehicle's
-        /// state (armed, type), so it is ignored, but it doesn't hide the vehicle either.
-        var isAutopilot: Bool { type != 6 && autopilot != 8 }
+        /// A ground station's own heartbeat (MAV_TYPE_GCS, or MAV_AUTOPILOT_INVALID): never a drone.
+        var isGcs: Bool { type == 6 || autopilot == 8 }
+        /// The vehicle's own flight controller: an autopilot (not MAV_AUTOPILOT_INVALID) on a vehicle type, not a
+        /// peripheral (camera, gimbal, ADS-B receiver, onboard computer …) that shares the drone's system id. Only
+        /// its heartbeat is the drone's (armed state, type).
+        var isAutopilot: Bool { autopilot != 8 && !Self.peripheralTypes.contains(type) }
+        /// MAV_TYPEs that are never a vehicle's flight controller: antenna tracker (5), GCS (6), onboard
+        /// controller (18), gimbal (26), ADS-B (27), camera (30), charging station (31), FLARM (32), servo (33),
+        /// Open Drone ID (34), battery (36), parachute (37), log (38), OSD (39), IMU (40), GPS (41), winch (42),
+        /// illuminator (44).
+        static let peripheralTypes: Set<Int> = [5, 6, 18, 26, 27, 30, 31, 32, 33, 34, 36, 37, 38, 39, 40, 41, 42, 44]
     }
 
     struct SysStatus: Equatable {
