@@ -34,7 +34,7 @@ class LocationService : Service() {
     companion object {
         const val CHANNEL = "recording"
         const val ID = 1
-        const val ACTION_STOP = "com.jacobusoettle.satmap.STOP_RECORDING"
+        const val ACTION_STOP = "com.koonap.spoor.STOP_RECORDING"
 
         /** From `LocationRecorder.beginUpdates` (foreground, location allowed). Android refuses it from the
          *  background (`ForegroundServiceStartNotAllowedException`, API 31+, an `IllegalStateException` as the refusal

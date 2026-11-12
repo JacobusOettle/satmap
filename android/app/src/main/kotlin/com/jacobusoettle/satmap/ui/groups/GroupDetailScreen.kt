@@ -316,7 +316,7 @@ sealed interface DetailAlert {
 }
 
 /** The alert when location can't be used for sharing (S9, and S5's switch). */
-const val LOCATION_OFF = "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services to share."
+const val LOCATION_OFF = "Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location to share."
 
 /** "On the map": show it, share your location (S9 first without consent; with consent, location asked first if it
  *  was never asked, as S9 does, and refused or off, the alert and sharing stays off; off asks whether to clear the

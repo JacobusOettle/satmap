@@ -1265,7 +1265,7 @@ There is no `Export/` folder (D8).
 
 - The file is `"${packageName}_preferences"`, private.
 - Launch extras are read before the stored values and never written back: the iOS argument domain.
-  - Example: `adb shell am start -n com.jacobusoettle.satmap/.MainActivity --es terrainMode colours --ez zoomScript true`.
+  - Example: `adb shell am start -n com.koonap.spoor/com.jacobusoettle.satmap.MainActivity --es terrainMode colours --ez zoomScript true`.
 
 | Key | Type | Written by | Notes |
 | --- | --- | --- | --- |
@@ -1441,14 +1441,14 @@ classes that don't touch `MapLibreMap`. `org.maplibre.geojson` types are plain J
 - **Emulator:** `reactivecircus/android-emulator-runner@v2`, API 35 `google_apis` x86_64, profile `pixel_7` (1080×2400 at 2.625), `-gpu swiftshader_indirect -no-snapshot`, 4 GB RAM.
 - **Before the test:**
   1. `./gradlew :app:installDebug :app:installDebugAndroidTest`.
-  2. `adb shell appops set com.jacobusoettle.satmap android:mock_location allow`.
+  2. `adb shell appops set com.koonap.spoor android:mock_location allow`.
   3. Seed the demo farm blocks with `run-as`:
      - copy `SatMapUITests/DemoFarm.kml` to `files/SatMap/KML/6F1C2D3E-4B5A-4C7D-8E9F-0A1B2C3D4E5F.kml`;
      - write `index.json` the same way the iOS workflow does.
   4. Put the status bar in demo mode: `sysui_demo_allowed`, clock 09:41, full battery and Wi-Fi, no notifications.
-- **Run:** `am instrument -w -e class com.jacobusoettle.satmap.ScreenshotTest com.jacobusoettle.satmap.test/androidx.test.runner.AndroidJUnitRunner`, plus `adb logcat -s tiles location offline` to a file.
+- **Run:** `am instrument -w -e class com.jacobusoettle.satmap.ScreenshotTest com.koonap.spoor.test/androidx.test.runner.AndroidJUnitRunner`, plus `adb logcat -s tiles location offline` to a file.
 - **After the run:**
-  1. `adb pull /sdcard/Android/data/com.jacobusoettle.satmap/files/screenshots`.
+  1. `adb pull /sdcard/Android/data/com.koonap.spoor/files/screenshots`.
   2. Resize to 600 px wide (Pillow).
   3. Upload the artifact.
   4. Fail the job unless the walk finished with every check passed (`OK (` in the test's output), naming the checks

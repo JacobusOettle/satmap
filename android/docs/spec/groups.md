@@ -187,7 +187,8 @@ member passes to another server or swap in the demo hub (iOS's launch arguments 
   extras (§9.9).
 - S9 asks for location (fine and coarse together, as `PermissionFlow`, marking `locationPermissionAsked`) when it was
   never asked; refused (or denied before, or location off), the alert "Location is off for Spoor. Turn it on in
-  Settings › Privacy › Location Services to share." and sharing stays off.
+  Settings › Apps › Spoor › Permissions › Location to share." (the Android settings path, like the map's location
+  hint; the iPhone says Settings › Privacy › Location Services) and sharing stays off.
 - S17 asks for `CAMERA` when it opens; without it, "Camera access is off for Spoor. Turn it on in Settings to scan a
   code." with "Open Settings" (the app's details page). `QRScannerView`: CameraX preview and an `ImageAnalysis`
   (latest frame only) decoding the Y plane with ZXing (`PlanarYUVLuminanceSource`); the first invite found replaces

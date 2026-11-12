@@ -6,7 +6,7 @@ import android.os.Bundle
 
 /** iOS `UserDefaults`, with the same keys: the app's SharedPreferences, plus the launch extras read before them and
  *  never written back (iOS's argument domain, e.g. `-terrainMode colours`). On Android the extras come from
- *  `adb shell am start -n com.jacobusoettle.satmap/.MainActivity --es terrainMode colours --ez zoomScript true`.
+ *  `adb shell am start -n com.koonap.spoor/com.jacobusoettle.satmap.MainActivity --es terrainMode colours --ez zoomScript true`.
  *
  *  Keys: terrainMode, showContours (legacy, read only), distanceUnit, heightUnit, kmlFileColours, offlineMaxZoom,
  *  trackAutoDownload (stored value only, `storedBool`), droneLinkEnabled, droneLinkPort and droneLinkDisclaimerAccepted

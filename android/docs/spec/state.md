@@ -508,7 +508,7 @@ object AppLifecycle {
 - `setContent { SatMapTheme(darkColorScheme(...)) { MapScreen(AppModel.shared) } }`, always dark.
 - `android:launchMode="singleTask"`, so a share lands in the open map.
 - **KML and GPX import:** handled in `onCreate` (when `savedInstanceState == null`) and in `onNewIntent`. The intent is `ACTION_VIEW` or `ACTION_SEND` (`EXTRA_STREAM`) with a .kml/.kmz/.gpx URI. It calls `model.kml.importFile(uri) { file -> file?.document?.bounds?.let { model.map?.zoom(it) } ?: model.setSheet(ActiveSheet.BLOCKS) }`. The intent filters belong to the KML subsystem.
-- **Launch arguments**, the CI counterpart of iOS `-key value`: `adb shell am start -n com.jacobusoettle.satmap/.MainActivity --es terrainMode colours --ez zoomScript true`.
+- **Launch arguments**, the CI counterpart of iOS `-key value`: `adb shell am start -n com.koonap.spoor/com.jacobusoettle.satmap.MainActivity --es terrainMode colours --ez zoomScript true`.
   - In `onCreate`, call `Defaults.setLaunchArguments(intent.extras)`, then `AppModel.shared.applyLaunchArguments()`.
   - `applyLaunchArguments()` re-reads `terrainMode`, `distanceUnit` and `heightUnit` from `Defaults` and sets the flows directly, without writing them back, as iOS reads its argument domain only in init.
 
@@ -798,7 +798,7 @@ This is the counterpart of iOS `UIBackgroundModes: location` plus `allowsBackgro
 ```kotlin
 class LocationService : Service() {
     companion object {
-        const val CHANNEL = "recording"; const val ID = 1; const val ACTION_STOP = "com.jacobusoettle.satmap.STOP_RECORDING"
+        const val CHANNEL = "recording"; const val ID = 1; const val ACTION_STOP = "com.koonap.spoor.STOP_RECORDING"
         fun start(context: Context) = ContextCompat.startForegroundService(context, Intent(context, LocationService::class.java))
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
