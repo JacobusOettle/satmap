@@ -5,7 +5,7 @@ import type { Config } from "../lib/config";
 import { escapeHtml, htmlResponse, page } from "./html";
 
 /** The responsible party named in the privacy notice (POPIA). The owner confirms it in the review. */
-export const RESPONSIBLE_PARTY = "Jacobus Oettle, the developer of SatMap";
+export const RESPONSIBLE_PARTY = "Jacobus Oettle, the developer of Spoor";
 export const NOTICE_VERSION = "Version 1, 2 November 2026";
 
 const HEADERS = {
@@ -21,10 +21,10 @@ function mail(cfg: Config): string {
 
 export function privacyPage(cfg: Config): Response {
   const body = `<div class="card">
-<h1>SatMap groups: privacy notice</h1>
+<h1>Spoor groups: privacy notice</h1>
 <p class="small">${NOTICE_VERSION}</p>
-<p>This notice explains what happens to your information when you use groups in SatMap: sharing your position,
-trail and pins with the members of a group. The rest of SatMap keeps your data on your phone.</p>
+<p>This notice explains what happens to your information when you use groups in Spoor: sharing your position,
+trail and pins with the members of a group. The rest of Spoor keeps your data on your phone.</p>
 
 <h2>Who is responsible</h2>
 <p>${escapeHtml(RESPONSIBLE_PARTY)}. Contact: ${mail(cfg)}.</p>
@@ -45,7 +45,7 @@ network edge.</li>
 </ul>
 
 <h2>Why</h2>
-<p>To run groups, to check SatMap Pro, to handle reports, and for security and abuse prevention.</p>
+<p>To run groups, to check Spoor Pro, to handle reports, and for security and abuse prevention.</p>
 
 <h2>Lawful basis</h2>
 <p>Your consent for sharing your location (asked in the app before sharing starts); performing the service you
@@ -102,12 +102,12 @@ link to a group (even a used, cancelled or expired one) keeps that group's key.<
 <p>Groups are not meant for people under 18 without a parent's or guardian's permission. The app asks you to confirm
 this before you first use groups.</p>
 </div>`;
-  return htmlResponse(page(cfg, "Privacy notice · SatMap groups", body), 200, HEADERS);
+  return htmlResponse(page(cfg, "Privacy notice · Spoor groups", body), 200, HEADERS);
 }
 
 export function termsPage(cfg: Config): Response {
   const body = `<div class="card">
-<h1>SatMap groups: terms of use</h1>
+<h1>Spoor groups: terms of use</h1>
 <p class="small">${NOTICE_VERSION}</p>
 
 <h2>Who may use groups</h2>
@@ -123,8 +123,8 @@ rules, including any rules about sharing wildlife sightings.</p>
 remove members and delete pins. We review reports and may delete content, remove members or delete groups that
 break these terms.</p>
 
-<h2>SatMap Pro</h2>
-<p>Only a group's owner needs SatMap Pro; members join free. Subscriptions renew through the App Store or Google
+<h2>Spoor Pro</h2>
+<p>Only a group's owner needs Spoor Pro; members join free. Subscriptions renew through the App Store or Google
 Play until you cancel them there. If the owner's Pro ends, the group pauses at once: no live sharing and no new pins.
 It resumes when the owner renews or hands the group to a member who has Pro. A group that stays paused is deleted
 after 30 days.</p>
@@ -142,7 +142,7 @@ for anyone who breaks these terms.</p>
 <h2>Law</h2>
 <p>These terms are governed by the law of South Africa.</p>
 </div>`;
-  return htmlResponse(page(cfg, "Terms of use · SatMap groups", body), 200, HEADERS);
+  return htmlResponse(page(cfg, "Terms of use · Spoor groups", body), 200, HEADERS);
 }
 
 export function homePage(cfg: Config): Response {
@@ -150,11 +150,11 @@ export function homePage(cfg: Config): Response {
   if (cfg.appStoreUrl !== "") stores.push(`<a href="${escapeHtml(cfg.appStoreUrl)}">Download on the App Store</a>`);
   if (cfg.playStoreUrl !== "") stores.push(`<a href="${escapeHtml(cfg.playStoreUrl)}">Get it on Google Play</a>`);
   const body = `<div class="card">
-<h1>SatMap groups</h1>
-<p>SatMap is a satellite map for drone teams and friends on the road. In a group, members see each other's live
+<h1>Spoor groups</h1>
+<p>Spoor is a satellite map for drone teams and friends on the road. In a group, members see each other's live
 position, trails and pins on the map. Everything a group shares is encrypted on the phones; this server only
 stores and forwards it.</p>
 ${stores.length > 0 ? `<p class="stores">${stores.join("\n")}</p>` : ""}
 </div>`;
-  return htmlResponse(page(cfg, "SatMap groups", body), 200, HEADERS);
+  return htmlResponse(page(cfg, "Spoor groups", body), 200, HEADERS);
 }

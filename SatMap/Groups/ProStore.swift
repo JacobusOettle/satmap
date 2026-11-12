@@ -36,7 +36,7 @@ final class ProStore: ObservableObject {
 
     static let storeUnavailable = "The store can't be reached right now. Try again later."
     static let pendingText = "Your purchase is waiting for approval. Pro starts when it's approved."
-    static let nothingToRestore = "No SatMap Pro purchase was found for this Apple ID." // §9.9: "Google account" on Android
+    static let nothingToRestore = "No Spoor Pro purchase was found for this Apple ID." // §9.9: "Google account" on Android
     static let demoPrices: [ProPlan: String] = [.yearly: "R399.99", .monthly: "R79.99", .lifetime: "R1,199.99"]
 
     @Published private(set) var isPro = false

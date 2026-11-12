@@ -63,9 +63,9 @@ struct MapScreen: View {
                     DroneLinkOverlay(link: model.droneLink, model: model)
                 }
                 if recorder.authorization == .denied || recorder.authorization == .restricted {
-                    Hint(text: "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services.")
+                    Hint(text: "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services.")
                 } else if recorder.reducedAccuracy {
-                    Hint(text: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › SatMap › Location.")
+                    Hint(text: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › Spoor › Location.")
                 }
                 // The shown group is paused (§9.1): a tap opens it; ✕ hides the banner until the next launch.
                 if let banner = groups.pausedBanner {

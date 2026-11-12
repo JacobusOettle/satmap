@@ -329,7 +329,7 @@ private struct PresetAreaView: View {
             NewAreaView(model: model, area: PendingArea(name: preset.name, shape: CoverageShape(polygons: preset.boundary)),
                         presetID: presetID)
         } else {
-            Text("The road list is missing from this build of SatMap.").foregroundColor(.secondary)
+            Text("The road list is missing from this build of Spoor.").foregroundColor(.secondary)
         }
     }
 }
@@ -349,7 +349,7 @@ private struct TrackAreaView: View {
                                               shape: Roads.corridor(download.lines)),
                             track: download)
             } else if worked {
-                Text("No track recorded yet. Your dotted track is recorded while SatMap knows where you are.")
+                Text("No track recorded yet. Your dotted track is recorded while Spoor knows where you are.")
                     .foregroundColor(.secondary)
                     .padding()
             } else {

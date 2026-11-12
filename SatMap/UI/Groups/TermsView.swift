@@ -17,7 +17,7 @@ struct TermsView: View {
                 IconRow(systemImage: "link", text: "Only people you invite can join. Each invite works once, for 7 days.")
                 IconRow(systemImage: "lock.fill", text: "Everything your group shares is encrypted on your phone. Our server can't read names, places or notes.")
                 IconRow(systemImage: "flag.fill", text: "Don't post anything illegal, hateful or dangerous. You can report and block anyone.")
-                IconRow(systemImage: "star.fill", text: "Creating a group needs SatMap Pro. Joining is free.")
+                IconRow(systemImage: "star.fill", text: "Creating a group needs Spoor Pro. Joining is free.")
             }
 
             Section {

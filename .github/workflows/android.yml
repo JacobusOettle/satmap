@@ -212,5 +212,5 @@ jobs:
             gh api -X PATCH "repos/$GH_REPO/git/refs/tags/android-test-build" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
               || echo "The tag stays at the earlier commit."
           else
-            gh release create android-test-build SatMap.apk --prerelease --target "$GITHUB_SHA" --title "SatMap Android test build" --notes "$notes"
+            gh release create android-test-build SatMap.apk --prerelease --target "$GITHUB_SHA" --title "Spoor Android test build" --notes "$notes"
           fi

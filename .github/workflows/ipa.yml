@@ -111,5 +111,5 @@ jobs:
             gh api -X PATCH "repos/$GH_REPO/git/refs/tags/test-build" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
               || echo "The tag stays at the earlier commit."
           else
-            gh release create test-build SatMap.ipa --prerelease --target "$GITHUB_SHA" --title "SatMap test build" --notes "$notes"
+            gh release create test-build SatMap.ipa --prerelease --target "$GITHUB_SHA" --title "Spoor test build" --notes "$notes"
           fi

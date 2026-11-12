@@ -1,4 +1,4 @@
-# SatMap Groups: implementation spec (v1)
+# Spoor Groups: implementation spec (v1)
 
 Status: ready for implementation, 2 November 2026, revised after the security and implementability reviews (the
 points not taken are in "Review notes" at the end). This document is the single source of truth for groups. Five
@@ -96,7 +96,7 @@ blocking also work while the group is paused.
 | SD12 | The owner cannot leave. They hand over ownership first, or delete the group. |
 | SD13 | Both apps show "Restore purchases" on the paywall (Android re-reads Play's purchases), so the screens match. |
 | SD14 | Both apps can scan an invite QR code in the app, and accept a pasted link. The phone's own camera app also works, through the link. |
-| SD15 | `satmap://join/<token>#<key>` exists only as the landing page's "Open in SatMap" fallback (on Android the page uses an `intent://` link that names the app's package, §5.4). Apps never share it. |
+| SD15 | `satmap://join/<token>#<key>` exists only as the landing page's "Open in Spoor" fallback (on Android the page uses an `intent://` link that names the app's package, §5.4). Apps never share it. |
 | SD16 | On the map, other members' trails default to the last 24 hours; "Everything" and "Off" are choices. Full history stays on the server and the phone. |
 | SD17 | Walkthroughs use a demo mode with an in-core fake server (§8.15), not a live Worker. |
 | SD18 | Invites still work while a group is paused, so a friend with Pro can be invited and take over. |
@@ -749,19 +749,19 @@ There are no external resources, no cookies and no analytics.
 
 Exact content:
 
-- `<title>`: "Join a SatMap group"
-- Heading: "You're invited to a SatMap group"
-- Paragraph: "Open this invite in the SatMap app to join. It works once and expires 7 days after it was sent."
-- Button "Open in SatMap". The inline script reads `location.hash` once, then at once calls
+- `<title>`: "Join a Spoor group"
+- Heading: "You're invited to a Spoor group"
+- Paragraph: "Open this invite in the Spoor app to join. It works once and expires 7 days after it was sent."
+- Button "Open in Spoor". The inline script reads `location.hash` once, then at once calls
   `history.replaceState(null, "", location.pathname)` so the key doesn't stay in the browser's history or address
   bar. It then sets the button's `href`:
   - on Android (`/Android/` in `navigator.userAgent`):
     `"intent://join/" + token + "#Intent;scheme=satmap;package=" + ANDROID_PACKAGE + ";S.groupKey=" + key + ";end"`,
-    so only SatMap can receive the key (and Chrome offers the Play Store if it isn't installed)
+    so only Spoor can receive the key (and Chrome offers the Play Store if it isn't installed)
   - otherwise: `"satmap://join/" + token + "#" + key`
   - If the hash is not `#` followed by 43 base64url characters, the script hides the button and shows: "This link
     is incomplete. Open it again from the message you received."
-- Paragraph: "Don't have SatMap yet?"
+- Paragraph: "Don't have Spoor yet?"
 - Links "Download on the App Store" (`APP_STORE_URL`) and "Get it on Google Play" (`PLAY_STORE_URL`). Each is left
   out when its variable is empty.
 - Small paragraph: "After installing, go back to the message and tap the invite link again."
@@ -2652,7 +2652,7 @@ worse*
     (POPIA section 35; the sentence is on S1).
   - Create and redeem send the accepted `termsVersion`. A later version in the app (`GroupConfig.termsVersion`)
     re-shows S1. On `409 terms_outdated`: if `GroupConfig.termsVersion` is above the accepted one, show S1 and
-    retry once; otherwise the server needs terms this app doesn't have, so show "Please update SatMap to create or
+    retry once; otherwise the server needs terms this app doesn't have, so show "Please update Spoor to create or
     join groups." (§8.14).
   - The app keeps `GroupHub.acceptedTermsVersion` equal to `groupsTermsAccepted`. On `terms_outdated` the action
     throws `.termsOutdated` with that text and deletes the secret it saved; the app decides whether to show S1, set
@@ -2674,11 +2674,11 @@ worse*
 | `429` | "Too many tries. Wait a moment and try again." |
 | `5xx`, timeout | "Something went wrong on our side. Try again in a minute." |
 | `503 store_unavailable` | "The store can't be reached right now. Try again later." |
-| `402 pro_invalid` / `pro_inactive` | "SatMap Pro couldn't be confirmed. Tap Restore purchases, then try again." |
+| `402 pro_invalid` / `pro_inactive` | "Spoor Pro couldn't be confirmed. Tap Restore purchases, then try again." |
 | `409 too_many_groups` | "You already own 20 groups. Delete one to make a new group." |
 | `403` | "You can't do that in this group." |
 | `invite_not_found` | "This invite has already been used, was cancelled or has expired. Ask for a new one." |
-| `409 terms_outdated` the app can't satisfy | "Please update SatMap to create or join groups." |
+| `409 terms_outdated` the app can't satisfy | "Please update Spoor to create or join groups." |
 | `409 group_paused` (`.groupPaused`) | "This group is paused at the moment." |
 | Another `404`, such as `not_found` (`.notFound`) | "This is no longer in the group." |
 | An action on a group that turns out to be gone (`401`, `404 group_not_found`, `410`; `.notFound`) | "The group no longer exists, or your membership ended." (the Gone alert's message, §9.3) |
@@ -2783,9 +2783,9 @@ year).
 
   | `pausedReason` | Member | Owner |
   | --- | --- | --- |
-  | `pro_ended` | "{group} is paused: the owner's SatMap Pro has ended." | "{group} is paused: your SatMap Pro has ended. Tap to renew." |
-  | `pro_refunded` | "{group} is paused: the owner's SatMap Pro was refunded or cancelled." | "{group} is paused: your SatMap Pro was refunded or cancelled. Tap to renew." |
-  | `pro_unverified` | "{group} is paused: the owner's SatMap Pro couldn't be confirmed." | "{group} is paused: your SatMap Pro couldn't be confirmed. Tap to fix." |
+  | `pro_ended` | "{group} is paused: the owner's Spoor Pro has ended." | "{group} is paused: your Spoor Pro has ended. Tap to renew." |
+  | `pro_refunded` | "{group} is paused: the owner's Spoor Pro was refunded or cancelled." | "{group} is paused: your Spoor Pro was refunded or cancelled. Tap to renew." |
+  | `pro_unverified` | "{group} is paused: the owner's Spoor Pro couldn't be confirmed." | "{group} is paused: your Spoor Pro couldn't be confirmed. Tap to fix." |
 
   - A tap opens S5 for that group. Its close button hides it until the next launch.
 - **Drop pin:** while a group is shown and active, the tapped-spot overlay at the bottom gets a capsule button
@@ -2818,7 +2818,7 @@ year).
   - Join (S8) succeeds: close `pendingInvite`, open `.groups` with `[List, Consent(gid)]`, then `[List,
     Detail(gid)]` as above. The joined group becomes the shown group.
   - Switching sharing on without consent (S5): push `Consent(gid)`; when it finishes, pop back to S5.
-  - Paywall (S3) is pushed from S4's entry, S5's "Renew SatMap Pro" or "Accept"; on success it pops and the action
+  - Paywall (S3) is pushed from S4's entry, S5's "Renew Spoor Pro" or "Accept"; on success it pops and the action
     continues.
 - **House style:** Form/List sections with plain footers, "Done" or "Cancel" in the leading slot, `Label` rows,
   alerts driven by an optional message. Android uses `Form.kt`'s rows.
@@ -2834,7 +2834,7 @@ year).
   - "Everything your group shares is encrypted on your phone. Our server can't read names, places or notes."
     (`lock.fill`)
   - "Don't post anything illegal, hateful or dangerous. You can report and block anyone." (`flag.fill`)
-  - "Creating a group needs SatMap Pro. Joining is free." (`star.fill`)
+  - "Creating a group needs Spoor Pro. Joining is free." (`star.fill`)
 - Text above the button: "By tapping Agree and continue you accept the terms of use and confirm that you're 18
   or older, or have a parent's or guardian's permission."
 - Button "Agree and continue" (id `agreeTerms`).
@@ -2858,7 +2858,7 @@ year).
   code with your camera."
 - Section: link rows "Terms of use", "Privacy notice", and "Contact us" (opens `mailto:{contactEmail}`).
 
-**S3 Paywall** (title "SatMap Pro"; leading "Cancel")
+**S3 Paywall** (title "Spoor Pro"; leading "Cancel")
 
 - Headline: "Create your own groups"
 - Rows with icons:
@@ -2883,7 +2883,7 @@ year).
   - Then link rows "Terms of use" and "Privacy notice".
 - Results:
   - Pending: "Your purchase is waiting for approval. Pro starts when it's approved."
-  - Restore found nothing: "No SatMap Pro purchase was found for this {Apple ID / Google account}."
+  - Restore found nothing: "No Spoor Pro purchase was found for this {Apple ID / Google account}."
   - Success: the screen closes and the flow continues (S4 or the ownership accept).
 
 **S4 Create group** (title "New group"; leading "Cancel")
@@ -2901,10 +2901,10 @@ year).
 **S5 Group detail** (title: the group name, inline; leading "Back" in the list stack, "Done" if opened alone).
 Sections in this order, each only when it applies:
 
-1. **Paused** (warning style, no header). The texts are below this list. Owner buttons: "Renew SatMap Pro" and
-   "Hand over ownership" (S14). "Renew SatMap Pro" sends E5 at once when the phone already has Pro (for example
+1. **Paused** (warning style, no header). The texts are below this list. Owner buttons: "Renew Spoor Pro" and
+   "Hand over ownership" (S14). "Renew Spoor Pro" sends E5 at once when the phone already has Pro (for example
    after a `pro_unverified` pause, or a renewal the server hasn't seen); otherwise it opens S3, then E5.
-2. **Offer to you:** "{owner} wants to make you the owner of this group. You need SatMap Pro." Buttons "Accept" (id
+2. **Offer to you:** "{owner} wants to make you the owner of this group. You need Spoor Pro." Buttons "Accept" (id
    `acceptOwner`; E17 at once when the phone has Pro, otherwise S3 first, then E17) and "Decline".
 3. **Offer by you:** "Waiting for {name} to accept ownership." Button "Cancel request".
 4. **"On the map":**
@@ -2913,7 +2913,7 @@ Sections in this order, each only when it applies:
      consent is missing)
    - choice row "Trails" with values "Off", "Last 24 hours" and "Everything" (id `trailsMode`)
    - Footer:
-     - Sharing on: "Members see where you are and the trail you leave, also while SatMap is in the background."
+     - Sharing on: "Members see where you are and the trail you leave, also while Spoor is in the background."
      - Off: "Members can't see where you are now. The trail you already shared stays visible until you clear it.
        You can still see the group and drop pins."
      - Paused: "Sharing is off while the group is paused."
@@ -2948,13 +2948,13 @@ Sections in this order, each only when it applies:
 
 Paused texts. `{date}` is `deleteAt`.
 
-- **Member, `pro_ended`:** "This group is paused because the owner's SatMap Pro has ended. Nobody can share their
+- **Member, `pro_ended`:** "This group is paused because the owner's Spoor Pro has ended. Nobody can share their
   location or drop pins until the owner renews Pro or hands the group to a member who has Pro. If it stays paused,
   everything shared in the group is deleted on {date}."
-- **Owner:** the same, with "because your SatMap Pro has ended" and "until you renew Pro or hand the group to a
+- **Owner:** the same, with "because your Spoor Pro has ended" and "until you renew Pro or hand the group to a
   member who has Pro".
-- **`pro_refunded`:** "because the owner's SatMap Pro was refunded or cancelled" (owner: "your SatMap Pro").
-- **`pro_unverified`:** "because the owner's SatMap Pro couldn't be confirmed" (owner: "your SatMap Pro").
+- **`pro_refunded`:** "because the owner's Spoor Pro was refunded or cancelled" (owner: "your Spoor Pro").
+- **`pro_unverified`:** "because the owner's Spoor Pro couldn't be confirmed" (owner: "your Spoor Pro").
 
 **S6 Invite** (title "Invite"; leading "Done")
 
@@ -2981,7 +2981,7 @@ Paused texts. `{date}` is `deleteAt`.
 - Footer: "Invite links start with https://{domain}/j/"
 - Under the field while it doesn't parse:
   - `missingKey`: "This invite link is incomplete. Copy the whole link from the message, or scan the QR code."
-  - `notInvite`, when the field isn't empty: "That isn't a SatMap invite link."
+  - `notInvite`, when the field isn't empty: "That isn't a Spoor invite link."
 
 **S8 Join confirmation** (title "Join group"; leading "Cancel")
 
@@ -3005,7 +3005,7 @@ Paused texts. `{date}` is `deleteAt`.
 
 **S9 Share your location?** (title "Share your location?"; no leading button)
 
-- Text: "SatMap collects location data to share your position and trail with {group}, even when the app is in the
+- Text: "Spoor collects location data to share your position and trail with {group}, even when the app is in the
   background." This is Google's prominent-disclosure sentence; iOS uses it too.
 - Rows:
   - "Members see where you are while sharing is on."
@@ -3014,7 +3014,7 @@ Paused texts. `{date}` is `deleteAt`.
   - "Turn sharing off any time in the group."
 - Buttons "Share my location" (id `consentShare`) and "Not now" (id `consentNotNow`).
 - Footer: "Without sharing you can still see the group and drop pins."
-- Location refused (iOS alert): "Location is off for SatMap. Turn it on in Settings › Privacy › Location Services
+- Location refused (iOS alert): "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services
   to share." Android: the denied path of `PermissionFlow`, with the same text.
 
 **S10 Drop pin** (title "Drop pin"; leading "Cancel")
@@ -3075,7 +3075,7 @@ Paused texts. `{date}` is `deleteAt`.
 **S14 Hand over ownership**
 
 - From S5, a member picker (title "Hand over to") lists the members; from S12 the member is already chosen.
-- Then the alert "Make {name} the owner?" with message "{name} needs SatMap Pro to accept. You'll become an admin. If
+- Then the alert "Make {name} the owner?" with message "{name} needs Spoor Pro to accept. You'll become an admin. If
   they don't accept within 7 days, the request ends." and buttons "Send request" and "Cancel".
 
 **S15 Your name and colour / Rename group** (title "Your name and colour" or "Rename group"; leading "Cancel";
@@ -3095,7 +3095,7 @@ trailing "Save")
 
 - The camera view with a square guide. Text: "Point the camera at the invite QR code."
 - A found invite closes the scanner and opens S8.
-- No permission: "Camera access is off for SatMap. Turn it on in Settings to scan a code." with an "Open Settings"
+- No permission: "Camera access is off for Spoor. Turn it on in Settings to scan a code." with an "Open Settings"
   button.
 
 **Alerts**
@@ -3247,7 +3247,7 @@ only the overlays (the Groups button, the banner, the drop-pin capsule); the emu
 | 38 | `38-pin-detail` | Tap "Drop pin"; then tap the Kudu pin; S11. iOS finds the pin view by its accessibility label (it starts with "Kudu"). Android asks `MapController` for the pin's screen point through a test-only accessor, inside `scenario.onActivity`, then taps there. |
 | 39 | `39-member-detail` | Groups → "Kruger trip" → member row "Thandi"; S12 |
 | 40 | `40-group-paused` | Groups → "Drone team" → switch on "Show on the map", close; the map with the paused banner |
-| 41 | (no screenshot) | Link check (§5.6), with the scheme form of `GroupDemo.inviteLink2` ("Braai club", not joined). iOS: `XCUIDevice.shared.system.open(URL(string: <that satmap:// link>)!)`; if Springboard asks 'Open in "SatMap"?', tap "Open" (through `XCUIApplication(bundleIdentifier: "com.apple.springboard")`); then `app.buttons["joinGroup"].waitForExistence(timeout: 10)` must be true. Android: covered by the instrumented `InviteIntentTest` (§5.6), which uses the same link. |
+| 41 | (no screenshot) | Link check (§5.6), with the scheme form of `GroupDemo.inviteLink2` ("Braai club", not joined). iOS: `XCUIDevice.shared.system.open(URL(string: <that satmap:// link>)!)`; if Springboard asks 'Open in "Spoor"?', tap "Open" (through `XCUIApplication(bundleIdentifier: "com.apple.springboard")`); then `app.buttons["joinGroup"].waitForExistence(timeout: 10)` must be true. Android: covered by the instrumented `InviteIntentTest` (§5.6), which uses the same link. |
 
 The fake prices come from the fake Pro store in demo mode, so screenshots are stable.
 
@@ -3279,7 +3279,7 @@ No free trial and no introductory offer at launch.
 
 | Plan | Apple product id (type) | Google product | Price |
 | --- | --- | --- | --- |
-| Monthly | `pro.monthly`: auto-renewable, subscription group "SatMap Pro", level 2 | Subscription `pro`, base plan `monthly` (P1M, auto-renewing) | R79.99 |
+| Monthly | `pro.monthly`: auto-renewable, subscription group "Spoor Pro", level 2 | Subscription `pro`, base plan `monthly` (P1M, auto-renewing) | R79.99 |
 | Yearly | `pro.yearly`: auto-renewable, same group, level 1 | Subscription `pro`, base plan `yearly` (P1Y, auto-renewing) | R399.99 ("Save 58%") |
 | Lifetime | `pro.lifetime`: non-consumable | One-time product `pro_lifetime` | R1,199.99 |
 
@@ -3349,10 +3349,10 @@ No free trial and no introductory offer at launch.
 S3 (§9.3). The paywall opens from:
 
 - "Create group" when not Pro
-- "Renew SatMap Pro" (S5) when not Pro
+- "Renew Spoor Pro" (S5) when not Pro
 - "Accept" an ownership offer when not Pro
 
-When the phone already has Pro (`isPro`), "Renew SatMap Pro" sends E5 and "Accept" sends E17 directly, so nobody
+When the phone already has Pro (`isPro`), "Renew Spoor Pro" sends E5 and "Accept" sends E17 directly, so nobody
 is invited to buy twice.
 
 ### 10.6 Pro cache
@@ -3391,7 +3391,7 @@ phone; the server's status decides what is shown.
 
 - The server pauses the group when the store says Pro ended (§7.6). It is immediate: at the expiry alarm, or on the
   notification.
-- Every member sees S5's paused section and the map banner. The owner sees "Renew SatMap Pro" and "Hand over
+- Every member sees S5's paused section and the map banner. The owner sees "Renew Spoor Pro" and "Hand over
   ownership".
 - Renewing sends E5, which resumes.
 - Handing over: the offer (E15) and the accept with the new owner's proof (E17) resume the group under the new
@@ -3413,7 +3413,7 @@ Both apps link to them (S1, S2, S3).
 
 1. **Responsible party:** the developer's name and `CONTACT_EMAIL`. The developer registers an Information Officer
    with the Information Regulator (owner task). There is no variable for the name: the draft says "Jacobus Oettle,
-   the developer of SatMap", a constant in `src/web/pages.ts`, for the owner's review.
+   the developer of Spoor", a constant in `src/web/pages.ts`, for the owner's review.
 2. **What is processed:**
    - random ids, role, join time and a hash of the member pass
    - encrypted names, positions, trails and pins, which the developer cannot read
@@ -3465,10 +3465,10 @@ Both apps link to them (S1, S2, S3).
 
 ### 11.2 iPhone purpose strings and Info.plist
 
-- `NSLocationWhenInUseUsageDescription`: "SatMap shows where you are on the map and records the dotted track of
+- `NSLocationWhenInUseUsageDescription`: "Spoor shows where you are on the map and records the dotted track of
   where you have been, also while the app is in the background. If you turn on sharing in a group, your position
   and track are also shared with that group's members."
-- New `NSCameraUsageDescription`: "SatMap uses the camera to scan a group's invite QR code."
+- New `NSCameraUsageDescription`: "Spoor uses the camera to scan a group's invite QR code."
 - No "Always" location. The existing When In Use plus background location mode is enough, with the blue
   indicator.
 - New keys: `CFBundleURLTypes` (§5.6) and `SatMapGroupsDomain` (§5.1).
@@ -3518,7 +3518,7 @@ is the safe default; the owner may narrow it after review.
 
 ### 11.6 Android location notification
 
-Today the notification's title is "SatMap" and its content text "Recording your track" (`LocationService.kt`). While
+Today the notification's title is "Spoor" and its content text "Recording your track" (`LocationService.kt`). While
 any group shares:
 
 - the content text stays "Recording your track" (the collapsed view)
@@ -3526,7 +3526,7 @@ any group shares:
   - one group: "Sharing your location with {group}."
   - several groups: "Sharing your location with {n} groups."
 
-The title stays "SatMap". Its Stop action stops recording (as today) and switches sharing off in every group. This
+The title stays "Spoor". Its Stop action stops recording (as today) and switches sharing off in every group. This
 is an Android-only difference (§9.9).
 
 ### 11.7 Store user-generated content rules (Apple guideline 1.2, Google UGC policy)

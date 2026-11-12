@@ -52,7 +52,7 @@ final class BackgroundDownload {
             return
         }
         #endif
-        status = "In the background a download goes on for about half a minute, then continues when you open SatMap. With iOS 26 or later it keeps going, with its progress on the Lock Screen."
+        status = "In the background a download goes on for about half a minute, then continues when you open Spoor. With iOS 26 or later it keeps going, with its progress on the Lock Screen."
     }
 
     /// The download's progress (tiles done and planned in the area being downloaded), for the system's progress bar.
@@ -161,7 +161,7 @@ final class BackgroundDownload {
             }
         }
         guard !possible.isEmpty else {
-            status = "In the background a download goes on for about half a minute: this copy of SatMap (\(bundleID)) isn't set up for more."
+            status = "In the background a download goes on for about half a minute: this copy of Spoor (\(bundleID)) isn't set up for more."
             return
         }
         let styles = possible

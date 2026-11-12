@@ -22,12 +22,12 @@ describe("landing page", () => {
     expect(res.headers.get("X-Robots-Tag")).toBe("noindex");
     expect(res.headers.get("Set-Cookie")).toBeNull();
     const html = await res.text();
-    expect(html).toContain("<title>Join a SatMap group</title>");
-    expect(html).toContain("You&#39;re invited to a SatMap group".replace("&#39;", "'"));
-    expect(html).toContain("Open this invite in the SatMap app to join. It works once and expires 7 days after it was sent.");
-    expect(html).toContain(">Open in SatMap</a>");
+    expect(html).toContain("<title>Join a Spoor group</title>");
+    expect(html).toContain("You&#39;re invited to a Spoor group".replace("&#39;", "'"));
+    expect(html).toContain("Open this invite in the Spoor app to join. It works once and expires 7 days after it was sent.");
+    expect(html).toContain(">Open in Spoor</a>");
     expect(html).toContain('<p id="incomplete" hidden>This link is incomplete. Open it again from the message you received.</p>');
-    expect(html).toContain("Don't have SatMap yet?");
+    expect(html).toContain("Don't have Spoor yet?");
     expect(html).toContain("After installing, go back to the message and tap the invite link again.");
     expect(html).toContain('<a href="/privacy">Privacy notice</a> · <a href="/terms">Terms of use</a> · <a href="mailto:groups@example.invalid">groups@example.invalid</a>');
     // No external resources and no token in the page itself.
@@ -145,6 +145,6 @@ describe("pages", () => {
   it("serves the terms and the home page", async () => {
     const terms = await termsPage(cfg).text();
     for (const text of ["rules about sharing wildlife sightings", "South Africa", "emergency", "pauses", "groups@example.invalid"]) expect(terms, text).toContain(text);
-    expect((await homePage(cfg).text())).toContain("SatMap groups");
+    expect((await homePage(cfg).text())).toContain("Spoor groups");
   });
 });

@@ -1,6 +1,6 @@
-# SatMap groups server
+# Spoor groups server
 
-The Cloudflare Worker behind SatMap groups: one Durable Object per group (SQLite storage, hibernating WebSockets),
+The Cloudflare Worker behind Spoor groups: one Durable Object per group (SQLite storage, hibernating WebSockets),
 one per Pro purchase, and one for reports, with old trail chunks archived to R2. Everything a group shares is
 encrypted on the phones; the server stores and forwards ciphertext and sees only ids, times, roles and sizes.
 
@@ -148,7 +148,7 @@ Bindings: `GROUP`, `PRO`, `ADMIN` (Durable Objects, all SQLite), `ARCHIVE` (R2 b
    `https://{domain}/.well-known/assetlinks.json`, then run
    `adb shell pm verify-app-links --re-verify com.jacobusoettle.satmap`.
 5. **Store setup** (SPEC §10.2):
-   - App Store Connect: the subscription group "SatMap Pro" with `pro.monthly` and `pro.yearly`, the non-consumable
+   - App Store Connect: the subscription group "Spoor Pro" with `pro.monthly` and `pro.yearly`, the non-consumable
      `pro.lifetime`; App Store Server Notifications V2 to `https://{domain}/v1/store/apple` for production and
      sandbox; an In-App Purchase key for the three `APPLE_*` secrets.
    - Play Console: the subscription `pro` (base plans `monthly`, `yearly`) and the one-time product `pro_lifetime`;

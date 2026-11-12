@@ -452,14 +452,14 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
                     let area = try JSONDecoder().decode(Area.self, from: info.areaJSON)
                     found[area.id, default: (area, [:])].files[info.layerKey] = local
                 } catch {
-                    problems.append((error as? LocalizedError)?.errorDescription ?? "\(url.lastPathComponent) isn't a SatMap backup.")
+                    problems.append((error as? LocalizedError)?.errorDescription ?? "\(url.lastPathComponent) isn't a Spoor backup.")
                 }
             }
 
             var restored: [Area] = []
             for (id, item) in found {
                 guard !known.contains(id) else {
-                    problems.append("\(item.area.name) is already in SatMap.")
+                    problems.append("\(item.area.name) is already in Spoor.")
                     continue
                 }
                 let folder = AppPaths.offlineArea(id)
@@ -692,7 +692,7 @@ final class OfflineManager: ObservableObject, @unchecked Sendable {
             encryption.release([area.id])
             update(area.id) {
                 $0.status = .incomplete
-                $0.problem = "This version of SatMap doesn't have the road list for this area."
+                $0.problem = "This version of Spoor doesn't have the road list for this area."
             }
             DispatchQueue.main.async { [weak self] in self?.startNextIfIdle() }
             return

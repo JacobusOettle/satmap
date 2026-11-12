@@ -257,7 +257,7 @@ struct MemberDetailView: View {
             } message: { a in
                 switch a {
                 case .makeOwner(let name):
-                    Text("\(name) needs SatMap Pro to accept. You'll become an admin. If they don't accept within 7 days, the request ends.")
+                    Text("\(name) needs Spoor Pro to accept. You'll become an admin. If they don't accept within 7 days, the request ends.")
                 case .remove(let name):
                     Text("\(name)'s trail and pins in this group are deleted. They can only come back with a new invite.")
                 case .error:

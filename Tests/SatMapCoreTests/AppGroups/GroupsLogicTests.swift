@@ -118,28 +118,28 @@ final class GroupsLogicTests: XCTestCase {
 
     func testPausedBanners() {
         XCTAssertEqual(GroupTexts.pausedBanner(group: "Drone team", reason: .proEnded, isOwner: false),
-                       "Drone team is paused: the owner's SatMap Pro has ended.")
+                       "Drone team is paused: the owner's Spoor Pro has ended.")
         XCTAssertEqual(GroupTexts.pausedBanner(group: "Drone team", reason: .proEnded, isOwner: true),
-                       "Drone team is paused: your SatMap Pro has ended. Tap to renew.")
+                       "Drone team is paused: your Spoor Pro has ended. Tap to renew.")
         XCTAssertEqual(GroupTexts.pausedBanner(group: "D", reason: .proRefunded, isOwner: false),
-                       "D is paused: the owner's SatMap Pro was refunded or cancelled.")
+                       "D is paused: the owner's Spoor Pro was refunded or cancelled.")
         XCTAssertEqual(GroupTexts.pausedBanner(group: "D", reason: .proRefunded, isOwner: true),
-                       "D is paused: your SatMap Pro was refunded or cancelled. Tap to renew.")
+                       "D is paused: your Spoor Pro was refunded or cancelled. Tap to renew.")
         XCTAssertEqual(GroupTexts.pausedBanner(group: "D", reason: .proUnverified, isOwner: false),
-                       "D is paused: the owner's SatMap Pro couldn't be confirmed.")
+                       "D is paused: the owner's Spoor Pro couldn't be confirmed.")
         XCTAssertEqual(GroupTexts.pausedBanner(group: "D", reason: .proUnverified, isOwner: true),
-                       "D is paused: your SatMap Pro couldn't be confirmed. Tap to fix.")
+                       "D is paused: your Spoor Pro couldn't be confirmed. Tap to fix.")
     }
 
     func testPausedSections() {
         XCTAssertEqual(GroupTexts.pausedSection(reason: .proEnded, isOwner: false, deleteDate: "29 Nov"),
-                       "This group is paused because the owner's SatMap Pro has ended. Nobody can share their location or drop pins until the owner renews Pro or hands the group to a member who has Pro. If it stays paused, everything shared in the group is deleted on 29 Nov.")
+                       "This group is paused because the owner's Spoor Pro has ended. Nobody can share their location or drop pins until the owner renews Pro or hands the group to a member who has Pro. If it stays paused, everything shared in the group is deleted on 29 Nov.")
         XCTAssertEqual(GroupTexts.pausedSection(reason: .proEnded, isOwner: true, deleteDate: "29 Nov"),
-                       "This group is paused because your SatMap Pro has ended. Nobody can share their location or drop pins until you renew Pro or hand the group to a member who has Pro. If it stays paused, everything shared in the group is deleted on 29 Nov.")
+                       "This group is paused because your Spoor Pro has ended. Nobody can share their location or drop pins until you renew Pro or hand the group to a member who has Pro. If it stays paused, everything shared in the group is deleted on 29 Nov.")
         XCTAssertTrue(GroupTexts.pausedSection(reason: .proRefunded, isOwner: false, deleteDate: nil)
-            .hasPrefix("This group is paused because the owner's SatMap Pro was refunded or cancelled. "))
+            .hasPrefix("This group is paused because the owner's Spoor Pro was refunded or cancelled. "))
         XCTAssertTrue(GroupTexts.pausedSection(reason: .proUnverified, isOwner: true, deleteDate: nil)
-            .hasPrefix("This group is paused because your SatMap Pro couldn't be confirmed. "))
+            .hasPrefix("This group is paused because your Spoor Pro couldn't be confirmed. "))
         XCTAssertFalse(GroupTexts.pausedSection(reason: nil, isOwner: false, deleteDate: nil).contains("deleted on"))
     }
 
@@ -156,7 +156,7 @@ final class GroupsLogicTests: XCTestCase {
                        "We'll get a copy of this pin's text to review, without any position. We review reports within 24 hours.")
         XCTAssertEqual(ReportReason.allCases.map(GroupTexts.reportReason),
                        ["Offensive or hateful", "Harassment or bullying", "Spam", "Dangerous or illegal", "Something else"])
-        XCTAssertEqual(GroupTexts.inviteShareText(group: "Kruger trip", link: "https://x/j/t#k"), "Join \"Kruger trip\" on SatMap: https://x/j/t#k")
+        XCTAssertEqual(GroupTexts.inviteShareText(group: "Kruger trip", link: "https://x/j/t#k"), "Join \"Kruger trip\" on Spoor: https://x/j/t#k")
     }
 
     func testPinTypesAndAlerts() {

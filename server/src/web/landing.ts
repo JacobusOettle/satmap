@@ -54,7 +54,7 @@ export async function landingPage(rest: string, cfg: Config): Promise<Response> 
   const token = rest.endsWith("/") ? rest.slice(0, -1) : rest;
   if (!TOKEN_PATTERN.test(token)) {
     const body = `<div class="card"><h1>This isn't a valid invite link.</h1></div>`;
-    return htmlResponse(page(cfg, "Join a SatMap group", body), 404, {
+    return htmlResponse(page(cfg, "Join a Spoor group", body), 404, {
       ...BASE_HEADERS,
       "Content-Security-Policy": csp("'none'"),
     });
@@ -64,15 +64,15 @@ export async function landingPage(rest: string, cfg: Config): Promise<Response> 
   if (cfg.appStoreUrl !== "") stores.push(`<a href="${escapeHtml(cfg.appStoreUrl)}">Download on the App Store</a>`);
   if (cfg.playStoreUrl !== "") stores.push(`<a href="${escapeHtml(cfg.playStoreUrl)}">Get it on Google Play</a>`);
   const body = `<div class="card">
-<h1>You're invited to a SatMap group</h1>
-<p>Open this invite in the SatMap app to join. It works once and expires 7 days after it was sent.</p>
-<a id="open" class="button">Open in SatMap</a>
+<h1>You're invited to a Spoor group</h1>
+<p>Open this invite in the Spoor app to join. It works once and expires 7 days after it was sent.</p>
+<a id="open" class="button">Open in Spoor</a>
 <p id="incomplete" hidden>This link is incomplete. Open it again from the message you received.</p>
-<p>Don't have SatMap yet?</p>
+<p>Don't have Spoor yet?</p>
 ${stores.length > 0 ? `<p class="stores">${stores.join("\n")}</p>` : ""}
 <p class="small">After installing, go back to the message and tap the invite link again.</p>
 </div>`;
-  return htmlResponse(page(cfg, "Join a SatMap group", body, script), 200, {
+  return htmlResponse(page(cfg, "Join a Spoor group", body, script), 200, {
     ...BASE_HEADERS,
     "Content-Security-Policy": csp(`'${await scriptHash(script)}'`),
   });

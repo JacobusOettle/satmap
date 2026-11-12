@@ -485,7 +485,7 @@ final class HTTPTileFetcher: TileFetching {
 
     static func fetch(_ url: URL, session: URLSession) async -> TileFetchResult {
         var request = URLRequest(url: url)
-        request.setValue("SatMap/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Spoor/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { return .failed }

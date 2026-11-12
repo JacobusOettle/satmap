@@ -60,7 +60,7 @@ enum OfflineBackup {
         var errorDescription: String? {
             switch self {
             case .busy(let name): return "Couldn't prepare \(name) for export. Try again in a moment."
-            case .notABackup(let name): return "\(name) isn't a SatMap backup."
+            case .notABackup(let name): return "\(name) isn't a Spoor backup."
             }
         }
     }

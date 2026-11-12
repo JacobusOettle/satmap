@@ -622,7 +622,7 @@
         "groupKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
       },
       {
-        "text": "Join \"Kruger trip\" on SatMap: https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        "text": "Join \"Kruger trip\" on Spoor: https://example.invalid/j/oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8#AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
         "result": "invite",
         "token": "oKGio6SlpqeoqaqrrK2ur-Dh4uPk5ebn6Onq6-zt7u8",
         "groupIdHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",

@@ -76,7 +76,7 @@ struct PaywallView: View {
                 LinkRow(title: "Privacy notice", url: GroupConfig.privacyURL)
             }
         }
-        .navigationTitle("SatMap Pro")
+        .navigationTitle("Spoor Pro")
         .navigationBarTitleDisplayMode(.inline)
         .groupsLeading(.cancel, action: nav.pop)
         .task { await pro.loadPrices() }

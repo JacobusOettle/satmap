@@ -225,7 +225,7 @@ enum GroupTexts {
     }
 
     private static func pauseCause(_ reason: PausedReason?, isOwner: Bool) -> String {
-        let whose = isOwner ? "your SatMap Pro" : "the owner's SatMap Pro"
+        let whose = isOwner ? "your Spoor Pro" : "the owner's Spoor Pro"
         switch reason ?? .proEnded {
         case .proEnded: return "\(whose) has ended"
         case .proRefunded: return "\(whose) was refunded or cancelled"
@@ -254,7 +254,7 @@ enum GroupTexts {
     /// S5 "On the map" footer.
     static func sharingFooter(isSharing: Bool, isPaused: Bool) -> String {
         if isPaused { return "Sharing is off while the group is paused." }
-        if isSharing { return "Members see where you are and the trail you leave, also while SatMap is in the background." }
+        if isSharing { return "Members see where you are and the trail you leave, also while Spoor is in the background." }
         return "Members can't see where you are now. The trail you already shared stays visible until you clear it. You can still see the group and drop pins."
     }
 
@@ -296,7 +296,7 @@ enum GroupTexts {
 
     /// The text shared with "Share link" (S6).
     static func inviteShareText(group: String, link: String) -> String {
-        "Join \"\(group)\" on SatMap: \(link)"
+        "Join \"\(group)\" on Spoor: \(link)"
     }
 
     /// S6's footer.
