@@ -37,7 +37,7 @@ fun ConsentScreen(model: AppModel, route: GroupsRoute.Consent, nav: GroupsNav) {
     val groups = model.groups
     val recorder = model.recorder
     val name = remember(route.groupId) { groups.hub.detail(route.groupId)?.name ?: "" }
-    var refused by remember { mutableStateOf(false) }
+    var refused by remember { mutableStateOf<String?>(null) }
 
     fun finish() {
         if (route.afterCreate) nav.replace(listOf(GroupsRoute.List, GroupsRoute.Detail(route.groupId))) else nav.pop()
@@ -51,7 +51,11 @@ fun ConsentScreen(model: AppModel, route: GroupsRoute.Consent, nav: GroupsNav) {
 
     val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         recorder.authorizationChanged()
-        if (recorder.authorization.value == LocationRecorder.Authorization.authorized) share() else refused = true
+        when (recorder.authorization.value) {
+            LocationRecorder.Authorization.authorized -> share()
+            LocationRecorder.Authorization.servicesOff -> refused = LOCATION_SERVICES_OFF
+            else -> refused = LOCATION_OFF
+        }
     }
     SheetScreen(ScreenChrome("Share your location?", leading = null)) {
         item {
@@ -79,18 +83,19 @@ fun ConsentScreen(model: AppModel, route: GroupsRoute.Consent, nav: GroupsNav) {
                             Defaults.putBoolean("locationPermissionAsked", true)
                             ask.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                         }
-                        LocationRecorder.Authorization.denied, LocationRecorder.Authorization.servicesOff -> refused = true
+                        LocationRecorder.Authorization.denied -> refused = LOCATION_OFF
+                        LocationRecorder.Authorization.servicesOff -> refused = LOCATION_SERVICES_OFF
                     }
                 }
                 ButtonRow("Not now", tag = "consentNotNow") { finish() }
             }
         }
     }
-    if (refused) {
+    refused?.let { text ->
         AlertBox(
-            LOCATION_OFF,
+            text,
             null,
             listOf(AlertButton("OK") { finish() }),
-        ) { refused = false }
+        ) { refused = null }
     }
 }

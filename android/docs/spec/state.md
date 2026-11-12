@@ -391,9 +391,10 @@ The timer's tolerance is 10% of the interval; it calls `startPeek()`.
 - Update `authorization` and `reducedAccuracy` (`accuracyAuthorization == .reducedAccuracy`).
 - If authorized, `beginUpdates()`.
 
-**Hints** (MapScreen, under the coordinate and drone rows):
-- Denied or restricted: "Location is off for Spoor. Turn it on in Settings › Privacy › Location Services."
-- Otherwise, with reduced accuracy: "Precise Location is off, so your track can't be recorded. Turn it on in Settings › Spoor › Location."
+**Hints** (MapScreen, under the coordinate and drone rows; Android wording, see the Android hints below):
+- Denied: "Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location."
+- Location off for the whole phone: "Location is off. Turn it on in Settings › Location."
+- Otherwise, with reduced accuracy: "Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › Spoor › Permissions › Location (Use precise location)."
 
 **UI tied to the recorder:**
 - Your coordinate bar shows only with a fix and not while drawing an area. Its icon is "location" (outline) while sleeping and "location.fill" otherwise.

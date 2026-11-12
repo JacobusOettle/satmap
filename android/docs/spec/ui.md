@@ -330,9 +330,10 @@ A custom `Layout`:
 - **Text:** Footnote Medium.
 - **Optional close:** `Icons.Filled.Close` 16 dp, labelled `Stop measuring`. It exists in Swift but no caller uses it now; port it anyway.
 - **Conditions and texts:**
-  - Permission denied, or location off on the phone (iOS reports `.denied` for both), and the request has been answered: `Location is off for Spoor. Turn it on in Settings › Location and in Settings › Apps › Spoor › Permissions.` (Android wording; iOS: `Location is off for Spoor. Turn it on in Settings › Privacy › Location Services.`)
+  - Permission denied, and the request has been answered: `Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location.` A tap opens the app's details page. (Android wording; iOS, which reports `.denied` for this and for location off on the phone: `Location is off for Spoor. Turn it on in Settings › Privacy › Location Services.`)
+  - Location off for the whole phone (`servicesOff`): `Location is off. Turn it on in Settings › Location.` A tap opens `ACTION_LOCATION_SOURCE_SETTINGS`.
   - Only COARSE location granted (iOS `reducedAccuracy`): `Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › Spoor › Permissions › Location (Use precise location).` (iOS: `Precise Location is off, so your track can't be recorded. Turn it on in Settings › Spoor › Location.`)
-  - The hint is not tappable, as on iOS.
+  - A tap opens the Settings page named above (an Android addition: iOS hints are not tappable). The precise hint opens the app's details page.
 
 #### 2.3.10 `DroneCard(report)`
 
@@ -899,7 +900,7 @@ Every string is given in place in §2–3. This section lists the reworded ones 
 
 | Where | iOS | Android |
 | --- | --- | --- |
-| Location hint | `Location is off for Spoor. Turn it on in Settings › Privacy › Location Services.` | `Location is off for Spoor. Turn it on in Settings › Location and in Settings › Apps › Spoor › Permissions.` |
+| Location hint | `Location is off for Spoor. Turn it on in Settings › Privacy › Location Services.` | `Location is off for Spoor. Turn it on in Settings › Apps › Spoor › Permissions › Location.`, or with location off for the whole phone `Location is off. Turn it on in Settings › Location.` |
 | Precise hint | `Precise Location is off, so your track can't be recorded. Turn it on in Settings › Spoor › Location.` | `Precise location is off, so your track can't be recorded. Turn it on in Settings › Apps › Spoor › Permissions › Location (Use precise location).` |
 | Offline: free space | `Free space on this iPhone: %s` | `Free space on this phone: %s` |
 | Offline: backup footer | `Saves each area as two MBTiles files, satellite and elevation, to Files, iCloud Drive or a USB drive, or AirDrop them to a computer. To restore, choose both files of each area. Long-press an area to export only that one.` | `Saves each area as two MBTiles files, satellite and elevation, to Google Drive, your phone's storage or a USB drive, or send them to a computer. To restore, choose both files of each area. Long-press an area to export only that one.` |
