@@ -131,12 +131,12 @@ final class BackgroundDownload {
     #if compiler(>=6.2)
     /// How the task's identifier is made. It has to start with the bundle identifier the app is installed with and
     /// match an entry "<prefix>.*" in BGTaskSchedulerPermittedIdentifiers. Sideloading with Impactor adds the team ID
-    /// to the bundle identifier (com.jacobusoettle.satmap.ABCDE12345) but not to those entries, and iOS doesn't say
+    /// to the bundle identifier (com.koonap.spoor.ABCDE12345) but not to those entries, and iOS doesn't say
     /// whether "*" then covers more than one part, so two ways are tried; one that iOS never starts isn't used again.
     private enum Style: String, CaseIterable {
         /// "<bundle id>.download.<new UUID>": a new identifier for each download.
         case unique
-        /// "<bundle id>" itself: one part after "com.jacobusoettle.satmap.", registered once.
+        /// "<bundle id>" itself: one part after "com.koonap.spoor.", registered once.
         case bundle
     }
 

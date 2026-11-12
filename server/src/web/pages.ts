@@ -5,7 +5,7 @@ import type { Config } from "../lib/config";
 import { escapeHtml, htmlResponse, page } from "./html";
 
 /** The responsible party named in the privacy notice (POPIA). The owner confirms it in the review. */
-export const RESPONSIBLE_PARTY = "Jacobus Oettle, the developer of Spoor";
+export const RESPONSIBLE_PARTY = "Koonap (Pty) Ltd (registration 2026/913811/07)";
 export const NOTICE_VERSION = "Version 1, 2 November 2026";
 
 const HEADERS = {
@@ -27,7 +27,7 @@ export function privacyPage(cfg: Config): Response {
 trail and pins with the members of a group. The rest of Spoor keeps your data on your phone.</p>
 
 <h2>Who is responsible</h2>
-<p>${escapeHtml(RESPONSIBLE_PARTY)}. Contact: ${mail(cfg)}.</p>
+<p>${escapeHtml(RESPONSIBLE_PARTY)}, the company that makes Spoor. Contact: ${mail(cfg)}.</p>
 
 <h2>What we process</h2>
 <ul>

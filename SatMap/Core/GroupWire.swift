@@ -7,7 +7,7 @@ import COpenSSL
 #if canImport(os)
 import os
 
-private let groupLogger = Logger(subsystem: "com.jacobusoettle.satmap", category: "groups")
+private let groupLogger = Logger(subsystem: "com.koonap.spoor", category: "groups")
 #endif
 
 // Wire basics for groups (docs/groups/SPEC.md §2): base64url, ids, random bytes, micro-degrees, text cleaning,

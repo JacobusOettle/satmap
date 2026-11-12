@@ -23,7 +23,7 @@ const NOW = 1_900_000_000;
 
 function settings(overrides: Partial<AppleSettings> = {}): AppleSettings {
   return {
-    bundleId: "com.jacobusoettle.satmap",
+    bundleId: "com.koonap.spoor",
     products: ["pro.monthly", "pro.yearly", "pro.lifetime"],
     allowTestPurchases: true,
     allowXcode: false,
@@ -59,7 +59,7 @@ describe("pinned root", () => {
 describe("verifyJws", () => {
   it("accepts a valid JWS and returns its payload", async () => {
     const payload = await verifyJws(await signJws(appleTransaction(NOW)), rootDer());
-    expect(payload.bundleId).toBe("com.jacobusoettle.satmap");
+    expect(payload.bundleId).toBe("com.koonap.spoor");
   });
 
   it("refuses a chain that ends in another root", async () => {
@@ -316,11 +316,11 @@ describe("App Store Server API", () => {
 
   it("signs the bearer token as ES256 with the right claims", async () => {
     const { pem, publicKey } = await p8();
-    const token = await appleApiToken({ issuerId: "issuer", keyId: "KEY123", privateKey: pem }, "com.jacobusoettle.satmap", NOW);
+    const token = await appleApiToken({ issuerId: "issuer", keyId: "KEY123", privateKey: pem }, "com.koonap.spoor", NOW);
     const [h, c, sig] = token.split(".") as [string, string, string];
     const decode = (part: string) => JSON.parse(new TextDecoder().decode(b64urlDecode(part)!));
     expect(decode(h)).toEqual({ alg: "ES256", kid: "KEY123", typ: "JWT" });
-    expect(decode(c)).toEqual({ iss: "issuer", iat: NOW, exp: NOW + 1800, aud: "appstoreconnect-v1", bid: "com.jacobusoettle.satmap" });
+    expect(decode(c)).toEqual({ iss: "issuer", iat: NOW, exp: NOW + 1800, aud: "appstoreconnect-v1", bid: "com.koonap.spoor" });
     const ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, publicKey, b64urlDecode(sig)!, new TextEncoder().encode(`${h}.${c}`));
     expect(ok).toBe(true);
   });

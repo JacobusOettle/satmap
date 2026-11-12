@@ -41,7 +41,7 @@ final class DroneLinkModel: ObservableObject, @unchecked Sendable {
     private var isForeground = UIApplication.shared.applicationState != .background
     private var isLocked = false
 
-    private let queue = DispatchQueue(label: "com.jacobusoettle.satmap.droneLink", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.koonap.spoor.droneLink", qos: .userInitiated)
     /// The socket, on the port wanted while listening; a port that couldn't be had is tried again by `tick()`.
     private lazy var listening: UDPListening = {
         let inbox = self.inbox

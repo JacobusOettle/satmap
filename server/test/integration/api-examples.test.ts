@@ -230,7 +230,7 @@ describe("api-examples.json", () => {
     // Admin and store endpoints
     await r.http("A4-not_allowed", "DELETE", `/v1/admin/groups/${G}/members/${JOINER.memberId}`, { headers: ADMIN });
     await r.http("E28-acknowledged", "POST", "/v1/store/google?token=test-rtdn-token-0123456789abcdefghijklmnop", {
-      body: { message: { data: btoa(JSON.stringify({ version: "1.0", packageName: "com.jacobusoettle.satmap", eventTimeMillis: "1793700000000", testNotification: { version: "1.0" } })), messageId: "1", publishTime: "2026-11-03T10:00:00Z" }, subscription: "projects/satmap/subscriptions/rtdn" },
+      body: { message: { data: btoa(JSON.stringify({ version: "1.0", packageName: "com.koonap.spoor", eventTimeMillis: "1793700000000", testNotification: { version: "1.0" } })), messageId: "1", publishTime: "2026-11-03T10:00:00Z" }, subscription: "projects/satmap/subscriptions/rtdn" },
     });
     await r.http("E29-ok", "GET", "/v1/health");
 

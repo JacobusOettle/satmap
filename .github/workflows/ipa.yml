@@ -85,9 +85,9 @@ jobs:
           set -e
           if [ $status -ne 0 ]; then grep -E "error:" simbuild.log | sort -u | head -n 50; exit 1; fi
           xcrun simctl install "$UDID" simbuild/Build/Products/Release-iphonesimulator/SatMap.app
-          xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
+          xcrun simctl privacy "$UDID" grant location com.koonap.spoor || true
           xcrun simctl location "$UDID" set -24.9969,31.5923
-          pid=$(xcrun simctl launch "$UDID" com.jacobusoettle.satmap | awk '{print $NF}')
+          pid=$(xcrun simctl launch "$UDID" com.koonap.spoor | awk '{print $NF}')
           sleep 30
           if ! ps -p "$pid" > /dev/null; then
             echo "SatMap quit after it was opened: not publishing this build."

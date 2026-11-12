@@ -6,7 +6,7 @@ import os
 /// same zooms and pans every time (no gestures, no following you), logging each step, so recordings of different
 /// builds can be compared step by step.
 enum ZoomScript {
-    private static let log = Logger(subsystem: "com.jacobusoettle.satmap", category: "zoomscript")
+    private static let log = Logger(subsystem: "com.koonap.spoor", category: "zoomscript")
 
     /// (tile zoom, east-west and north-south shift in screens) for each step, five seconds apart.
     private static let steps: [(zoom: Double, dx: Double, dy: Double)] = [
@@ -59,7 +59,7 @@ enum ZoomScript {
 
 private final class Watchdog {
     private var last = CACurrentMediaTime()
-    private let log = Logger(subsystem: "com.jacobusoettle.satmap", category: "zoomscript")
+    private let log = Logger(subsystem: "com.koonap.spoor", category: "zoomscript")
 
     func tick() {
         let now = CACurrentMediaTime()

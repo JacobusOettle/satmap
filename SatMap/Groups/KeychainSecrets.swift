@@ -2,11 +2,11 @@ import Foundation
 import Security
 
 /// The memberships in the Keychain (docs/groups/SPEC.md §8.3): one generic-password item per group, service
-/// `com.jacobusoettle.satmap.groups`, account = the group id, readable after the first unlock (also in the background),
+/// `com.koonap.spoor.groups`, account = the group id, readable after the first unlock (also in the background),
 /// never in backups or on other devices, not synchronised. iOS keeps them when the app is deleted, so a reinstall
 /// restores the memberships. (§9.9: the Keychain here, the Keystore on Android.)
 final class KeychainSecrets: GroupSecretStore {
-    static let service = "com.jacobusoettle.satmap.groups"
+    static let service = "com.koonap.spoor.groups"
 
     struct KeychainError: Error {
         let status: OSStatus

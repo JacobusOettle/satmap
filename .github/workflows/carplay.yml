@@ -90,13 +90,13 @@ jobs:
       - name: Run the app, standing still and then driving
         run: |
           xcrun simctl install "$UDID" build/Build/Products/Release-iphonesimulator/SatMap.app
-          xcrun simctl privacy "$UDID" grant location com.jacobusoettle.satmap || true
+          xcrun simctl privacy "$UDID" grant location com.koonap.spoor || true
           xcrun simctl location "$UDID" set -24.9969,31.5923
           xcrun simctl spawn "$UDID" log stream --level debug --style compact \
-            --predicate 'subsystem == "com.jacobusoettle.satmap"' > carplay/app.log 2>&1 &
+            --predicate 'subsystem == "com.koonap.spoor"' > carplay/app.log 2>&1 &
           LOGPID=$!
           # The real test-build switch never locks this run (the launch argument is read only in the simulator).
-          xcrun simctl launch "$UDID" com.jacobusoettle.satmap -testBuildSwitch skip
+          xcrun simctl launch "$UDID" com.koonap.spoor -testBuildSwitch skip
           sleep 40
           xcrun simctl io "$UDID" screenshot --display=internal carplay/phone.png || true
           xcrun simctl io "$UDID" screenshot --display=external carplay/car-home.png || true

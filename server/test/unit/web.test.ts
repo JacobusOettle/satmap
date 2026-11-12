@@ -39,7 +39,7 @@ describe("landing page", () => {
     const res = await landingPage(vectors.invite.token, cfg);
     const html = await res.text();
     const script = /<script>([\s\S]*)<\/script>/.exec(html)![1]!;
-    expect(script).toBe(landingScript("com.jacobusoettle.satmap"));
+    expect(script).toBe(landingScript("com.koonap.spoor"));
     const hash = `sha256-${b64Encode(await sha256(script))}`;
     expect(res.headers.get("Content-Security-Policy")).toBe(
       `default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src '${hash}'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
@@ -100,7 +100,7 @@ describe("well-known files", () => {
       applinks: { details: [{ appIDs: ["TEAM1.com.a", "TEAM2.com.b"], components: [{ "/": "/j/*", comment: "Group invites" }] }] },
     });
     expect(await appleAppSiteAssociation(cfg).text()).toBe(
-      '{"applinks":{"details":[{"appIDs":["TEAMID.com.jacobusoettle.satmap"],"components":[{"/":"/j/*","comment":"Group invites"}]}]}}',
+      '{"applinks":{"details":[{"appIDs":["TEAMID.com.koonap.spoor"],"components":[{"/":"/j/*","comment":"Group invites"}]}]}}',
     );
   });
 
@@ -116,7 +116,7 @@ describe("well-known files", () => {
     expect((await assetLinks(cfg).json()) as unknown[]).toEqual([
       {
         relation: ["delegate_permission/common.handle_all_urls"],
-        target: { namespace: "android_app", package_name: "com.jacobusoettle.satmap", sha256_cert_fingerprints: [] },
+        target: { namespace: "android_app", package_name: "com.koonap.spoor", sha256_cert_fingerprints: [] },
       },
     ]);
   });

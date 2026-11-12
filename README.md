@@ -292,7 +292,7 @@ You need a Mac with **Xcode 16 or newer** and an iPhone with **iOS 16 or newer**
 1. Open `SatMap.xcodeproj` in Xcode.
 2. Select the **SatMap** target → **Signing & Capabilities** → choose your **Team** (sign in with your
    Apple ID if asked). If Xcode says the bundle identifier is taken, change it, e.g. to
-   `com.yourname.satmap`.
+   `com.yourname.spoor`.
 3. Connect the iPhone, select it as the run destination, and press **Run** (⌘R). The first time, on the
    iPhone open *Settings → General → VPN & Device Management* and trust your developer certificate.
 4. When the app asks, allow **location** and **motion**.
@@ -319,6 +319,24 @@ drone mode (the button at the top cycles them, like the mountain button on the p
 apps installed from the Play Store unless you allow others: in the Android Auto settings on the phone, tap
 *Version* ten times to unlock developer mode, then in the ⋮ menu → *Developer settings* turn on *Unknown
 sources*. This part hasn't been tried in a car yet.
+
+## Moving to the new app ID
+
+The app's ID is now `com.koonap.spoor` on both phones. Because of that, the next
+test build installs as a new app named **Spoor**, next to the old one. The old one may also be called Spoor (or
+still SatMap), so tell them apart by what is inside: the new one opens with no offline maps, the old one is the one
+that still has them. To bring your offline maps across:
+
+1. In the old app (the one with your maps): **Offline** → *Export all offline maps*, and save the files somewhere
+   the phone can reach.
+2. In the new app (the one that opened empty): **Offline** → *Restore from a backup*, and choose those files
+   (both files of each area, satellite and elevation).
+3. Only once the new app shows your maps, delete the old app.
+
+Only offline maps move this way. KML and GPX files, your "Where I've been" track, settings and group memberships
+stay in the old app: re-add the KML and GPX files and rejoin your groups in the new one before you delete the old one.
+
+The App Store and Google Play listings (not set up yet) must use `com.koonap.spoor`.
 
 ## Test builds can be switched off
 

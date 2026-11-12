@@ -103,7 +103,7 @@ enum TestBuildSwitch {
         title: defaultTitle,
         message: "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
         appStoreURL: "https://apps.apple.com/app/satmap/id0000000000",
-        playStoreURL: "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        playStoreURL: "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         websiteURL: "https://github.com/JacobusOettle/satmap")
 
     // MARK: - Which builds check

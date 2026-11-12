@@ -108,7 +108,7 @@ def example_transaction(transaction_id, expires_ms):
     return {
         "transactionId": transaction_id,
         "originalTransactionId": transaction_id,
-        "bundleId": "com.jacobusoettle.satmap",
+        "bundleId": "com.koonap.spoor",
         "productId": "pro.yearly",
         "purchaseDate": 1793600000000,
         "originalPurchaseDate": 1793600000000,

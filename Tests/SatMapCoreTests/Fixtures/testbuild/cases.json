@@ -19,7 +19,7 @@
     "title": "This test version of Spoor has been switched off",
     "message": "Thanks for testing Spoor. Get Spoor from the App Store or Google Play to keep using it.",
     "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-    "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+    "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
     "websiteURL": "https://github.com/JacobusOettle/satmap"
   },
   "files": [
@@ -52,7 +52,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.\nSpoor is now on the App Store and Google Play.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap",
         "updated": "2026-12-01T08:00:00Z"
       },
@@ -61,7 +61,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.\nSpoor is now on the App Store and Google Play.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       }
     },
@@ -117,7 +117,7 @@
         ],
         "appStoreURL": true,
         "playStoreURL": {
-          "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+          "url": "https://play.google.com/store/apps/details?id=com.koonap.spoor"
         },
         "websiteURL": 3.5
       },
@@ -259,7 +259,7 @@
         "schema": 1,
         "testBuilds": "off",
         "appStoreURL": "http://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "http://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "http://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "http://github.com/JacobusOettle/satmap"
       },
       "expect": {
@@ -404,7 +404,7 @@
       "allowed": true
     },
     {
-      "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+      "url": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
       "allowed": true
     },
     {
@@ -555,7 +555,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "expect": {
@@ -564,7 +564,7 @@
           "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
@@ -590,7 +590,7 @@
             {
               "kind": "googlePlay",
               "title": "Get it on Google Play",
-              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+              "url": "https://play.google.com/store/apps/details?id=com.koonap.spoor"
             },
             {
               "kind": "website",
@@ -651,7 +651,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "fetched": null,
@@ -661,7 +661,7 @@
           "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
@@ -687,7 +687,7 @@
             {
               "kind": "googlePlay",
               "title": "Get it on Google Play",
-              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+              "url": "https://play.google.com/store/apps/details?id=com.koonap.spoor"
             },
             {
               "kind": "website",
@@ -707,7 +707,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "fetched": {
@@ -748,7 +748,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "expect": {
@@ -757,7 +757,7 @@
           "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
@@ -783,7 +783,7 @@
             {
               "kind": "googlePlay",
               "title": "Get it on Google Play",
-              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+              "url": "https://play.google.com/store/apps/details?id=com.koonap.spoor"
             },
             {
               "kind": "website",
@@ -804,7 +804,7 @@
         "title": null,
         "message": null,
         "appStoreURL": null,
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "expect": {
@@ -813,7 +813,7 @@
           "title": null,
           "message": null,
           "appStoreURL": null,
-          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": {
@@ -834,7 +834,7 @@
             {
               "kind": "googlePlay",
               "title": "Get it on Google Play",
-              "url": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap"
+              "url": "https://play.google.com/store/apps/details?id=com.koonap.spoor"
             },
             {
               "kind": "website",
@@ -880,7 +880,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "fetched": {
@@ -888,7 +888,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "expect": {
@@ -897,7 +897,7 @@
           "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": null,
@@ -913,7 +913,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "fetched": {
@@ -921,7 +921,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "expect": {
@@ -930,7 +930,7 @@
           "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": null,
@@ -946,7 +946,7 @@
         "title": "Spoor test builds have ended",
         "message": "Thank you for testing.",
         "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-        "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+        "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
         "websiteURL": "https://github.com/JacobusOettle/satmap"
       },
       "fetched": null,
@@ -956,7 +956,7 @@
           "title": "Spoor test builds have ended",
           "message": "Thank you for testing.",
           "appStoreURL": "https://apps.apple.com/app/satmap/id0000000000",
-          "playStoreURL": "https://play.google.com/store/apps/details?id=com.jacobusoettle.satmap",
+          "playStoreURL": "https://play.google.com/store/apps/details?id=com.koonap.spoor",
           "websiteURL": "https://github.com/JacobusOettle/satmap"
         },
         "iPhone": null,

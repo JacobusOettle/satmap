@@ -61,7 +61,9 @@ jobs:
           set -u
           cd "$GITHUB_WORKSPACE" || exit 1
           export PATH="$PATH:${ANDROID_HOME:-/usr/local/lib/android/sdk}/platform-tools"
-          PKG=com.jacobusoettle.satmap
+          # The app ID (applicationId); the Kotlin classes keep their package (KPKG).
+          PKG=com.koonap.spoor
+          KPKG=com.jacobusoettle.satmap
           APKS=android/app/build/outputs/apk
           # adb with a time limit (LIMIT seconds, 60 unless set): with the emulator gone, an adb command can wait for it
           # for ever.
@@ -100,7 +102,7 @@ jobs:
             REC=$!
             date -u +"recording $mode started %Y-%m-%d %H:%M:%S.%N" | tee -a videos/times.txt
             sleep 2
-            timeout -k 10 10m adb shell am instrument -w -e class "$PKG.ZoomTest#$test" \
+            timeout -k 10 10m adb shell am instrument -w -e class "$KPKG.ZoomTest#$test" \
               $PKG.test/androidx.test.runner.AndroidJUnitRunner > "videos/test-$mode.log" 2>&1
             grep -q '^OK (' "videos/test-$mode.log" || tail -n 30 "videos/test-$mode.log"
             # The recording ends at its time limit, or now (screenrecord finishes the file when interrupted).
