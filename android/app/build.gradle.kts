@@ -70,6 +70,9 @@ android {
         // Where the screenshot walk touches the screen: made on the emulator, checked by the unit tests.
         getByName("test").kotlin.srcDir("src/sharedTest/kotlin")
         getByName("androidTest").kotlin.srcDir("src/sharedTest/kotlin")
+        // Drone link's recorded demo flight (docs/mavlink/demo_flight.json), for the walkthrough's replay: in the test
+        // APK only, never in the app.
+        getByName("androidTest").assets.srcDirs("../../docs/mavlink")
     }
 
     testOptions {

@@ -22,6 +22,7 @@ on:
       - "android/**"
       - "SatMap/Resources/**"
       - "SatMapUITests/DemoFarm.kml"
+      - "docs/mavlink/**"
       - ".github/workflows/android-screenshots.yml"
 
 # Read-only: the build runs Gradle plugins, dependencies and third-party actions from the internet. Only the commit job

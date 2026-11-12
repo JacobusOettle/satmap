@@ -149,6 +149,9 @@ class MapController(
 
     /** Drone mode: aerodromes, strips, helipads and navaids, with distances from you and the tapped spot. */
     private var aviation: AviationLayer? = null
+
+    /** Drone link, in drone mode: your drones and the aircraft their ADS-B receivers hear (drone-link.md §3). */
+    private var droneLink: DroneLinkLayer? = null
     private var markerLayer: MeasureMarkerLayer? = null
     private var measureLine: MeasureLineLayer? = null
     private var selectedLayer: SelectedPointLayer? = null
@@ -295,6 +298,7 @@ class MapController(
             }
         }
         aviation = AviationLayer(m, style, activity) { visibleRegion(m) }.also { it.isOn = model.terrainMode.value.showsAviation }
+        droneLink = DroneLinkLayer(m, style, activity).also { it.isOn = model.terrainMode.value.showsAviation }
         markerLayer = MeasureMarkerLayer(m, style, activity)
         measureLine = MeasureLineLayer(m, style, activity)
         selectedLayer = SelectedPointLayer(m, style, activity)
@@ -341,7 +345,14 @@ class MapController(
                 builtTerrain = mode
                 imagery?.terrainChanged(mode)
                 aviation?.isOn = mode.showsAviation
+                droneLink?.isOn = mode.showsAviation
+                droneLinkChanged()
             }
+        }
+        // Drone link: what it hears, what is selected, and the heights' unit.
+        scope.launch {
+            combine(model.droneLink.revision, model.droneLink.selection, model.heightUnit) { _, _, _ -> }
+                .collect { droneLinkChanged() }
         }
         scope.launch { model.measure.collect { measureChanged(it) } }
         scope.launch {
@@ -392,6 +403,14 @@ class MapController(
 
     /** Test-only (the walkthrough): the style's layer ids, bottom to top; empty before the style has loaded. */
     fun layerIds(): List<String> = map?.style?.takeIf { it.isFullyLoaded }?.layers?.map { it.id }.orEmpty()
+
+    /** Test-only (the walkthrough, drone-link.md §5): each drone's and aircraft's point on the screen, in pixels. */
+    fun droneLinkScreenPoints(): List<Pair<DroneLinkLayer.Item, PointF>> {
+        val layer = droneLink ?: return emptyList()
+        if (!started) return emptyList()
+        val at = IntArray(2).also { container.getLocationOnScreen(it) }
+        return layer.shown.map { item -> item to layer.screenPoint(item).let { PointF(it.x + at[0], it.y + at[1]) } }
+    }
 
     /** Test-only (the walkthrough, groups §9.6): each member dot's and group pin's point on the screen, in pixels, with
      *  its kind ("member" or "pin"), id and accessibility label. */
@@ -585,6 +604,20 @@ class MapController(
         container.labelsChanged()
     }
 
+    /** Drone link's drones and aircraft as they are now (drone mode only). */
+    private fun droneLinkChanged() {
+        val layer = droneLink ?: return
+        if (!layer.isOn) return
+        val link = model.droneLink
+        val before = layer.shown
+        layer.update(
+            link.traffic, link.selection.value, model.recorder.location.value?.point, model.userElevation.value,
+            model.heightUnit.value, link.now(),
+        )
+        // The names accessibility services read: only when there are (or were) any.
+        if (before.isNotEmpty() || layer.shown.isNotEmpty()) container.labelsChanged()
+    }
+
     /** Drone mode's labels: how far each place is from you and from the tapped spot. */
     private fun aviationDistances(pin: GeoPoint?) {
         aviation?.distancesChanged(model.recorder.location.value?.point, pin)
@@ -740,6 +773,11 @@ class MapController(
                 null -> {}
             }
         }
+        // In drone mode, a drone or an aircraft from the drone link: its panel. Any other tap closes the panel.
+        if (measure == MeasureMode.Off) {
+            droneLink?.item(point)?.let { return model.droneLink.select(it) }
+        }
+        if (model.droneLink.selection.value != null) model.droneLink.select(null)
         if (measure == MeasureMode.Off) {
             kmlPoint(m, spot)?.let { k ->
                 model.pointTapped(k.coordinate, k.name)
@@ -1022,7 +1060,15 @@ class MapController(
             val r = g.radiusDp * density
             Placed(g.label, RectF(g.point.x - r, g.point.y - r, g.point.x + r, g.point.y + r), g.point)
         }
-        return (placed(layers.toTypedArray()) + group)
+        // Drone link's drones and aircraft, by their labels ("Drone 1", "SAA312").
+        val linked = droneLink?.let { layer ->
+            layer.shown.map { item ->
+                val s = layer.screenPoint(item)
+                val r = 16 * density
+                Placed(item.label, RectF(s.x - r, s.y - r, s.x + r, s.y + r), s)
+            }
+        }.orEmpty()
+        return (placed(layers.toTypedArray()) + group + linked)
             .sortedWith(compareBy({ it.box.top }, { it.box.left }))
             .map { MapContainerView.Label(it.name, it.box, it.spot) }
     }
@@ -1119,6 +1165,7 @@ class MapController(
         blocks = null
         aviation?.stop()
         aviation = null
+        droneLink = null
         markerLayer = null
         measureLine = null
         selectedLayer = null

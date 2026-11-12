@@ -71,13 +71,14 @@ import androidx.compose.ui.unit.dp
  *  `SheetBackground`, 29.5 dp apart (`Arrangement.spacedBy(29.5.dp)`, content padding top 16, bottom the navigation
  *  bar + 15), and a section without a footer ends 5.5 dp below its card, iOS's empty footer: the next section starts
  *  35 dp below a card, 33 dp below a footer's last baseline (screenshots 06, 07, 21). `first`: the first section
- *  starts 1 dp lower with a header, 19 dp lower without, as iOS's list does. */
+ *  starts 1 dp lower with a header, 19 dp lower without, as iOS's list does. `footerColour`: red for a warning (drone link's port). */
 @Composable
 fun FormSection(
     header: String? = null,
     footer: String? = null,
     first: Boolean = false,
     modifier: Modifier = Modifier,
+    footerColour: Color = LabelSecondary,
     content: @Composable () -> Unit,
 ) {
     val top = if (!first) 0.dp else if (header != null) 1.dp else 19.dp
@@ -95,7 +96,7 @@ fun FormSection(
             Text(
                 footer,
                 style = Footnote,
-                color = LabelSecondary,
+                color = footerColour,
                 modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 6.dp),
             )
         } else {

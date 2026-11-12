@@ -41,11 +41,15 @@ KML of the farm's blocks (`.github/workflows/screenshots.yml`).
 | <img src="docs/screenshots/34-join-group.jpg" width="250"> | <img src="docs/screenshots/35-share-consent.jpg" width="250"> | <img src="docs/screenshots/36-group-map.jpg" width="250"> |
 | **Dropping a pin** | **A pin** | **A member** |
 | <img src="docs/screenshots/37-drop-pin.jpg" width="250"> | <img src="docs/screenshots/38-pin-detail.jpg" width="250"> | <img src="docs/screenshots/39-member-detail.jpg" width="250"> |
-| **A paused group** | **Test build switched off** | |
-| <img src="docs/screenshots/40-group-paused.jpg" width="250"> | <img src="docs/screenshots/41-test-build-off.jpg" width="250"> | |
+| **A paused group** | **Test build switched off** | **Drone link: settings** |
+| <img src="docs/screenshots/40-group-paused.jpg" width="250"> | <img src="docs/screenshots/41-test-build-off.jpg" width="250"> | <img src="docs/screenshots/42-drone-link-settings.jpg" width="250"> |
+| **Drone link: your drone and the traffic** | | |
+| <img src="docs/screenshots/43-drone-on-map.jpg" width="250"> | | |
 
 The groups screenshots run in demo mode (`-groupsDemo YES`): the app talks to a fake server built into the core,
-with a fixed set of groups, members, trails and pins near the walk, and a fake store for SatMap Pro.
+with a fixed set of groups, members, trails and pins near the walk, and a fake store for SatMap Pro. The Drone link
+shots replay a recorded flight over the farm with three ADS-B aircraft (`docs/mavlink/demo_flight.json`) through the
+same decoder, instead of listening on the network (`-droneLinkDemo YES`, simulator and debug builds only).
 
 The Android app's screenshots, taken the same way on an Android emulator (`.github/workflows/android-screenshots.yml`),
 are in [docs/screenshots/android](docs/screenshots/android):
@@ -59,15 +63,15 @@ are in [docs/screenshots/android](docs/screenshots/android):
 | <img src="docs/screenshots/android/32-group-detail.jpg" width="180"> | <img src="docs/screenshots/android/33-invite-qr.jpg" width="180"> | <img src="docs/screenshots/android/34-join-group.jpg" width="180"> | <img src="docs/screenshots/android/35-share-consent.jpg" width="180"> |
 | **A group on the map** | **Dropping a pin** | **A pin** | **A member** |
 | <img src="docs/screenshots/android/36-group-map.jpg" width="180"> | <img src="docs/screenshots/android/37-drop-pin.jpg" width="180"> | <img src="docs/screenshots/android/38-pin-detail.jpg" width="180"> | <img src="docs/screenshots/android/39-member-detail.jpg" width="180"> |
-| **A paused group** | **Test build switched off** | | |
-| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | <img src="docs/screenshots/android/41-test-build-off.jpg" width="180"> | | |
+| **A paused group** | **Test build switched off** | **Drone link: settings** | **Drone link: your drone and the traffic** |
+| <img src="docs/screenshots/android/40-group-paused.jpg" width="180"> | <img src="docs/screenshots/android/41-test-build-off.jpg" width="180"> | <img src="docs/screenshots/android/42-drone-link-settings.jpg" width="180"> | <img src="docs/screenshots/android/43-drone-on-map.jpg" width="180"> |
 
 ## Features
 
 | What you asked for | How it works |
 | --- | --- |
 | Satellite view | Esri World Imagery tiles drawn over MapKit (Apple's own map is switched off). SatMap draws the imagery itself: every spot at once with the best imagery already in memory (the coarser tile enlarged when zooming in, the sharper ones shrunk when zooming out), with the contour lines on top, and swaps in a freshly drawn layer under the old one as better tiles arrive, so the map doesn't go grey while tiles load. In a new place it asks for a tile three levels up first (one request covers 64 tiles), and when the map stops it keeps coarse tiles around the screen ready for the next zoom or pan. |
-| Contour lines and elevation colours | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Contour spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. The elevation colours tint the map by height, blue for the lowest ground on screen to red for the highest, so high spots stand out; the range is chosen from the heights on screen (round numbers, at least 10 m) and kept while you pan around, so the colours stay put. The mountain button, under **Groups** at the top of the side buttons, cycles through contour lines → contour lines with colours → colours only → neither (remembered; a label says which). On the left, the contour interval shows above the scale bar and the colours' heights below it. Works offline for downloaded areas; with neither shown, no elevation is downloaded for the map. The same button's next mode is **drone mode** (the plane): the airports, airstrips, helipads and radio beacons (VOR, NDB) around, from [OurAirports](https://ourairports.com) (public domain, shipped with the app, so it works offline), more of them as you zoom in. Each shows its code and name, how far it is from you in nautical miles (cyan) and, once you tap a spot, from that spot (amber). A card at the top says where you are as a pilot reports it ("3.2 NM NE of FASZ Skukuza"), and where the tapped spot is. Tap an airfield to select it: the distances to the others are then from it. Visual reporting points and airspace aren't in the open data, so they aren't shown. |
+| Contour lines and elevation colours | Drawn on the phone from elevation tiles (AWS Terrain Tiles). Contour spacing adapts to zoom: 100 m → 50 → 20 → 10 → 5 m, with every 5th line thicker and labelled. The elevation colours tint the map by height, blue for the lowest ground on screen to red for the highest, so high spots stand out; the range is chosen from the heights on screen (round numbers, at least 10 m) and kept while you pan around, so the colours stay put. The mountain button, under **Groups** at the top of the side buttons, cycles through contour lines → contour lines with colours → colours only → neither (remembered; a label says which). On the left, the contour interval shows above the scale bar and the colours' heights below it. Works offline for downloaded areas; with neither shown, no elevation is downloaded for the map. The same button's next mode is **drone mode** (the plane): the airports, airstrips, helipads and radio beacons (VOR, NDB) around, from [OurAirports](https://ourairports.com) (public domain, shipped with the app, so it works offline), more of them as you zoom in. Each shows its code and name, how far it is from you in nautical miles (cyan) and, once you tap a spot, from that spot (amber). A card at the top says where you are as a pilot reports it ("3.2 NM NE of FASZ Skukuza"), and where the tapped spot is. Tap an airfield to select it: the distances to the others are then from it. Visual reporting points and airspace aren't in the open data, so they aren't shown. With **Drone link** on (the button under the card), your drone and the aircraft around it show too: see [Drone link](#drone-link). |
 | My location + dotted track | Blue dot (grey while the GPS sleeps) with a small arrow pointing where the phone points (the compass; it turns with the map) and a cyan dotted line of where you have been. Recording continues in the background. Long-press the locate button to clear the track. |
 | KML and GPX files | **Blocks** button → **+** to import `.kml`/`.kmz`/`.gpx` from Files, or share a KML or GPX file from WhatsApp/Mail/Files to SatMap. Blocks are drawn in the file's own colours and line widths (what a file leaves unset is white), with their names. A GPX file's tracks and routes are drawn as white lines and its waypoints as points (GPX has no colours). Each file has a switch to take its blocks off the map and put them back; untick **Use the colours in the files** to draw every block in white. Long-press the **Blocks** button to switch files (and the colours) without opening the list. Points in a file (launch points …) show as a dot with their name; tap one to select it at its exact position, with its name, coordinates and height at the bottom. Tap a file to zoom to it. Swipe to remove. |
 | Measuring tool | Tap the ruler: a crosshair appears in the centre of the screen. Move the map to put the crosshair on the spot, then tap anywhere on the map (or the ruler again) to drop a marker under the crosshair. As you walk, a dashed line joins you to the marker and the panel shows the live distance and how much higher or lower the marker is than where you are (from the elevation model). With a spot selected (tapped on the map, or a point in a KML file), the ruler makes it the marker straight away, without moving the map, so you see how far it is from you and how much higher or lower. Add more points the same way (B, C, D …): the panel shows the total distance along the line, the last leg, and how much higher or lower the last point is than A. Tap A, or put the crosshair on A and tap (or **Close shape**), to close the shape: its area (hectares and m²) and perimeter. **Undo** removes the last point; ✕ clears it all. Tap the distance (or the scale bar) to show distances in kilometres, miles or nautical miles; the scale bar follows. |
@@ -89,6 +93,51 @@ group whose owner's Pro has ended (the group pauses, and is deleted 30 days late
 pins and the group name can be reported and blocked, names and notes pass a word filter, and owners and admins can
 invite, cancel invites and remove members. The full design is in [docs/groups/SPEC.md](docs/groups/SPEC.md); the
 server is in `server/`.
+
+### Drone link
+
+In drone mode, SatMap can show your drone and the aircraft around it, live, from the MAVLink your ground station
+forwards to the phone over Wi-Fi. It works with ArduPilot and PX4 drones flown with QGroundControl, Mission Planner
+or MAVProxy. **DJI drones don't use MAVLink**, so they can't be shown.
+
+On the map, each drone is drawn turned to its heading, in its own colour, labelled "Drone 1" (its MAVLink system id)
+with its height above take-off, and its home point is marked H. Aircraft come from an ADS-B receiver on the drone
+(uAvionix pingRX and the like, reported as `ADSB_VEHICLE`): an icon for the kind of aircraft (airliner, light
+aircraft, helicopter, glider, balloon, drone), turned to its heading, with its callsign (or ICAO address), altitude in
+feet, speed in knots and an arrow when it climbs or descends. Aircraft below 2,000 ft within 5 NM of you or the drone
+are drawn red. Tap the drone for its height above take-off and above sea level, an estimate of its height above the
+ground (from SatMap's elevation data), ground speed, climb, battery, armed or not, GPS fix and satellites, how far it
+is from you, and the nearest airfields in nautical miles. Tap an aircraft for its details and its distance and bearing
+from you and from the drone. A drone with no new position for 10 s turns grey and goes after 60 s; an aircraft fades
+after 15 s and goes after 120 s (as in QGroundControl). Heights and speeds follow your units.
+
+**Set it up.** Put the phone and the ground station on the same Wi-Fi (or turn on Personal Hotspot on the phone and
+join it from the laptop or tablet running the ground station). In drone mode tap **Drone link**, switch it on, and
+note the phone's address and port shown there (port 14445 by default). Then, in **QGroundControl**:
+
+1. Open **Application Settings > Telemetry**.
+2. Under **MAVLink Forwarding**, tick **Enable** and set **Host name** to the phone's address and port, for example
+   `192.168.1.23:14445` (the Drone link screen shows the exact text, with a Copy button).
+3. Restart QGroundControl.
+
+QGroundControl then forwards everything it receives from the drone, one way, over UDP (MAVLink 2 only; it strips
+signatures). In **Mission Planner** use its MAVLink mirror (Ctrl+F, **Mavlink**, `UDP Client`) to the same address and port; with
+**MAVProxy** add `--out=udp:<phone-ip>:14445`. Both can forward MAVLink 1 or 2. The status line in the Drone link
+screen says *Waiting for MAVLink on port 14445…*, *Receiving from 1 drone*, or *No data for 10 s*.
+
+SatMap only listens: it never sends anything to the drone or the ground station, and the port is open only while the
+switch is on and SatMap is on screen (it closes in the background and opens again when you come back). It is off by
+default. On iPhone, receiving a ground station's datagrams needs no Local Network permission; the app declares one
+for later. On Android no extra permission is needed today (Android 17 will add `ACCESS_LOCAL_NETWORK`).
+
+> **Traffic awareness only. Not for navigation, separation or collision avoidance. Many aircraft don't broadcast.
+> Under SACAA Part 101 the remote pilot must give way to manned aircraft.** SatMap shows this when you first switch
+> Drone link on, and in every drone and aircraft panel.
+
+The decoder (MAVLink 1 and 2, CRCs, signed frames, several frames to a datagram) and the rules are in the shared core
+(`SatMap/Core/MAVLink.swift`, `DroneLink.swift` and their Kotlin twins), tested against the same fixture
+(`Tests/SatMapCoreTests/Fixtures/mavlink/cases.json`, made with pymavlink by `docs/mavlink/make_fixtures.py`). Online
+ADS-B (adsb.lol and the like) may be added later for aircraft when the drone has no receiver.
 
 ### Offline downloads
 
@@ -319,7 +368,7 @@ SatMap/
   UI/         SwiftUI screens (UI/Groups: the groups screens)
   Core/       platform-independent logic: tile maths, area → tile coverage, PNG/Terrarium decoding,
               marching-squares contours, KML/KMZ and GPX parsing, MBTiles (SQLite, tiles encrypted), track log,
-              download engine
+              download engine, the MAVLink decoder and Drone link rules (with a receive-only UDP socket)
 Tests/        unit tests for Core (run with `swift test`, also on Linux)
 android/      the Android app (Gradle): a file-for-file port of the above
   core/       SatMap/Core in Kotlin, with the same tests ported

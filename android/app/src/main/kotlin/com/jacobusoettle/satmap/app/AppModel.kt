@@ -279,7 +279,7 @@ class HeightLookup(private val source: ElevationSource, private val found: (GeoP
 /** A shape waiting for the user to confirm an offline download. */
 data class PendingArea(val id: UUID = UUID.randomUUID(), val name: String, val shape: CoverageShape)
 
-enum class ActiveSheet { blocks, offline, coordinates, groups }
+enum class ActiveSheet { blocks, offline, coordinates, groups, droneLink }
 
 /** App state shared by the map and the controls, for the whole process (not a ViewModel: recording, downloads and
  *  Android Auto run without an activity). Used on the main thread only (background work comes back on the main
@@ -321,6 +321,10 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
      *  This model acts on its lock (`applyLock`); the map screen shows it. Told of the foreground by this model, like
      *  groups. */
     val testBuild = TestBuildGate()
+
+    /** Drone link (android/docs/spec/drone-link.md): your drone and the aircraft its ADS-B receiver hears, from a
+     *  ground station forwarding MAVLink over Wi-Fi. Told of the foreground and the lock by this model. */
+    val droneLink = DroneLinkModel(elevation)
 
     /** The lock to show over everything while a test build is switched off (null when not locked). */
     val testBuildLock: StateFlow<TestBuildSwitch.Lock?> get() = testBuild.lock
@@ -592,7 +596,10 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
             .onEach { applyLock(it != null) }
             .launchIn(scope)
         recorder.start()
-        if (AppLifecycle.isForeground) testBuild.foregrounded()
+        if (AppLifecycle.isForeground) {
+            testBuild.foregrounded()
+            droneLink.foregrounded()
+        }
     }
 
     /** The test-build switch turned off (locked) or on again. While locked the app stops what runs but keeps every
@@ -607,6 +614,7 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         lockedOut = locked
         offline.setLockedOut(locked)
         groups.setLockedOut(locked)
+        droneLink.setLocked(locked)
         if (locked) {
             recorder.stopForLock()
         } else {
@@ -1052,6 +1060,8 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         if (reloadPending) requestReload()
         // Check the switch on return to the foreground (and keep checking every five minutes); nothing in background.
         testBuild.foregrounded()
+        // Drone link: the socket opens again (it is closed in the background).
+        droneLink.foregrounded()
     }
 
     /** Elevations aren't looked up in the background; catch up when the app is opened. */
@@ -1074,5 +1084,6 @@ class AppModel(private val app: Application, private val elevation: ElevationSou
         ContourRenderer.shared.clearCaches()
         // The switch isn't checked in the background.
         testBuild.backgrounded()
+        droneLink.backgrounded()
     }
 }
