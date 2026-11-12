@@ -119,3 +119,57 @@ final class UDPReceiver {
         return out
     }
 }
+
+/// Keeps one `UDPReceiver` open on the port wanted, for as long as it is wanted (Drone link). A port that can't be
+/// had (another app has it) is remembered in `failedPort` and tried again by `retry()`; asking for another port, or
+/// for none, closes the old socket and forgets the failure, so a socket is never left closed while the port shown
+/// is still wanted. Use it on one thread.
+final class UDPListening {
+    private let queue: DispatchQueue
+    private let onDatagram: ([UInt8]) -> Void
+    private var receiver: UDPReceiver?
+    /// The port wanted (nil: none).
+    private(set) var wantedPort: UInt16?
+    /// The wanted port, while it couldn't be had.
+    private(set) var failedPort: UInt16?
+
+    init(queue: DispatchQueue, onDatagram: @escaping ([UInt8]) -> Void) {
+        self.queue = queue
+        self.onDatagram = onDatagram
+    }
+
+    deinit {
+        receiver?.stop()
+    }
+
+    /// True while a socket is open on the wanted port.
+    var isListening: Bool { receiver?.isRunning == true }
+
+    /// Listen on `port`, or on nothing (nil). Another port than the open one closes it and binds the new one at once.
+    func want(_ port: UInt16?) {
+        if port != wantedPort {
+            receiver?.stop()
+            receiver = nil
+            failedPort = nil
+            wantedPort = port
+        }
+        if wantedPort != nil, receiver == nil { bind() }
+    }
+
+    /// Tries the wanted port again if it couldn't be had.
+    func retry() {
+        if wantedPort != nil, receiver == nil { bind() }
+    }
+
+    private func bind() {
+        guard let p = wantedPort else { return }
+        let r = UDPReceiver(port: p, queue: queue, onDatagram: onDatagram)
+        do {
+            try r.start()
+            receiver = r
+            failedPort = nil
+        } catch {
+            failedPort = p
+        }
+    }
+}

@@ -109,7 +109,9 @@ are drawn red. Tap the drone for its height above take-off and above sea level, 
 ground (from SatMap's elevation data), ground speed, climb, battery, armed or not, GPS fix and satellites, how far it
 is from you, and the nearest airfields in nautical miles. Tap an aircraft for its details and its distance and bearing
 from you and from the drone. A drone with no new position for 10 s turns grey and goes after 60 s; an aircraft fades
-after 15 s and goes after 120 s (as in QGroundControl). Heights and speeds follow your units.
+after 15 s and goes after 120 s (as in QGroundControl). Heights and speeds follow your units. Until the drone has a
+GPS position (autopilots report 0°, 0° before then) it stays off the map. Heartbeats from a companion computer,
+camera or gimbal on the drone are ignored, so armed or not is always the flight controller's.
 
 **Set it up.** Put the phone and the ground station on the same Wi-Fi (or turn on Personal Hotspot on the phone and
 join it from the laptop or tablet running the ground station). In drone mode tap **Drone link**, switch it on, and

@@ -42,7 +42,11 @@ final class DroneLinkModel: ObservableObject, @unchecked Sendable {
     private var isLocked = false
 
     private let queue = DispatchQueue(label: "com.jacobusoettle.satmap.droneLink", qos: .userInitiated)
-    private var receiver: UDPReceiver?
+    /// The socket, on the port wanted while listening; a port that couldn't be had is tried again by `tick()`.
+    private lazy var listening: UDPListening = {
+        let inbox = self.inbox
+        return UDPListening(queue: queue) { inbox.put($0) }
+    }()
     /// Datagrams from the socket's queue, taken on the main thread four times a second.
     private let inbox = Inbox()
     private var timer: Timer?
@@ -98,16 +102,13 @@ final class DroneLinkModel: ObservableObject, @unchecked Sendable {
         setEnabled(true)
     }
 
-    /// A new port (checked by `DroneLink.port`): listened on at once if the link is on.
+    /// A new port (checked by `DroneLink.port`): listened on at once if the link is on, whether or not the old port
+    /// could be had (the old socket, or the old port's failure, goes).
     func setPort(_ p: Int) {
         guard DroneLink.portRange.contains(p), p != port else { return }
         port = p
-        failedPort = nil
         if !isDemo { defaults.set(p, forKey: DroneLink.portKey) }
-        if receiver != nil {
-            stopListening()
-            update()
-        }
+        update()
     }
 
     func refreshAddresses() {
@@ -148,24 +149,14 @@ final class DroneLinkModel: ObservableObject, @unchecked Sendable {
     }
 
     private func startListening() {
-        guard receiver == nil else { return }
-        let inbox = self.inbox
-        let r = UDPReceiver(port: UInt16(port), queue: queue) { inbox.put($0) }
-        do {
-            try r.start()
-            receiver = r
-            failedPort = nil
-        } catch {
-            failedPort = port
-        }
+        let p = UInt16(port)
+        if listening.wantedPort != p { inbox.clear() }
+        listening.want(p)
     }
 
-    /// The port that couldn't be had, until the next try.
-    private var failedPort: Int?
-
     private func stopListening() {
-        receiver?.stop()
-        receiver = nil
+        guard listening.wantedPort != nil else { return }
+        listening.want(nil)
         inbox.clear()
     }
 
@@ -210,8 +201,8 @@ final class DroneLinkModel: ObservableObject, @unchecked Sendable {
     private func tick() {
         // A port that was taken: try again every few seconds (the other app may have let it go).
         ticks += 1
-        if receiver == nil, !isDemo, shouldListen, failedPort != nil, ticks % 12 == 0 {
-            startListening()
+        if !isDemo, shouldListen, !listening.isListening, ticks % 12 == 0 {
+            listening.retry()
         }
         feedReplay()
         let now = Date()
@@ -277,8 +268,8 @@ final class DroneLinkModel: ObservableObject, @unchecked Sendable {
         let new: DroneLink.Status
         if !isEnabled {
             new = .off
-        } else if let p = failedPort, receiver == nil, !isDemo {
-            new = .failed(port: p)
+        } else if !isDemo, shouldListen, !listening.isListening, let p = listening.failedPort {
+            new = .failed(port: Int(p))
         } else {
             new = traffic.status(port: port, now: Date())
         }

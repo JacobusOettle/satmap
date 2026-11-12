@@ -267,11 +267,22 @@ enum DroneLink {
 
     // MARK: - Drones
 
+    /// MAV_COMP_ID_AUTOPILOT1: the flight controller.
+    static let autopilotCompid: UInt8 = 1
+
+    /// A real position: in range and not 0,0 (what autopilots send before they have one).
+    static func isPosition(lat: Double, lon: Double) -> Bool {
+        guard lat.isFinite, lon.isFinite, (-90...90).contains(lat), (-180...180).contains(lon) else { return false }
+        return !(lat == 0 && lon == 0)
+    }
+
     struct Drone: Equatable {
         let sysid: UInt8
         /// The colour slot, in the order drones were first heard (0, 1, 2 …).
         let colourIndex: Int
         var heartbeat: MAVLink.Heartbeat?
+        /// The component the kept heartbeat came from: the flight controller's (MAV_COMP_ID_AUTOPILOT1, 1) wins.
+        var heartbeatCompid: UInt8?
         var position: MAVLink.GlobalPositionInt?
         var positionAt: Date?
         var vfr: MAVLink.VfrHud?
@@ -344,7 +355,7 @@ enum DroneLink {
         private(set) var aircraft: [UInt32: Aircraft] = [:]
         /// When the last datagram with a known frame came.
         private(set) var lastReceived: Date?
-        /// System ids that sent a ground station's heartbeat: never drones.
+        /// System ids that sent a ground station's heartbeat (MAV_TYPE_GCS): never drones.
         private(set) var groundStations = Set<UInt8>()
         private var nextColour = 0
 
@@ -372,8 +383,10 @@ enum DroneLink {
         @discardableResult
         func apply(_ f: MAVLink.Frame, at now: Date) -> Applied {
             guard let message = f.message else { return .ignored }
-            if case .heartbeat(let h) = message, h.isGcs {
-                if drones[f.sysid] == nil { groundStations.insert(f.sysid) }
+            if case .heartbeat(let h) = message, !h.isAutopilot {
+                // A ground station's heartbeat marks its system id; a companion's, camera's or gimbal's is ignored
+                // without hiding the vehicle it rides on.
+                if h.isGroundStation, drones[f.sysid] == nil { groundStations.insert(f.sysid) }
                 return .ignored
             }
             if case .adsbVehicle(let a) = message {
@@ -387,10 +400,17 @@ enum DroneLink {
             d.lastSeen = now
             switch message {
             case .heartbeat(let h):
-                d.heartbeat = h
+                // The flight controller's heartbeat; another autopilot-like component never overrides it.
+                if f.compid == DroneLink.autopilotCompid || d.heartbeatCompid != DroneLink.autopilotCompid {
+                    d.heartbeat = h
+                    d.heartbeatCompid = f.compid
+                }
             case .globalPositionInt(let p):
-                d.position = p
-                d.positionAt = now
+                // lat = lon = 0: no position yet (before GPS or an EKF origin). Still heard, but not drawn.
+                if DroneLink.isPosition(lat: p.latDeg, lon: p.lonDeg) {
+                    d.position = p
+                    d.positionAt = now
+                }
             case .vfrHud(let v):
                 d.vfr = v
             case .sysStatus(let s):
@@ -401,7 +421,7 @@ enum DroneLink {
             case .gpsRawInt(let g):
                 d.gps = g
             case .homePosition(let h):
-                d.home = h
+                if DroneLink.isPosition(lat: h.latDeg, lon: h.lonDeg) { d.home = h }
             case .adsbVehicle:
                 break
             }

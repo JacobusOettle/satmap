@@ -129,8 +129,12 @@ enum MAVLink {
         let systemStatus: Int
         /// MAV_MODE_FLAG_SAFETY_ARMED.
         var armed: Bool { baseMode & 0x80 != 0 }
-        /// A ground station's own heartbeat (MAV_TYPE_GCS, or MAV_AUTOPILOT_INVALID): never a drone.
-        var isGcs: Bool { type == 6 || autopilot == 8 }
+        /// A ground station's own heartbeat (MAV_TYPE_GCS): its system id is never a drone.
+        var isGroundStation: Bool { type == 6 }
+        /// The flight controller's own heartbeat. A companion computer, camera, gimbal or ADS-B transceiver on the
+        /// vehicle sends MAV_AUTOPILOT_INVALID (8) under the vehicle's system id: it says nothing about the vehicle's
+        /// state (armed, type), so it is ignored, but it doesn't hide the vehicle either.
+        var isAutopilot: Bool { type != 6 && autopilot != 8 }
     }
 
     struct SysStatus: Equatable {

@@ -31,8 +31,9 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 CASES_PATH = os.path.join(ROOT, "Tests", "SatMapCoreTests", "Fixtures", "mavlink", "cases.json")
 DEMO_PATH = os.path.join(ROOT, "docs", "mavlink", "demo_flight.json")
 
-# Demo farm anchor (SatMap/Core/GroupDemo.swift), near Stellenbosch.
-HOME_LAT, HOME_LON, HOME_ALT = -33.918292, 18.921204, 142.0
+# Demo farm anchor (SatMap/Core/GroupDemo.swift), near Stellenbosch. HOME_ALT is the ground there in
+# SatMap's elevation data (about 431 m), so the demo's "≈ above ground" reads about the height above take-off.
+HOME_LAT, HOME_LON, HOME_ALT = -33.918292, 18.921204, 431.0
 
 # Messages the apps decode: id -> (name, CRC_EXTRA, v1 payload length, v2 full payload length)
 MESSAGES = {}

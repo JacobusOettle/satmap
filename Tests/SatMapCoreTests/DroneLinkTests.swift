@@ -73,7 +73,7 @@ final class DroneLinkTests: XCTestCase {
         switch m {
         case .heartbeat(let h):
             return ["type": h.type, "autopilot": h.autopilot, "baseMode": h.baseMode, "customMode": Int(h.customMode),
-                    "systemStatus": h.systemStatus, "armed": h.armed, "isGcs": h.isGcs]
+                    "systemStatus": h.systemStatus, "armed": h.armed, "isGcs": !h.isAutopilot]
         case .sysStatus(let s):
             return ["batteryVoltageV": s.batteryVoltageV, "batteryCurrentA": s.batteryCurrentA,
                     "batteryRemainingPct": s.batteryRemainingPct]
@@ -172,6 +172,95 @@ final class DroneLinkTests: XCTestCase {
         XCTAssertEqual(traffic.drones[1]?.heartbeat?.armed, true)
     }
 
+    // Hand-made frames (the decoder is tested against the fixture; these test what the tracker does with values).
+    private func le(_ v: UInt32) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF), UInt8(v >> 16 & 0xFF), UInt8(v >> 24)] }
+    private func le(_ v: Int32) -> [UInt8] { le(UInt32(bitPattern: v)) }
+    private func le16(_ v: Int) -> [UInt8] { [UInt8(v & 0xFF), UInt8(v >> 8 & 0xFF)] }
+
+    private func heartbeatFrame(sysid: UInt8, compid: UInt8, type: UInt8, autopilot: UInt8, armed: Bool) -> MAVLink.Frame {
+        let payload = le(UInt32(0)) + [type, autopilot, armed ? 0x81 : 0x01, 4, 3]
+        return MAVLink.Frame(version: 2, signed: false, sysid: sysid, compid: compid, msgId: 0, payload: payload)
+    }
+
+    private func positionFrame(sysid: UInt8, lat: Double, lon: Double, altM: Double = 481, relM: Double = 50) -> MAVLink.Frame {
+        var payload = le(UInt32(1000)) + le(Int32((lat * 1e7).rounded())) + le(Int32((lon * 1e7).rounded()))
+        payload += le(Int32(altM * 1000)) + le(Int32(relM * 1000)) + le16(0) + le16(0) + le16(0) + le16(9000)
+        return MAVLink.Frame(version: 2, signed: false, sysid: sysid, compid: 1, msgId: 33, payload: payload)
+    }
+
+    private func homeFrame(sysid: UInt8, lat: Double, lon: Double) -> MAVLink.Frame {
+        var payload = le(Int32((lat * 1e7).rounded())) + le(Int32((lon * 1e7).rounded())) + le(Int32(431_000))
+        payload += [UInt8](repeating: 0, count: 60 - payload.count)
+        return MAVLink.Frame(version: 2, signed: false, sysid: sysid, compid: 1, msgId: 242, payload: payload)
+    }
+
+    func testCompanionHeartbeatDoesNotHideTheDrone() throws {
+        let traffic = DroneLink.Traffic()
+        // A companion computer (autopilot 8, MAV_TYPE_ONBOARD_CONTROLLER 18) is heard first from system id 1.
+        XCTAssertEqual(traffic.apply(heartbeatFrame(sysid: 1, compid: 191, type: 18, autopilot: 8, armed: false), at: t0),
+                       .ignored)
+        XCTAssertTrue(traffic.groundStations.isEmpty, "only MAV_TYPE_GCS marks a ground station")
+        XCTAssertTrue(traffic.drones.isEmpty)
+        // The autopilot's position still makes Drone 1.
+        XCTAssertEqual(traffic.apply(positionFrame(sysid: 1, lat: -33.918, lon: 18.921), at: t0), .drone)
+        XCTAssertEqual(traffic.drones[1]?.label, "Drone 1")
+        XCTAssertNotNil(traffic.drones[1]?.point)
+        // The flight controller's heartbeat sets armed; a camera's (autopilot 8) or another component's doesn't.
+        traffic.apply(heartbeatFrame(sysid: 1, compid: 1, type: 2, autopilot: 3, armed: true), at: t0)
+        traffic.apply(heartbeatFrame(sysid: 1, compid: 100, type: 30, autopilot: 8, armed: false), at: t0)
+        traffic.apply(heartbeatFrame(sysid: 1, compid: 154, type: 26, autopilot: 3, armed: false), at: t0)
+        XCTAssertEqual(traffic.drones[1]?.heartbeat?.armed, true)
+        XCTAssertEqual(traffic.drones[1]?.heartbeatCompid, 1)
+        traffic.apply(heartbeatFrame(sysid: 1, compid: 1, type: 2, autopilot: 3, armed: false), at: t0)
+        XCTAssertEqual(traffic.drones[1]?.heartbeat?.armed, false)
+        // A drone whose only heartbeat so far comes from another component shows it until the autopilot's comes.
+        traffic.apply(heartbeatFrame(sysid: 3, compid: 154, type: 2, autopilot: 12, armed: true), at: t0)
+        XCTAssertEqual(traffic.drones[3]?.heartbeat?.armed, true)
+        traffic.apply(heartbeatFrame(sysid: 3, compid: 1, type: 2, autopilot: 12, armed: false), at: t0)
+        XCTAssertEqual(traffic.drones[3]?.heartbeat?.armed, false)
+        // A ground station's heartbeat (type 6) on its own id still blocks that id.
+        traffic.apply(heartbeatFrame(sysid: 255, compid: 190, type: 6, autopilot: 8, armed: false), at: t0)
+        XCTAssertEqual(traffic.groundStations, [255])
+        XCTAssertEqual(traffic.apply(positionFrame(sysid: 255, lat: -33.9, lon: 18.9), at: t0), .ignored)
+    }
+
+    func testNoPositionYetIsNotAPosition() throws {
+        let traffic = DroneLink.Traffic()
+        // Before GPS or an EKF origin: GLOBAL_POSITION_INT and HOME_POSITION at 0,0.
+        XCTAssertEqual(traffic.apply(positionFrame(sysid: 1, lat: 0, lon: 0, altM: 0, relM: 0), at: t0), .drone)
+        traffic.apply(homeFrame(sysid: 1, lat: 0, lon: 0), at: t0)
+        var d = try XCTUnwrap(traffic.drones[1])
+        XCTAssertNil(d.position)
+        XCTAssertNil(d.positionAt)
+        XCTAssertNil(d.point)
+        XCTAssertNil(d.home)
+        XCTAssertNil(d.homePoint)
+        XCTAssertTrue(d.isStale(t0), "greyed: no position")
+        XCTAssertEqual(d.lastSeen, t0, "still heard")
+        // Then the real one.
+        let t1 = t0.addingTimeInterval(5)
+        traffic.apply(positionFrame(sysid: 1, lat: -33.918292, lon: 18.921204), at: t1)
+        traffic.apply(homeFrame(sysid: 1, lat: -33.918292, lon: 18.921204), at: t1)
+        d = try XCTUnwrap(traffic.drones[1])
+        XCTAssertEqual(d.point?.lat ?? 0, -33.918292, accuracy: 1e-7)
+        XCTAssertEqual(d.homePoint?.lon ?? 0, 18.921204, accuracy: 1e-7)
+        XCTAssertFalse(d.isStale(t1))
+        // A later 0,0 (the EKF lost its origin) doesn't move it to 0,0 or make it fresh.
+        let t2 = t0.addingTimeInterval(9)
+        traffic.apply(positionFrame(sysid: 1, lat: 0, lon: 0), at: t2)
+        d = try XCTUnwrap(traffic.drones[1])
+        XCTAssertEqual(d.point?.lat ?? 0, -33.918292, accuracy: 1e-7)
+        XCTAssertEqual(d.positionAt, t1)
+        XCTAssertEqual(d.lastSeen, t2)
+        // The rule itself.
+        XCTAssertFalse(DroneLink.isPosition(lat: 0, lon: 0))
+        XCTAssertFalse(DroneLink.isPosition(lat: 91, lon: 18))
+        XCTAssertFalse(DroneLink.isPosition(lat: -33, lon: 181))
+        XCTAssertFalse(DroneLink.isPosition(lat: .nan, lon: 18))
+        XCTAssertTrue(DroneLink.isPosition(lat: 0, lon: 18.9))
+        XCTAssertTrue(DroneLink.isPosition(lat: -33.9, lon: 0))
+    }
+
     func testDronesAreTrackedPerSystemId() throws {
         let traffic = DroneLink.Traffic()
         traffic.receive(try datagram(try named("v2-global-position-int")), at: t0)
@@ -197,7 +286,7 @@ final class DroneLinkTests: XCTestCase {
         XCTAssertEqual(d.groundSpeedMs ?? 0, 9.75, accuracy: 1e-9)
         XCTAssertEqual(d.climbMs ?? 0, 0.5, accuracy: 1e-9)
         XCTAssertEqual(d.headingDeg ?? 0, 50.2, accuracy: 1e-9)
-        XCTAssertEqual(d.takeOffGroundM ?? 0, 142, accuracy: 1e-6)
+        XCTAssertEqual(d.takeOffGroundM ?? 0, 431, accuracy: 1e-6)
         XCTAssertEqual(d.homePoint?.lat ?? 0, -33.918292, accuracy: 1e-7)
         // Unknown battery values don't wipe known ones.
         traffic.receive(try datagram(try named("v2-sys-status-unknown-battery")), at: t0)
@@ -272,7 +361,7 @@ final class DroneLinkTests: XCTestCase {
         let traffic = DroneLink.Traffic()
         traffic.receive(try datagram(try named("adsb-three-in-one-datagram")), at: t0)
         let farm = GeoPoint(lat: -33.918292, lon: 18.921204)
-        let refs: [(point: GeoPoint, groundM: Double?)] = [(farm, 142)]
+        let refs: [(point: GeoPoint, groundM: Double?)] = [(farm, 431)]
         // The helicopter (800 ft, 2.9 NM) and the light aircraft (1,500 ft, about 4 NM) are; the airliner isn't.
         XCTAssertTrue(DroneLink.isLowAndClose(try XCTUnwrap(traffic.aircraft[0x00C5D6]), references: refs))
         XCTAssertTrue(DroneLink.isLowAndClose(try XCTUnwrap(traffic.aircraft[0x00B3C4]), references: refs))
@@ -462,6 +551,97 @@ final class DroneLinkTests: XCTestCase {
         lock.lock()
         XCTAssertEqual(received.count, datagrams.count)
         lock.unlock()
+    }
+
+    /// Port changes after a failed bind: the new port is listened on at once, and nothing is left closed.
+    func testListeningAfterATakenPort() throws {
+        let queue = DispatchQueue(label: "udp-listening-test")
+        let blocker = UDPReceiver(port: 0, queue: queue) { _ in }
+        try blocker.start()
+        let taken = blocker.port
+        let free = try freeUDPPort()
+        XCTAssertNotEqual(free, taken)
+
+        let lock = NSLock()
+        var received: [[UInt8]] = []
+        let listening = UDPListening(queue: queue) { d in
+            lock.lock()
+            received.append(d)
+            lock.unlock()
+        }
+        listening.want(taken)
+        XCTAssertFalse(listening.isListening)
+        XCTAssertEqual(listening.failedPort, taken)
+        XCTAssertEqual(listening.wantedPort, taken)
+        // The user types another port: it binds at once and the failure is forgotten.
+        listening.want(free)
+        XCTAssertTrue(listening.isListening)
+        XCTAssertNil(listening.failedPort)
+        XCTAssertEqual(listening.wantedPort, free)
+        let hb = try datagram(try named("v2-heartbeat-armed"))
+        try send(hb, to: free)
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            lock.lock()
+            let n = received.count
+            lock.unlock()
+            if n > 0 { break }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        lock.lock()
+        XCTAssertEqual(received, [hb])
+        lock.unlock()
+        // Back to the taken port: the free one closes, the taken one fails; retry() gets it once it is let go.
+        listening.want(taken)
+        XCTAssertFalse(listening.isListening)
+        XCTAssertEqual(listening.failedPort, taken)
+        listening.retry()
+        XCTAssertFalse(listening.isListening)
+        blocker.stop() // the socket closes on its queue, a moment later
+        let retryUntil = Date().addingTimeInterval(5)
+        while !listening.isListening, Date() < retryUntil {
+            listening.retry()
+            if !listening.isListening { Thread.sleep(forTimeInterval: 0.02) }
+        }
+        XCTAssertTrue(listening.isListening)
+        XCTAssertNil(listening.failedPort)
+        // Asking again for the same port keeps the socket; asking for none closes it.
+        listening.want(taken)
+        XCTAssertTrue(listening.isListening)
+        listening.want(nil)
+        XCTAssertFalse(listening.isListening)
+        XCTAssertNil(listening.wantedPort)
+        XCTAssertNil(listening.failedPort)
+        listening.retry()
+        XCTAssertFalse(listening.isListening, "nothing wanted, nothing opened")
+    }
+
+    /// A UDP port free right now (bound and closed at once; `UDPReceiver.stop` closes on its queue, later).
+    private func freeUDPPort() throws -> UInt16 {
+        #if canImport(Glibc)
+        let s = socket(AF_INET, Int32(SOCK_DGRAM.rawValue), Int32(IPPROTO_UDP))
+        #else
+        let s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        #endif
+        XCTAssertGreaterThanOrEqual(s, 0)
+        defer { close(s) }
+        var addr = sockaddr_in()
+        #if canImport(Darwin)
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        #endif
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr = in_addr(s_addr: INADDR_ANY)
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(s, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        XCTAssertEqual(bound, 0)
+        var actual = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &actual) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(s, $0, &len) }
+        }
+        return UInt16(bigEndian: actual.sin_port)
     }
 
     private func send(_ bytes: [UInt8], to port: UInt16) throws {

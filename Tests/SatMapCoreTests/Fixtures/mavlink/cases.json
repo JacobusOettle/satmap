@@ -170,7 +170,7 @@
   {
    "name": "v2-gps-raw-int",
    "description": "3D fix, 17 satellites",
-   "hex": "fd2b00000d0101180000a8666b30000000006488c8eb9077470b2cef020048006e005203282303110c6903008a0200004c040000b4e2ca",
+   "hex": "fd2b00000d0101180000a8666b30000000006488c8eb9077470b1458070048006e00520328230311f4d107008a0200004c040000b47a7d",
    "expect": [
     {
      "msgId": 24,
@@ -184,13 +184,13 @@
       "fix_type": 3,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 192300,
+      "alt": 481300,
       "eph": 72,
       "epv": 110,
       "vel": 850,
       "cog": 9000,
       "satellites_visible": 17,
-      "alt_ellipsoid": 223500,
+      "alt_ellipsoid": 512500,
       "h_acc": 650,
       "v_acc": 1100,
       "vel_acc": 180,
@@ -202,7 +202,7 @@
       "satellitesVisible": 17,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 192.3
+      "altMslM": 481.3
      }
     }
    ]
@@ -210,7 +210,7 @@
   {
    "name": "v2-global-position-int",
    "description": "50.3 m above take-off, flying north-east",
-   "hex": "fd1c00000e010121000040e201006488c8eb9077470b2cef02007cc400007102ee02ceff9c1302cc",
+   "hex": "fd1c00000e010121000040e201006488c8eb9077470b145807007cc400007102ee02ceff9c131549",
    "expect": [
     {
      "msgId": 33,
@@ -223,7 +223,7 @@
       "time_boot_ms": 123456,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 192300,
+      "alt": 481300,
       "relative_alt": 50300,
       "vx": 625,
       "vy": 750,
@@ -234,7 +234,7 @@
       "timeBootMs": 123456,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 192.3,
+      "altMslM": 481.3,
       "relativeAltM": 50.3,
       "vxMs": 6.25,
       "vyMs": 7.5,
@@ -247,7 +247,7 @@
   {
    "name": "v2-vfr-hud",
    "description": "Groundspeed 9.75 m/s, climb 0.5 m/s (float32-exact values)",
-   "hex": "fd1300000f01014a00000000284100001c41004040430000003f32002ee2e9",
+   "hex": "fd1300000f01014a00000000284100001c4100a0f0430000003f32002e6788",
    "expect": [
     {
      "msgId": 74,
@@ -261,7 +261,7 @@
       "groundspeed": 9.75,
       "heading": 50,
       "throttle": 46,
-      "alt": 192.25,
+      "alt": 481.25,
       "climb": 0.5
      },
      "decoded": {
@@ -269,7 +269,7 @@
       "groundspeedMs": 9.75,
       "headingDeg": 50,
       "throttlePct": 46,
-      "altM": 192.25,
+      "altM": 481.25,
       "climbMs": 0.5
      }
     }
@@ -329,7 +329,7 @@
   {
    "name": "v2-home-position",
    "description": "Home at the demo farm",
-   "hex": "fd380000110101f20000b87ac8eb8825470bb02a02000000000000000000000000000000803f000000000000000000000000000000000000000000000000002366308ef0",
+   "hex": "fd380000110101f20000b87ac8eb8825470b989306000000000000000000000000000000803f00000000000000000000000000000000000000000000000000236630ddd4",
    "expect": [
     {
      "msgId": 242,
@@ -341,7 +341,7 @@
      "raw": {
       "latitude": -339182920,
       "longitude": 189212040,
-      "altitude": 142000,
+      "altitude": 431000,
       "x": 0.0,
       "y": 0.0,
       "z": 0.0,
@@ -359,7 +359,7 @@
      "decoded": {
       "latDeg": -33.918292,
       "lonDeg": 18.921204,
-      "altMslM": 142.0
+      "altMslM": 431.0
      }
     }
    ]
@@ -524,7 +524,7 @@
   {
    "name": "v1-gps-raw-int",
    "description": "3D fix, 17 satellites",
-   "hex": "fe1e71010118a8666b30000000006488c8eb9077470b2cef020048006e00520328230311058a",
+   "hex": "fe1e71010118a8666b30000000006488c8eb9077470b1458070048006e0052032823031162a2",
    "expect": [
     {
      "msgId": 24,
@@ -538,7 +538,7 @@
       "fix_type": 3,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 192300,
+      "alt": 481300,
       "eph": 72,
       "epv": 110,
       "vel": 850,
@@ -556,7 +556,7 @@
       "satellitesVisible": 17,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 192.3
+      "altMslM": 481.3
      }
     }
    ]
@@ -564,7 +564,7 @@
   {
    "name": "v1-global-position-int",
    "description": "50.3 m above take-off, flying north-east",
-   "hex": "fe1c7201012140e201006488c8eb9077470b2cef02007cc400007102ee02ceff9c13d594",
+   "hex": "fe1c7201012140e201006488c8eb9077470b145807007cc400007102ee02ceff9c13c211",
    "expect": [
     {
      "msgId": 33,
@@ -577,7 +577,7 @@
       "time_boot_ms": 123456,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 192300,
+      "alt": 481300,
       "relative_alt": 50300,
       "vx": 625,
       "vy": 750,
@@ -588,7 +588,7 @@
       "timeBootMs": 123456,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 192.3,
+      "altMslM": 481.3,
       "relativeAltM": 50.3,
       "vxMs": 6.25,
       "vyMs": 7.5,
@@ -601,7 +601,7 @@
   {
    "name": "v1-vfr-hud",
    "description": "Groundspeed 9.75 m/s, climb 0.5 m/s (float32-exact values)",
-   "hex": "fe147301014a0000284100001c41004040430000003f32002e00d183",
+   "hex": "fe147301014a0000284100001c4100a0f0430000003f32002e001550",
    "expect": [
     {
      "msgId": 74,
@@ -615,7 +615,7 @@
       "groundspeed": 9.75,
       "heading": 50,
       "throttle": 46,
-      "alt": 192.25,
+      "alt": 481.25,
       "climb": 0.5
      },
      "decoded": {
@@ -623,7 +623,7 @@
       "groundspeedMs": 9.75,
       "headingDeg": 50,
       "throttlePct": 46,
-      "altM": 192.25,
+      "altM": 481.25,
       "climbMs": 0.5
      }
     }
@@ -683,7 +683,7 @@
   {
    "name": "v1-home-position",
    "description": "Home at the demo farm",
-   "hex": "fe34750101f2b87ac8eb8825470bb02a02000000000000000000000000000000803f000000000000000000000000000000000000000000000000e507",
+   "hex": "fe34750101f2b87ac8eb8825470b989306000000000000000000000000000000803f000000000000000000000000000000000000000000000000faa6",
    "expect": [
     {
      "msgId": 242,
@@ -695,7 +695,7 @@
      "raw": {
       "latitude": -339182920,
       "longitude": 189212040,
-      "altitude": 142000,
+      "altitude": 431000,
       "x": 0.0,
       "y": 0.0,
       "z": 0.0,
@@ -713,7 +713,7 @@
      "decoded": {
       "latDeg": -33.918292,
       "lonDeg": 18.921204,
-      "altMslM": 142.0
+      "altMslM": 431.0
      }
     }
    ]
@@ -776,7 +776,7 @@
   {
    "name": "v2-global-position-int-no-heading",
    "description": "Heading unknown (hdg = 65535 -> null), on the ground",
-   "hex": "fd1c0000280101210000d0070000b87ac8eb8825470bb02a020000000000000000000000ffff65bf",
+   "hex": "fd1c0000280101210000d0070000b87ac8eb8825470b9893060000000000000000000000ffff2e16",
    "expect": [
     {
      "msgId": 33,
@@ -789,7 +789,7 @@
       "time_boot_ms": 2000,
       "lat": -339182920,
       "lon": 189212040,
-      "alt": 142000,
+      "alt": 431000,
       "relative_alt": 0,
       "vx": 0,
       "vy": 0,
@@ -800,7 +800,7 @@
       "timeBootMs": 2000,
       "latDeg": -33.918292,
       "lonDeg": 18.921204,
-      "altMslM": 142.0,
+      "altMslM": 431.0,
       "relativeAltM": 0.0,
       "vxMs": 0.0,
       "vyMs": 0.0,
@@ -851,7 +851,7 @@
   {
    "name": "v2-truncated-payload",
    "description": "GLOBAL_POSITION_INT with vz = 0 and hdg = 0: the sender trims trailing zero bytes (payload 24 of 28 bytes); the decoder must zero-extend",
-   "hex": "fd1800002a0101210000400d03006488c8eb9077470be09f0200307500002c0170fecae7",
+   "hex": "fd1800002a0101210000400d03006488c8eb9077470bc8080700307500002c0170fe464d",
    "expect": [
     {
      "msgId": 33,
@@ -864,7 +864,7 @@
       "time_boot_ms": 200000,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 172000,
+      "alt": 461000,
       "relative_alt": 30000,
       "vx": 300,
       "vy": -400,
@@ -875,7 +875,7 @@
       "timeBootMs": 200000,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 172.0,
+      "altMslM": 461.0,
       "relativeAltM": 30.0,
       "vxMs": 3.0,
       "vyMs": -4.0,
@@ -921,7 +921,7 @@
   {
    "name": "v2-signed-global-position-int",
    "description": "Signed position frame",
-   "hex": "fd1c01004e0101210000e09304006488c8eb9077470bc0ce020010a400006400c8000000c418f7c0009b78563412006f222b8c0fed",
+   "hex": "fd1c01004e0101210000e09304006488c8eb9077470ba837070010a400006400c8000000c4181094009b7856341200eb9cf1aee260",
    "expect": [
     {
      "msgId": 33,
@@ -934,7 +934,7 @@
       "time_boot_ms": 300000,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 184000,
+      "alt": 473000,
       "relative_alt": 42000,
       "vx": 100,
       "vy": 200,
@@ -945,7 +945,7 @@
       "timeBootMs": 300000,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 184.0,
+      "altMslM": 473.0,
       "relativeAltM": 42.0,
       "vxMs": 1.0,
       "vyMs": 2.0,
@@ -958,7 +958,7 @@
   {
    "name": "two-frames-one-datagram",
    "description": "HEARTBEAT then GLOBAL_POSITION_INT in one UDP datagram",
-   "hex": "fd090000320101000000050000000203d9040352b4fd1c0000330101210000801a06006488c8eb9077470b00ee020050c30000000020030000282339f9",
+   "hex": "fd090000320101000000050000000203d9040352b4fd1c0000330101210000801a06006488c8eb9077470be856070050c300000000200300002823c4f2",
    "expect": [
     {
      "msgId": 0,
@@ -996,7 +996,7 @@
       "time_boot_ms": 400000,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 192000,
+      "alt": 481000,
       "relative_alt": 50000,
       "vx": 0,
       "vy": 800,
@@ -1007,7 +1007,7 @@
       "timeBootMs": 400000,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 192.0,
+      "altMslM": 481.0,
       "relativeAltM": 50.0,
       "vxMs": 0.0,
       "vyMs": 8.0,
@@ -1020,7 +1020,7 @@
   {
    "name": "v1-and-v2-one-datagram",
    "description": "A v1 HEARTBEAT followed by a v2 VFR_HUD",
-   "hex": "fe0900010100050000000203d904037089fd1300003401014a0000000000410000004100004043000080be5a002e67df",
+   "hex": "fe0900010100050000000203d904037089fd1300003401014a000000000041000000410080f043000080be5a002e6d91",
    "expect": [
     {
      "msgId": 0,
@@ -1059,7 +1059,7 @@
       "groundspeed": 8.0,
       "heading": 90,
       "throttle": 46,
-      "alt": 192.0,
+      "alt": 481.0,
       "climb": -0.25
      },
      "decoded": {
@@ -1067,7 +1067,7 @@
       "groundspeedMs": 8.0,
       "headingDeg": 90,
       "throttlePct": 46,
-      "altM": 192.0,
+      "altM": 481.0,
       "climbMs": -0.25
      }
     }
@@ -1108,7 +1108,7 @@
   {
    "name": "garbage-false-magic",
    "description": "Garbage with a fake v1 start byte (0xFE, length 3) whose frame would overlap the real one; its CRC fails, so the decoder must resync one byte on and still find the frame",
-   "hex": "55fe03000101fd1c000036010121000020a107006488c8eb9077470b00ee020050c30000000000000000504681a0",
+   "hex": "55fe03000101fd1c000036010121000020a107006488c8eb9077470be856070050c3000000000000000050467cab",
    "expect": [
     {
      "msgId": 33,
@@ -1121,7 +1121,7 @@
       "time_boot_ms": 500000,
       "lat": -339179420,
       "lon": 189233040,
-      "alt": 192000,
+      "alt": 481000,
       "relative_alt": 50000,
       "vx": 0,
       "vy": 0,
@@ -1132,7 +1132,7 @@
       "timeBootMs": 500000,
       "latDeg": -33.917942,
       "lonDeg": 18.923304,
-      "altMslM": 192.0,
+      "altMslM": 481.0,
       "relativeAltM": 50.0,
       "vxMs": 0.0,
       "vyMs": 0.0,
@@ -1151,7 +1151,7 @@
   {
    "name": "bad-crc-then-good",
    "description": "Corrupted payload (rejected), then a valid HEARTBEAT",
-   "hex": "fd1c0000380101210000c02709006588c8eb9077470b00ee020050c30000000000000000e8034f66fd090000390101000000050000000203d90403b77e",
+   "hex": "fd1c0000380101210000c02709006588c8eb9077470be856070050c30000000000000000e803b26dfd090000390101000000050000000203d90403b77e",
    "expect": [
     {
      "msgId": 0,
@@ -1286,7 +1286,7 @@
   {
    "name": "second-drone",
    "description": "Position from a second drone (system id 2), tracked separately",
-   "hex": "fd1c000000020121000050c30000d84bc8ebb048470b588c0200a86100006aff0000000050465b14",
+   "hex": "fd1c000000020121000050c30000d84bc8ebb048470b40f50600a86100006aff0000000050462416",
    "expect": [
     {
      "msgId": 33,
@@ -1299,7 +1299,7 @@
       "time_boot_ms": 50000,
       "lat": -339194920,
       "lon": 189221040,
-      "alt": 167000,
+      "alt": 456000,
       "relative_alt": 25000,
       "vx": -150,
       "vy": 0,
@@ -1310,7 +1310,7 @@
       "timeBootMs": 50000,
       "latDeg": -33.919492,
       "lonDeg": 18.922104,
-      "altMslM": 167.0,
+      "altMslM": 456.0,
       "relativeAltM": 25.0,
       "vxMs": -1.5,
       "vyMs": 0.0,
