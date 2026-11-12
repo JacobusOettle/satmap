@@ -235,7 +235,8 @@ struct DroneLinkPanel: View {
             Text(name)
                 .font(.caption.weight(.heavy))
                 .opacity(0.7)
-                .frame(width: 92, alignment: .leading)
+                .frame(width: 104, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             Text(value)
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundColor(colour)
@@ -260,7 +261,10 @@ struct DroneLinkPanel: View {
         if let p = d.position {
             row("Height", "\(Format.height(p.relativeAltM, hu)) above take-off · \(Format.height(p.altMslM, hu)) above sea level")
             if let ground = link.selectedGroundM {
-                row("≈ above ground", Format.height(p.altMslM - ground, hu))
+                // A drone reporting itself well under the elevation model's ground has a sea-level height that doesn't
+                // match the map's (another datum, or a barometric height): no estimate rather than a wrong one.
+                let agl = p.altMslM - ground
+                row("≈ above ground", agl >= -10 ? Format.height(max(0, agl), hu) : "– (heights don't match the map)")
             }
         }
         let motion = [d.groundSpeedMs.map { DroneLink.speed($0, model.distanceUnit) },

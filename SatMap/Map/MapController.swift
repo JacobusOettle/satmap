@@ -194,6 +194,7 @@ final class MapController: NSObject, MKMapViewDelegate, UIGestureRecognizerDeleg
                     self?.imagery.terrainChanged(mode)
                     self?.aviation.isOn = mode.showsAviation
                     self?.droneLink.isOn = mode.showsAviation
+                    if !mode.showsAviation { self?.model.droneLink.select(nil) }
                     self?.droneLinkChanged()
                 }
             }

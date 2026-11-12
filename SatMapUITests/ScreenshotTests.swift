@@ -838,6 +838,9 @@ final class ScreenshotTests: XCTestCase {
         snap("42-drone-link-settings")
         tap("Done")
         sleep(4) // the flight climbs away from home and the aircraft move
+        // The drone (over the farm, by you) down and left of the middle, so the panel at the top and the buttons at
+        // the bottom right leave it and the traffic in sight.
+        dragMap(dx: -0.25, dy: 0.15)
 
         // On the map: the drone (over the farm, above your dot) and the aircraft; a tap on the drone opens its panel.
         let drone = app.descendants(matching: .any)["droneLinkDrone"].firstMatch
